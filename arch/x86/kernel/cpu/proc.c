@@ -168,7 +168,6 @@ static void *c_next(struct seq_file *m, void *v, loff_t *pos)
 	ret = c_start(m, pos);
 
 	if(ret == NULL){
-		printk("Before calling remote info display\n");	
 		remote_proc_cpu_info(m);
 	}
 
