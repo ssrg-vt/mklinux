@@ -2176,4 +2176,6 @@ source "crypto/Kconfig"
 
 source "arch/x86/kvm/Kconfig"
 
+source "arch/x86/vmm/Kconfig"
+
 source "lib/Kconfig"
