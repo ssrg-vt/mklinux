@@ -18,6 +18,7 @@
 
 #include "irq.h"
 #include "mmu.h"
+#include "ept.h"
 
 #include <linux/kvm_host.h>
 #include <linux/module.h>
@@ -3005,7 +3006,9 @@ static u64 construct_eptp(unsigned long root_hpa)
 	/* TODO write the value reading from MSR */
 	eptp = VMX_EPT_DEFAULT_MT |
 		VMX_EPT_DEFAULT_GAW << VMX_EPT_GAW_EPTP_SHIFT;
-	eptp |= (root_hpa & PAGE_MASK);
+
+	/* Modifying this to point to the right thing... */
+	eptp |= ((2 * 1024UL * 1024 * 1024) & PAGE_MASK);
 
 	return eptp;
 }
@@ -3496,6 +3499,10 @@ static int init_rmode_identity_map(struct kvm *kvm)
 		if (r < 0)
 			goto out;
 	}
+
+	/* Piggyback on this function to set up static EPT */
+	ept_vmmmap((2 * 1024UL * 1024 * 1024), 0x0, (3 * 1024UL * 1024 * 1024), (1 * 1024UL * 1024 * 1024), 0, 0, 1);
+
 	kvm->arch.ept_identity_pagetable_done = true;
 	ret = 1;
 out:
@@ -3562,6 +3569,10 @@ static int alloc_identity_pagetable(struct kvm *kvm)
 
 	kvm->arch.ept_identity_pagetable = gfn_to_page(kvm,
 			kvm->arch.ept_identity_map_addr >> PAGE_SHIFT);
+
+	/* Piggyback on this to init mapping pagetable */
+	ept_init();
+
 out:
 	mutex_unlock(&kvm->slots_lock);
 	return r;
