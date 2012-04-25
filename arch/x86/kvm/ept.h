@@ -29,14 +29,12 @@
 #ifndef	_EPT_H_
 #define	_EPT_H_
 
-struct vmx;
-
 #define	EPT_PWLEVELS	4		/* page walk levels */
 #define	EPTP(pml4)	((pml4) | (EPT_PWLEVELS - 1) << 3 | PAT_WRITE_BACK)
 
 int	ept_init(void);
 int	ept_vmmmap(void *arg, phys_addr_t gpa, phys_addr_t hpa, size_t length,
-	    vm_memattr_t attr, int prot, bool allow_superpage_mappings);
+	    int attr, int prot, bool allow_superpage_mappings);
 void	ept_invalidate_mappings(u_long ept_pml4);
-void	ept_vmcleanup(struct vmx *vmx);
+//void	ept_vmcleanup(struct vmx *vmx);
 #endif

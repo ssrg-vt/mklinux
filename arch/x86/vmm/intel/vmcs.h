@@ -29,7 +29,6 @@
 #ifndef _VMCS_H_
 #define	_VMCS_H_
 
-#ifdef _KERNEL
 struct vmcs {
 	uint32_t	identifier;
 	uint32_t	abort_code;
@@ -65,8 +64,6 @@ uint64_t vmcs_read(uint32_t encoding);
 #define	vmcs_instruction_error()	vmcs_read(VMCS_INSTRUCTION_ERROR)
 #define	vmcs_exit_reason()		(vmcs_read(VMCS_EXIT_REASON) & 0xffff)
 #define	vmcs_exit_qualification()	vmcs_read(VMCS_EXIT_QUALIFICATION)
-
-#endif	/* _KERNEL */
 
 #define	VMCS_INITIAL			0xffffffffffffffff
 

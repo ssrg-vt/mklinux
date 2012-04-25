@@ -26,29 +26,12 @@
  * $FreeBSD$
  */
 
-#include <sys/cdefs.h>
-
 #include "bhyve_linux_defs.h"
 
 #include <linux/types.h>
 #include <linux/errno.h>
-#include <sys/systm.h>
-#include <malloc.h>
 #include <linux/smp.h>
 
-#include <vm/vm.h>
-#include <vm/pmap.h>
-#include "mman.h"
-
-#include <machine/param.h>
-#include <machine/cpufunc.h>
-#include <machine/pmap.h>
-#include <machine/vmparam.h>
-
-#include "vmm.h"
-#include "vmx_cpufunc.h"
-#include "vmx_msr.h"
-#include "vmx.h"
 #include "ept.h"
 
 #define	EPT_PWL4(cap)			((cap) & (1UL << 6))
@@ -75,9 +58,31 @@
 
 #define	EPT_ADDR_MASK			((uint64_t)-1 << 12)
 
-MALLOC_DECLARE(M_VMX);
+#define EPT_REGION_BASE_ADDRESS         (2 * 1024UL * 1024 * 1024)
+#define EPT_REGION_SIZE                 (64 * 1024UL * 1024)
+
+#define PHYS_TO_DMAP(_addr_)            (ept_mapped_addr + (_addr_))
 
 static uint64_t page_sizes_mask;
+
+void * ept_mapped_addr = 0;
+
+/* Set aside a region in memory for the extended page tables */
+uint64_t ept_malloc(void)
+{
+	static int last_page_reserved = 0;
+	uint64_t addr_to_allocate;
+	
+	addr_to_allocate = EPT_REGION_BASE_ADDRESS + (last_page_reserved * (1 << 12));
+
+	if (addr_to_allocate >= (EPT_REGION_BASE_ADDRESS + EPT_REGION_SIZE)) {
+		trace_printk("Attempted to allocate an address beyond the EPT region!\n");
+	}
+
+	last_page_reserved++;
+
+	return addr_to_allocate;
+}
 
 int
 ept_init(void)
@@ -85,7 +90,13 @@ ept_init(void)
 	int page_shift;
 	uint64_t cap;
 
-	cap = rdmsr(MSR_VMX_EPT_VPID_CAP);
+	cap = native_read_msr(MSR_IA32_VMX_EPT_VPID_CAP);
+
+	/* We need to map the extended page table region in physical memory into our address space */
+	ept_mapped_addr = ioremap(EPT_REGION_BASE_ADDRESS, EPT_REGION_SIZE);
+
+	trace_printk("Mapped EPT region at physical address 0x%lx to virtual address 0x%lx\n",
+		EPT_REGION_BASE_ADDRESS, ept_mapped_addr);
 
 	/*
 	 * Verify that:
@@ -119,7 +130,7 @@ ept_init(void)
 
 static size_t
 ept_create_mapping(uint64_t *ptp, phys_addr_t gpa, phys_addr_t hpa, size_t length,
-		   vm_memattr_t attr, unsigned long prot, bool spok)
+		   int attr, unsigned long prot, bool spok)
 {
 	int spshift, ptpshift, ptpindex, nlevels;
 
@@ -167,13 +178,14 @@ ept_create_mapping(uint64_t *ptp, phys_addr_t gpa, phys_addr_t hpa, size_t lengt
 		 * to it from the current page table.
 		 */
 		if (ptp[ptpindex] == 0) {
-			void *nlp = malloc(PAGE_SIZE, M_VMX, M_WAITOK | M_ZERO);
-			ptp[ptpindex] = virt_to_phys(nlp);
+			void *nlp = ept_malloc();
+			// ept_malloc already returns a physical address...
+			//ptp[ptpindex] = virt_to_phys(nlp);
 			ptp[ptpindex] |= EPT_PG_RD | EPT_PG_WR | EPT_PG_EX;
 		}
 
 		/* Work our way down to the next level page table page */
-		ptp = (uint64_t *)PHYS_TO_DMAP(ptp[ptpindex] & EPT_ADDR_MASK);
+		ptp = (uint64_t *) PHYS_TO_DMAP(ptp[ptpindex] & EPT_ADDR_MASK);
 	}
 
 	if ((gpa & ((1UL << ptpshift) - 1)) != 0) {
@@ -185,12 +197,15 @@ ept_create_mapping(uint64_t *ptp, phys_addr_t gpa, phys_addr_t hpa, size_t lengt
 	ptp[ptpindex] = hpa;
 
 	/* Apply the access controls */
+	/*
 	if (prot & PROT_READ)
 		ptp[ptpindex] |= EPT_PG_RD;
 	if (prot & PROT_WRITE)
 		ptp[ptpindex] |= EPT_PG_WR;
 	if (prot & PROT_EXEC)
 		ptp[ptpindex] |= EPT_PG_EX;
+	*/
+	ptp[ptpindex] |= (EPT_PG_RD | EPT_PG_WR | EPT_PG_EX);
 
 	/*
 	 * XXX should we enforce this memory type by setting the ignore PAT
@@ -230,7 +245,7 @@ ept_free_pd_entry(pd_entry_t pde)
 		pt = (pt_entry_t *)PHYS_TO_DMAP(pde & EPT_ADDR_MASK);
 		for (i = 0; i < NPTEPG; i++)
 			ept_free_pt_entry(pt[i]);
-		free(pt, M_VMX);	/* free the page table page */
+		//free(pt, M_VMX);	/* free the page table page */
 	}
 }
 
@@ -247,7 +262,7 @@ ept_free_pdp_entry(pdp_entry_t pdpe)
 		pd = (pd_entry_t *)PHYS_TO_DMAP(pdpe & EPT_ADDR_MASK);
 		for (i = 0; i < NPDEPG; i++)
 			ept_free_pd_entry(pd[i]);
-		free(pd, M_VMX);	/* free the page directory page */
+		//free(pd, M_VMX);	/* free the page directory page */
 	}
 }
 
@@ -264,10 +279,11 @@ ept_free_pml4_entry(pml4_entry_t pml4e)
 		pdp = (pdp_entry_t *)PHYS_TO_DMAP(pml4e & EPT_ADDR_MASK);
 		for (i = 0; i < NPDPEPG; i++)
 			ept_free_pdp_entry(pdp[i]);
-		free(pdp, M_VMX);	/* free the page directory ptr page */
+		//free(pdp, M_VMX);	/* free the page directory ptr page */
 	}
 }
 
+#if 0
 void
 ept_vmcleanup(struct vmx *vmx)
 {
@@ -276,16 +292,16 @@ ept_vmcleanup(struct vmx *vmx)
 	for (i = 0; i < NPML4EPG; i++)
 		ept_free_pml4_entry(vmx->pml4ept[i]);
 }
+#endif
 
 int
-ept_vmmmap(void *arg, phys_addr_t gpa, phys_addr_t hpa, size_t len,
-	   vm_memattr_t attr, int prot, bool spok)
+ept_vmmmap(void *eptp, phys_addr_t gpa, phys_addr_t hpa, size_t len,
+	   int attr, int prot, bool spok)
 {
 	size_t n;
-	struct vmx *vmx = arg;
 
 	while (len > 0) {
-		n = ept_create_mapping(vmx->pml4ept, gpa, hpa, len, attr,
+		n = ept_create_mapping(eptp, gpa, hpa, len, attr,
 				       prot, spok);
 		len -= n;
 		gpa += n;
@@ -294,7 +310,7 @@ ept_vmmmap(void *arg, phys_addr_t gpa, phys_addr_t hpa, size_t len,
 
 	return (0);
 }
-
+#if 0
 static void
 invept_single_context(void *arg)
 {
@@ -312,3 +328,5 @@ ept_invalidate_mappings(u_long pml4ept)
 
 	smp_rendezvous(NULL, invept_single_context, NULL, &invept_desc);
 }
+#endif
+

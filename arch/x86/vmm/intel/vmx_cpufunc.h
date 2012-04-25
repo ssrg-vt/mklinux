@@ -62,7 +62,7 @@ vmxon(char *region)
 	int error;
 	uint64_t addr;
 
-	addr = vtophys(region);
+	addr = virt_to_phys(region);
 	__asm __volatile("vmxon %0" : : "m" (*(uint64_t *)&addr) : "memory");
 	VMX_SET_ERROR_CODE(error);
 	return (error);
@@ -75,7 +75,7 @@ vmclear(struct vmcs *vmcs)
 	int error;
 	uint64_t addr;
 
-	addr = vtophys(vmcs);
+	addr = virt_to_phys(vmcs);
 	__asm __volatile("vmclear %0" : : "m" (*(uint64_t *)&addr) : "memory");
 	VMX_SET_ERROR_CODE(error);
 	return (error);
@@ -99,7 +99,7 @@ vmptrld(struct vmcs *vmcs)
 	int error;
 	uint64_t addr;
 
-	addr = vtophys(vmcs);
+	addr = virt_to_phys(vmcs);
 	__asm __volatile("vmptrld %0" : : "m" (*(uint64_t *)&addr) : "memory");
 	VMX_SET_ERROR_CODE(error);
 	return (error);
