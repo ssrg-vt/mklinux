@@ -3556,6 +3556,8 @@ long kvm_arch_vm_ioctl(struct file *filp,
 	case KVM_SET_IDENTITY_MAP_ADDR: {
 		u64 ident_addr;
 
+		printk("Called KVM_SET_IDENTITY_MAP_ADDR!\n");
+
 		r = -EFAULT;
 		if (copy_from_user(&ident_addr, argp, sizeof ident_addr))
 			goto out;
@@ -5189,6 +5191,8 @@ int kvm_arch_init(void *opaque)
 {
 	int r;
 	struct kvm_x86_ops *ops = (struct kvm_x86_ops *)opaque;
+
+	printk("Called kvm_arch_init for x86!\n");
 
 	if (kvm_x86_ops) {
 		printk(KERN_ERR "kvm: already loaded the other module\n");

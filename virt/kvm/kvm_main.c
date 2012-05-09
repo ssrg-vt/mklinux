@@ -106,6 +106,8 @@ static pfn_t hwpoison_pfn;
 struct page *fault_page;
 pfn_t fault_pfn;
 
+static void *guest_mapped_addr = 0x0;
+
 inline int kvm_is_mmio_pfn(pfn_t pfn)
 {
 	if (pfn_valid(pfn)) {
@@ -1311,6 +1313,8 @@ int kvm_read_guest_page(struct kvm *kvm, gfn_t gfn, void *data, int offset,
 	int r;
 	unsigned long addr;
 
+	printk("WARNING: called read_guest_page, gfn 0x%lx, offset 0x%x, len 0x%x\n", gfn, offset, len);	
+
 	addr = gfn_to_hva(kvm, gfn);
 	if (kvm_is_error_hva(addr))
 		return -EFAULT;
@@ -1327,6 +1331,8 @@ int kvm_read_guest(struct kvm *kvm, gpa_t gpa, void *data, unsigned long len)
 	int seg;
 	int offset = offset_in_page(gpa);
 	int ret;
+
+	printk("WARNING: Reading guest memory, gpa 0x%lx, len 0x%lx\n", gpa, len);
 
 	while ((seg = next_segment(len, offset)) != 0) {
 		ret = kvm_read_guest_page(kvm, gfn, data, offset, seg);
@@ -1349,6 +1355,8 @@ int kvm_read_guest_atomic(struct kvm *kvm, gpa_t gpa, void *data,
 	gfn_t gfn = gpa >> PAGE_SHIFT;
 	int offset = offset_in_page(gpa);
 
+	printk("WARNING: Reading guest memory atomically, gpa 0x%lx, len 0x%lx\n", gpa, len);
+
 	addr = gfn_to_hva(kvm, gfn);
 	if (kvm_is_error_hva(addr))
 		return -EFAULT;
@@ -1364,9 +1372,29 @@ EXPORT_SYMBOL(kvm_read_guest_atomic);
 int kvm_write_guest_page(struct kvm *kvm, gfn_t gfn, const void *data,
 			 int offset, int len)
 {
+
+	printk("WARNING: called write_guest_page, gfn 0x%lx, offset 0x%x, len 0x%x\n", gfn, offset, len);
+
+#if 0
+	if (guest_mapped_addr == 0x0) {
+		printk("First time calling write_guest_page: remapping guest memory\n");
+	
+		guest_mapped_addr = ioremap_cache((3 * 1024UL * 1024 * 1024), (1 * 1024UL * 1024 * 1024));
+
+	        printk("guest_mapped_addr is 0x%lx\n", guest_mapped_addr);
+	
+	}
+#endif
+
+	
 	int r;
 	unsigned long addr;
 
+	//addr = ((gfn << PAGE_SHIFT) + offset) + guest_mapped_addr;
+
+	//memcpy(addr, data, len);
+
+#if 0
 	addr = gfn_to_hva(kvm, gfn);
 	if (kvm_is_error_hva(addr))
 		return -EFAULT;
@@ -1374,6 +1402,8 @@ int kvm_write_guest_page(struct kvm *kvm, gfn_t gfn, const void *data,
 	if (r)
 		return -EFAULT;
 	mark_page_dirty(kvm, gfn);
+#endif
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(kvm_write_guest_page);
@@ -1385,6 +1415,8 @@ int kvm_write_guest(struct kvm *kvm, gpa_t gpa, const void *data,
 	int seg;
 	int offset = offset_in_page(gpa);
 	int ret;
+
+	printk("WARNING: Writing guest memory, gpa 0x%lx, len 0x%lx\n", gpa, len);
 
 	while ((seg = next_segment(len, offset)) != 0) {
 		ret = kvm_write_guest_page(kvm, gfn, data, offset, seg);
@@ -1424,6 +1456,8 @@ int kvm_write_guest_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 	struct kvm_memslots *slots = kvm_memslots(kvm);
 	int r;
 
+	printk("WARNING: Writing guest memory cached, len 0x%lx\n", len);
+
 	if (slots->generation != ghc->generation)
 		kvm_gfn_to_hva_cache_init(kvm, ghc, ghc->gpa);
 
@@ -1444,6 +1478,8 @@ int kvm_read_guest_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 {
 	struct kvm_memslots *slots = kvm_memslots(kvm);
 	int r;
+
+	printk("WARNING: Reading guest memory cached, len 0x%lx\n", len);
 
 	if (slots->generation != ghc->generation)
 		kvm_gfn_to_hva_cache_init(kvm, ghc, ghc->gpa);
@@ -1472,6 +1508,8 @@ int kvm_clear_guest(struct kvm *kvm, gpa_t gpa, unsigned long len)
 	int seg;
 	int offset = offset_in_page(gpa);
 	int ret;
+
+	printk("WARNING: Clearing guest memory, gpa 0x%lx, len 0x%lx\n", gpa, len);	
 
         while ((seg = next_segment(len, offset)) != 0) {
 		ret = kvm_clear_guest_page(kvm, gfn, offset, seg);
@@ -2681,6 +2719,13 @@ int kvm_init(void *opaque, unsigned vcpu_size, unsigned vcpu_align,
 {
 	int r;
 	int cpu;
+
+	printk("Mapping guest physical memory to kernel virtual address...\n");
+
+        guest_mapped_addr = ioremap_cache((3 * 1024UL * 1024 * 1024), (1 * 1024UL * 1024 * 1024));
+
+        printk("guest_mapped_addr is 0x%lx\n", guest_mapped_addr);
+
 
 	r = kvm_arch_init(opaque);
 	if (r)

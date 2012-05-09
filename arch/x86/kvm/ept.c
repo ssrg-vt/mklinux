@@ -59,25 +59,27 @@
 #define	EPT_ADDR_MASK			((uint64_t)-1 << 12)
 
 #define EPT_REGION_BASE_ADDRESS         (2 * 1024UL * 1024 * 1024)
-#define EPT_REGION_SIZE                 (64 * 1024UL * 1024)
+#define EPT_REGION_SIZE                 (16 * 1024UL * 1024)
 
-#define PHYS_TO_DMAP(_addr_)            (ept_mapped_addr + (_addr_))
+#define PHYS_TO_DMAP(_addr_)            (ept_mapped_addr + (_addr_) - 0x80000000)
 
 static uint64_t page_sizes_mask;
 
-void * ept_mapped_addr = 0;
+static void *ept_mapped_addr = 0;
 
 /* Set aside a region in memory for the extended page tables */
 uint64_t ept_malloc(void)
 {
-	static int last_page_reserved = 0;
+	static int last_page_reserved = 1;
 	uint64_t addr_to_allocate;
 	
 	addr_to_allocate = EPT_REGION_BASE_ADDRESS + (last_page_reserved * (1 << 12));
 
 	if (addr_to_allocate >= (EPT_REGION_BASE_ADDRESS + EPT_REGION_SIZE)) {
-		trace_printk("Attempted to allocate an address beyond the EPT region!\n");
+		printk("Attempted to allocate an address beyond the EPT region!\n");
 	}
+
+	printk("Allocated EPT page 0x%lp\n", last_page_reserved);
 
 	last_page_reserved++;
 
@@ -93,10 +95,14 @@ ept_init(void)
 	cap = native_read_msr(MSR_IA32_VMX_EPT_VPID_CAP);
 
 	/* We need to map the extended page table region in physical memory into our address space */
-	ept_mapped_addr = ioremap(EPT_REGION_BASE_ADDRESS, EPT_REGION_SIZE);
+	ept_mapped_addr = ioremap_cache(EPT_REGION_BASE_ADDRESS, EPT_REGION_SIZE);
 
-	trace_printk("Mapped EPT region at physical address 0x%lx to virtual address 0x%lx\n",
+	printk("Mapped EPT region at physical address 0x%lx to virtual address 0x%lx\n",
 		EPT_REGION_BASE_ADDRESS, ept_mapped_addr);
+
+	memset(ept_mapped_addr, 0x0, EPT_REGION_SIZE);
+
+	printk("Memset EPT region to all zeros\n");
 
 	/*
 	 * Verify that:
@@ -128,11 +134,14 @@ ept_init(void)
 	return (0);
 }
 
+
 static size_t
 ept_create_mapping(uint64_t *ptp, phys_addr_t gpa, phys_addr_t hpa, size_t length,
 		   int attr, unsigned long prot, bool spok)
 {
 	int spshift, ptpshift, ptpindex, nlevels;
+
+	ptp = (void *) PHYS_TO_DMAP((uint64_t) ptp);
 
 	/*
 	 * Compute the size of the mapping that we can accomodate.
@@ -162,13 +171,18 @@ ept_create_mapping(uint64_t *ptp, phys_addr_t gpa, phys_addr_t hpa, size_t lengt
 		      gpa, hpa, length, page_sizes_mask);
 	}
 
+	//printk("spshift is 0x%x\n");
+
 	nlevels = EPT_PWLEVELS;
 	while (--nlevels >= 0) {
 		ptpshift = PAGE_SHIFT + nlevels * 9;
 		ptpindex = (gpa >> ptpshift) & 0x1FF;
 
+		//printk("ptpshift 0x%x, ptpindex 0x%x\n", ptpshift, ptpindex);
+
 		/* We have reached the leaf mapping */
 		if (spshift >= ptpshift)
+			//printk("Reached the leaf mapping!\n");
 			break;
 
 		/*
@@ -177,10 +191,20 @@ ept_create_mapping(uint64_t *ptp, phys_addr_t gpa, phys_addr_t hpa, size_t lengt
 		 * Create the next level page table page if necessary and point
 		 * to it from the current page table.
 		 */
+
+		//printk("Working on a non-leaf page table page\n");
+
 		if (ptp[ptpindex] == 0) {
+
+			//printk("Pagetable pointer is zero; allocating new page and setting the pointer\n");
+
 			void *nlp = ept_malloc();
+
+			//printk("New physical pointer is 0x%lx\n", nlp);
+
 			// ept_malloc already returns a physical address...
 			//ptp[ptpindex] = virt_to_phys(nlp);
+			ptp[ptpindex] = nlp;
 			ptp[ptpindex] |= EPT_PG_RD | EPT_PG_WR | EPT_PG_EX;
 		}
 
@@ -300,7 +324,12 @@ ept_vmmmap(void *eptp, phys_addr_t gpa, phys_addr_t hpa, size_t len,
 {
 	size_t n;
 
+	printk("Called ept_vmmmap, eptp 0x%lp, gpa 0x%lx, hpa 0x%lx, len 0x%lx\n",
+		eptp, gpa, hpa, len);
+
 	while (len > 0) {
+		//printk("ept_vmmmap: len is 0x%lx\n", len);
+
 		n = ept_create_mapping(eptp, gpa, hpa, len, attr,
 				       prot, spok);
 		len -= n;

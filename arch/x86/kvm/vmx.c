@@ -51,6 +51,36 @@
 MODULE_AUTHOR("Qumranet");
 MODULE_LICENSE("GPL");
 
+#define GUEST_REGION_BASE_ADDRESS (3 * 1024UL * 1024 * 1024)
+#define GUEST_REGION_SIZE (1 * 1024UL * 1024 * 1024)
+
+#define EPT_REGION_BASE_ADDRESS (2 * 1024UL * 1024 * 1024)
+#define EPT_REGION_SIZE (16 * 1024UL * 1024)
+
+#define TSS_REGION_BASE_ADDRESS (EPT_REGION_BASE_ADDRESS + EPT_REGION_SIZE)
+#define TSS_REGION_SIZE (3 * 4 * 1024UL)
+
+#define APIC_REGION_BASE_ADDRESS (TSS_REGION_BASE_ADDRESS + TSS_REGION_SIZE)
+#define APIC_REGION_SIZE (4 * 1024UL)
+
+#define IDPT_REGION_BASE_ADDRESS (APIC_REGION_BASE_ADDRESS + APIC_REGION_SIZE)
+#define IDPT_REGION_SIZE (4 * 1024UL)
+
+static void *guest_mapped_addr = 0;
+static void *ept_mapped_addr = 0;
+static void *tss_mapped_addr = 0;
+static void *apic_mapped_addr = 0;
+static void *idpt_mapped_addr = 0;
+
+static uint64_t tss_gfn = 0;
+static uint64_t apic_gfn = 0;
+static uint64_t idpt_gfn = 0;
+
+static int kvm_write_guest_page_staticmap(struct kvm *kvm, gfn_t gfn, const void *data,
+                                          int offset, int len);
+
+static int kvm_clear_guest_page_staticmap(struct kvm *kvm, gfn_t gfn, int offset, int len);
+
 static int __read_mostly enable_vpid = 1;
 module_param_named(vpid, enable_vpid, bool, 0444);
 
@@ -2613,6 +2643,8 @@ static __init int alloc_kvm_area(void)
 
 static __init int hardware_setup(void)
 {
+	printk("hardware_setup called for x86\n");
+
 	if (setup_vmcs_config(&vmcs_config) < 0)
 		return -EIO;
 
@@ -2675,6 +2707,8 @@ static void enter_pmode(struct kvm_vcpu *vcpu)
 	unsigned long flags;
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 
+	printk("enter_pmode called!\n");
+
 	vmx->emulation_required = 1;
 	vmx->rmode.vm86_active = 0;
 
@@ -2715,13 +2749,21 @@ static void enter_pmode(struct kvm_vcpu *vcpu)
 
 static gva_t rmode_tss_base(struct kvm *kvm)
 {
+
+	printk("Called rmode_tss_base\n");
+
 	if (!kvm->arch.tss_addr) {
 		struct kvm_memslots *slots;
 		gfn_t base_gfn;
 
+		printk("tss_addr has not yet been set!\n");
+
 		slots = kvm_memslots(kvm);
 		base_gfn = slots->memslots[0].base_gfn +
 				 kvm->memslots->memslots[0].npages - 3;
+
+		printk("rmode_tss_base: base_gfn is 0x%lx\n", base_gfn);
+
 		return base_gfn << PAGE_SHIFT;
 	}
 	return kvm->arch.tss_addr;
@@ -2750,7 +2792,10 @@ static void enter_rmode(struct kvm_vcpu *vcpu)
 	unsigned long flags;
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 
+	printk("enter_rmode called!\n");
+
 	if (enable_unrestricted_guest)
+		printk("enable_unrestricted_guest is TRUE; returning...\n");
 		return;
 
 	vmx->emulation_required = 1;
@@ -3440,24 +3485,26 @@ static int init_rmode_tss(struct kvm *kvm)
 	u16 data = 0;
 	int r, idx, ret = 0;
 
+	printk("Initializing real-mode TSS\n");
+
 	idx = srcu_read_lock(&kvm->srcu);
 	fn = rmode_tss_base(kvm) >> PAGE_SHIFT;
-	r = kvm_clear_guest_page(kvm, fn, 0, PAGE_SIZE);
+	r = kvm_clear_guest_page_staticmap(kvm, fn, 0, PAGE_SIZE);
 	if (r < 0)
 		goto out;
 	data = TSS_BASE_SIZE + TSS_REDIRECTION_SIZE;
-	r = kvm_write_guest_page(kvm, fn++, &data,
+	r = kvm_write_guest_page_staticmap(kvm, fn++, &data,
 			TSS_IOPB_BASE_OFFSET, sizeof(u16));
 	if (r < 0)
 		goto out;
-	r = kvm_clear_guest_page(kvm, fn++, 0, PAGE_SIZE);
+	r = kvm_clear_guest_page_staticmap(kvm, fn++, 0, PAGE_SIZE);
 	if (r < 0)
 		goto out;
-	r = kvm_clear_guest_page(kvm, fn, 0, PAGE_SIZE);
+	r = kvm_clear_guest_page_staticmap(kvm, fn, 0, PAGE_SIZE);
 	if (r < 0)
 		goto out;
 	data = ~0;
-	r = kvm_write_guest_page(kvm, fn, &data,
+	r = kvm_write_guest_page_staticmap(kvm, fn, &data,
 				 RMODE_TSS_SIZE - 2 * PAGE_SIZE - 1,
 				 sizeof(u8));
 	if (r < 0)
@@ -3484,24 +3531,27 @@ static int init_rmode_identity_map(struct kvm *kvm)
 	}
 	if (likely(kvm->arch.ept_identity_pagetable_done))
 		return 1;
+
+	printk("Initializing real-mode identity map for the first time\n");
+
 	ret = 0;
 	identity_map_pfn = kvm->arch.ept_identity_map_addr >> PAGE_SHIFT;
 	idx = srcu_read_lock(&kvm->srcu);
-	r = kvm_clear_guest_page(kvm, identity_map_pfn, 0, PAGE_SIZE);
+	r = kvm_clear_guest_page_staticmap(kvm, identity_map_pfn, 0, PAGE_SIZE);
 	if (r < 0)
 		goto out;
 	/* Set up identity-mapping pagetable for EPT in real mode */
 	for (i = 0; i < PT32_ENT_PER_PAGE; i++) {
 		tmp = (i << 22) + (_PAGE_PRESENT | _PAGE_RW | _PAGE_USER |
 			_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_PSE);
-		r = kvm_write_guest_page(kvm, identity_map_pfn,
+		r = kvm_write_guest_page_staticmap(kvm, identity_map_pfn,
 				&tmp, i * sizeof(tmp), sizeof(tmp));
 		if (r < 0)
 			goto out;
 	}
 
 	/* Piggyback on this function to set up static EPT */
-	ept_vmmmap((2 * 1024UL * 1024 * 1024), 0x0, (3 * 1024UL * 1024 * 1024), (1 * 1024UL * 1024 * 1024), 0, 0, 1);
+	ept_vmmmap((2 * 1024UL * 1024 * 1024), 0x0, GUEST_REGION_BASE_ADDRESS, GUEST_REGION_SIZE, 0, 0, 1);
 
 	kvm->arch.ept_identity_pagetable_done = true;
 	ret = 1;
@@ -3528,10 +3578,73 @@ static void seg_setup(int seg)
 	vmcs_write32(sf->ar_bytes, ar);
 }
 
+
+static int kvm_write_guest_page_staticmap(struct kvm *kvm, gfn_t gfn, const void *data,
+					  int offset, int len)
+{
+	uint64_t region_offset;
+	void *hva;
+
+	printk("called write_guest_page_staticmap, gfn 0x%lx, offset 0x%x, len 0x%x\n", gfn, offset, len);
+
+	printk_once("tss_gfn 0x%lx, apic_gfn 0x%lx, idpt_gfn 0x%lx\n", tss_gfn, apic_gfn, idpt_gfn);
+
+	if ((gfn >= tss_gfn) && (gfn < (tss_gfn + (TSS_REGION_SIZE >> 12))) ) {
+		printk("Writing to TSS region...\n");
+		region_offset = ((gfn - tss_gfn) << 12) + offset;
+		hva = tss_mapped_addr + region_offset;
+		memcpy(hva, data, len);
+
+	} else if ((gfn >= apic_gfn) && (gfn < (apic_gfn + (APIC_REGION_SIZE >> 12)))) {
+		printk("Writing to APIC region...\n");
+		region_offset = ((gfn - apic_gfn) << 12) + offset;
+                hva = apic_mapped_addr + region_offset;
+                memcpy(hva, data, len);
+
+	} else if ((gfn >= idpt_gfn) && (gfn < (idpt_gfn + (IDPT_REGION_SIZE >> 12)))) {
+		printk("Writing to IDPT region...\n");
+		region_offset = ((gfn - idpt_gfn) << 12) + offset;
+                hva = idpt_mapped_addr + region_offset;
+                memcpy(hva, data, len);
+
+	} else {
+		printk("Writing to guest memory region...\n");
+		region_offset = (gfn << 12) + offset;
+                hva = guest_mapped_addr + region_offset;
+                memcpy(hva, data, len);
+
+	}
+
+	return 0;
+}
+
+static int kvm_clear_guest_page_staticmap(struct kvm *kvm, gfn_t gfn, int offset, int len)
+{
+	printk("Called kvm_clear_guest_page_staticmap...\n");
+
+        return kvm_write_guest_page_staticmap(kvm, gfn, (const void *) empty_zero_page,
+                                    offset, len);
+}
+
+
 static int alloc_apic_access_page(struct kvm *kvm)
 {
 	struct kvm_userspace_memory_region kvm_userspace_mem;
 	int r = 0;
+
+	printk("alloc_apic_access_page called\n");
+
+	apic_mapped_addr = ioremap_cache(APIC_REGION_BASE_ADDRESS, APIC_REGION_SIZE);
+
+	apic_gfn = 0xfee00ULL;
+
+	ept_vmmmap(EPT_REGION_BASE_ADDRESS, apic_gfn << 12, APIC_REGION_BASE_ADDRESS, APIC_REGION_SIZE, 0, 0, 1);
+
+	kvm->arch.apic_access_page = apic_mapped_addr;
+
+	printk("apic_mapped_addr is 0x%lx, gfn 0x%lx\n", apic_mapped_addr, apic_gfn);
+
+#if 0
 
 	mutex_lock(&kvm->slots_lock);
 	if (kvm->arch.apic_access_page)
@@ -3545,8 +3658,14 @@ static int alloc_apic_access_page(struct kvm *kvm)
 		goto out;
 
 	kvm->arch.apic_access_page = gfn_to_page(kvm, 0xfee00);
+
+	printk("Set apic_access_page to 0x%lx\n", kvm->arch.apic_access_page);
+
 out:
 	mutex_unlock(&kvm->slots_lock);
+
+#endif
+
 	return r;
 }
 
@@ -3554,6 +3673,20 @@ static int alloc_identity_pagetable(struct kvm *kvm)
 {
 	struct kvm_userspace_memory_region kvm_userspace_mem;
 	int r = 0;
+
+	printk("alloc_identity_pagetable called\n");
+
+	idpt_mapped_addr = ioremap_cache(IDPT_REGION_BASE_ADDRESS, IDPT_REGION_SIZE);
+
+	idpt_gfn = kvm->arch.ept_identity_map_addr >> PAGE_SHIFT;
+
+	ept_vmmmap(EPT_REGION_BASE_ADDRESS, kvm->arch.ept_identity_map_addr, IDPT_REGION_BASE_ADDRESS, IDPT_REGION_SIZE, 0, 0, 1); 
+
+	kvm->arch.ept_identity_pagetable = idpt_mapped_addr;
+
+	printk("ept_identity_pagetable is 0x%lx\n", idpt_mapped_addr);
+
+#if 0
 
 	mutex_lock(&kvm->slots_lock);
 	if (kvm->arch.ept_identity_pagetable)
@@ -3570,12 +3703,17 @@ static int alloc_identity_pagetable(struct kvm *kvm)
 	kvm->arch.ept_identity_pagetable = gfn_to_page(kvm,
 			kvm->arch.ept_identity_map_addr >> PAGE_SHIFT);
 
+	printk("Set ept_identity_pagetable to 0x%lx\n", kvm->arch.ept_identity_pagetable);
+
 	/* Piggyback on this to init mapping pagetable */
 	ept_init();
 
 out:
 	mutex_unlock(&kvm->slots_lock);
-	return r;
+
+#endif
+
+	return 0;
 }
 
 static void allocate_vpid(struct vcpu_vmx *vmx)
@@ -3920,7 +4058,7 @@ static int vmx_vcpu_reset(struct kvm_vcpu *vcpu)
 
 	if (vm_need_virtualize_apic_accesses(vmx->vcpu.kvm))
 		vmcs_write64(APIC_ACCESS_ADDR,
-			     page_to_phys(vmx->vcpu.kvm->arch.apic_access_page));
+			     APIC_REGION_BASE_ADDRESS);
 
 	if (vmx->vpid != 0)
 		vmcs_write16(VIRTUAL_PROCESSOR_ID, vmx->vpid);
@@ -4113,12 +4251,28 @@ static int vmx_set_tss_addr(struct kvm *kvm, unsigned int addr)
 		.flags = 0,
 	};
 
+	printk("Called vmx_set_tss_addr, addr=0x%lx\n", addr);
+
+	tss_mapped_addr = ioremap_cache(TSS_REGION_BASE_ADDRESS, TSS_REGION_SIZE);
+
+	tss_gfn = addr >> PAGE_SHIFT;
+
+        ept_vmmmap(EPT_REGION_BASE_ADDRESS, addr, TSS_REGION_BASE_ADDRESS, TSS_REGION_SIZE, 0, 0, 1);
+
+	kvm->arch.tss_addr = addr;
+
+	printk("Mapped TSS region to virtual address 0x%lx\n", tss_mapped_addr);
+
+#if 0
+
 	ret = kvm_set_memory_region(kvm, &tss_mem, 0);
 	if (ret)
 		return ret;
 	kvm->arch.tss_addr = addr;
 	if (!init_rmode_tss(kvm))
 		return  -ENOMEM;
+
+#endif
 
 	return 0;
 }
@@ -7183,6 +7337,11 @@ static struct kvm_x86_ops vmx_x86_ops = {
 static int __init vmx_init(void)
 {
 	int r, i;
+
+	printk("Called vmx_init\n");
+
+	printk("Called ept_init...\n");
+	ept_init();
 
 	rdmsrl_safe(MSR_EFER, &host_efer);
 
