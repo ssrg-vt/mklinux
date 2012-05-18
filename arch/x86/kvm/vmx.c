@@ -3485,7 +3485,7 @@ static int init_rmode_tss(struct kvm *kvm)
 	u16 data = 0;
 	int r, idx, ret = 0;
 
-	printk("Initializing real-mode TSS\n");
+	printk("Called init_rmode_tss!\n");
 
 	idx = srcu_read_lock(&kvm->srcu);
 	fn = rmode_tss_base(kvm) >> PAGE_SHIFT;
@@ -4262,6 +4262,9 @@ static int vmx_set_tss_addr(struct kvm *kvm, unsigned int addr)
 	kvm->arch.tss_addr = addr;
 
 	printk("Mapped TSS region to virtual address 0x%lx\n", tss_mapped_addr);
+
+	if (!init_rmode_tss(kvm))
+                return  -ENOMEM;
 
 #if 0
 

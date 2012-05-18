@@ -579,7 +579,7 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, gva_t addr, u32 error_code,
 	unsigned long mmu_seq;
 	bool map_writable;
 
-	pgprintk("%s: addr %lx err %x\n", __func__, addr, error_code);
+	printk("%s: addr %lx err %x\n", __func__, addr, error_code);
 
 	if (unlikely(error_code & PFERR_RSVD_MASK))
 		return handle_mmio_page_fault(vcpu, addr, error_code,
@@ -598,7 +598,7 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, gva_t addr, u32 error_code,
 	 * The page is not mapped by the guest.  Let the guest handle it.
 	 */
 	if (!r) {
-		pgprintk("%s: guest page fault\n", __func__);
+		printk("%s: guest page fault\n", __func__);
 		if (!prefault) {
 			inject_page_fault(vcpu, &walker.fault);
 			/* reset fork detector */
@@ -638,7 +638,7 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, gva_t addr, u32 error_code,
 	sptep = FNAME(fetch)(vcpu, addr, &walker, user_fault, write_fault,
 			     level, &emulate, pfn, map_writable, prefault);
 	(void)sptep;
-	pgprintk("%s: shadow pte %p %llx emulate %d\n", __func__,
+	printk("%s: shadow pte %p %llx emulate %d\n", __func__,
 		 sptep, *sptep, emulate);
 
 	if (!emulate)
