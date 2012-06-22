@@ -490,6 +490,12 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 		break;
 #endif
 
+	case LINUX_REBOOT_CMD_MKBSP: {
+		int cpu = (int) arg;
+		int apicid = apic->cpu_present_to_apicid(cpu);
+		ret = mkbsp_boot_cpu(apicid, cpu);
+		break; }
+
 #ifdef CONFIG_HIBERNATION
 	case LINUX_REBOOT_CMD_SW_SUSPEND:
 		ret = hibernate();

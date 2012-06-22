@@ -664,6 +664,121 @@ static void __cpuinit announce_cpu(int cpu, int apicid)
 			node, cpu, apicid);
 }
 
+
+
+
+/*
+ * NOTE - on most systems this is a PHYSICAL apic ID, but on multiquad
+ * (ie clustered apic addressing mode), this is a LOGICAL apic ID.
+ * Returns zero if CPU booted OK, else error code from
+ * ->wakeup_secondary_cpu.
+ */
+int __cpuinit mkbsp_boot_cpu(int apicid, int cpu)
+{
+	unsigned long boot_error = 0;
+	unsigned long start_ip;
+	int timeout;
+
+	// TODO -- don't hardcode these values!
+	unsigned long mkbsp_load_addr = 0x40000000;
+	unsigned long mkbsp_load_params = 0x13420;
+
+#ifdef CONFIG_X86_32
+	/* Stack for startup_32 can be just as for start_secondary onwards */
+	//irq_ctx_init(cpu);
+#else
+	//clear_tsk_thread_flag(c_idle.idle, TIF_FORK);
+	//initial_gs = per_cpu_offset(cpu);
+	//per_cpu(kernel_stack, cpu) =
+		//(unsigned long)task_stack_page(c_idle.idle) -
+		//KERNEL_STACK_OFFSET + THREAD_SIZE;
+#endif
+
+	//early_gdt_descr.address = (unsigned long)get_cpu_gdt_table(cpu);
+	initial_code = (unsigned long) mkbsp_load_addr;
+	//stack_start  = c_idle.idle->thread.sp;
+
+	/* start_ip had better be page-aligned! */
+	start_ip = trampoline_address();
+
+	/* So we see what's up */
+	//announce_cpu(cpu, apicid);
+
+	/*
+	 * This grunge runs the startup process for
+	 * the targeted processor.
+	 */
+
+	printk("multikernel boot: cpu %d: start_ip = %lx\n", cpu, start_ip);
+
+	//atomic_set(&init_deasserted, 0);
+
+	if (get_uv_system_type() != UV_NON_UNIQUE_APIC) {
+
+		pr_debug("Setting warm reset code and vector.\n");
+
+		smpboot_setup_warm_reset_vector(start_ip);
+		/*
+		 * Be paranoid about clearing APIC errors.
+		*/
+		if (APIC_INTEGRATED(apic_version[boot_cpu_physical_apicid])) {
+			apic_write(APIC_ESR, 0);
+			apic_read(APIC_ESR);
+		}
+	}
+
+	/*
+	 * Kick the secondary CPU. Use the method in the APIC driver
+	 * if it's defined - or use an INIT boot APIC message otherwise:
+	 */
+	if (apic->wakeup_secondary_cpu)
+		boot_error = apic->wakeup_secondary_cpu(apicid, start_ip);
+	else
+		boot_error = wakeup_secondary_cpu_via_init(apicid, start_ip);
+
+	if (!boot_error) {
+
+		/*
+		 * Wait 5s total for a response
+		 */
+		for (timeout = 0; timeout < 50000; timeout++) {
+			udelay(100);
+
+			if (*(volatile u32 *)TRAMPOLINE_SYM(trampoline_status)
+			    == 0xA5A5A5A5) {
+				/* trampoline started but...? */
+				pr_err("CPU%d: Stuck ??\n", cpu);
+				break;
+			} else {
+				/* trampoline code not run */
+				pr_err("CPU%d: Not responding.\n", cpu);
+				boot_error = 1;
+				if (apic->inquire_remote_apic)
+					apic->inquire_remote_apic(apicid);
+			}
+
+			/*
+                         * Allow other tasks to run while we wait for the
+                         * AP to come online. This also gives a chance
+                         * for the MTRR work(triggered by the AP coming online)
+                         * to be completed in the stop machine context.
+                         */
+                        schedule();
+		}
+	}
+
+	if (boot_error) {
+		printk("BOOT ERROR!!!\n");
+	}
+
+	/* mark "stuck" area as not stuck */
+	*(volatile u32 *)TRAMPOLINE_SYM(trampoline_status) = 0;
+
+	return boot_error;
+}
+
+
+
 /*
  * NOTE - on most systems this is a PHYSICAL apic ID, but on multiquad
  * (ie clustered apic addressing mode), this is a LOGICAL apic ID.
