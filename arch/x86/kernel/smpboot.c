@@ -695,11 +695,11 @@ int __cpuinit mkbsp_boot_cpu(int apicid, int cpu)
 #endif
 
 	//early_gdt_descr.address = (unsigned long)get_cpu_gdt_table(cpu);
-	initial_code = (unsigned long) mkbsp_load_addr;
+	//initial_code = (unsigned long) mkbsp_load_addr;
 	//stack_start  = c_idle.idle->thread.sp;
 
 	/* start_ip had better be page-aligned! */
-	start_ip = trampoline_address();
+	start_ip = trampoline_bsp_address();
 
 	/* So we see what's up */
 	//announce_cpu(cpu, apicid);
@@ -744,7 +744,7 @@ int __cpuinit mkbsp_boot_cpu(int apicid, int cpu)
 		for (timeout = 0; timeout < 50000; timeout++) {
 			udelay(100);
 
-			if (*(volatile u32 *)TRAMPOLINE_SYM(trampoline_status)
+			if (*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp)
 			    == 0xA5A5A5A5) {
 				/* trampoline started but...? */
 				pr_err("CPU%d: Stuck ??\n", cpu);
@@ -772,7 +772,7 @@ int __cpuinit mkbsp_boot_cpu(int apicid, int cpu)
 	}
 
 	/* mark "stuck" area as not stuck */
-	*(volatile u32 *)TRAMPOLINE_SYM(trampoline_status) = 0;
+	*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp) = 0;
 
 	return boot_error;
 }
