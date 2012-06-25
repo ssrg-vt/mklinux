@@ -95,7 +95,15 @@ startup_32_bsp:
 	 * prior to entering the kernel. */
 
 
-	/* MKLINUX -- at this point, the */
+	/* MKLINUX -- at this point, need to change the segment selector
+	 * registers to avoid screwing stuff up */
+
+	cli
+        movl    $(__KERNEL_DS), %eax
+        movl    %eax, %ds
+        movl    %eax, %es
+        movl    %eax, %ss
+
 /*
  * Calculate the delta between where we were compiled to run
  * at and where we were actually loaded at.  This can only be done
@@ -120,8 +128,7 @@ startup_32_bsp:
   * Build early 4G boot pagetable
   */
         /* Initialize Page tables to 0 */
-	leal    pgtable_bsp - bsp_base + 0(%ebx), %edi        
-
+	leal    (pgtable_bsp - bsp_base)(%esi), %edi
 	xorl    %eax, %eax
         movl    $((4096*6)/4), %ecx
         rep     stosl
