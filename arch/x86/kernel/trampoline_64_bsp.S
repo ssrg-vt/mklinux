@@ -52,9 +52,9 @@ bsp_base = .
 					# Setup stack
 	movw	$(trampoline_stack_bsp_end - bsp_base), %sp
 
-	call	verify_cpu		# Verify the cpu supports long mode
-	testl   %eax, %eax		# Check for return code
-	jnz	no_longmode_bsp
+	# call	verify_cpu		# Verify the cpu supports long mode
+	# testl   %eax, %eax		# Check for return code
+	# jnz	no_longmode_bsp
 
 	mov	%cs, %ax
 	movzx	%ax, %esi		# Find the 32bit trampoline location
@@ -67,6 +67,9 @@ bsp_base = .
 	movl	%eax, startup_64_vector_bsp - bsp_base
 	leal	(tgdt_bsp - bsp_base)(%esi), %eax
 	movl	%eax, (tgdt_bsp + 2 - bsp_base)
+	#leal	(gdt_bsp_64 - bsp_base)(%esi), %eax
+	#movl	%eax, (gdt_bsp_64 + 4 - bsp_base)
+
 
 	/*
 	 * GDT tables in non default location kernel can be beyond 16MB and
@@ -104,24 +107,18 @@ startup_32_bsp:
         movl    %eax, %es
         movl    %eax, %ss
 
-/*
- * Calculate the delta between where we were compiled to run
- * at and where we were actually loaded at.  This can only be done
- * with a short local call on x86.  Nothing  else will tell us what
- * address we are running at.  The reserved chunk of the real-mode
- * data at 0x1e4 (defined as a scratch field) are used as the stack
- * for this calculation. Only 4 bytes are needed.
- */
 
-/*
-        leal    (0x1e4)(%esi), %esp
-        call    1f
-1:      popl    %ebp
-        subl    $1b, %ebp
-*/
+/* MKLINUX -- from boot/compressed/head_64.S */
 
-	/* MKLINUX -- load where we were loaded into %ebx */
+	/* Load new GDT with the 64bit segments using 32bit descriptor */
+        leal    (gdt_bsp_64 - bsp_base)(%esi), %eax
+        movl    %eax, (gdt_bsp_64 - bsp_base + 2)(%esi)
+        lgdt    (gdt_bsp_64 - bsp_base)(%esi)
 
+	/* Enable PAE mode */
+	movl	%cr4, %eax
+        orl     $(X86_CR4_PAE), %eax
+        movl    %eax, %cr4
 		
 
  /*
@@ -168,55 +165,37 @@ startup_32_bsp:
         btsl    $_EFER_LME, %eax
         wrmsr
 
+        /*
+         * Setup for the jump to 64bit mode
+         *
+         * When the jump is performend we will be in long mode but
+         * in 32bit compatibility mode with EFER.LME = 1, CS.L = 0, CS.D = 1
+         * (and in turn EFER.LMA = 1).  To jump into 64bit mode we use
+         * the new gdt/idt that has __KERNEL_CS with CS.L = 1.
+         * We place all of the values on our mini stack so lret can
+         * used to perform that far jump.
+         */
+        pushl   $__KERNEL_CS
+        leal    (startup_64_bsp - bsp_base)(%esi), %eax
+        pushl   %eax
 
 	/* Enter paged protected Mode, activating Long Mode */
         movl    $(X86_CR0_PG | X86_CR0_PE), %eax /* Enable Paging and Protected mode */
         movl    %eax, %cr0
 
-
-/*
-
-	movl	$__KERNEL_DS, %eax	# Initialize the %ds segment register
-	movl	%eax, %ds
-
-	movl	$X86_CR4_PAE, %eax
-	movl	%eax, %cr4		# Enable PAE mode
-
-					# Setup trampoline 4 level pagetables
-	leal	(trampoline_level4_pgt - r_base)(%esi), %eax
-	movl	%eax, %cr3
-
-	movl	$MSR_EFER, %ecx
-	movl	$(1 << _EFER_LME), %eax	# Enable Long Mode
-	xorl	%edx, %edx
-	wrmsr
-
-	# Enable paging and in turn activate Long Mode
-	# Enable protected mode
-	movl	$(X86_CR0_PG | X86_CR0_PE), %eax
-	movl	%eax, %cr0
-*/
-
-	/*
-	 * At this point we're in long mode but in 32bit compatibility mode
-	 * with EFER.LME = 1, CS.L = 0, CS.D = 1 (and in turn
-	 * EFER.LMA = 1). Now we want to jump in 64bit mode, to do that we use
-	 * the new gdt/idt that has __KERNEL_CS with CS.L = 1.
-	 */
-	ljmp	*(startup_64_vector_bsp - bsp_base)(%esi)
+	/* Jump from 32bit compatibility mode into 64bit mode. */
+        lret
 
 	.code64
 	.balign 4
 startup_64_bsp:
-	# Now jump into the kernel using virtual addresses
-	movq	$secondary_startup_64, %rax
+
+	/* We should be in full 64-bit mode here, so we're able to jump
+	 * to a kernel anywhere in the address space */
+	movq	$0x40000000, %rax
 	jmp	*%rax
 
 	.code16
-no_longmode_bsp:
-	hlt
-	jmp no_longmode_bsp
-#include "verify_cpu.S"
 
 	.balign 4
 	# Careful these need to be in the same 64K segment as the above;
@@ -236,6 +215,20 @@ tgdt_bsp:
 	.quad	0x00cf93000000ffff	# __KERNEL_DS
 tgdt_bsp_end:
 
+	.code64
+	.balign 4
+gdt_bsp_64:
+        .word   gdt_bsp_64_end - gdt_bsp_64
+        .long   gdt_bsp_64 - bsp_base
+        .word   0
+        .quad   0x0000000000000000      /* NULL descriptor */
+        .quad   0x00af9a000000ffff      /* __KERNEL_CS */
+        .quad   0x00cf92000000ffff      /* __KERNEL_DS */
+        .quad   0x0080890000000000      /* TS descriptor */
+        .quad   0x0000000000000000      /* TS continued */
+gdt_bsp_64_end:
+
+	.code16
 	.balign 4
 startup_32_vector_bsp:
 	.long	startup_32_bsp - bsp_base
