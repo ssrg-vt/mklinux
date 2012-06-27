@@ -67,9 +67,6 @@ bsp_base = .
 	movl	%eax, startup_64_vector_bsp - bsp_base
 	leal	(tgdt_bsp - bsp_base)(%esi), %eax
 	movl	%eax, (tgdt_bsp + 2 - bsp_base)
-	#leal	(gdt_bsp_64 - bsp_base)(%esi), %eax
-	#movl	%eax, (gdt_bsp_64 + 4 - bsp_base)
-
 
 	/*
 	 * GDT tables in non default location kernel can be beyond 16MB and
@@ -91,39 +88,36 @@ bsp_base = .
 	.balign 4
 startup_32_bsp:
 
-	/* MKLINUX -- at this point, we're in 32-bit mode */
+	/* MKLINUX -- at this point, we're in 32-bit protected mode */
 
-	/* MKLINUX -- this is code from arch/x86/boot/compressed/head_64.S
-	 * It's necessary here in order to set up the identity pagetables
-	 * prior to entering the kernel. */
-
-
-	/* MKLINUX -- at this point, need to change the segment selector
-	 * registers to avoid screwing stuff up */
-
+	/* MKLINUX -- at this point, the segment selector registers point to
+	 * the beginning of the trampoline (usually 0x92000), and we need to 
+	 * change them to point to the beginning of the address space (0x0) */
 	cli
         movl    $(__KERNEL_DS), %eax
         movl    %eax, %ds
         movl    %eax, %es
         movl    %eax, %ss
 
+	/* MKLINUX -- from boot/compressed/head_64.S */
 
-/* MKLINUX -- from boot/compressed/head_64.S */
-
-	/* Load new GDT with the 64bit segments using 32bit descriptor */
+	/* Load new GDT with the 64bit segments using 32bit descriptor.
+	 * The new GDT labels the entire address space as 64-bit, so we
+	 * can switch into long mode later. */
         leal    (gdt_bsp_64 - bsp_base)(%esi), %eax
         movl    %eax, (gdt_bsp_64 - bsp_base + 2)(%esi)
         lgdt    (gdt_bsp_64 - bsp_base)(%esi)
 
-	/* Enable PAE mode */
+	/* Enable PAE mode.  Note that this does not actually take effect
+	 * until paging is enabled */
 	movl	%cr4, %eax
         orl     $(X86_CR4_PAE), %eax
         movl    %eax, %cr4
-		
 
- /*
-  * Build early 4G boot pagetable
-  */
+	/* MKLINUX -- this is code from arch/x86/boot/compressed/head_64.S
+         * It's necessary here in order to set up pagetables to identity-map
+	 * the first 4 GB of the address space prior to entering the kernel. */
+
         /* Initialize Page tables to 0 */
 	leal    (pgtable_bsp - bsp_base)(%esi), %edi
 	xorl    %eax, %eax
@@ -190,13 +184,13 @@ startup_32_bsp:
 	.balign 4
 startup_64_bsp:
 
-	/* We should be in full 64-bit mode here, so we're able to jump
-	 * to a kernel anywhere in the address space */
+	/* MKLINUX -- We should be in full 64-bit mode here, so we're 
+	 * able to jump to a kernel anywhere in the address space that
+	 * we identity-mapped earlier */
 	movq	$0x40000000, %rax
 	jmp	*%rax
 
 	.code16
-
 	.balign 4
 	# Careful these need to be in the same 64K segment as the above;
 tidt_bsp:
@@ -247,23 +241,15 @@ ENTRY(trampoline_status_bsp)
 ENTRY(trampoline_location)
 	.quad   0
 
-#ENTRY(trampoline_level4_pgt)
-#        .quad   level3_ident_pgt - __START_KERNEL_map + _KERNPG_TABLE
-#        .fill   510,8,0
-#        .quad   level3_kernel_pgt - __START_KERNEL_map + _KERNPG_TABLE
-
 trampoline_stack_bsp:
 	.fill 512,8,0
 trampoline_stack_bsp_end:
-
 
 ENTRY(trampoline_bsp_end)
 
 /*
  * Space for page tables (not in .bss so not zeroed)
  */
-
-#        .section ".pgtable_bsp","a",@nobits
         .balign 4096
 pgtable_bsp:
         .fill 6*4096, 1, 0
