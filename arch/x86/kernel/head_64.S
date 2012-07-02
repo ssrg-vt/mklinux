@@ -88,6 +88,8 @@ startup_64:
 	addq	%rbp, init_level4_pgt + (L4_START_KERNEL*8)(%rip)
 
 	addq	%rbp, level3_ident_pgt + 0(%rip)
+	/* MKLINUX -- fix up extended direct-map page table */
+	addq	%rbp, level3_ident_pgt + (1*8)(%rip)
 
 	addq	%rbp, level3_kernel_pgt + (510*8)(%rip)
 	addq	%rbp, level3_kernel_pgt + (511*8)(%rip)
@@ -95,6 +97,10 @@ startup_64:
 	addq	%rbp, level2_fixmap_pgt + (506*8)(%rip)
 
 	/* Add an Identity mapping if I am above 1G */
+
+	/* MKLINUX -- this is temporary!!! */
+	jmp	ident_complete
+
 	leaq	_text(%rip), %rdi
 	andq	$PMD_PAGE_MASK, %rdi
 
@@ -105,6 +111,8 @@ startup_64:
 
 	leaq	(level2_spare_pgt - __START_KERNEL_map + _KERNPG_TABLE)(%rbp), %rdx
 	leaq	level3_ident_pgt(%rip), %rbx
+	/* Set the second entry of level3_ident_pgt to point to 
+	 * level2_spare_pgt */
 	movq	%rdx, 0(%rbx, %rax, 8)
 
 	movq	%rdi, %rax
@@ -355,7 +363,8 @@ NEXT_PAGE(init_level4_pgt)
 
 NEXT_PAGE(level3_ident_pgt)
 	.quad	level2_ident_pgt - __START_KERNEL_map + _KERNPG_TABLE
-	.fill	511,8,0
+	.quad   level2_ident_pgt_sect2 - __START_KERNEL_map + _KERNPG_TABLE
+	.fill	510,8,0
 
 NEXT_PAGE(level3_kernel_pgt)
 	.fill	L3_START_KERNEL,8,0
@@ -377,6 +386,10 @@ NEXT_PAGE(level2_ident_pgt)
 	 * Don't set NX because code runs from these pages.
 	 */
 	PMDS(0, __PAGE_KERNEL_IDENT_LARGE_EXEC, PTRS_PER_PMD)
+	/* MKLINUX -- need to map more space, because the relocated kernel
+	 * may not be located within the first 1 GB of physical memory */
+NEXT_PAGE(level2_ident_pgt_sect2)
+	PMDS(0x40000000, __PAGE_KERNEL_IDENT_LARGE_EXEC, PTRS_PER_PMD)
 
 NEXT_PAGE(level2_kernel_pgt)
 	/*
