@@ -34,6 +34,7 @@
 #include <linux/dmi.h>
 #include <linux/smp.h>
 #include <linux/mm.h>
+#include <linux/multikernel.h>
 
 #include <asm/perf_event.h>
 #include <asm/x86_init.h>
