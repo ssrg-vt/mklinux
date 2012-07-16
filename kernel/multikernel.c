@@ -14,7 +14,8 @@
 #include <linux/smp.h>
 #include <linux/cpu.h>
 
-static int mklinux_boot __initdata;
+int mklinux_boot __initdata;
+EXPORT_SYMBOL(mklinux_boot);
 
 static int __init setup_mklinux(char *arg)
 {
