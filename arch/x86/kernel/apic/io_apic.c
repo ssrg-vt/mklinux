@@ -1733,6 +1733,9 @@ __apicdebuginit(void) print_IO_APICs(void)
 
 	printk(KERN_INFO ".................................... done.\n");
 }
+void NSprint_IO_APICs(void) {
+       NSprint_IO_APICs();
+}
 
 __apicdebuginit(void) print_APIC_field(int base)
 {
@@ -1846,6 +1849,9 @@ __apicdebuginit(void) print_local_APIC(void *dummy)
 		}
 	}
 	printk("\n");
+}
+void NSprint_local_APIC(void *dummy) {
+       NSprint_local_APIC(dummy);
 }
 
 __apicdebuginit(void) print_local_APICs(int maxcpu)
