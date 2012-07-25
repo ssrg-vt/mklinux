@@ -671,6 +671,13 @@ void __init smp_init(void)
 
 	/* FIXME: This should be done in userspace --RR */
 	for_each_present_cpu(cpu) {
+/*
+	ok ... how defined present and where?
+			what we need is a maskof present cpus (that is different from possible)
+	idea is somewhere define the present cpus differently from possible
+	using a mask and we are done
+			result is: trying to boot up an 8 cores enabling only cores 1, 3 ,5 7
+*/
 		if (num_online_cpus() >= setup_max_cpus)
 			break;
 		if (!cpu_online(cpu))

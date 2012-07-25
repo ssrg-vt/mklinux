@@ -1272,6 +1272,49 @@ static int __init _setup_possible_cpus(char *str)
 }
 early_param("possible_cpus", _setup_possible_cpus);
 
+/* TODO
+ * in the next version, copy from tilera code, they maybe have a better
+ * way to do the same things. Because you can map in and out processor from
+ * the grid.
+ */
+static DECLARE_BITMAP(setup_present_bits, CONFIG_NR_CPUS) __read_mostly;
+const struct cpumask *const setup_present_mask = to_cpumask(setup_present_bits);
+//EXPORT_SYMBOL(setup_present_mask); //not required to be public
+
+static int __init _setup_present_mask(char *str)
+{
+	cpulist_parse(str, (struct cpumask *)setup_present_mask);
+	return 0;
+}
+early_param("present_mask", _setup_present_mask);
+
+__init void prefill_present_map(void)
+{
+	int present;
+
+	// TODO
+
+	//a little of checking that the mask is included in the possible cpu must be done
+	//max_cpus or the variables connected must be modified accordingly
+
+	//check if the current CPU is included in the mask if not add it
+	//then get the weight
+
+	//check present with possible
+
+	present = cpumask_weight(setup_present_mask);
+	if (!present) //never setted, let everything as it is
+		return;
+
+	if (present != setup_max_cpus) //how to handle this situation?
+		printk(KERN_INFO
+				"%s: present_cpus %d, max_cpus %d\n",
+				__func__, present, setup_max_cpus);
+		setup_max_cpus = present;
+
+	//figure out which is the current processor and change the present subset accordingly
+	cpumask_copy((struct cpumask *)cpu_present_mask, (struct cpumask *)setup_present_mask);
+}
 
 /*
  * cpu_possible_mask should be static, it cannot change as cpu's

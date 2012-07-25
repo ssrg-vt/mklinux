@@ -500,7 +500,7 @@ asmlinkage void __init start_kernel(void)
 	mm_init_owner(&init_mm, &init_task);
 	mm_init_cpumask(&init_mm);
 	setup_command_line(command_line);
-	setup_nr_cpu_ids();
+	setup_nr_cpu_ids(); //requires cpu_possible_mask setted up (in setup_arch, acpi_boot_init)
 	setup_per_cpu_areas();
 	smp_prepare_boot_cpu();	/* arch-specific boot-cpu hooks */
 

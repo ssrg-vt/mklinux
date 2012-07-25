@@ -10,6 +10,7 @@
 #ifdef CONFIG_SMP
 
 extern void prefill_possible_map(void);
+extern void prefill_present_map(void);
 
 #else /* CONFIG_SMP */
 
