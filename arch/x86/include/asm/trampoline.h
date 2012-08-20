@@ -18,6 +18,7 @@ extern unsigned char *x86_trampoline_base;
 extern const unsigned char x86_trampoline_bsp_start [];
 extern const unsigned char x86_trampoline_bsp_end   [];
 extern unsigned char *x86_trampoline_bsp_base;
+extern unsigned long kernel_phys_addr;
 
 extern unsigned long init_rsp;
 extern unsigned long initial_code;

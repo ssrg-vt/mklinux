@@ -673,36 +673,23 @@ static void __cpuinit announce_cpu(int cpu, int apicid)
  * Returns zero if CPU booted OK, else error code from
  * ->wakeup_secondary_cpu.
  */
-int __cpuinit mkbsp_boot_cpu(int apicid, int cpu)
+
+int __cpuinit mkbsp_boot_cpu(int apicid, int cpu, unsigned long kernel_start_address)
 {
 	unsigned long boot_error = 0;
 	unsigned long start_ip;
 	int timeout;
 
-	// TODO -- don't hardcode these values!
-	unsigned long mkbsp_load_addr = 0x40000000;
-	unsigned long mkbsp_load_params = 0x13420;
+	/* MKLINUX -- set physical address where kernel has been copied.
+	   Note that this needs to be written to the location where the
+	   trampoline was copied, not to the location within the original
+	   kernel itself. */
 
-#ifdef CONFIG_X86_32
-	/* Stack for startup_32 can be just as for start_secondary onwards */
-	//irq_ctx_init(cpu);
-#else
-	//clear_tsk_thread_flag(c_idle.idle, TIF_FORK);
-	//initial_gs = per_cpu_offset(cpu);
-	//per_cpu(kernel_stack, cpu) =
-		//(unsigned long)task_stack_page(c_idle.idle) -
-		//KERNEL_STACK_OFFSET + THREAD_SIZE;
-#endif
-
-	//early_gdt_descr.address = (unsigned long)get_cpu_gdt_table(cpu);
-	//initial_code = (unsigned long) mkbsp_load_addr;
-	//stack_start  = c_idle.idle->thread.sp;
+	unsigned long *trampoline_virt_addr = TRAMPOLINE_SYM_BSP(&kernel_phys_addr);
+	*trampoline_virt_addr = kernel_start_address;
 
 	/* start_ip had better be page-aligned! */
 	start_ip = trampoline_bsp_address();
-
-	/* So we see what's up */
-	//announce_cpu(cpu, apicid);
 
 	/*
 	 * This grunge runs the startup process for

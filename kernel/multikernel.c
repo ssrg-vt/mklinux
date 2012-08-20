@@ -31,9 +31,12 @@ early_param("mklinux", setup_mklinux);
 
 SYSCALL_DEFINE2(multikernel_boot, int, cpu, unsigned long, kernel_start_address)
 {
+	int apicid;
+
 	printk("multikernel boot: got to multikernel_boot syscall, cpu %d, kernel start address 0x%lu\n",
 			cpu, kernel_start_address);
-	int apicid = apic->cpu_present_to_apicid(cpu);
-        return mkbsp_boot_cpu(apicid, cpu);
+
+	apicid = apic->cpu_present_to_apicid(cpu);
+        return mkbsp_boot_cpu(apicid, cpu, kernel_start_address);
 }
 

@@ -187,8 +187,13 @@ startup_64_bsp:
 	/* MKLINUX -- We should be in full 64-bit mode here, so we're 
 	 * able to jump to a kernel anywhere in the address space that
 	 * we identity-mapped earlier */
-	movq	$0x40000000, %rax
+
+	movq    (kernel_phys_addr - bsp_base)(%rsi), %rax
 	jmp	*%rax
+
+	.align 8
+	ENTRY(kernel_phys_addr)
+	.quad  0
 
 	.code16
 	.balign 4
