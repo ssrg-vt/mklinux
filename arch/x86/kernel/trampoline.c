@@ -5,6 +5,8 @@
 #include <asm/cacheflush.h>
 #include <asm/pgtable.h>
 
+extern int mklinux_boot;
+
 unsigned char *x86_trampoline_base;
 unsigned char *x86_trampoline_bsp_base;
 
@@ -24,7 +26,12 @@ void __init setup_trampolines(void)
 	printk(KERN_DEBUG "Base memory trampoline at [%p] %llx size %zu\n",
 	       x86_trampoline_base, (unsigned long long)mem, size);
 
-	memcpy(x86_trampoline_base, x86_trampoline_start, size);
+
+	if (!mklinux_boot) {
+		memcpy(x86_trampoline_base, x86_trampoline_start, size);
+	} else {
+		printk("mklinux boot: SMP trampoline will NOT be copied\n");
+	}
 }
 
 
@@ -44,7 +51,12 @@ void __init setup_trampolines_bsp(void)
 	printk(KERN_DEBUG "Base memory trampoline BSP at [%p] %llx size %zu\n",
 	       x86_trampoline_bsp_base, (unsigned long long)mem, size);
 
-	memcpy(x86_trampoline_bsp_base, x86_trampoline_bsp_start, size);
+	if (!mklinux_boot) {
+		memcpy(x86_trampoline_bsp_base, x86_trampoline_bsp_start, size);
+
+	} else {
+		printk("mklinux boot: MKLinux trampoline will NOT be copied\n");
+	}
 }
 
 /*
