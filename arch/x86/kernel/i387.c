@@ -107,7 +107,8 @@ void __cpuinit fpu_init(void)
 		cr0 |= X86_CR0_EM;
 	write_cr0(cr0);
 
-	if (!smp_processor_id())
+	//if (!smp_processor_id())
+	if (smp_processor_id() == boot_cpu_physical_apicid)
 		init_thread_xstate();
 
 	mxcsr_feature_mask_init();

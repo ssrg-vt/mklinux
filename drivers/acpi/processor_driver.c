@@ -470,10 +470,11 @@ static int __cpuinit acpi_processor_add(struct acpi_device *device)
 
 #ifdef CONFIG_SMP
 	printk(KERN_INFO
-			"pr->id %d setup_max_cpus %d nr_cpu_ids %d cpu_present %d\n",
-			pr->id, setup_max_cpus, nr_cpu_ids, cpu_present(pr->id));
+			"pr->id %d setup_max_cpus %d nr_cpu_ids %d cpu_present %d boot %d prev_check %d curr_check %d\n",
+			pr->id, setup_max_cpus, nr_cpu_ids, cpu_present(pr->id), boot_cpu_physical_apicid,
+			(pr->id >= setup_max_cpus && pr->id != 0), ( !cpu_present(pr->id) && pr->id != boot_cpu_physical_apicid));
 //	if (pr->id >= setup_max_cpus && pr->id != 0)
-	if ( !cpu_present(pr->id) && pr->id != 0 )
+	if ( !cpu_present(pr->id) && pr->id != boot_cpu_physical_apicid)
 		return 0;
 #endif
 

@@ -321,7 +321,7 @@ void __cpuinit smp_store_cpu_info(int id)
 
 	*c = boot_cpu_data;
 	c->cpu_index = id;
-	if (id != 0)
+	if (id != boot_cpu_physical_apicid)
 		identify_secondary_cpu(c);
 }
 
@@ -1020,7 +1020,7 @@ static int __init smp_sanity_check(unsigned max_cpus)
 	preempt_disable();
 
 #if !defined(CONFIG_X86_BIGSMP) && defined(CONFIG_X86_32)
-	if (def_to_bigsmp && nr_cpu_ids > 8) {
+	if (def_to_bigsmp && nr_cpu_idssmp_store_cpu_info > 8) {
 		unsigned int cpu;
 		unsigned nr;
 
@@ -1133,6 +1133,7 @@ static void __init smp_cpu_index_default(void)
 void __init native_smp_prepare_cpus(unsigned int max_cpus)
 {
 	unsigned int i;
+	unsigned int cpu = boot_cpu_physical_apicid;
 
 	preempt_disable();
 	smp_cpu_index_default();
@@ -1140,17 +1141,17 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 	/*
 	 * Setup boot CPU information
 	 */
-	smp_store_cpu_info(0); /* Final full version of the data */
-	cpumask_copy(cpu_callin_mask, cpumask_of(0));
+	smp_store_cpu_info(cpu); /* Final full version of the data */
+	cpumask_copy(cpu_callin_mask, cpumask_of(cpu));
 	mb();
 
-	current_thread_info()->cpu = 0;  /* needed? */
+	current_thread_info()->cpu = cpu;  /* needed? */
 	for_each_possible_cpu(i) {
 		zalloc_cpumask_var(&per_cpu(cpu_sibling_map, i), GFP_KERNEL);
 		zalloc_cpumask_var(&per_cpu(cpu_core_map, i), GFP_KERNEL);
 		zalloc_cpumask_var(&per_cpu(cpu_llc_shared_map, i), GFP_KERNEL);
 	}
-	set_cpu_sibling_map(0);
+	set_cpu_sibling_map(cpu);
 
 
 	if (smp_sanity_check(max_cpus) < 0) {
@@ -1192,8 +1193,8 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 	 * Set up local APIC timer on boot CPU.
 	 */
 
-	printk(KERN_INFO "CPU%d: ", 0);
-	print_cpu_info(&cpu_data(0));
+	printk(KERN_INFO "CPU%d: ", cpu);
+	print_cpu_info(&cpu_data(cpu));
 	x86_init.timers.setup_percpu_clockev();
 
 	if (is_uv_system())
@@ -1279,8 +1280,6 @@ __init void prefill_present_map(void)
 {
 	int present;
 
-	// TODO
-
 	//a little of checking that the mask is included in the possible cpu must be done
 	//max_cpus or the variables connected must be modified accordingly
 
@@ -1288,15 +1287,23 @@ __init void prefill_present_map(void)
 	//then get the weight
 
 	//check present with possible
-
 	present = cpumask_weight(setup_present_mask);
-	if (!present) //never setted, let everything as it is
-		return;
+	printk(KERN_INFO "%s: present_cpus %d, max_cpus %d\n",
+			__func__, present, setup_max_cpus);
 
-	if (present != setup_max_cpus) //how to handle this situation?
-		printk(KERN_INFO
-				"%s: present_cpus %d, max_cpus %d\n",
-				__func__, present, setup_max_cpus);
+	//we assume that present was never settedif it is 0, prefill it with setup_max_cpus (if setted)
+	if (!present) {
+		// the following code do not let the secondary kernels boot correctly
+/*		int i;
+		for (i=0; i<setup_max_cpus; i++)
+			cpumask_set_cpu(i, (struct cpumask *) setup_present_mask);
+		present = cpumask_weight(setup_present_mask);
+*/		return; //not sure to return here
+	}
+
+	// present and setup_max_cpus must be synchronized, setup_max_cpus is imposed by the user
+	// does it affects hot plug? hopefully no
+	if (present != setup_max_cpus)
 		setup_max_cpus = present;
 
 	//figure out which is the current processor and change the present subset accordingly
