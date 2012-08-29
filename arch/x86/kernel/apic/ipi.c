@@ -109,6 +109,11 @@ void default_send_IPI_mask_logical(const struct cpumask *cpumask, int vector)
 	if (WARN_ONCE(!mask, "empty IPI mask"))
 		return;
 
+	/*
+	printk("%s: TO mask %lx vector %d dest %lx cpu_online_mask %lx\n",
+		__func__, mask, vector, apic->dest_logical, cpumask_bits(cpu_online_mask)[0]);
+	*/
+
 	local_irq_save(flags);
 	WARN_ON(mask & ~cpumask_bits(cpu_online_mask)[0]);
 	__default_send_IPI_dest_field(mask, vector, apic->dest_logical);

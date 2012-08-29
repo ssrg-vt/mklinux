@@ -1414,10 +1414,12 @@ static int setup_ioapic_entry(int irq, struct IO_APIC_route_entry *entry,
 	return 0;
 }
 
+int unsigned pin_maskera[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
 static void setup_ioapic_irq(unsigned int irq, struct irq_cfg *cfg,
 				struct io_apic_irq_attr *attr)
 {
-	struct IO_APIC_route_entry entry;
+	struct IO_APIC_route_entry entry, tmp_entry;
 	unsigned int dest;
 
 	if (!IO_APIC_IRQ(irq))
@@ -1435,6 +1437,9 @@ static void setup_ioapic_irq(unsigned int irq, struct irq_cfg *cfg,
 
 	dest = apic->cpu_mask_to_apicid_and(cfg->domain, apic->target_cpus());
 
+	printk("%s: domain %lx target_cpus() %lx dest %x\n",
+			__func__, cpumask_bits(cfg->domain)[0],
+			cpumask_bits(apic->target_cpus())[0], dest);
 	apic_printk(APIC_VERBOSE,KERN_DEBUG
 		    "IOAPIC[%d]: Set routing entry (%d-%d -> 0x%x -> "
 		    "IRQ %d Mode:%i Active:%i Dest:%d)\n",
@@ -1453,7 +1458,23 @@ static void setup_ioapic_irq(unsigned int irq, struct irq_cfg *cfg,
 	if (irq < legacy_pic->nr_legacy_irqs)
 		legacy_pic->mask(irq);
 
-	ioapic_write_entry(attr->ioapic, attr->ioapic_pin, entry);
+	tmp_entry = ioapic_read_entry(attr->ioapic, attr->ioapic_pin);
+/*	printk("%s: READ%d-%d destM %d dest %d vect %d mask %d trig %d pol %d bsp %d[%d]\n",
+			__func__, attr->ioapic, attr->ioapic_pin,
+			tmp_entry.dest_mode, tmp_entry.dest,
+			tmp_entry.vector, tmp_entry.mask,
+			tmp_entry.trigger, tmp_entry.polarity,
+			lapic_is_bsp(), !(!lapic_is_bsp()) );
+	if(!lapic_is_bsp()) // if we are not on the bsp (the master)
+		entry.dest |= tmp_entry.dest;
+	printk("%s: WRITE%d-%d destM %d dest %d vect %d mask %d trig %d pol %d\n",
+			__func__, attr->ioapic, attr->ioapic_pin,
+			entry.dest_mode, entry.dest,
+			entry.vector, entry.mask,
+			entry.trigger, entry.polarity );
+*/
+	if ( !(!lapic_is_bsp()) ) // write only if we are on the bsp (the master)
+		ioapic_write_entry(attr->ioapic, attr->ioapic_pin, entry);
 }
 
 static bool __init io_apic_pin_not_connected(int idx, int ioapic_idx, int pin)
@@ -1483,6 +1504,16 @@ static void __init __io_apic_setup_irqs(unsigned int ioapic_idx)
 		idx = find_irq_entry(ioapic_idx, pin, mp_INT);
 		if (io_apic_pin_not_connected(idx, ioapic_idx, pin))
 			continue;
+
+		// TODO check if it is programmed or not
+		/* the following code is copyed by some other place in this file
+		hard_smp_processor_id(), boot_cpu_physical_apicid, !(!lapic_is_bsp()));
+if(!(!lapic_is_bsp())) { // this maybe substituted with a "mklinux" kernel cmd line parameter
+	printk(KERN_WARNING "clearing the IO APIC content\n");
+	clear_IO_APIC(); // the idea is that only the first kernel will clear the IO APIC content
+	*/
+
+		// idea we can skip some thing that is programmed or set a OR variable if we are not bsp
 
 		irq = pin_2_irq(idx, ioapic_idx, pin);
 
@@ -2310,6 +2341,9 @@ static void __target_IO_APIC_irq(unsigned int irq, unsigned int dest, struct irq
 	struct irq_pin_list *entry;
 	u8 vector = cfg->vector;
 
+	if (!lapic_is_bsp()) // continue remapping only on the bsp processor (master)
+		return;
+
 	for_each_irq_pin(entry, cfg->irq_2_pin) {
 		unsigned int reg;
 
@@ -2319,12 +2353,12 @@ static void __target_IO_APIC_irq(unsigned int irq, unsigned int dest, struct irq
 		 * With interrupt-remapping, destination information comes
 		 * from interrupt-remapping table entry.
 		 */
-		if (!irq_remapped(cfg))
-			io_apic_write(apic, 0x11 + pin*2, dest);
+		if (!irq_remapped(cfg)) //original code
+			io_apic_write(apic, 0x11 + pin*2, dest); // WRITE DESTINATION!!!
 		reg = io_apic_read(apic, 0x10 + pin*2);
 		reg &= ~IO_APIC_REDIR_VECTOR_MASK;
 		reg |= vector;
-		io_apic_modify(apic, 0x10 + pin*2, reg);
+		io_apic_modify(apic, 0x10 + pin*2, reg); // WRITE NEW MASK!!!
 	}
 }
 

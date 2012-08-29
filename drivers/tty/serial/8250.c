@@ -3319,6 +3319,9 @@ static int __init serial8250_init(void)
 	if (ret)
 		goto put_dev;
 
+	if (!lapic_is_bsp())
+		return ret;
+
 	serial8250_register_ports(&serial8250_reg, &serial8250_isa_devs->dev);
 
 	ret = platform_driver_register(&serial8250_isa_driver);
