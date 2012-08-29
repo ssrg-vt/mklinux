@@ -29,6 +29,8 @@ struct pg_state {
 	pgprot_t current_prot;
 	unsigned long start_address;
 	unsigned long current_address;
+	unsigned long start_physical;
+	unsigned long current_physical;
 	const struct addr_marker *marker;
 };
 
@@ -139,7 +141,7 @@ static void printk_prot(struct seq_file *m, pgprot_t prot, int level)
 		else
 			seq_printf(m, "x  ");
 	}
-	seq_printf(m, "%s\n", level_name[level]);
+	seq_printf(m, "%s ", level_name[level]);
 }
 
 /*
@@ -200,6 +202,10 @@ static void note_page(struct seq_file *m, struct pg_state *st,
 		seq_printf(m, "%9lu%c ", delta, *unit);
 		printk_prot(m, st->current_prot, st->level);
 
+		seq_printf(m, "0x%0*lx-0x%0*lx\n",
+			   width, st->start_physical,
+			   width, st->current_physical);
+
 		/*
 		 * We print markers for special areas of address space,
 		 * such as the start of vmalloc space etc.
@@ -210,6 +216,7 @@ static void note_page(struct seq_file *m, struct pg_state *st,
 			seq_printf(m, "---[ %s ]---\n", st->marker->name);
 		}
 
+		st->start_physical = st->current_physical;
 		st->start_address = st->current_address;
 		st->current_prot = new_prot;
 		st->level = level;
@@ -310,6 +317,7 @@ static void walk_pgd_level(struct seq_file *m)
 
 	for (i = 0; i < PTRS_PER_PGD; i++) {
 		st.current_address = normalize_addr(i * PGD_LEVEL_MULT);
+		st.current_physical = (pgd_val(*start) & (0xFFFFFFFF << PAGE_SHIFT));
 		if (!pgd_none(*start)) {
 			pgprotval_t prot = pgd_val(*start) & PTE_FLAGS_MASK;
 
@@ -326,12 +334,13 @@ static void walk_pgd_level(struct seq_file *m)
 
 	/* Flush out the last page */
 	st.current_address = normalize_addr(PTRS_PER_PGD*PGD_LEVEL_MULT);
+	st.current_physical = (pgd_val(*start) & (0xFFFFFFFF << PAGE_SHIFT));
 	note_page(m, &st, __pgprot(0), 0);
 }
 
 static int ptdump_show(struct seq_file *m, void *v)
 {
-	walk_pgd_level(m);
+	walk_pgd_level(m); //main call
 	return 0;
 }
 

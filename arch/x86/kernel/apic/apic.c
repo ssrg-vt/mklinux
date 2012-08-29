@@ -2373,6 +2373,14 @@ static int __init parse_nolapic_timer(char *arg)
 }
 early_param("nolapic_timer", parse_nolapic_timer);
 
+static int __init parse_lapic_timer(char *arg)
+{
+	lapic_timer_frequency = simple_strtoul(arg, NULL, 0); // set the value
+	pr_info("APIC: lapic_timer_frequency set to %d\n", lapic_timer_frequency);
+	return 0;
+}
+early_param("lapic_timer", parse_lapic_timer);
+
 static int __init apic_set_verbosity(char *arg)
 {
 	if (!arg)  {
