@@ -220,6 +220,7 @@ extern void enable_IR_x2apic(void);
 
 extern int get_physical_broadcast(void);
 
+extern unsigned int lapic_is_bsp(void);
 extern int lapic_get_maxlvt(void);
 extern void clear_local_APIC(void);
 extern void connect_bsp_APIC(void);

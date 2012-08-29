@@ -1468,9 +1468,16 @@ static bool __init io_apic_pin_not_connected(int idx, int ioapic_idx, int pin)
 
 static void __init __io_apic_setup_irqs(unsigned int ioapic_idx)
 {
-	int idx, node = cpu_to_node(0);
+	int idx, node;
 	struct io_apic_irq_attr attr;
 	unsigned int pin, irq;
+	char buffer[128];
+	node = cpu_to_node(0); // note: node is always node zero! Have sense in single kernel
+//	node = boot_cpu_physical_apicid; // actually this is always correct because is what we want (APIC)
+/*	node = cpumask_first(cpu_present_mask); // This solution does not work correctly cpu_present_mask
+	cpumask_scnprintf(buffer, 128, cpu_present_mask); // is somewhere overwritten by someone else to
+	pr_info("node %d -%s-\n", node, buffer); */ // a mask of all available cpus..
+	// final note: apparently node is referred to numa, so does not influentiate mklinux
 
 	for (pin = 0; pin < ioapics[ioapic_idx].nr_registers; pin++) {
 		idx = find_irq_entry(ioapic_idx, pin, mp_INT);
@@ -1991,7 +1998,12 @@ void __init enable_IO_APIC(void)
 	/*
 	 * Do not trust the IO-APIC being empty at bootup
 	 */
-	clear_IO_APIC();
+	printk(KERN_WARNING "hard_smp_processor_id=%d boot_cpu_physical_apicid=%d lapic_is_bsp=%d\n",
+			hard_smp_processor_id(), boot_cpu_physical_apicid, !(!lapic_is_bsp()));
+	if(!(!lapic_is_bsp())) { // this maybe substituted with a "mklinux" kernel cmd line parameter
+		printk(KERN_WARNING "clearing the IO APIC content\n");
+		clear_IO_APIC(); // the idea is that only the first kernel will clear the IO APIC content
+	}
 }
 
 /*
@@ -2996,7 +3008,7 @@ void __init setup_IO_APIC(void)
 	sync_Arb_IDs();
 	setup_IO_APIC_irqs();
 	init_IO_APIC_traps();
-	if (legacy_pic->nr_legacy_irqs)
+	if (legacy_pic->nr_legacy_irqs && !(!lapic_is_bsp()))
 		check_timer();
 }
 

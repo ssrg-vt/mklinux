@@ -1301,6 +1301,12 @@ __init void prefill_present_map(void)
 
 	//figure out which is the current processor and change the present subset accordingly
 	cpumask_copy((struct cpumask *)cpu_present_mask, (struct cpumask *)setup_present_mask);
+
+	//adjust online and active cpu masks
+	cpumask_clear((struct cpumask *)cpu_online_mask);
+	cpumask_set_cpu(boot_cpu_physical_apicid, (struct cpumask *)cpu_online_mask);
+	cpumask_copy((struct cpumask *)cpu_active_mask, (struct cpumask *)cpu_online_mask);
+	// TODO basically a check about the previous setting of cpu_online_mask and cpu_active_mask must be done
 }
 
 /*

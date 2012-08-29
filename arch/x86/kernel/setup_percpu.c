@@ -170,8 +170,10 @@ void __init setup_per_cpu_areas(void)
 	unsigned long delta;
 	int rc;
 
-	pr_info("NR_CPUS:%d nr_cpumask_bits:%d nr_cpu_ids:%d nr_node_ids:%d\n",
-		NR_CPUS, nr_cpumask_bits, nr_cpu_ids, nr_node_ids);
+/*	pr_info("NR_CPUS:%d nr_cpumask_bits:%d nr_cpu_ids:%d nr_node_ids:%d\n",
+			NR_CPUS, nr_cpumask_bits, nr_cpu_ids, nr_node_ids);
+*/	printk("%s NR_CPUS:%d nr_cpumask_bits:%d nr_cpu_ids:%d nr_node_ids:%d\n",
+			__func__, NR_CPUS, nr_cpumask_bits, nr_cpu_ids, nr_node_ids);
 
 	/*
 	 * Allocate percpu area.  Embedding allocator is our favorite;
@@ -206,10 +208,17 @@ void __init setup_per_cpu_areas(void)
 
 	/* alrighty, percpu areas up and running */
 	delta = (unsigned long)pcpu_base_addr - (unsigned long)__per_cpu_start;
+	printk("%s delta=%lx pcpu_base_addr=%lx __per_cpu_start=%lx\n",
+			__func__, delta, (unsigned long)pcpu_base_addr, (unsigned long)__per_cpu_start);
 	for_each_possible_cpu(cpu) {
 		per_cpu_offset(cpu) = delta + pcpu_unit_offsets[cpu];
 		per_cpu(this_cpu_off, cpu) = per_cpu_offset(cpu);
 		per_cpu(cpu_number, cpu) = cpu;
+/*		pr_info("CPU%d per_cpu_offset=%x this_cpu_off=%x cpu_number=%d\n",
+				cpu, per_cpu_offset(cpu), per_cpu(this_cpu_off, cpu), per_cpu(cpu_number, cpu));
+*/		printk("%s CPU%d per_cpu_offset=%lx this_cpu_off=%lx cpu_number=%d\n",
+				__func__, cpu, per_cpu_offset(cpu), per_cpu(this_cpu_off, cpu), per_cpu(cpu_number, cpu));
+
 		setup_percpu_segment(cpu);
 		setup_stack_canary_segment(cpu);
 		/*
@@ -247,11 +256,14 @@ void __init setup_per_cpu_areas(void)
 		 */
 		set_cpu_numa_node(cpu, early_cpu_to_node(cpu));
 #endif
+
 		/*
 		 * Up to this point, the boot CPU has been using .init.data
 		 * area.  Reload any changed state for the boot CPU.
 		 */
-		if (!cpu)
+		//This will happen ONLY if the cpu is booting CPU that do not have to be the ZERO
+		//if (!cpu) // PREVIOUS CODE
+		if (cpu == boot_cpu_physical_apicid)
 			switch_to_new_gdt(cpu);
 	}
 

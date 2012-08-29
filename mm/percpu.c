@@ -1129,12 +1129,12 @@ static void pcpu_dump_alloc_info(const char *lvl,
 				printk("\n");
 				printk("%spcpu-alloc: ", lvl);
 			}
-			printk("[%0*d] ", group_width, group);
+			printk("[%0*d] ", group_width, group); // print group id
 
 			for (unit_end += upa; unit < unit_end; unit++)
 				if (gi->cpu_map[unit] != NR_CPUS)
 					printk("%0*d ", cpu_width,
-					       gi->cpu_map[unit]);
+					       gi->cpu_map[unit]); // print cpuid of each element in the group
 				else
 					printk("%s ", empty_str);
 		}

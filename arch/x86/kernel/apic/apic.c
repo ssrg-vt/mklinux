@@ -283,6 +283,14 @@ int get_physical_broadcast(void)
 }
 #endif
 
+unsigned int lapic_is_bsp(void)
+{
+	unsigned int msr, msr2;
+
+	rdmsr(MSR_IA32_APICBASE, msr, msr2);
+	return (MSR_IA32_APICBASE_BSP & msr);
+}
+
 /**
  * lapic_get_maxlvt - get the maximum number of local vector table entries
  */
