@@ -1158,7 +1158,8 @@ void __cpuinit cpu_init(void)
 	int cpu;
 	int i;
 
-	cpu = stack_smp_processor_id();
+//	cpu = stack_smp_processor_id(); // it returns the cpu id assigned to the current process
+	cpu = smp_processor_id(); // it returns the cpu id assigned to the current process
 	t = &per_cpu(init_tss, cpu);
 	oist = &per_cpu(orig_ist, cpu);
 

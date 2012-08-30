@@ -219,8 +219,8 @@ void __init setup_per_cpu_areas(void)
 */		printk("%s CPU%d per_cpu_offset=%lx this_cpu_off=%lx cpu_number=%d\n",
 				__func__, cpu, per_cpu_offset(cpu), per_cpu(this_cpu_off, cpu), per_cpu(cpu_number, cpu));
 
-		setup_percpu_segment(cpu);
-		setup_stack_canary_segment(cpu);
+		setup_percpu_segment(cpu); // only 32bit
+		setup_stack_canary_segment(cpu); // only 32bit
 		/*
 		 * Copy data used in early init routines from the
 		 * initial arrays to the per cpu data areas.  These
@@ -263,8 +263,9 @@ void __init setup_per_cpu_areas(void)
 		 */
 		//This will happen ONLY if the cpu is booting CPU that do not have to be the ZERO
 		//if (!cpu) // PREVIOUS CODE
-		if (cpu == boot_cpu_physical_apicid)
-			switch_to_new_gdt(cpu);
+		if (cpu == boot_cpu_physical_apicid) {
+printk("boot cpu physical acpiid %d\n", cpu);
+			switch_to_new_gdt(cpu); }
 	}
 
 	/* indicate the early static arrays will soon be gone */
