@@ -188,8 +188,19 @@ startup_64_bsp:
 	 * able to jump to a kernel anywhere in the address space that
 	 * we identity-mapped earlier */
 
+	/* Get physical address of boot_params structure */
+	movq    (boot_params_phys_addr - bsp_base)(%rsi), %rcx
+
+	/* Jump into kernel */
 	movq    (kernel_phys_addr - bsp_base)(%rsi), %rax
+
+	/* Set esi to point to the boot_params structure */
+	movq	%rcx, %rsi
 	jmp	*%rax
+
+	.align 8
+	ENTRY(boot_params_phys_addr)
+	.quad  0
 
 	.align 8
 	ENTRY(kernel_phys_addr)

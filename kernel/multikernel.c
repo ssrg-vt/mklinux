@@ -15,7 +15,7 @@
 #include <linux/cpu.h>
 #include <linux/syscalls.h>
 
-int mklinux_boot __initdata;
+int mklinux_boot;
 EXPORT_SYMBOL(mklinux_boot);
 
 static int __init setup_mklinux(char *arg)

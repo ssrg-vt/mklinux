@@ -72,6 +72,8 @@
 #include <asm/smpboot_hooks.h>
 #include <asm/i8259.h>
 
+extern unsigned long *orig_boot_params;
+
 /* State of each CPU */
 DEFINE_PER_CPU(int, cpu_state) = { 0 };
 
@@ -685,8 +687,11 @@ int __cpuinit mkbsp_boot_cpu(int apicid, int cpu, unsigned long kernel_start_add
 	   trampoline was copied, not to the location within the original
 	   kernel itself. */
 
-	unsigned long *trampoline_virt_addr = TRAMPOLINE_SYM_BSP(&kernel_phys_addr);
-	*trampoline_virt_addr = kernel_start_address;
+	unsigned long *kernel_virt_addr = TRAMPOLINE_SYM_BSP(&kernel_phys_addr);
+	unsigned long *boot_params_virt_addr = TRAMPOLINE_SYM_BSP(&boot_params_phys_addr);
+	
+	*kernel_virt_addr = kernel_start_address;
+	*boot_params_virt_addr = orig_boot_params;
 
 	/* start_ip had better be page-aligned! */
 	start_ip = trampoline_bsp_address();
