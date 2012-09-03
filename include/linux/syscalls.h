@@ -860,4 +860,6 @@ asmlinkage long sys_process_vm_writev(pid_t pid,
 asmlinkage long sys_multikernel_boot(int cpu,
 				     unsigned long kernel_start_address);
 
+asmlinkage long sys_get_boot_params_addr(void);
+
 #endif

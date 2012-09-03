@@ -688,6 +688,8 @@ __SYSCALL(__NR_process_vm_readv, sys_process_vm_readv)
 __SYSCALL(__NR_process_vm_writev, sys_process_vm_writev)
 #define __NR_multikernel_boot                   312
 __SYSCALL(__NR_multikernel_boot, sys_multikernel_boot)
+#define __NR_get_boot_params_addr               313
+__SYSCALL(__NR_get_boot_params_addr, sys_get_boot_params_addr)
 
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR

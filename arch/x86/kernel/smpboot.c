@@ -72,7 +72,7 @@
 #include <asm/smpboot_hooks.h>
 #include <asm/i8259.h>
 
-extern unsigned long *orig_boot_params;
+extern unsigned long orig_boot_params;
 
 /* State of each CPU */
 DEFINE_PER_CPU(int, cpu_state) = { 0 };
