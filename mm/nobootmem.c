@@ -352,6 +352,8 @@ void * __init __alloc_bootmem_node_nopanic(pg_data_t *pgdat, unsigned long size,
 #define ARCH_LOW_ADDRESS_LIMIT	0xffffffffUL
 #endif
 
+#define ARCH_LOW_ADDRESS_LIMIT_64 0xffffffffffffffffULL
+
 /**
  * __alloc_bootmem_low - allocate low boot memory
  * @size: size of the request in bytes
@@ -368,7 +370,7 @@ void * __init __alloc_bootmem_node_nopanic(pg_data_t *pgdat, unsigned long size,
 void * __init __alloc_bootmem_low(unsigned long size, unsigned long align,
 				  unsigned long goal)
 {
-	return ___alloc_bootmem(size, align, goal, ARCH_LOW_ADDRESS_LIMIT);
+	return ___alloc_bootmem(size, align, goal, ARCH_LOW_ADDRESS_LIMIT_64);
 }
 
 /**
