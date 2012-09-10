@@ -115,7 +115,8 @@ void __init x86_64_start_reservations(char *real_mode_data)
 	/* Reserve INITRD */
 	if (boot_params.hdr.type_of_loader && boot_params.hdr.ramdisk_image) {
 		/* Assume only end is not page aligned */
-		unsigned long ramdisk_image = boot_params.hdr.ramdisk_image;
+		unsigned long ramdisk_shift = boot_params.hdr.ramdisk_shift;
+		unsigned long ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
 		unsigned long ramdisk_size  = boot_params.hdr.ramdisk_size;
 		unsigned long ramdisk_end   = PAGE_ALIGN(ramdisk_image + ramdisk_size);
 		memblock_x86_reserve_range(ramdisk_image, ramdisk_end, "RAMDISK");

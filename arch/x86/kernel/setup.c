@@ -319,7 +319,8 @@ static void __init reserve_brk(void)
 static void __init relocate_initrd(void)
 {
 	/* Assume only end is not page aligned */
-	u64 ramdisk_image = boot_params.hdr.ramdisk_image;
+	u64 ramdisk_shift = boot_params.hdr.ramdisk_shift;
+	u64 ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
 	u64 ramdisk_size  = boot_params.hdr.ramdisk_size;
 	u64 area_size     = PAGE_ALIGN(ramdisk_size);
 	u64 end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;
@@ -381,10 +382,14 @@ static void __init relocate_initrd(void)
 static void __init reserve_initrd(void)
 {
 	/* Assume only end is not page aligned */
-	u64 ramdisk_image = boot_params.hdr.ramdisk_image;
+	u64 ramdisk_shift = boot_params.hdr.ramdisk_shift;
+	u64 ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
 	u64 ramdisk_size  = boot_params.hdr.ramdisk_size;
 	u64 ramdisk_end   = PAGE_ALIGN(ramdisk_image + ramdisk_size);
 	u64 end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;
+
+	printk("ramdisk_image 0x%lx, size 0x%lx, shift 0x%lx, end 0x%lx, end_of_lowmem 0x%lx\n",
+			ramdisk_image, ramdisk_size, ramdisk_shift, ramdisk_end, end_of_lowmem);
 
 	if (!boot_params.hdr.type_of_loader ||
 	    !ramdisk_image || !ramdisk_size)
@@ -409,6 +414,7 @@ static void __init reserve_initrd(void)
 		 * don't need to reserve again, already reserved early
 		 * in i386_start_kernel
 		 */
+		printk("Ramdisk all in lowmem -- easy case\n");
 		initrd_start = ramdisk_image + PAGE_OFFSET;
 		initrd_end = initrd_start + ramdisk_size;
 		return;
@@ -881,12 +887,16 @@ void __init setup_arch(char **cmdline_p)
 
 	check_x2apic();
 
+	printk("max_pfn is 0x%lx\n", max_pfn);
+
 	/* How many end-of-memory variables you have, grandma! */
 	/* need this before calling reserve_initrd */
-	if (max_pfn > (1UL<<(32 - PAGE_SHIFT)))
+	if (max_pfn > (1UL<<(32 - PAGE_SHIFT))) {
+		printk("Setting max_low_pfn to e820_end_of_low_ram_pfn\n");
 		max_low_pfn = e820_end_of_low_ram_pfn();
-	else
+	} else {
 		max_low_pfn = max_pfn;
+	}
 
 	high_memory = (void *)__va(max_pfn * PAGE_SIZE - 1) + 1;
 #endif
@@ -931,6 +941,8 @@ void __init setup_arch(char **cmdline_p)
 	setup_trampolines_bsp();
 
 	init_gbpages();
+
+	printk("max_low_pfn 0x%lx, page_shift 0x%lx\n", max_low_pfn, PAGE_SHIFT);
 
 	/* max_pfn_mapped is updated here */
 	max_low_pfn_mapped = init_memory_mapping(0, max_low_pfn<<PAGE_SHIFT);
