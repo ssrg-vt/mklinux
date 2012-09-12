@@ -316,17 +316,26 @@ static void __init reserve_brk(void)
 #ifdef CONFIG_BLK_DEV_INITRD
 
 #define MAX_MAP_CHUNK	(NR_FIX_BTMAPS << PAGE_SHIFT)
+#define RAMDISK_MAGIC 0xdf
 static void __init relocate_initrd(void)
 {
 	/* Assume only end is not page aligned */
 	u64 ramdisk_shift = boot_params.hdr.ramdisk_shift;
-	u64 ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
+	u64 ramdisk_image;
 	u64 ramdisk_size  = boot_params.hdr.ramdisk_size;
 	u64 area_size     = PAGE_ALIGN(ramdisk_size);
 	u64 end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;
 	u64 ramdisk_here;
 	unsigned long slop, clen, mapaddr;
 	char *p, *q;
+
+	/* MKLINUX -- the BIOS might not zero out the ramdisk_shift
+	   field, so we need to account for it */
+	if (boot_params.hdr.ramdisk_magic == RAMDISK_MAGIC) {
+		ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
+	} else {
+		ramdisk_image = boot_params.hdr.ramdisk_image;
+	}
 
 	/* We need to move the initrd down into lowmem */
 	ramdisk_here = memblock_find_in_range(0, end_of_lowmem, area_size,
@@ -383,16 +392,26 @@ static void __init reserve_initrd(void)
 {
 	/* Assume only end is not page aligned */
 	u64 ramdisk_shift = boot_params.hdr.ramdisk_shift;
-	u64 ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
+	u64 ramdisk_image;
 	u64 ramdisk_size  = boot_params.hdr.ramdisk_size;
-	u64 ramdisk_end   = PAGE_ALIGN(ramdisk_image + ramdisk_size);
+	u64 ramdisk_end;
 	u64 end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;
 
 	printk("ramdisk_image 0x%lx, size 0x%lx, shift 0x%lx, end 0x%lx, end_of_lowmem 0x%lx\n",
 			ramdisk_image, ramdisk_size, ramdisk_shift, ramdisk_end, end_of_lowmem);
 
+	/* MKLINUX -- the BIOS might not zero out the ramdisk_shift
+	   field, so we need to account for it */
+	if (boot_params.hdr.ramdisk_magic == RAMDISK_MAGIC) {
+		ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
+	} else {
+		ramdisk_image = boot_params.hdr.ramdisk_image;
+	}
+
+	ramdisk_end = PAGE_ALIGN(ramdisk_image + ramdisk_size);
+
 	if (!boot_params.hdr.type_of_loader ||
-	    !ramdisk_image || !ramdisk_size)
+			!ramdisk_image || !ramdisk_size)
 		return;		/* No initrd provided by bootloader */
 
 	initrd_start = 0;
@@ -400,7 +419,7 @@ static void __init reserve_initrd(void)
 	if (ramdisk_size >= (end_of_lowmem>>1)) {
 		memblock_x86_free_range(ramdisk_image, ramdisk_end);
 		printk(KERN_ERR "initrd too large to handle, "
-		       "disabling initrd\n");
+				"disabling initrd\n");
 		return;
 	}
 
