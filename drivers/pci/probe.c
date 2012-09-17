@@ -1268,58 +1268,61 @@ int pci_dev_list_add(int compatible, char *vendor, char *model,
  */
 static int pci_dev_add_str(char *dev_list)
 {
-       char *vendor, *device, *strflags;
-       char *next, *next_check;
-       int res = 0;
+	char *vendor, *device, *strflags;
+	char *next, *next_check;
+	int res = 0;
 
-       next = dev_list;
-       if (next && next[0] == '"') {
-               // Ignore both the leading and trailing quote.
-               next++;
-               next_check = ",\"";
-       } else {
-               next_check = ",";
-       }
+	next = dev_list;
+	if (next && next[0] == '"') {
+		// Ignore both the leading and trailing quote.
+		next++;
+		next_check = ",\"";
+	} else {
+		next_check = ",";
+	}
 
-       /*
-        * For the leading and trailing '"' case, the for loop comes
-        * through the last time with vendor[0] == '\0'.
-        */
-       for (vendor = strsep(&next, ":");
-                       vendor && (vendor[0] != '\0') && (res == 0);
-                       vendor = strsep(&next, ":")) {
-               strflags = NULL;
-               device = strsep(&next, ":");
-               if (device)
-                       strflags = strsep(&next, next_check);
-                       if (!device || !strflags) {
-                               printk(KERN_ERR "%s: bad dev info string '%s' '%s'"
-                                               " '%s'\n", __func__, vendor, device,
-                                               strflags);
-                               res = -EINVAL;
-                       } else
-                               res = pci_dev_list_add(0 /* compatible */, vendor,
-                                               device, strflags, 0);
-       }
-       return res;
+	/*
+	 * For the leading and trailing '"' case, the for loop comes
+	 * through the last time with vendor[0] == '\0'.
+	 */
+	for (vendor = strsep(&next, ":");
+			vendor && (vendor[0] != '\0') && (res == 0);
+			vendor = strsep(&next, ":")) {
+		strflags = NULL;
+		device = strsep(&next, ":");
+		if (device)
+			strflags = strsep(&next, next_check);
+		if (!device || !strflags) {
+			printk(KERN_ERR "%s: bad dev info string '%s' '%s'"
+					" '%s'\n", __func__, vendor, device,
+					strflags);
+			res = -EINVAL;
+		} else {
+			res = pci_dev_list_add(0 /* compatible */, vendor,
+					device, strflags, 0);
+			res = 0;
+		}
+	}
+
+	return res;
 }
 
 static int __init parse_pci_dev_flags(char *argv)
 {
-       return pci_dev_add_str(argv);
+	return pci_dev_add_str(argv);
 }
 early_param("pci_dev_flags", parse_pci_dev_flags);
 //__setup("pci_dev_flags", parse_pci_dev_flags);
 
 static int pci_device_blacklisted(struct pci_dev *dev)
 {
-       int i;
+	int i;
 
-       for (i=0; i<pci_dev_blacklist_elements; i++)
-               if (dev->vendor == pci_dev_blacklist[i].vendor &&
-                       dev->device == pci_dev_blacklist[i].device)
-                               return (i +1);
-       return 0;
+	for (i=0; i<pci_dev_blacklist_elements; i++)
+		if (dev->vendor == pci_dev_blacklist[i].vendor &&
+				dev->device == pci_dev_blacklist[i].device)
+			return (i +1);
+	return 0;
 }
 
 struct pci_dev *__ref pci_scan_single_device(struct pci_bus *bus, int devfn)
