@@ -207,6 +207,24 @@ void smp_reschedule_interrupt(struct pt_regs *regs)
 	 */
 }
 
+/********************
+***** VTY Interrupt handling
+********************/
+/*
+void myFunction()
+{
+	printk(KERN_ALERT "Test ipi %s\n",__func__);
+}
+
+void smp_vty_interrupt(struct pt_regs *reg)
+{
+	ack_APIC_irq();
+	printk(KERN_ALERT " Receiving the interrupt for VTY SMP request from %s\n",__func__);
+	myFunction();
+	irq_exit();
+}
+*/
+
 void smp_call_function_interrupt(struct pt_regs *regs)
 {
 	ack_APIC_irq();

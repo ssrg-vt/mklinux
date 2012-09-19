@@ -171,7 +171,7 @@ static void __init smp_intr_init(void)
 	 * IPI, driven by wakeup.
 	 */
 	alloc_intr_gate(RESCHEDULE_VECTOR, reschedule_interrupt);
-
+	//alloc_intr_gate(MK_VTY,vty_interrupt);
 	/* IPIs for invalidation */
 #define ALLOC_INVTLB_VEC(NR) \
 	alloc_intr_gate(INVALIDATE_TLB_VECTOR_START+NR, \
