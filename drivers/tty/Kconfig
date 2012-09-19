@@ -108,6 +108,14 @@ config UNIX98_PTYS
 
 	  All modern Linux systems use the Unix98 ptys.  Say Y unless
 	  you're on an embedded system and want to conserve memory.
+	  
+	  
+config  VTY
+	bool "VTY Serial driver"
+	default y
+	---help---
+	This module will provide the serial driver support for the Multikernel Linux.
+	It helps the guest kernels to talk among themselves.
 
 config DEVPTS_MULTIPLE_INSTANCES
 	bool "Support multiple instances of devpts"
