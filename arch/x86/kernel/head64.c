@@ -112,12 +112,25 @@ void __init x86_64_start_reservations(char *real_mode_data)
 	memblock_x86_reserve_range(__pa_symbol(&_text), __pa_symbol(&__bss_stop), "TEXT DATA BSS");
 
 #ifdef CONFIG_BLK_DEV_INITRD
+#define RAMDISK_MAGIC 0xdf
 	/* Reserve INITRD */
 	if (boot_params.hdr.type_of_loader && boot_params.hdr.ramdisk_image) {
 		/* Assume only end is not page aligned */
-		unsigned long ramdisk_image = boot_params.hdr.ramdisk_image;
+		unsigned long ramdisk_shift = boot_params.hdr.ramdisk_shift;
+		unsigned long ramdisk_image;
 		unsigned long ramdisk_size  = boot_params.hdr.ramdisk_size;
-		unsigned long ramdisk_end   = PAGE_ALIGN(ramdisk_image + ramdisk_size);
+		unsigned long ramdisk_end;
+	
+		/* MKLINUX -- the BIOS might not zero out the ramdisk_shift
+		   field, so we need to account for it */
+		if (boot_params.hdr.ramdisk_magic == RAMDISK_MAGIC) {
+			ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
+		} else {
+			ramdisk_image = boot_params.hdr.ramdisk_image;
+		}
+
+		ramdisk_end = PAGE_ALIGN(ramdisk_image + ramdisk_size);
+
 		memblock_x86_reserve_range(ramdisk_image, ramdisk_end, "RAMDISK");
 	}
 #endif

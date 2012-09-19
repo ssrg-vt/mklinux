@@ -185,18 +185,49 @@ startup_32_bsp:
 startup_64_bsp:
 
 	/* MKLINUX -- We should be in full 64-bit mode here, so we're 
-	 * able to jump to a kernel anywhere in the address space that
-	 * we identity-mapped earlier */
+	 * able to jump to a kernel anywhere in the address space */
 
 	/* Get physical address of boot_params structure */
-	movq    (boot_params_phys_addr - bsp_base)(%rsi), %rcx
+	movq    (boot_params_phys_addr - bsp_base)(%rsi), %r15
 
-	/* Jump into kernel */
-	movq    (kernel_phys_addr - bsp_base)(%rsi), %rax
+	/* Load kernel address into register */
+	movq    (kernel_phys_addr - bsp_base)(%rsi), %r14
+
+	/* Check whether the kernel is in the 4 GB we mapped already,
+	 * and if not, add an additional mapping */
+	movq	$0xffffffff00000000, %r8
+	testq	%r8, %r14
+	je	2f
+
+	/* If we got here, we need to identity-map an additional 1 GB */
+	
+	/* Mask off to figure out what our directory pointer should be */
+	movq	%r14, %r13
+	movq	$0xffffffffc0000000, %r12
+	andq	%r12, %r13
+
+	/* Set our PDPTE */
+	movq	%r13, %r11
+	shrq	$(30-3), %r11
+	leaq    (pgtable_bsp - bsp_base + 0x1000)(%rsi), %rdi
+	addq	%r11, %rdi
+	leaq	(pgtable_extra_bsp - bsp_base + 0x7)(%rsi), %rax
+	movq	%rax, 0(%rdi)
+
+	/* Populate the page directory */
+	leaq    (pgtable_extra_bsp - bsp_base)(%rsi), %rdi
+	movq    $0x00000183, %rax
+	addq	%r13, %rax
+	movq    $512, %rcx
+1:      movq    %rax, 0(%rdi)
+	addq    $0x00200000, %rax
+	addq    $8, %rdi
+	decq    %rcx
+	jnz     1b
 
 	/* Set esi to point to the boot_params structure */
-	movq	%rcx, %rsi
-	jmp	*%rax
+2:	movq	%r15, %rsi
+	jmp	*%r14
 
 	.align 8
 	ENTRY(boot_params_phys_addr)
@@ -269,5 +300,6 @@ ENTRY(trampoline_bsp_end)
         .balign 4096
 pgtable_bsp:
         .fill 6*4096, 1, 0
-
+pgtable_extra_bsp:
+	.fill 1*4096, 1, 0
 
