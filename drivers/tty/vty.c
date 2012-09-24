@@ -85,7 +85,16 @@ static int allocate_shared_memory()
 
 		ring_buffer_address[0] = (struct ring_buffer *)virtual_address;
 		ring_buffer_address[0]->current_pos = 0;
+		
+		int i;
+		
+		for(i=1;i<NO_OF_DEV;i++)
+		{
+			ring_buffer_address[i] = (struct ring_buffer *)(((void *)ring_buffer_address[i-1])+sizeof(struct ring_buffer));
+			ring_buffer_address[i]->current_pos = 0;
 
+		}
+/*
 		ring_buffer_address[1] = (struct ring_buffer *)(((void *)ring_buffer_address[0])+sizeof(struct ring_buffer));
 		ring_buffer_address[1]->current_pos = 0;
 
@@ -94,7 +103,7 @@ static int allocate_shared_memory()
 
 		ring_buffer_address[3] = (struct ring_buffer *)(((void *)ring_buffer_address[2])+sizeof(struct ring_buffer));
 		ring_buffer_address[3]->current_pos = 0;
-
+*/
 		return 0;
 }
 
