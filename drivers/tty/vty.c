@@ -50,7 +50,7 @@ struct ring_buffer
 	int current_pos;
 };
 
-struct ring_buffer *ring_buffer_address[NO_OF_DEV];
+struct ring_buffer *ring_buffer_address[NO_OF_DEV][NO_OF_DEV];
 
 
 
@@ -83,27 +83,22 @@ static int allocate_shared_memory()
 
         }
 
-		ring_buffer_address[0] = (struct ring_buffer *)virtual_address;
-		ring_buffer_address[0]->current_pos = 0;
+		ring_buffer_address[0][0] = (struct ring_buffer *)virtual_address;
+		ring_buffer_address[0][0]->current_pos = 0;
 		
 		int i;
+		int j;
 		
-		for(i=1;i<NO_OF_DEV;i++)
+		for(i=0;i< NO_OF_DEV ;i++)
 		{
-			ring_buffer_address[i] = (struct ring_buffer *)(((void *)ring_buffer_address[i-1])+sizeof(struct ring_buffer));
-			ring_buffer_address[i]->current_pos = 0;
-
+			for(j =0 ; j< NO_OF_DEV ; j++){
+				if(i == 0 && j == 0){
+					continue;
+				}
+				ring_buffer_address[i][j] = (struct ring_buffer *)(((void *)ring_buffer_address[i][j-1])+sizeof(struct ring_buffer));
+				ring_buffer_address[i][j]->current_pos = 0;
+			}
 		}
-/*
-		ring_buffer_address[1] = (struct ring_buffer *)(((void *)ring_buffer_address[0])+sizeof(struct ring_buffer));
-		ring_buffer_address[1]->current_pos = 0;
-
-		ring_buffer_address[2] = (struct ring_buffer *)(((void *)ring_buffer_address[1])+sizeof(struct ring_buffer));
-		ring_buffer_address[2]->current_pos = 0;
-
-		ring_buffer_address[3] = (struct ring_buffer *)(((void *)ring_buffer_address[2])+sizeof(struct ring_buffer));
-		ring_buffer_address[3]->current_pos = 0;
-*/
 		return 0;
 }
 
@@ -132,16 +127,20 @@ void tty_dev_close(struct tty_struct *tty, struct file *flip)
 
 static int  tty_dev_write(struct tty_struct * tty,const unsigned char *buf, int count)
 {
-	int index = tty->index;
-	struct ring_buffer *my_ring_buf = ring_buffer_address[index];
+	/**
+	 * When 0 wants to write to 2 it will write in 2,0
+	 * 2 wants to read what is written by 0, it will read 2,0
+	 * */
+	int xGrid = tty->index;
+	int yGrid = order;
+
 	if (count > 0)
 	{
-		if (ring_buffer_address[index]->current_pos < 0 ||
-				ring_buffer_address[index]->current_pos > BUF_SIZE ) {
-			ring_buffer_address[index]->current_pos = 0 ;
+		if (ring_buffer_address[xGrid][yGrid]->current_pos < 0 ||
+				ring_buffer_address[xGrid][yGrid]->current_pos > BUF_SIZE ) {
+			ring_buffer_address[xGrid][yGrid]->current_pos = 0 ;
 		}
-		struct ring_buffer *current_buffer =  ring_buffer_address[index];
-		current_buffer->buffer[current_buffer->current_pos] = *buf;
+		struct ring_buffer *current_buffer =  ring_buffer_address[xGrid][yGrid];
 		memcpy(&(current_buffer->buffer[current_buffer->current_pos]),
 				buf, count);
 		current_buffer->current_pos +=count;
@@ -152,23 +151,25 @@ static int  tty_dev_write(struct tty_struct * tty,const unsigned char *buf, int 
 
 static int tty_dev_read(void)
 {
-	struct ring_buffer *my_ring_buf =  ring_buffer_address[order];
-	if(my_ring_buf->current_pos == 0){
-		mod_timer(&read_function_timer, jiffies + msecs_to_jiffies(reading_interval));
+	struct tty_struct *tty = current_tty;
+	if (tty == NULL) {
+		printk(KERN_ALERT "TTY is null \n");
 		return 0;
 	}
-	struct tty_struct *tty = current_tty;
-	if(tty==NULL)
-	{
-		printk(KERN_ALERT "TTY is null \n");
+
+	int xGrid = order;
+	int yGrid = tty->index;
+	struct ring_buffer *my_ring_buf =  ring_buffer_address[xGrid][yGrid];
+	if(my_ring_buf->current_pos == 0){
+		mod_timer(&read_function_timer, jiffies + msecs_to_jiffies(reading_interval));
 		return 0;
 	}
 
 	tty_buffer_flush(tty);
 	tty_insert_flip_string(tty,my_ring_buf->buffer,my_ring_buf->current_pos);
 	tty_flip_buffer_push(tty);
-	memset(ring_buffer_address[order]->buffer,'\0',strlen(ring_buffer_address[order]->buffer));
-	ring_buffer_address[order]->current_pos = 0;
+	memset(ring_buffer_address[xGrid][yGrid]->buffer,'\0',strlen(ring_buffer_address[xGrid][yGrid]->buffer));
+	ring_buffer_address[xGrid][yGrid]->current_pos = 0;
 	mod_timer(&read_function_timer, jiffies + msecs_to_jiffies(reading_interval));
 	return 1;
 
