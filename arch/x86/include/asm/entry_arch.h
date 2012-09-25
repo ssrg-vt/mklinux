@@ -11,7 +11,10 @@
  */
 #ifdef CONFIG_SMP
 BUILD_INTERRUPT(reschedule_interrupt,RESCHEDULE_VECTOR)
-//BUILD_INTERRUPT(vty_interrupt,MK_VTY)
+
+/*****VTY Changes single line code change****************/
+BUILD_INTERRUPT(vty_interrupt,MK_VTY)
+
 BUILD_INTERRUPT(call_function_interrupt,CALL_FUNCTION_VECTOR)
 BUILD_INTERRUPT(call_function_single_interrupt,CALL_FUNCTION_SINGLE_VECTOR)
 BUILD_INTERRUPT(irq_move_cleanup_interrupt,IRQ_MOVE_CLEANUP_VECTOR)

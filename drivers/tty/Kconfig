@@ -116,6 +116,14 @@ config  VTY
 	---help---
 	This module will provide the serial driver support for the Multikernel Linux.
 	It helps the guest kernels to talk among themselves.
+	
+config IPIM
+	bool "IPIM Support"
+	default y
+	---help---
+	This module will provide the serial driver support for the Multikernel Linux.
+	It helps the guest kernels to talk among themselves.
+	
 
 config DEVPTS_MULTIPLE_INSTANCES
 	bool "Support multiple instances of devpts"

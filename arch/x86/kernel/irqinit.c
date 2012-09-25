@@ -26,6 +26,7 @@
 #include <asm/i8259.h>
 #include <asm/traps.h>
 #include <asm/prom.h>
+#include <asm/irq_vectors.h>
 
 /*
  * ISA PIC or low IO-APIC triggered (INTA-cycle or APIC) interrupts:
@@ -171,7 +172,7 @@ static void __init smp_intr_init(void)
 	 * IPI, driven by wakeup.
 	 */
 	alloc_intr_gate(RESCHEDULE_VECTOR, reschedule_interrupt);
-	//alloc_intr_gate(MK_VTY,vty_interrupt);
+//	alloc_intr_gate(MK_VTY, vty_interrupt);
 	/* IPIs for invalidation */
 #define ALLOC_INVTLB_VEC(NR) \
 	alloc_intr_gate(INVALIDATE_TLB_VECTOR_START+NR, \
