@@ -107,9 +107,10 @@ void __cpuinit fpu_init(void)
 		cr0 |= X86_CR0_EM;
 	write_cr0(cr0);
 
-printk("%s: processor id %d\n", __func__, smp_processor_id());
+printk("%s: processor id %d\n present_map %d", __func__, smp_processor_id(), first_cpu(cpu_present_map));
 	//if (!smp_processor_id())
-	if (smp_processor_id() == boot_cpu_physical_apicid)
+	if ((read_apic_id() == boot_cpu_physical_apicid) 
+           && (smp_processor_id() == first_cpu(cpu_present_map)))
 		init_thread_xstate();
 
 	mxcsr_feature_mask_init();

@@ -323,7 +323,7 @@ void __cpuinit smp_store_cpu_info(int id)
 
 	*c = boot_cpu_data;
 	c->cpu_index = id;
-	if (id != boot_cpu_physical_apicid)
+	if (id != first_cpu(cpu_present_map))
 		identify_secondary_cpu(c);
 }
 
@@ -1138,7 +1138,7 @@ static void __init smp_cpu_index_default(void)
 void __init native_smp_prepare_cpus(unsigned int max_cpus)
 {
 	unsigned int i;
-	unsigned int cpu = boot_cpu_physical_apicid;
+	unsigned int cpu = first_cpu(cpu_present_map);
 
 	preempt_disable();
 	smp_cpu_index_default();
