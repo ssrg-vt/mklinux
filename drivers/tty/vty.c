@@ -8,15 +8,13 @@
 #include<linux/mm.h>
 #include<asm/io.h>
 #include<linux/sched.h>
-
-
 #include<linux/tty.h>
 #include<linux/tty_driver.h>
 #include<linux/tty_flip.h>
 #include<linux/device.h>
 #include<linux/major.h>
 #include<linux/timer.h>
-
+#include<linux/spinlock.h>
 
 
 
@@ -35,7 +33,7 @@ MODULE_LICENSE("GPL");
 #define MINOR_START_NUMBER 121
 const char *tty_dev_name  = "ttty";
 int order = 0;
-const int reading_interval = 200;
+const int reading_interval = 500;
 const char tokenizer = '%';
 
 /***************************************************/
@@ -48,6 +46,7 @@ struct ring_buffer
 {
 	char buffer[BUF_SIZE];
 	int current_pos;
+	rwlock_t lock;
 };
 
 struct ring_buffer *ring_buffer_address[NO_OF_DEV][NO_OF_DEV];
@@ -85,7 +84,8 @@ static int allocate_shared_memory()
 
 		ring_buffer_address[0][0] = (struct ring_buffer *)virtual_address;
 		ring_buffer_address[0][0]->current_pos = 0;
-		
+		rwlock_init(&(ring_buffer_address[0][0]->lock));
+
 		int i;
 		int j;
 		
@@ -97,6 +97,7 @@ static int allocate_shared_memory()
 				}
 				ring_buffer_address[i][j] = (struct ring_buffer *)(((void *)ring_buffer_address[i][j-1])+sizeof(struct ring_buffer));
 				ring_buffer_address[i][j]->current_pos = 0;
+				rwlock_init(&(ring_buffer_address[i][j]->lock));
 			}
 		}
 		return 0;
@@ -133,9 +134,11 @@ static int  tty_dev_write(struct tty_struct * tty,const unsigned char *buf, int 
 	 * */
 	int xGrid = tty->index;
 	int yGrid = order;
+	unsigned long flag;
 
 	if (count > 0)
 	{
+		write_lock(&(ring_buffer_address[xGrid][yGrid]->lock));
 		if (ring_buffer_address[xGrid][yGrid]->current_pos < 0 ||
 				ring_buffer_address[xGrid][yGrid]->current_pos > BUF_SIZE ) {
 			ring_buffer_address[xGrid][yGrid]->current_pos = 0 ;
@@ -145,6 +148,7 @@ static int  tty_dev_write(struct tty_struct * tty,const unsigned char *buf, int 
 				buf, count);
 		current_buffer->current_pos +=count;
 		current_buffer->buffer[current_buffer->current_pos] = '\0';
+		write_unlock(&(ring_buffer_address[xGrid][yGrid]->lock));
 	}
 	return count;
 }
@@ -160,16 +164,22 @@ static int tty_dev_read(void)
 	int xGrid = order;
 	int yGrid = tty->index;
 	struct ring_buffer *my_ring_buf =  ring_buffer_address[xGrid][yGrid];
+	unsigned long flag;
+	read_lock(&(ring_buffer_address[xGrid][yGrid]->lock));
 	if(my_ring_buf->current_pos == 0){
+		read_unlock(&(ring_buffer_address[xGrid][yGrid]->lock));
 		mod_timer(&read_function_timer, jiffies + msecs_to_jiffies(reading_interval));
 		return 0;
 	}
 
 	tty_buffer_flush(tty);
 	tty_insert_flip_string(tty,my_ring_buf->buffer,my_ring_buf->current_pos);
+	read_unlock(&(ring_buffer_address[xGrid][yGrid]->lock));
 	tty_flip_buffer_push(tty);
+	write_lock(&(ring_buffer_address[xGrid][yGrid]->lock));
 	memset(ring_buffer_address[xGrid][yGrid]->buffer,'\0',strlen(ring_buffer_address[xGrid][yGrid]->buffer));
 	ring_buffer_address[xGrid][yGrid]->current_pos = 0;
+	write_unlock(&(ring_buffer_address[xGrid][yGrid]->lock));
 	mod_timer(&read_function_timer, jiffies + msecs_to_jiffies(reading_interval));
 	return 1;
 
@@ -177,8 +187,13 @@ static int tty_dev_read(void)
 
 
 static int tty_dev_write_room(struct tty_struct *tty){
-
-	return 255;
+	int xGrid = tty->index;
+	int yGrid = order;
+	int retVal;
+	read_lock(&(ring_buffer_address[xGrid][yGrid]->lock));
+	retVal = BUF_SIZE - ring_buffer_address[xGrid][yGrid]->current_pos;
+	read_unlock(&(ring_buffer_address[xGrid][yGrid]->lock));
+	return retVal;
 }
 
 static struct tty_operations tty_dev_operations = {
