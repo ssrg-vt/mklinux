@@ -44,7 +44,7 @@
  * code for safe.
  */
 #define GART_MIN_ADDR	(512ULL << 20)
-#define GART_MAX_ADDR	(1ULL   << 32)
+#define GART_MAX_ADDR	(1ULL   << 64)
 
 int gart_iommu_aperture;
 int gart_iommu_aperture_disabled __initdata;
@@ -369,6 +369,9 @@ int __init gart_iommu_hole_init(void)
 	u64 aper_base, last_aper_base = 0;
 	int fix, slot, valid_agp = 0;
 	int i, node;
+
+	/* MKLINUX -- this is temporary! */
+	gart_iommu_aperture_disabled = 1;
 
 	if (gart_iommu_aperture_disabled || !fix_aperture ||
 	    !early_pci_allowed())

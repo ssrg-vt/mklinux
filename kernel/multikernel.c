@@ -33,13 +33,22 @@ early_param("mklinux", setup_mklinux);
 
 SYSCALL_DEFINE2(multikernel_boot, int, cpu, unsigned long, kernel_start_address)
 {
-	int apicid;
+	int apicid, apicid_1;
 
-	printk("multikernel boot: got to multikernel_boot syscall, cpu %d, kernel start address 0x%lu\n",
-			cpu, kernel_start_address);
+	printk("multikernel boot: got to multikernel_boot syscall, cpu %d, apicid %d (%x), kernel start address 0x%lx\n",
+			cpu, apic->cpu_present_to_apicid(cpu), BAD_APICID,kernel_start_address);
+
+	apicid_1 = per_cpu(x86_bios_cpu_apicid, cpu);
 
 	apicid = apic->cpu_present_to_apicid(cpu);
-        return mkbsp_boot_cpu(apicid, cpu, kernel_start_address);
+	if (apicid == BAD_APICID)
+		printk(KERN_ERR"the cpu is not present in the current present_mask and it is ok to continue, apicid = %d, apicid_1 = %d\n", apicid, apicid_1);
+	else {
+		printk(KERN_ERR"the cpu is currently running with this kernel instance first put it to offline and then continue, apicid = %d, apicid_1 = %d\n", apicid, apicid_1);
+		return -1;
+	}
+	apicid = per_cpu(x86_bios_cpu_apicid, cpu);  
+	return mkbsp_boot_cpu(apicid, cpu, kernel_start_address);
 }
 
 SYSCALL_DEFINE0(get_boot_params_addr)

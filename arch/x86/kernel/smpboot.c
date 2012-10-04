@@ -323,7 +323,7 @@ void __cpuinit smp_store_cpu_info(int id)
 
 	*c = boot_cpu_data;
 	c->cpu_index = id;
-	if (id != boot_cpu_physical_apicid)
+	if (id != first_cpu(cpu_present_map))
 		identify_secondary_cpu(c);
 }
 
@@ -486,7 +486,7 @@ wakeup_secondary_cpu_via_nmi(int logical_apicid, unsigned long start_eip)
 {
 	unsigned long send_status, accept_status = 0;
 	int maxlvt;
-
+printk(KERN_ERR"%s WANTS LOGICAL %d\n", __func__, logical_apicid);
 	/* Target chip */
 	/* Boot on the stack */
 	/* Kick the second */
@@ -520,7 +520,7 @@ wakeup_secondary_cpu_via_init(int phys_apicid, unsigned long start_eip)
 {
 	unsigned long send_status, accept_status = 0;
 	int maxlvt, num_starts, j;
-
+printk(KERN_ERR"%s WANTS PHYSICAL %d\n",__func__, phys_apicid);
 	maxlvt = lapic_get_maxlvt();
 
 	/*
@@ -1138,7 +1138,7 @@ static void __init smp_cpu_index_default(void)
 void __init native_smp_prepare_cpus(unsigned int max_cpus)
 {
 	unsigned int i;
-	unsigned int cpu = boot_cpu_physical_apicid;
+	unsigned int cpu = first_cpu(cpu_present_map);
 
 	preempt_disable();
 	smp_cpu_index_default();
@@ -1284,6 +1284,7 @@ early_param("present_mask", _setup_present_mask);
 __init void prefill_present_map(void)
 {
 	int present;
+        int first;
 
 	//a little of checking that the mask is included in the possible cpu must be done
 	//max_cpus or the variables connected must be modified accordingly
@@ -1293,17 +1294,18 @@ __init void prefill_present_map(void)
 
 	//check present with possible
 	present = cpumask_weight(setup_present_mask);
-	printk(KERN_INFO "%s: present_cpus %d, max_cpus %d\n",
-			__func__, present, setup_max_cpus);
+        first = cpumask_first(setup_present_mask);
+	printk(KERN_INFO "%s: present_cpus %d, first %d, max_cpus %d\n",
+			__func__, present, first, setup_max_cpus);
 
 	//we assume that present was never settedif it is 0, prefill it with setup_max_cpus (if setted)
 	if (!present) {
-		// the following code do not let the secondary kernels boot correctly
-/*		int i;
-		for (i=0; i<setup_max_cpus; i++)
+// TODO this code must be tested
+		int i;
+		for (i=first; i<setup_max_cpus; i++)
 			cpumask_set_cpu(i, (struct cpumask *) setup_present_mask);
 		present = cpumask_weight(setup_present_mask);
-*/		return; //not sure to return here
+//		return; //not sure to return here
 	}
 
 	// present and setup_max_cpus must be synchronized, setup_max_cpus is imposed by the user
@@ -1316,7 +1318,7 @@ __init void prefill_present_map(void)
 
 	//adjust online and active cpu masks
 	cpumask_clear((struct cpumask *)cpu_online_mask);
-	cpumask_set_cpu(boot_cpu_physical_apicid, (struct cpumask *)cpu_online_mask);
+	cpumask_set_cpu(first_cpu(cpu_present_map), (struct cpumask *)cpu_online_mask);
 	cpumask_copy((struct cpumask *)cpu_active_mask, (struct cpumask *)cpu_online_mask);
 	// TODO basically a check about the previous setting of cpu_online_mask and cpu_active_mask must be done
 }

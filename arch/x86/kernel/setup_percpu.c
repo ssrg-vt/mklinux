@@ -263,7 +263,8 @@ void __init setup_per_cpu_areas(void)
 		 */
 		//This will happen ONLY if the cpu is booting CPU that do not have to be the ZERO
 		//if (!cpu) // PREVIOUS CODE
-		if (cpu == boot_cpu_physical_apicid) {
+		if ((read_apic_id() == boot_cpu_physical_apicid)
+                    && (cpu == first_cpu(cpu_present_map))) {
 printk("boot cpu physical acpiid %d\n", cpu);
 			switch_to_new_gdt(cpu); }
 	}

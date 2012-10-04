@@ -474,7 +474,8 @@ static int __cpuinit acpi_processor_add(struct acpi_device *device)
 			pr->id, setup_max_cpus, nr_cpu_ids, cpu_present(pr->id), boot_cpu_physical_apicid,
 			(pr->id >= setup_max_cpus && pr->id != 0), ( !cpu_present(pr->id) && pr->id != boot_cpu_physical_apicid));
 //	if (pr->id >= setup_max_cpus && pr->id != 0)
-	if ( !cpu_present(pr->id) && pr->id != boot_cpu_physical_apicid)
+	if (!cpu_present(pr->id) 
+           && (pr->id != first_cpu(cpu_present_map)))
 		return 0;
 #endif
 
