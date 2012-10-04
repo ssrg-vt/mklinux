@@ -23,6 +23,8 @@
 
 #include "internal.h"
 
+#include <linux/multikernel.h>
+
 #ifndef CONFIG_NEED_MULTIPLE_NODES
 struct pglist_data __refdata contig_page_data;
 EXPORT_SYMBOL(contig_page_data);
@@ -370,7 +372,11 @@ void * __init __alloc_bootmem_node_nopanic(pg_data_t *pgdat, unsigned long size,
 void * __init __alloc_bootmem_low(unsigned long size, unsigned long align,
 				  unsigned long goal)
 {
-	return ___alloc_bootmem(size, align, goal, ARCH_LOW_ADDRESS_LIMIT_64);
+	if (mklinux_boot) {
+		return ___alloc_bootmem(size, align, goal, ARCH_LOW_ADDRESS_LIMIT_64);
+	} else {
+		return ___alloc_bootmem(size, align, goal, ARCH_LOW_ADDRESS_LIMIT);
+	}
 }
 
 /**
