@@ -397,18 +397,20 @@ static void __init reserve_initrd(void)
 	u64 ramdisk_end;
 	u64 end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;
 
-	printk("ramdisk_image 0x%lx, size 0x%lx, shift 0x%lx, end 0x%lx, end_of_lowmem 0x%lx\n",
-			ramdisk_image, ramdisk_size, ramdisk_shift, ramdisk_end, end_of_lowmem);
-
 	/* MKLINUX -- the BIOS might not zero out the ramdisk_shift
 	   field, so we need to account for it */
 	if (boot_params.hdr.ramdisk_magic == RAMDISK_MAGIC) {
+		printk("ramdisk magic number is correct (0x%x), applying shift...\n", boot_params.hdr.ramdisk_magic);
 		ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
 	} else {
+		printk("ramdisk magic number is wrong (0x%x)\n", boot_params.hdr.ramdisk_magic);
 		ramdisk_image = boot_params.hdr.ramdisk_image;
 	}
 
 	ramdisk_end = PAGE_ALIGN(ramdisk_image + ramdisk_size);
+
+	printk("ramdisk_image 0x%lx, size 0x%lx, shift 0x%lx, end 0x%lx, end_of_lowmem 0x%lx\n",
+                        ramdisk_image, ramdisk_size, ramdisk_shift, ramdisk_end, end_of_lowmem);
 
 	if (!boot_params.hdr.type_of_loader ||
 			!ramdisk_image || !ramdisk_size)
@@ -423,7 +425,7 @@ static void __init reserve_initrd(void)
 		return;
 	}
 
-	printk(KERN_INFO "RAMDISK: %08llx - %08llx\n", ramdisk_image,
+	printk(KERN_INFO "RAMDISK: %llx - %llx\n", ramdisk_image,
 			ramdisk_end);
 
 
