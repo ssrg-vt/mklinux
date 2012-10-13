@@ -729,7 +729,7 @@ void __init trap_init(void)
 	/*
 	 * Should be a barrier for any external CPU state:
 	 */
-	cpu_init();
+	cpu_init(1);
 
 	x86_init.irqs.trap_init();
 }

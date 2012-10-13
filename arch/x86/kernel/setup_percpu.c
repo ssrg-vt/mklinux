@@ -216,8 +216,8 @@ void __init setup_per_cpu_areas(void)
 		per_cpu(cpu_number, cpu) = cpu;
 /*		pr_info("CPU%d per_cpu_offset=%x this_cpu_off=%x cpu_number=%d\n",
 				cpu, per_cpu_offset(cpu), per_cpu(this_cpu_off, cpu), per_cpu(cpu_number, cpu));
-*/		printk("%s CPU%d per_cpu_offset=%lx this_cpu_off=%lx cpu_number=%d\n",
-				__func__, cpu, per_cpu_offset(cpu), per_cpu(this_cpu_off, cpu), per_cpu(cpu_number, cpu));
+*/		printk("%s CPU%d per_cpu_offset=%lx unit_off=%lx cpu_number=%d\n",
+				__func__, cpu, per_cpu_offset(cpu), pcpu_unit_offsets[cpu], per_cpu(cpu_number, cpu));
 
 		setup_percpu_segment(cpu); // only 32bit
 		setup_stack_canary_segment(cpu); // only 32bit

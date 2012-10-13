@@ -45,6 +45,10 @@ static void * __init __alloc_memory_core_early(int nid, u64 size, u64 align,
 
 	addr = find_memory_core_early(nid, size, align, goal, limit);
 
+	if (addr < 0x1000000) {
+		printk("Allocated bootmem below 16 MB, address 0x%lx\n", addr);
+	}
+
 	if (addr == MEMBLOCK_ERROR)
 		return NULL;
 
@@ -243,8 +247,10 @@ static void * __init ___alloc_bootmem(unsigned long size, unsigned long align,
 {
 	void *mem = ___alloc_bootmem_nopanic(size, align, goal, limit);
 
-	if (mem)
+	if (mem) {
+		
 		return mem;
+	}
 	/*
 	 * Whoops, we cannot satisfy the allocation request.
 	 */

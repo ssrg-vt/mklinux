@@ -150,7 +150,7 @@ void tty_buffer_flush(struct tty_struct *tty)
 		__tty_buffer_flush(tty);
 	spin_unlock_irqrestore(&tty->buf.lock, flags);
 }
-
+EXPORT_SYMBOL(tty_buffer_flush);
 /**
  *	tty_buffer_find		-	find a free tty buffer
  *	@tty: tty owning the buffer

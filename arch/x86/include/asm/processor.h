@@ -774,7 +774,7 @@ extern struct desc_ptr		early_gdt_descr;
 extern void cpu_set_gdt(int);
 extern void switch_to_new_gdt(int);
 extern void load_percpu_segment(int);
-extern void cpu_init(void);
+extern void cpu_init(int);
 
 static inline unsigned long get_debugctlmsr(void)
 {

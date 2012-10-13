@@ -220,6 +220,7 @@ extern void enable_IR_x2apic(void);
 
 extern int get_physical_broadcast(void);
 
+extern int is_bsp_cluster; // must maybe declared as static and do not directly accessed by functions... TODO
 extern unsigned int lapic_is_bsp(void);
 extern int lapic_get_maxlvt(void);
 extern void clear_local_APIC(void);

@@ -1437,9 +1437,10 @@ static void setup_ioapic_irq(unsigned int irq, struct irq_cfg *cfg,
 
 	dest = apic->cpu_mask_to_apicid_and(cfg->domain, apic->target_cpus());
 
-	printk("%s: domain %lx target_cpus() %lx dest %x\n",
+		printk("%s: domain %lx target_cpus() %lx dest %x DBG smp id %d is_bsp %d is_bsp_cluster %d\n",
 			__func__, cpumask_bits(cfg->domain)[0],
-			cpumask_bits(apic->target_cpus())[0], dest);
+			cpumask_bits(apic->target_cpus())[0], dest,
+			smp_processor_id(), !(!lapic_is_bsp()), is_bsp_cluster );
 	apic_printk(APIC_VERBOSE,KERN_DEBUG
 		    "IOAPIC[%d]: Set routing entry (%d-%d -> 0x%x -> "
 		    "IRQ %d Mode:%i Active:%i Dest:%d)\n",
@@ -1473,7 +1474,7 @@ static void setup_ioapic_irq(unsigned int irq, struct irq_cfg *cfg,
 			entry.vector, entry.mask,
 			entry.trigger, entry.polarity );
 */
-	if ( !(!lapic_is_bsp()) ) // write only if we are on the bsp (the master)
+	if ( !(!lapic_is_bsp()) || is_bsp_cluster) // write only if we are on the bsp (the master)
 		ioapic_write_entry(attr->ioapic, attr->ioapic_pin, entry);
 }
 

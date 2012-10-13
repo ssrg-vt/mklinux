@@ -1269,6 +1269,9 @@ int __init pcpu_setup_first_chunk(const struct pcpu_alloc_info *ai,
 			unit_map[cpu] = unit + i;
 			unit_off[cpu] = gi->base_offset + i * ai->unit_size;
 
+//printk(KERN_ALERT"group %d (base:0x%p) unit %d cpu %d i %d unit_size %d\n",
+//       group, gi->base_offset, unit, cpu, i, ai->unit_size );
+
 			/* determine low/high unit_cpu */
 			if (pcpu_low_unit_cpu == NR_CPUS ||
 			    unit_off[cpu] < unit_off[pcpu_low_unit_cpu])
@@ -1471,7 +1474,7 @@ static struct pcpu_alloc_info * __init pcpu_build_alloc_info(
 	/* group cpus according to their proximity */
 	for_each_possible_cpu(cpu) {
 		group = 0;
-	next_group:
+/*	next_group:
 		for_each_possible_cpu(tcpu) {
 			if (cpu == tcpu)
 				break;
@@ -1483,7 +1486,7 @@ static struct pcpu_alloc_info * __init pcpu_build_alloc_info(
 				goto next_group;
 			}
 		}
-		group_map[cpu] = group;
+*/		group_map[cpu] = group;
 		group_cnt[group]++;
 	}
 
