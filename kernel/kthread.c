@@ -159,12 +159,17 @@ struct task_struct *kthread_create_on_node(int (*threadfn)(void *data),
 	create.node = node;
 	init_completion(&create.done);
 
+printk("%s: %d LOCK\n", __func__, node);
 	spin_lock(&kthread_create_lock);
 	list_add_tail(&create.list, &kthread_create_list);
+printk("%s: %d added to tail\n", __func__, node);
 	spin_unlock(&kthread_create_lock);
 
+printk("%s: %d UNLOCK\n", __func__, node);
 	wake_up_process(kthreadd_task);
+printk("%s: %d WOKEN UP\n", __func__, node);
 	wait_for_completion(&create.done);
+printk("%s: %d COMPLETE\n", __func__, node);
 
 	if (!IS_ERR(create.result)) {
 		static const struct sched_param param = { .sched_priority = 0 };

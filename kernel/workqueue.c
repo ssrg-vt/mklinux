@@ -2964,7 +2964,7 @@ struct workqueue_struct *__alloc_workqueue_key(const char *name,
 {
 	struct workqueue_struct *wq;
 	unsigned int cpu;
-printk("%s BEGIN\n", __func__);
+
 	/*
 	 * Workqueues which may be used during memory reclaim should
 	 * have a rescuer to guarantee forward progress.
@@ -2981,7 +2981,7 @@ printk("%s BEGIN\n", __func__);
 
 	max_active = max_active ?: WQ_DFL_ACTIVE;
 	max_active = wq_clamp_max_active(max_active, flags, name);
-printk("%s kzalloc\n", __func__);
+
 	wq = kzalloc(sizeof(*wq), GFP_KERNEL);
 	if (!wq)
 		goto err;
@@ -2992,7 +2992,7 @@ printk("%s kzalloc\n", __func__);
 	atomic_set(&wq->nr_cwqs_to_flush, 0);
 	INIT_LIST_HEAD(&wq->flusher_queue);
 	INIT_LIST_HEAD(&wq->flusher_overflow);
-printk("%s: lockdep_init_map\n", __func__);
+
 	wq->name = name;
 	lockdep_init_map(&wq->lockdep_map, lock_name, key, 0);
 	INIT_LIST_HEAD(&wq->list);
@@ -3001,7 +3001,7 @@ printk("%s: lockdep_init_map\n", __func__);
 		goto err;
 
 	for_each_cwq_cpu(cpu, wq) {
-printk("%s: each_cwq_cpu %d\n", __func__, cpu);
+//printk("%s: each_cwq_cpu %d\n", __func__, cpu);
 		struct cpu_workqueue_struct *cwq = get_cwq(cpu, wq);
 		struct global_cwq *gcwq = get_gcwq(cpu);
 
@@ -3012,6 +3012,7 @@ printk("%s: each_cwq_cpu %d\n", __func__, cpu);
 		cwq->max_active = max_active;
 		INIT_LIST_HEAD(&cwq->delayed_works);
 	}
+printk("%s: each_cwq_cpu %d\n", __func__, cpu);
 
 	if (flags & WQ_RESCUER) {
 		struct worker *rescuer;
