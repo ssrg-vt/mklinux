@@ -113,11 +113,12 @@ startup_64:
 	shrq	$PMD_SHIFT, %rax
 	andq	$(PTRS_PER_PMD - 1), %rax
 
-	/* MKLINUX -- at this point, %rax = 0x0 */
+	/* MKLINUX -- at this point, %rax should be 0x0
+	 * and %rdi should be rounded down to a multiple of 1 GB */
 	movq    $0, %rax
-	andq    $0xffffffffe0000000, %rdi
+	andq    $0xffffffffc0000000, %rdi
 
-	/* MKLINUX -- fill up level2_spare_pgt to map the 512 MB where the
+	/* MKLINUX -- fill up level2_spare_pgt to map the 1 GB where the
 	 * kernel has been loaded */
 	movq	$512, %rcx
 	leaq	__PAGE_KERNEL_IDENT_LARGE_EXEC(%rdi), %rdx
