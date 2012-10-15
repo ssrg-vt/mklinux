@@ -114,6 +114,9 @@ startup_64:
 	andq	$(PTRS_PER_PMD - 1), %rax
 
 	/* MKLINUX -- at this point, %rax = 0x0 */
+	movq    $0, %rax
+	andq    $0xffffffffe0000000, %rdi
+
 	/* MKLINUX -- fill up level2_spare_pgt to map the 512 MB where the
 	 * kernel has been loaded */
 	movq	$512, %rcx

@@ -2177,10 +2177,11 @@ void __init cpuset_init_smp(void)
 {
 	cpumask_copy(top_cpuset.cpus_allowed, cpu_active_mask);
 	top_cpuset.mems_allowed = node_states[N_HIGH_MEMORY];
-
+printk("top_cpuset.mems_allowed\n");
 	hotplug_memory_notifier(cpuset_track_online_nodes, 10);
-
+printk("hotplug_memory_notifier\n");
 	cpuset_wq = create_singlethread_workqueue("cpuset");
+printk("create singlethread_workqueue %p\n", cpuset_wq);
 	BUG_ON(!cpuset_wq);
 }
 

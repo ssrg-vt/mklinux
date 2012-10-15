@@ -120,6 +120,10 @@ static phys_addr_t __init_memblock memblock_find_base(phys_addr_t size,
 	if (end == MEMBLOCK_ALLOC_ACCESSIBLE)
 		end = memblock.current_limit;
 
+	//if (start < 0x1000000) {
+	//	printk("memblock_find_base: trying to find a memory block within the first 16 MB, address = 0x%lx\n", start);
+	//}
+
 	/* We do a top-down search, this tends to limit memory
 	 * fragmentation by keeping early boot allocs near the
 	 * top of memory
@@ -138,8 +142,13 @@ static phys_addr_t __init_memblock memblock_find_base(phys_addr_t size,
 		if (bottom >= top)
 			continue;
 		found = memblock_find_region(bottom, top, size, align);
-		if (found != MEMBLOCK_ERROR)
+		if (found != MEMBLOCK_ERROR) {
+			if (found < 0x1000000) {
+				printk("memblock_find_base: BELOW 16 MB, reserved block of size 0x%lx at phys addr 0x%lx\n",
+					size, found);
+			}
 			return found;
+		}
 	}
 	return MEMBLOCK_ERROR;
 }

@@ -283,12 +283,19 @@ int get_physical_broadcast(void)
 }
 #endif
 
+int is_bsp_cluster=0;
+
 unsigned int lapic_is_bsp(void)
 {
 	unsigned int msr, msr2;
 
 	rdmsr(MSR_IA32_APICBASE, msr, msr2);
-	return (MSR_IA32_APICBASE_BSP & msr);
+	msr &= MSR_IA32_APICBASE_BSP;
+	
+	if (!is_bsp_cluster && msr)
+	  is_bsp_cluster = msr;
+
+	return msr;
 }
 
 /**

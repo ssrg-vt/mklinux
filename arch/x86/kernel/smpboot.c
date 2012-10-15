@@ -250,7 +250,7 @@ notrace static void __cpuinit start_secondary(void *unused)
 	 * fragile that we want to limit the things done here to the
 	 * most necessary things.
 	 */
-	cpu_init();
+	cpu_init(0);
 	preempt_disable();
 	smp_callin();
 
@@ -520,7 +520,7 @@ wakeup_secondary_cpu_via_init(int phys_apicid, unsigned long start_eip)
 {
 	unsigned long send_status, accept_status = 0;
 	int maxlvt, num_starts, j;
-printk(KERN_ERR"%s WANTS PHYSICAL %d\n",__func__, phys_apicid);
+printk(KERN_ERR"%s WANTS PHYSICAL %d START ip %lu\n",__func__, phys_apicid, start_eip);
 	maxlvt = lapic_get_maxlvt();
 
 	/*
@@ -1285,6 +1285,8 @@ __init void prefill_present_map(void)
 {
 	int present;
         int first;
+char buffer[96];
+memset(buffer, 0, 96);
 
 	//a little of checking that the mask is included in the possible cpu must be done
 	//max_cpus or the variables connected must be modified accordingly
@@ -1295,17 +1297,18 @@ __init void prefill_present_map(void)
 	//check present with possible
 	present = cpumask_weight(setup_present_mask);
         first = cpumask_first(setup_present_mask);
-	printk(KERN_INFO "%s: present_cpus %d, first %d, max_cpus %d\n",
-			__func__, present, first, setup_max_cpus);
+	// print present mask
+	cpumask_scnprintf(buffer, 96, setup_present_mask);
+	printk(KERN_INFO "%s: present_cpus %d %s, first %d, max_cpus %d\n",
+			__func__, present, buffer, first, setup_max_cpus);
 
 	//we assume that present was never settedif it is 0, prefill it with setup_max_cpus (if setted)
 	if (!present) {
-// TODO this code must be tested
 		int i;
-		for (i=first; i<setup_max_cpus; i++)
+		for (i=0; i<setup_max_cpus; i++)
 			cpumask_set_cpu(i, (struct cpumask *) setup_present_mask);
 		present = cpumask_weight(setup_present_mask);
-//		return; //not sure to return here
+		goto _finalize;
 	}
 
 	// present and setup_max_cpus must be synchronized, setup_max_cpus is imposed by the user
@@ -1320,7 +1323,16 @@ __init void prefill_present_map(void)
 	cpumask_clear((struct cpumask *)cpu_online_mask);
 	cpumask_set_cpu(first_cpu(cpu_present_map), (struct cpumask *)cpu_online_mask);
 	cpumask_copy((struct cpumask *)cpu_active_mask, (struct cpumask *)cpu_online_mask);
+
+_finalize:
 	// TODO basically a check about the previous setting of cpu_online_mask and cpu_active_mask must be done
+	cpumask_scnprintf(buffer, 96, cpu_present_mask);
+        printk(KERN_INFO "%s: cpu_present_mask %s\n",__func__, buffer);
+        cpumask_scnprintf(buffer, 96, cpu_online_mask);
+        printk(KERN_INFO "%s: cpu_online_mask %s\n",__func__, buffer);
+        cpumask_scnprintf(buffer, 96, cpu_active_mask);
+        printk(KERN_INFO "%s: cpu_active_mask %s\n ",__func__, buffer);
+	return;
 }
 
 /*

@@ -27,11 +27,11 @@ void __init setup_trampolines(void)
 	       x86_trampoline_base, (unsigned long long)mem, size);
 
 
-	if (!mklinux_boot) {
+//	if (!mklinux_boot) {
 		memcpy(x86_trampoline_base, x86_trampoline_start, size);
-	} else {
-		printk("mklinux boot: SMP trampoline will NOT be copied\n");
-	}
+//	} else {
+//		printk("mklinux boot: SMP trampoline will NOT be copied\n");
+//	}
 }
 
 

@@ -1149,17 +1149,23 @@ static void dbg_restore_debug_regs(void)
  */
 #ifdef CONFIG_X86_64
 
-void __cpuinit cpu_init(void)
+void __cpuinit cpu_init( int flags)
 {
 	struct orig_ist *oist;
 	struct task_struct *me;
 	struct tss_struct *t;
 	unsigned long v;
-	int cpu;
+	int cpu, smp_cpu;
 	int i;
 
-//	cpu = stack_smp_processor_id(); // it returns the cpu id assigned to the current process
-	cpu = smp_processor_id(); // it returns the cpu id assigned to the current process
+	cpu = stack_smp_processor_id(); // original
+	smp_cpu = smp_processor_id(); // Antonio's buggy version
+
+printk("%s: cpu %d smp_cpu %d virtual %p\n",__func__,  cpu, smp_cpu, &cpu);
+
+if (flags)
+  cpu = smp_cpu;
+
 	t = &per_cpu(init_tss, cpu);
 	oist = &per_cpu(orig_ist, cpu);
 
@@ -1171,8 +1177,9 @@ void __cpuinit cpu_init(void)
 
 	me = current;
 
+
 	if (cpumask_test_and_set_cpu(cpu, cpu_initialized_mask))
-		panic("CPU#%d already initialized!\n", cpu);
+		panic("CPU#%d APICID %x unit_off=%lx already initialized!\n", cpu, read_apic_id(), per_cpu(this_cpu_off, cpu) );
 
 	pr_debug("Initializing CPU#%d\n", cpu);
 
