@@ -132,8 +132,7 @@ int tty_dev_open(struct tty_struct *tty, struct file *flip) {
 	tty->driver_data = tmp->id;
 	list_add(&(tmp->list), &(current_tty));
 
-	//mod_timer(&read_function_timer,
-	//		jiffies + msecs_to_jiffies(reading_interval));
+	mod_timer(&read_function_timer,	jiffies + msecs_to_jiffies(reading_interval));
 	return SUCCESS;
 }
 
@@ -153,7 +152,7 @@ void tty_dev_close(struct tty_struct *tty, struct file *flip) {
 		}
 	}
 
-	//del_timer(&read_function_timer);
+	del_timer(&read_function_timer);
 }
 
 int tty_dev_write(struct tty_struct * tty, const unsigned char *buf, int count) {
@@ -288,8 +287,8 @@ static int __init vty_init(void)
 
 	INIT_LIST_HEAD(&current_tty);
 
-	mod_timer(&read_function_timer,
-			jiffies + msecs_to_jiffies(reading_interval));
+	//mod_timer(&read_function_timer,
+	//		jiffies + msecs_to_jiffies(reading_interval));
 	return SUCCESS;
 }
 
