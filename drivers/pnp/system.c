@@ -89,7 +89,9 @@ static void reserve_resources_of_dev(struct pnp_dev *dev)
 static int system_pnp_probe(struct pnp_dev *dev,
 			    const struct pnp_device_id *dev_id)
 {
+printk("%s: reserve\n", __func__);
 	reserve_resources_of_dev(dev);
+printk("%s: done\n", __func__);
 	return 0;
 }
 
@@ -102,7 +104,9 @@ static struct pnp_driver system_pnp_driver = {
 
 static int __init pnp_system_init(void)
 {
+printk("%s eneterd\n", __func__);
 	return pnp_register_driver(&system_pnp_driver);
+
 }
 
 /**
