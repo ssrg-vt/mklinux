@@ -247,10 +247,9 @@ static void * __init ___alloc_bootmem(unsigned long size, unsigned long align,
 {
 	void *mem = ___alloc_bootmem_nopanic(size, align, goal, limit);
 
-	if (mem) {
-		
+	if (mem) 
 		return mem;
-	}
+
 	/*
 	 * Whoops, we cannot satisfy the allocation request.
 	 */

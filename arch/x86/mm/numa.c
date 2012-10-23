@@ -224,14 +224,9 @@ static void __init setup_node_data(int nid, u64 start, u64 end)
 		nd_pa = __pa(nd);
 		remapped = true;
 	} else {
-
-		printk("NUMA: calling memblock_x86_find_in_range_node, nd_low 0x%lx, nd_high 0x%lx\n",
-			nd_low, nd_high);
-
 		nd_pa = memblock_x86_find_in_range_node(nid, nd_low, nd_high,
 						nd_size, SMP_CACHE_BYTES);
 		if (nd_pa == MEMBLOCK_ERROR)
-			printk("NUMA: MEMBLOCK_ERROR, trying again with memblock_find_in_range...\n");
 			nd_pa = memblock_find_in_range(nd_low, nd_high,
 						nd_size, SMP_CACHE_BYTES);
 		if (nd_pa == MEMBLOCK_ERROR) {
@@ -397,9 +392,6 @@ static int __init numa_alloc_distance(void)
 		cnt = i;
 	cnt++;
 	size = cnt * cnt * sizeof(numa_distance[0]);
-
-	printk("NUMA: calling memblock_find_in_range, max 0x%lx, size 0x%lx\n",
-		PFN_PHYS(max_pfn_mapped), size);
 
 	phys = memblock_find_in_range(0, PFN_PHYS(max_pfn_mapped),
 				      size, PAGE_SIZE);
