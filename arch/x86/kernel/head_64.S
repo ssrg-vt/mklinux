@@ -254,9 +254,7 @@ ENTRY(secondary_startup_64)
 	movl	initial_gs+4(%rip),%edx
 	wrmsr	
 
-	/* MKLINUX -- for now, hardcode the start of the boot_params structure */
-	/* movl $0x13bd0, %esi */
-
+	/* MKLINUX -- note that esi contains the pointer to the boot_params structure! */
 	/* esi is pointer to real mode structure with interesting info.
 	   pass it to C */
 	movl	%esi, %edi

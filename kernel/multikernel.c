@@ -42,9 +42,9 @@ SYSCALL_DEFINE2(multikernel_boot, int, cpu, unsigned long, kernel_start_address)
 
 	apicid = apic->cpu_present_to_apicid(cpu);
 	if (apicid == BAD_APICID)
-		printk(KERN_ERR"the cpu is not present in the current present_mask and it is ok to continue, apicid = %d, apicid_1 = %d\n", apicid, apicid_1);
+		printk(KERN_ERR"The CPU is not present in the current present_mask (OK to continue), apicid = %d, apicid_1 = %d\n", apicid, apicid_1);
 	else {
-		printk(KERN_ERR"the cpu is currently running with this kernel instance first put it to offline and then continue, apicid = %d, apicid_1 = %d\n", apicid, apicid_1);
+		printk(KERN_ERR"The CPU is currently running with this kernel instance. First put it offline and then continue. apicid = %d, apicid_1 = %d\n", apicid, apicid_1);
 		return -1;
 	}
 	apicid = per_cpu(x86_bios_cpu_apicid, cpu);  

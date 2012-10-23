@@ -1,0 +1,24 @@
+menu "Popcorn Multi-Kernel Support"
+
+# This is selected by all the architectures Popcorn supports
+config HAVE_POPCORN_ARCH_SUPPORT
+	bool
+
+config POPCORN
+	bool "Popcorn Multi-Kernel Support"
+	depends on HAVE_POPCORN_ARCH_SUPPORT
+	default y
+	help
+		Enable or disable the Popcorn multi-kernel Linux support.
+
+config DEBUG_POPCORN
+	bool "Popcorn debugging messages in kernel log"
+	depends on POPCORN
+	default n
+	help
+		Enable or disable kernel messages that can help debug Popcorn issues.
+
+comment "Popcorn is not currently supported on your architecture"
+	depends on !HAVE_POPCORN_ARCH_SUPPORT
+
+endmenu

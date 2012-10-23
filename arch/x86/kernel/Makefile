@@ -34,7 +34,8 @@ obj-y			+= tsc.o io_delay.o rtc.o
 obj-y			+= pci-iommu_table.o
 obj-y			+= resource.o
 
-obj-y				+= trampoline.o trampoline_$(BITS).o trampoline_$(BITS)_bsp.o
+obj-y				+= trampoline.o trampoline_$(BITS).o
+obj-$(CONFIG_POPCORN)           += trampoline_$(BITS)_bsp.o
 obj-y				+= process.o
 obj-y				+= i387.o xsave.o
 obj-y				+= ptrace.o
