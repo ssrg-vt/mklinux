@@ -44,7 +44,13 @@
  * code for safe.
  */
 #define GART_MIN_ADDR	(512ULL << 20)
+
+#ifdef CONFIG_POPCORN
 #define GART_MAX_ADDR	(1ULL   << 64)
+#else
+#define GART_MAX_ADDR	(1ULL   << 32)
+#endif
+
 
 int gart_iommu_aperture;
 int gart_iommu_aperture_disabled __initdata;
@@ -370,8 +376,10 @@ int __init gart_iommu_hole_init(void)
 	int fix, slot, valid_agp = 0;
 	int i, node;
 
-	/* MKLINUX -- this is temporary! */
+	/* POPCORN -- disable IOMMU aperture for now */
+#ifdef CONFIG_POPCORN
 	gart_iommu_aperture_disabled = 1;
+#endif
 
 	if (gart_iommu_aperture_disabled || !fix_aperture ||
 	    !early_pci_allowed())

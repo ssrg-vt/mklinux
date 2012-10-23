@@ -93,7 +93,7 @@ void __cpuinit fpu_init(void)
 {
 	unsigned long cr0;
 	unsigned long cr4_mask = 0;
-char buf[96]; memset(buf, 0, 96);
+	char buf[96]; memset(buf, 0, 96);
 
 	if (cpu_has_fxsr)
 		cr4_mask |= X86_CR4_OSFXSR;
@@ -108,13 +108,12 @@ char buf[96]; memset(buf, 0, 96);
 		cr0 |= X86_CR0_EM;
 	write_cr0(cr0);
 
-//char buf[128]; memset(buf, 0, 128);
-cpumask_scnprintf(buf, 96, cpu_present_mask);
-printk("%s: processor id %d (hard id %x)\npresent_map %d %s",
- __func__, smp_processor_id(), read_apic_id(), first_cpu(cpu_present_map), buf);
-	//if (!smp_processor_id())
+	cpumask_scnprintf(buf, 96, cpu_present_mask);
+	printk("%s: processor id %d (hard id %x)\npresent_map %d %s",
+			__func__, smp_processor_id(), read_apic_id(), first_cpu(cpu_present_map), buf);
+	// original: if (!smp_processor_id())
 	if ((read_apic_id() == boot_cpu_physical_apicid) 
-           && (smp_processor_id() == first_cpu(cpu_present_map)))
+			&& (smp_processor_id() == first_cpu(cpu_present_map)))
 		init_thread_xstate();
 
 	mxcsr_feature_mask_init();

@@ -203,9 +203,6 @@ static inline int restore_ioapic_entries(void)
 
 static inline void mp_save_irq(struct mpc_intsrc *m) { };
 static inline void disable_ioapic_support(void) { }
-#endif /* !CONFIG_X86_IO_APIC */
-
-void NSprint_IO_APICs(void);
-void NSprint_local_APIC(void *dummy);
+#endif
 
 #endif /* _ASM_X86_IO_APIC_H */

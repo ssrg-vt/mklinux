@@ -53,6 +53,6 @@ SYSCALL_DEFINE2(multikernel_boot, int, cpu, unsigned long, kernel_start_address)
 
 SYSCALL_DEFINE0(get_boot_params_addr)
 {
-	printk("MKLINUX: syscall to return phys addr of boot_params structure\n");
+	printk("POPCORN: syscall to return phys addr of boot_params structure\n");
 	return orig_boot_params;
 }

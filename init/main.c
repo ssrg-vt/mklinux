@@ -728,19 +728,12 @@ static void __init do_initcalls(void)
 static void __init do_basic_setup(void)
 {
 	cpuset_init_smp();
-printk("cpuset_init_smp\n");
 	usermodehelper_init();
-printk("usermodehelper_init\n");
 	shmem_init();
-printk("shmem_init\n");
 	driver_init();
-printk("driver_init\n");
 	init_irq_proc();
-printk("init_irq_proc\n");
 	do_ctors();
-printk("do_ctors\m");
 	usermodehelper_enable();
-printk("usermodehelper_enable\n");
 	do_initcalls();
 }
 
@@ -822,12 +815,9 @@ static int __init kernel_init(void * unused)
 	lockup_detector_init();
 
 	smp_init();
-printk("smp_init done\n");
 	sched_init_smp();
-printk("sched_init_smp\n");
 
 	do_basic_setup();
-printk("so_basic_setup\n");
 
 	/* Open the /dev/console on the rootfs, this should never fail */
 	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)

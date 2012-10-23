@@ -794,13 +794,6 @@ static int __init calibrate_APIC_clock(void)
  */
 void __init setup_boot_APIC_clock(void)
 {
-	/* MKLINUX -- if we're a guest kernel, set lapic_timer_frequency
-	 * to 1000000 */
-/*	if (mklinux_boot) {
-		pr_info("Multikernel boot: setting lapic_timer_frequency to 1000000\n");
-		lapic_timer_frequency = 1000000;
-	}
-*/
 	/*
 	 * The local apic timer can be disabled via the kernel
 	 * commandline or from the CPU detection code. Register the lapic

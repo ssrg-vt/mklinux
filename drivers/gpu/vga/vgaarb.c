@@ -1304,8 +1304,10 @@ static int __init vga_arb_device_init(void)
 	struct pci_dev *pdev;
 	struct vga_device *vgadev;
 
-if ( !is_bsp_cluster )
-   return -1;
+	/* POPCORN -- not sure
+	 * TODO -- check this! */
+	if ( !is_bsp_cluster )
+		return -1;
 
 	rc = misc_register(&vga_arb_device);
 	if (rc < 0)

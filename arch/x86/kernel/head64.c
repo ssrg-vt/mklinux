@@ -105,8 +105,6 @@ void __init x86_64_start_reservations(char *real_mode_data)
 {
 	copy_bootdata(__va(real_mode_data));
 
-	//orig_boot_params = real_mode_data;
-
 	memblock_init();
 
 	memblock_x86_reserve_range(__pa_symbol(&_text), __pa_symbol(&__bss_stop), "TEXT DATA BSS");
@@ -121,7 +119,7 @@ void __init x86_64_start_reservations(char *real_mode_data)
 		unsigned long ramdisk_size  = boot_params.hdr.ramdisk_size;
 		unsigned long ramdisk_end;
 	
-		/* MKLINUX -- the BIOS might not zero out the ramdisk_shift
+		/* POPCORN -- the BIOS might not zero out the ramdisk_shift
 		   field, so we need to account for it */
 		if (boot_params.hdr.ramdisk_magic == RAMDISK_MAGIC) {
 			ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);

@@ -997,11 +997,6 @@ apicinterrupt CALL_FUNCTION_VECTOR \
 	call_function_interrupt smp_call_function_interrupt
 apicinterrupt RESCHEDULE_VECTOR \
 	reschedule_interrupt smp_reschedule_interrupt
-	
-/*** VTY Code changes *********
-apicinterrupt MK_VTY \
-        vty_interrupt smp_vty_interrupt
-        */
 #endif
 
 apicinterrupt ERROR_APIC_VECTOR \

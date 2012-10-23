@@ -261,12 +261,14 @@ void __init setup_per_cpu_areas(void)
 		 * Up to this point, the boot CPU has been using .init.data
 		 * area.  Reload any changed state for the boot CPU.
 		 */
-		//This will happen ONLY if the cpu is booting CPU that do not have to be the ZERO
+		/* POPCORN -- This will happen ONLY if the CPU is booting 
+		 * CPU that do not have to be the ZERO */
 		//if (!cpu) // PREVIOUS CODE
 		if ((read_apic_id() == boot_cpu_physical_apicid)
-                    && (cpu == first_cpu(cpu_present_map))) {
-printk("boot cpu physical acpiid %d\n", cpu);
-			switch_to_new_gdt(cpu); }
+				&& (cpu == first_cpu(cpu_present_map))) {
+			printk("boot cpu physical acpiid %d\n", cpu);
+			switch_to_new_gdt(cpu); 
+		}
 	}
 
 	/* indicate the early static arrays will soon be gone */

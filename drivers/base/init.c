@@ -20,9 +20,7 @@
 void __init driver_init(void)
 {
 	/* These are the core pieces */
-printk("driver_init:\n");	
-
-devtmpfs_init();
+	devtmpfs_init();
 	devices_init();
 	buses_init();
 	classes_init();

@@ -430,7 +430,6 @@ out:
  */
 int __init devtmpfs_init(void)
 {
-printk("register_filessytem\n");
 	int err = register_filesystem(&dev_fs_type);
 	if (err) {
 		printk(KERN_ERR "devtmpfs: unable to register devtmpfs "
@@ -438,13 +437,9 @@ printk("register_filessytem\n");
 		return err;
 	}
 
-printk("kthread_run\n");
 	thread = kthread_run(devtmpfsd, &err, "kdevtmpfs");
-printk("kthread_run RET\n");
 	if (!IS_ERR(thread)) {
-printk("wait_for_completion\n");
 		wait_for_completion(&setup_done);
-printk("wait_for_completion DONE\n");
 	} else {
 		err = PTR_ERR(thread);
 		thread = NULL;

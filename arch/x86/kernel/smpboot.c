@@ -486,7 +486,7 @@ wakeup_secondary_cpu_via_nmi(int logical_apicid, unsigned long start_eip)
 {
 	unsigned long send_status, accept_status = 0;
 	int maxlvt;
-printk(KERN_ERR"%s WANTS LOGICAL %d\n", __func__, logical_apicid);
+	printk(KERN_ERR"%s WANTS LOGICAL %d\n", __func__, logical_apicid);
 	/* Target chip */
 	/* Boot on the stack */
 	/* Kick the second */
@@ -520,7 +520,7 @@ wakeup_secondary_cpu_via_init(int phys_apicid, unsigned long start_eip)
 {
 	unsigned long send_status, accept_status = 0;
 	int maxlvt, num_starts, j;
-printk(KERN_ERR"%s WANTS PHYSICAL %d START ip %lu\n",__func__, phys_apicid, start_eip);
+	printk(KERN_ERR"%s WANTS PHYSICAL %d START ip %lu\n",__func__, phys_apicid, start_eip);
 	maxlvt = lapic_get_maxlvt();
 
 	/*
@@ -682,7 +682,7 @@ int __cpuinit mkbsp_boot_cpu(int apicid, int cpu, unsigned long kernel_start_add
 	unsigned long start_ip;
 	int timeout;
 
-	/* MKLINUX -- set physical address where kernel has been copied.
+	/* POPCORN -- set physical address where kernel has been copied.
 	   Note that this needs to be written to the location where the
 	   trampoline was copied, not to the location within the original
 	   kernel itself. */
@@ -701,9 +701,7 @@ int __cpuinit mkbsp_boot_cpu(int apicid, int cpu, unsigned long kernel_start_add
 	 * the targeted processor.
 	 */
 
-	printk("multikernel boot: cpu %d: start_ip = %lx\n", cpu, start_ip);
-
-	//atomic_set(&init_deasserted, 0);
+	printk("Popcorn boot: CPU %d: start_ip = %lx\n", cpu, start_ip);
 
 	if (get_uv_system_type() != UV_NON_UNIQUE_APIC) {
 
@@ -739,7 +737,7 @@ int __cpuinit mkbsp_boot_cpu(int apicid, int cpu, unsigned long kernel_start_add
 			if (*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp)
 			    == 0xA5A5A5A5) {
 				/* trampoline started but...? */
-				pr_err("CPU%d: Stuck ??\n", cpu);
+				pr_info("CPU%d: Trampoline has started.\n", cpu);
 				break;
 			} else {
 				/* trampoline code not run */
@@ -760,7 +758,7 @@ int __cpuinit mkbsp_boot_cpu(int apicid, int cpu, unsigned long kernel_start_add
 	}
 
 	if (boot_error) {
-		printk("BOOT ERROR!!!\n");
+		pr_err("Popcorn: boot error!!!\n");
 	}
 
 	/* mark "stuck" area as not stuck */
@@ -1265,14 +1263,8 @@ static int __init _setup_possible_cpus(char *str)
 }
 early_param("possible_cpus", _setup_possible_cpus);
 
-/* TODO
- * in the next version, copy from tilera code, they maybe have a better
- * way to do the same things. Because you can map in and out processor from
- * the grid.
- */
 static DECLARE_BITMAP(setup_present_bits, CONFIG_NR_CPUS) __read_mostly;
 const struct cpumask *const setup_present_mask = to_cpumask(setup_present_bits);
-//EXPORT_SYMBOL(setup_present_mask); //not required to be public
 
 static int __init _setup_present_mask(char *str)
 {
@@ -1284,19 +1276,13 @@ early_param("present_mask", _setup_present_mask);
 __init void prefill_present_map(void)
 {
 	int present;
-        int first;
-char buffer[96];
-memset(buffer, 0, 96);
-
-	//a little of checking that the mask is included in the possible cpu must be done
-	//max_cpus or the variables connected must be modified accordingly
-
-	//check if the current CPU is included in the mask if not add it
-	//then get the weight
+	int first;
+	char buffer[96];
+	memset(buffer, 0, 96);
 
 	//check present with possible
 	present = cpumask_weight(setup_present_mask);
-        first = cpumask_first(setup_present_mask);
+	first = cpumask_first(setup_present_mask);
 	// print present mask
 	cpumask_scnprintf(buffer, 96, setup_present_mask);
 	printk(KERN_INFO "%s: present_cpus %d %s, first %d, max_cpus %d\n",

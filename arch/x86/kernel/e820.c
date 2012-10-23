@@ -825,11 +825,15 @@ unsigned long __init e820_end_of_ram_pfn(void)
 
 unsigned long __init e820_end_of_low_ram_pfn(void)
 {
+#ifdef CONFIG_POPCORN
 	if (mklinux_boot) {
 		return e820_end_pfn(1UL<<(64 - PAGE_SHIFT), E820_RAM);
 	} else {
 		return e820_end_pfn(1UL<<(32 - PAGE_SHIFT), E820_RAM);
 	}
+#else
+	return e820_end_pfn(1UL<<(32 - PAGE_SHIFT), E820_RAM);
+#endif
 }
 
 static void early_panic(char *msg)
