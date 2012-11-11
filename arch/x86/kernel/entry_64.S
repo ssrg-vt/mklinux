@@ -997,6 +997,8 @@ apicinterrupt CALL_FUNCTION_VECTOR \
 	call_function_interrupt smp_call_function_interrupt
 apicinterrupt RESCHEDULE_VECTOR \
 	reschedule_interrupt smp_reschedule_interrupt
+apicinterrupt POPCORN_NET_VECTOR \
+	popcorn_net_interrupt smp_popcorn_net_interrupt
 #endif
 
 apicinterrupt ERROR_APIC_VECTOR \

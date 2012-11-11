@@ -35,7 +35,8 @@ extern void spurious_interrupt(void);
 extern void thermal_interrupt(void);
 extern void reschedule_interrupt(void);
 
-extern void vty_interrupt(void);
+/* POPCORN -- handler definition */
+extern void popcorn_net_interrupt(void);
 
 extern void invalidate_interrupt(void);
 extern void invalidate_interrupt0(void);
@@ -154,7 +155,7 @@ extern asmlinkage void smp_irq_move_cleanup_interrupt(void);
 #endif
 #ifdef CONFIG_SMP
 extern void smp_reschedule_interrupt(struct pt_regs *);
-//extern void smp_vty_interrupt(struct pt_regs *);
+extern void smp_popcorn_net_interrupt(struct pt_regs *);
 extern void smp_call_function_interrupt(struct pt_regs *);
 extern void smp_call_function_single_interrupt(struct pt_regs *);
 #ifdef CONFIG_X86_32

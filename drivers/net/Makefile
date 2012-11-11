@@ -18,6 +18,7 @@ obj-$(CONFIG_NETCONSOLE) += netconsole.o
 obj-$(CONFIG_PHYLIB) += phy/
 obj-$(CONFIG_RIONET) += rionet.o
 obj-$(CONFIG_TUN) += tun.o
+obj-$(CONFIG_TUN_POPCORN) += tun_popcorn.o
 obj-$(CONFIG_VETH) += veth.o
 obj-$(CONFIG_VIRTIO_NET) += virtio_net.o
 

@@ -216,6 +216,12 @@ config TUN
 
 	  If you don't know what to use this for, you don't need it.
 
+config TUN_POPCORN
+	tristate "Popcorn shared memory TUN/TAP device driver support"
+	select CRC32
+	---help---
+	  This is the inter-kernel network tunnel support for Popcorn Linux.
+
 config VETH
 	tristate "Virtual ethernet pair device"
 	---help---

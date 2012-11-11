@@ -258,6 +258,9 @@ static void __init smp_intr_init(void)
 
 	/* IPI used for rebooting/stopping */
 	alloc_intr_gate(REBOOT_VECTOR, reboot_interrupt);
+
+	/* POPCORN -- IPI used for inter-kernel network device */
+	alloc_intr_gate(POPCORN_NET_VECTOR, popcorn_net_interrupt);
 #endif
 #endif /* CONFIG_SMP */
 }
