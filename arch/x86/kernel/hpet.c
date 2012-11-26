@@ -795,6 +795,11 @@ int __init hpet_enable(void)
 	u64 freq;
 	int i;
 
+	if (hpet_virt_address == 0) {
+		printk("%s: hpet_virt_address = 0x%p\n", __func__, hpet_virt_address);
+		return 0;
+	}
+
 	if (!is_hpet_capable())
 		return 0;
 

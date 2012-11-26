@@ -35,7 +35,8 @@
 
 static struct proc_dir_entry *proc_root_kcore;
 
-
+// #define PAGE_OFFSET             ((unsigned long)__PAGE_OFFSET)
+// #define __PAGE_OFFSET           _AC(0xffff880000000000, UL)
 #ifndef kc_vaddr_to_offset
 #define	kc_vaddr_to_offset(v) ((v) - PAGE_OFFSET)
 #endif
@@ -59,6 +60,9 @@ static int kcore_need_update = 1;
 void
 kclist_add(struct kcore_list *new, void *addr, size_t size, int type)
 {
+	if (type == 1)
+		return;
+
 	new->addr = (unsigned long)addr;
 	new->size = size;
 	new->type = type;
@@ -80,16 +84,21 @@ static size_t get_kcore_size(int *nphdr, size_t *elf_buflen)
 		try = kc_vaddr_to_offset((size_t)m->addr + m->size);
 		if (try > size)
 			size = try;
+
+		size += m->size; //antonio
+
 		*nphdr = *nphdr + 1;
-	}
-	*elf_buflen =	sizeof(struct elfhdr) + 
-			(*nphdr + 2)*sizeof(struct elf_phdr) + 
-			3 * ((sizeof(struct elf_note)) +
-			     roundup(sizeof(CORE_STR), 4)) +
-			roundup(sizeof(struct elf_prstatus), 4) +
-			roundup(sizeof(struct elf_prpsinfo), 4) +
-			roundup(sizeof(struct task_struct), 4);
-	*elf_buflen = PAGE_ALIGN(*elf_buflen);
+	}													// size is calculated here.. in a wird manner
+	*elf_buflen =	sizeof(struct elfhdr) + 			// elf header
+			(*nphdr + 2)*sizeof(struct elf_phdr) + 		// elf p header (nphdr +2) "program header"
+			3 * ((sizeof(struct elf_note)) +			// elf_note (headers?) * 3
+
+			     roundup(sizeof(CORE_STR), 4)) +		// CORE_STR
+			roundup(sizeof(struct elf_prstatus), 4) +   // elf_prstatus ?
+			roundup(sizeof(struct elf_prpsinfo), 4) +	// elf prpsinfo ?
+			roundup(sizeof(struct task_struct), 4);		// task_struct ?
+
+	*elf_buflen = PAGE_ALIGN(*elf_buflen);				// page align the content
 	return size + *elf_buflen;
 }
 
@@ -447,7 +456,7 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 	if (*fpos < elf_buflen) {
 		char * elf_buf;
 
-		tsz = elf_buflen - *fpos;
+		tsz = elf_buflen - *fpos; // allocate memory space for the headers
 		if (buflen < tsz)
 			tsz = buflen;
 		elf_buf = kzalloc(elf_buflen, GFP_ATOMIC);
@@ -455,13 +464,16 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 			read_unlock(&kclist_lock);
 			return -ENOMEM;
 		}
-		elf_kcore_store_hdr(elf_buf, nphdr, elf_buflen);
+
+		elf_kcore_store_hdr(elf_buf, nphdr, elf_buflen); // create the headers
 		read_unlock(&kclist_lock);
-		if (copy_to_user(buffer, elf_buf + *fpos, tsz)) {
+
+		if (copy_to_user(buffer, elf_buf + *fpos, tsz)) { // copy to user the headers
 			kfree(elf_buf);
 			return -EFAULT;
 		}
-		kfree(elf_buf);
+
+		kfree(elf_buf);		// release the allocated memory adjust the pointers
 		buflen -= tsz;
 		*fpos += tsz;
 		buffer += tsz;
@@ -484,30 +496,45 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 	while (buflen) {
 		struct kcore_list *m;
 
-		read_lock(&kclist_lock);
+		read_lock(&kclist_lock); // it finds the right place from where to copy -------------------
 		list_for_each_entry(m, &kclist_head, list) {
 			if (start >= m->addr && start < (m->addr+m->size))
-				break;
+				break; // found!
 		}
+
+		//Antonio
+		//I have to search at which offset each segment begins in the file (can be saved in m->
+		//and then copy .. then I have to recreate a real offset and go throught the following ..
+		//because they are addressing real memory I am addressing the file
+
+
 		read_unlock(&kclist_lock);
 
-		if (&m->list == &kclist_head) {
+		if (&m->list == &kclist_head) { // erroneous situation ------------------------------------
 			if (clear_user(buffer, tsz))
 				return -EFAULT;
-		} else if (is_vmalloc_or_module_addr((void *)start)) {
+		} else if (is_vmalloc_or_module_addr((void *)start)) { // vmalloc or modules --------------
+			/* is_vmalloc_or_module_addr checks
+			 * return addr >= VMALLOC_START && addr < VMALLOC_END;
+			 * if (addr >= MODULES_VADDR && addr < MODULES_END)
+			 * they are type == KCORE_VMALLOC (both)
+			 */
 			char * elf_buf;
 
 			elf_buf = kzalloc(tsz, GFP_KERNEL);
 			if (!elf_buf)
 				return -ENOMEM;
-			vread(elf_buf, (char *)start, tsz);
+			vread(elf_buf, (char *)start, tsz); // mm/vmalloc.c#L2003 - read vmalloc area in a safe way.
 			/* we have to zero-fill user buffer even if no read */
 			if (copy_to_user(buffer, elf_buf, tsz)) {
 				kfree(elf_buf);
 				return -EFAULT;
 			}
 			kfree(elf_buf);
-		} else {
+		} else { // other areas -------------------------------------------------------------------
+			/* everything that is not KCORE_VMALLOC
+			 * i.e. KCORE_TEXT, KCORE_RAM, KCORE_VMEMMAP, KCORE_OTHER
+			 */
 			if (kern_addr_valid(start)) {
 				unsigned long n;
 
@@ -539,7 +566,7 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 	return acc;
 }
 
-
+char * kcore_type[] = {"TEXT", "VMALLOC", "RAM", "VMEMMAP", "OTHER"};
 static int open_kcore(struct inode *inode, struct file *filp)
 {
 	if (!capable(CAP_SYS_RAWIO))
@@ -551,6 +578,17 @@ static int open_kcore(struct inode *inode, struct file *filp)
 		i_size_write(inode, proc_root_kcore->size);
 		mutex_unlock(&inode->i_mutex);
 	}
+	//printk("%s: size %ld\n", __func__, proc_root_kcore->size);
+
+	size_t try, size;
+	struct kcore_list *m;
+	list_for_each_entry(m, &kclist_head, list) {
+		try = kc_vaddr_to_offset((size_t)m->addr + m->size);
+		printk("%s: addr 0x%lx try 0x%lx size %ld type %d\n",
+				__func__, m->addr, try, m->size, m->type, kcore_type[m->type]
+				);
+	}
+
 	return 0;
 }
 
