@@ -75,7 +75,7 @@ static unsigned long mcomm_address = 0x0000;
 #define free_on_node(addr) __free_on_node(addr)
 
 // KRN SHM
-#define INIT_SIZE 0x100000
+#define INIT_SIZE 0x1000000
 unsigned long alloc_size = INIT_SIZE;
 unsigned long alloc_addr = 0xbadabada;
 
@@ -130,14 +130,16 @@ static int alloc_init(void* poff, int size)
 
 void* __alloc_on_node(size_t size, int node)
 {
-	int asize = 0x20000; // TODO check, improve and determine the size
+	int asize = 0x100000; // TODO check, improve and determine the size
 	int anode = node +1;
 	void* shmaddr = (void*)(alloc_addr +
 			(unsigned long)(anode * asize));
 
-	if (size > asize)
-		printk(KERN_ERR "%s: size %ld asize %d ERROR\n",
-				__func__, size, asize);
+	if (size > asize) {
+		printk(KERN_ERR "%s: size %ld node %d asize %d ERROR\n",
+				__func__, size, node, asize);
+		return 0;
+	}
 
 	return shmaddr;
 }
@@ -223,6 +225,8 @@ static int matrix_init_row (row_comm ** prow, matrix_comm * matrix,
 				__func__);
 		return 0;
 	}
+	printk("%s: row_memory %d (0x%x) id %d row %p\n",
+			__func__, row_memory, row_memory, id, row);
 	CHECK_CACHE_ALIGNED(row);
 	matrix->desc[id] = row; // TODO
 
@@ -260,6 +264,8 @@ static int matrix_init_row (row_comm ** prow, matrix_comm * matrix,
 	}
 
 	// check the alignment
+	printk("%s: row_status %p row %p\n",
+			__func__, &(row->status), &(row[1]));
 	CHECK_CACHE_ALIGNED( (&(row->status)) );
 
 	bbuffer_t * pbbuf = (bbuffer_t*)&(row[1]);
@@ -463,7 +469,7 @@ static comm_mapping* cmap;
 static comm_buffers* cbuf;
 
 #define COMM_BUFFS_SIZE 0x2000
-#define COMM_CPU_NUM 64
+#define COMM_CPU_NUM 8
 
 static int __init mcomm_init(void)
 {

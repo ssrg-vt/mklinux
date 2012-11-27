@@ -4,14 +4,14 @@
 #define MAGIC_CHARS_ROW {'R','O','W',' '}
 
 typedef struct _row_comm {
-	char magic[4];		// magic
+	char magic[8];		// magic
 	int elements;		// number of cpus
 	int id;				// cpu identifier
 	unsigned long lock;	// lock
 
 #ifdef USE_CACHE_ALIGN
 	char pad0[(CACHE_LINE -
-			( (sizeof(char) *4) +
+			( (sizeof(char) *8) +
 			(sizeof(int) *2) +
 			(sizeof(unsigned long) *1) ) %
 			CACHE_LINE)];

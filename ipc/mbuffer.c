@@ -177,7 +177,7 @@ int mbuffer_get (bbuffer_t * buf, char * dst, int count)
 	ht.tail = (ht.tail + count) % size;
 
 	/* check for the align space */
-	register acount = hh.total - hh.part - sizeof(hheader_t);
+	register int acount = hh.total - hh.part - sizeof(hheader_t);
 	if ( acount )
 		ht.tail = (ht.tail + acount) % size;
 
@@ -185,10 +185,11 @@ int mbuffer_get (bbuffer_t * buf, char * dst, int count)
 	return count;
 }
 
-
+/*
 static void mbuffer_dump(bbuffer_t * bb)
 {
   printk("mbuffer_dump: head %d tail %d size %d count %d\n",
 		  bb->indexes.head, bb->indexes.tail, bb->size,
 		  (((bb->size + bb->indexes.head) - bb->indexes.tail) % bb->size));
 }
+*/
