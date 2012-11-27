@@ -84,8 +84,6 @@ static int alloc_init(void* poff, int size)
 {
 	void * virtual_address;
 
-    printk(KERN_ALERT "Poff %p and %d\n", poff, size);
-
     unsigned long pfn = (long) poff >> PAGE_SHIFT;
     unsigned long psize = (size) ? size : alloc_size;
     unsigned long node = -1, nid = -1; // TODO
@@ -109,7 +107,7 @@ static int alloc_init(void* poff, int size)
 
     if (node == -1) { // page never mapped (why?)
     	 virtual_address = ioremap_cache(
-    			 (resource_size_t)((void *) poff), size);
+    			 (resource_size_t)((void *) poff), alloc_size);
     } else {
     	struct page *shared_page;
     	shared_page = pfn_to_page(pfn);
@@ -120,18 +118,25 @@ static int alloc_init(void* poff, int size)
     }
 
     alloc_addr = (unsigned long)virtual_address; // set the allocated address to the virtual address
-	return 0;
+
+    printk(KERN_ALERT "%s: poff %p vaddr 0x%lx size %lu (0x%lx)\n",
+    		__func__, poff, alloc_addr, alloc_size, alloc_size);
+
+    if (alloc_addr)
+    	return 0;
+    else
+    	return -1;
 }
 
 void* __alloc_on_node(size_t size, int node)
 {
-	int asize = 0x20000; // TODO check, improve!
+	int asize = 0x20000; // TODO check, improve and determine the size
 	int anode = node +1;
 	void* shmaddr = (void*)(alloc_addr +
 			(unsigned long)(anode * asize));
 
 	if (size > asize)
-		printk(KERN_ERR"%s: size %ld asize %d ERROR\n",
+		printk(KERN_ERR "%s: size %ld asize %d ERROR\n",
 				__func__, size, asize);
 
 	return shmaddr;
@@ -200,6 +205,8 @@ static int matrix_init_row (row_comm ** prow, matrix_comm * matrix,
 #ifdef CACHE_ALIGNED
 	bbuf_pad_size = BBUFFER_SPACE(size);
 #endif /* CACHE_ALIGNED */
+	printk("%s: bbuf_pad_size 0x%x buffer_limit 0x%lx\n",
+			__func__, bbuf_pad_size, (unsigned long)BBUFFER_LIMIT);
 	BBUFFER_CHECK(bbuf_pad_size);
 
 	/* for each cpu there is a vector of recveirs buffers */

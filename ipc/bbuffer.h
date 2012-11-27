@@ -44,9 +44,9 @@ typedef struct bbuffer {
 #endif /* !CACHE_ALIGNED */
 
 /* every byte must be accessed using an __index_t index */
-#define BBUFFER_LIMIT ((0x01 << sizeof(__index_t)) -1)
+#define BBUFFER_LIMIT ((0x01 << (sizeof(__index_t) * 8) ) -1)
 //#define BBUFFER_CHECK(pad_size) assert((pad_size > BBUFFER_LIMIT))
-#define BBUFFER_CHECK(pad_size) BUG_ON((pad_size > BBUFFER_LIMIT))
+#define BBUFFER_CHECK(pad_size) BUG_ON(((unsigned long)pad_size > (unsigned long)BBUFFER_LIMIT))
 
 #define BBUFFER_SPACE(pad_size) ((!(pad_size%CACHE_LINE)) ? \
 		(pad_size) : (pad_size + (CACHE_LINE - (pad_size%CACHE_LINE))))
