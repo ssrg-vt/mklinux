@@ -74,7 +74,7 @@ int mbuffer_put (bbuffer_t* buf, char* src, int count)
     	memcpy(&(buf->buffer[ht.head]),
     			&hh, (size - ht.head) );
     	memcpy(&(buf->buffer[0]),
-    	    			(&hh + (size - ht.head)), (ht.head + sizeof(hheader_t)) % size);
+    	    		 	(&hh + (size - ht.head)), (ht.head + sizeof(hheader_t)) % size);
     	// copy the data
     	memcpy(&(buf->buffer[((ht.head + sizeof(hheader_t)) % size)]),
     	    			src, count);

@@ -2,9 +2,13 @@
 // mcomm.c
 // Copyright Antonio Barbalace, Virginia Tech 2012
 
+#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/string.h>
+#include <linux/slab.h>
+#include <linux/highmem.h>
+#include <linux/mm.h>
 
 #include <linux/smp.h>
 
@@ -12,17 +16,56 @@
  #define CACHE_ALIGNED
 #endif
 
+#define MAX_CPUS 64
+#define MAX_ARRAY MAX_CPUS
+#define MAX_BITMAP 4
+
+//#if (WORLD_BYTES == 4)
+// #define BIT_PER_BITMASK 32
+//#else
+#define BIT_PER_BITMASK 64
+//#endif
+
+
 #define USE_MBUFFER
 #include "bbuffer.h"
 #ifdef USE_MBUFFER
  #include "mbuffer.h"
 #endif /* USE_MBUFFER */
 
+/////////////////////////////////////////////////////////////////////
+// bitmask support
+/////////////////////////////////////////////////////////////////////
+
+typedef unsigned int bitmask_t;
+
+static inline void clear_bit_bitmap(bitmask_t* pbitmap, int id)
+{
+	pbitmap[(id / BIT_PER_BITMASK)] &= ~(1 << (id % BIT_PER_BITMASK));
+}
+
+static inline void set_bit_bitmap(bitmask_t* pbitmap, int id)
+{
+	pbitmap[(id / BIT_PER_BITMASK)] |= (1 << (id % BIT_PER_BITMASK));
+}
+
+static inline int ffs_bit_bitmap(bitmask_t* pbitmap)
+{
+	register int i, pos;
+	for (i=0; i<MAX_BITMAP; i++)
+		if ((pos = ffs(pbitmap[i])) > 0)
+			return ((i*BIT_PER_BITMASK) + (pos -1));
+	return -1;
+}
+/////////////////////////////////////////////////////////////////////
+
 #include "mcomm.h"
 
 static unsigned long mcomm_address = 0x0000;
 
-/// allocator
+/////////////////////////////////////////////////////////////////////
+// allocator
+/////////////////////////////////////////////////////////////////////
 
 #define get_node_from_cpu(id) 0
 
@@ -41,7 +84,7 @@ static int alloc_init(void* poff, int size)
 {
 	void * virtual_address;
 
-    printk(KERN_ALERT "Poff %llx and %ld\n",poff,size);
+    printk(KERN_ALERT "Poff %p and %d\n", poff, size);
 
     unsigned long pfn = (long) poff >> PAGE_SHIFT;
     unsigned long psize = (size) ? size : alloc_size;
@@ -66,30 +109,40 @@ static int alloc_init(void* poff, int size)
 
     if (node == -1) { // page never mapped (why?)
     	 virtual_address = ioremap_cache(
-    			 (resource_size_t)((void *) poff + (i * size)), size);
+    			 (resource_size_t)((void *) poff), size);
     } else {
     	struct page *shared_page;
     	shared_page = pfn_to_page(pfn);
     	virtual_address = page_address(shared_page);
     	void * kmap_addr = kmap(shared_page);
+    	printk(KERN_INFO "%s: pages were mapped! page_address %p kmap_addr %p",
+    			__func__, virtual_address, kmap_addr);
     }
 
-    alloc_addr = virtual_addr;
+    alloc_addr = (unsigned long)virtual_address; // set the allocated address to the virtual address
 	return 0;
 }
 
 void* __alloc_on_node(size_t size, int node)
 {
-	int asize = 0x20000; // TODO check
+	int asize = 0x20000; // TODO check, improve!
 	int anode = node +1;
-	void* shmaddr = alloc_addr + (anode * asize);
+	void* shmaddr = (void*)(alloc_addr +
+			(unsigned long)(anode * asize));
 
 	if (size > asize)
-		printk(KERN_ERR"%s: size %d asize %d ERROR\n", __func__);
+		printk(KERN_ERR"%s: size %ld asize %d ERROR\n",
+				__func__, size, asize);
 
 	return shmaddr;
 }
 
+// do not use shared memory (local copy on private memory
+void* __alloc_private(size_t size, int node) {
+        return kmalloc(size, GFP_KERNEL);
+}
+
+/////////////////////////////////////////////////////////////////////
 
 
 /// matrix memory
@@ -232,11 +285,8 @@ static int matrix_init_row (row_comm ** prow, matrix_comm * matrix,
  */
 comm_mapping * matrix_init_mapping (int size, int elements )
 {
-	int i, l;
-	int need_init =0, need_init_cell =0;
-
-	char matrix_magic[]= MAGIC_CHARS_MATR;
-	char row_magic[]= MAGIC_CHARS_ROW;
+	int i;
+	int need_init =0;
 
 	matrix_comm * matrix;
 
@@ -263,7 +313,7 @@ comm_mapping * matrix_init_mapping (int size, int elements )
 	// allocate and init local data structures
 	for (i=0; i<elements; i++) {
 
-		row_comm * row;
+		row_comm * row = 0;
 		int need_init_cell = matrix_init_row (&row, matrix,
 						size, need_init, i, elements);
 		if ( need_init_cell == -1 )
@@ -408,23 +458,24 @@ static comm_buffers* cbuf;
 #define COMM_BUFFS_SIZE 0x2000
 #define COMM_CPU_NUM 64
 
-void __init mcomm_init(void)
+static int __init mcomm_init(void)
 {
-	if ( !ncomm_address ) {
-		printk(KERN_ERR"MATRIX Communicator @ %p. Cannot Initialize\n",
+	if ( !mcomm_address ) {
+		printk(KERN_ERR"MATRIX Communicator @ 0x%lx. Cannot Initialize\n",
 				mcomm_address);
-		return;
+		return -1;
 	}
 
-	printk("MATRIX Communicator @ %p. Initialization\n",
-			mcomm_address);
+	printk("MATRIX Communicator @ 0x%lx cpuid %d. Initialization\n",
+			mcomm_address, smp_processor_id());
 
-	init_alloc(mcomm_address, 0);
+	alloc_init((void*)mcomm_address, 0);
 
 	cmap = matrix_init_mapping(COMM_BUFFS_SIZE, COMM_CPU_NUM);
 	cbuf = matrix_init_buffers(cmap, smp_processor_id());
 
 	printk("MATRIX Communicator cmap %p cbuf %p\n", cmap, cbuf);
+	return 0;
 }
 __initcall(mcomm_init);
 

@@ -7,13 +7,15 @@
  #define WORLD_BYTES 4
 #endif
 
-#if (WORLD_BYTES == 4)
-typedef u16 __index_t;
-typedef u32 __indexes_t;
-#else
+//#if (WORLD_BYTES == 4)
+//typedef u16 __index_t;
+//typedef u32 __indexes_t;
+//#else
 typedef u32 __index_t;
 typedef u64 __indexes_t;
-#endif
+//#endif
+
+// TODO cacheline length FROM topology
 
 #ifndef CACHE_LINE
  #define CACHE_LINE 64
@@ -43,7 +45,8 @@ typedef struct bbuffer {
 
 /* every byte must be accessed using an __index_t index */
 #define BBUFFER_LIMIT ((0x01 << sizeof(__index_t)) -1)
-#define BBUFFER_CHECK(pad_size) assert((pad_size > BBUFFER_LIMIT))
+//#define BBUFFER_CHECK(pad_size) assert((pad_size > BBUFFER_LIMIT))
+#define BBUFFER_CHECK(pad_size) BUG_ON((pad_size > BBUFFER_LIMIT))
 
 #define BBUFFER_SPACE(pad_size) ((!(pad_size%CACHE_LINE)) ? \
 		(pad_size) : (pad_size + (CACHE_LINE - (pad_size%CACHE_LINE))))
