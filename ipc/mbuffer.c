@@ -20,8 +20,8 @@
  #define CACHE_ALIGNED
 #endif
 
-#include "bbuffer.h"
-#include "mbuffer.h"
+#include <linux/bbuffer.h>
+#include <linux/mbuffer.h>
 
 
 

@@ -28,9 +28,9 @@
 
 
 #define USE_MBUFFER
-#include "bbuffer.h"
+#include <linux/bbuffer.h>
 #ifdef USE_MBUFFER
- #include "mbuffer.h"
+ #include <linux/mbuffer.h>
 #endif /* USE_MBUFFER */
 
 /////////////////////////////////////////////////////////////////////
@@ -59,7 +59,7 @@ static inline int ffs_bit_bitmap(bitmask_t* pbitmap)
 }
 /////////////////////////////////////////////////////////////////////
 
-#include "mcomm.h"
+#include <linux/mcomm.h>
 
 static unsigned long mcomm_address = 0x0000;
 
