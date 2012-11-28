@@ -27,7 +27,7 @@
  #define CACHE_ALIGNED
 #endif
 
-#include "bbuffer.h"
+#include <linux/bbuffer.h>"
 
 
 //and maybe one cache line before and after the buffer must be a watermark
