@@ -4,7 +4,7 @@
  * DKatz
  */
 
-#include <../ipc/mcomm.h> // IPC
+#include <linux/mcomm.h> // IPC
 #include <linux/kthread.h>
 #include <linux/export.h>
 #include <linux/delay.h>
