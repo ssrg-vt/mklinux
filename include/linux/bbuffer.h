@@ -17,8 +17,10 @@ typedef u64 __indexes_t;
 
 // TODO cacheline length FROM topology
 
+#include <asm/cache.h>
+
 #ifndef CACHE_LINE
- #define CACHE_LINE 64
+ #define CACHE_LINE L1_CACHE_BYTES
 #endif
 
 typedef struct bbuffer {

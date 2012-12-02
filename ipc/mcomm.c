@@ -12,10 +12,6 @@
 
 #include <linux/smp.h>
 
-#ifndef CACHE_ALIGNED
- #define CACHE_ALIGNED
-#endif
-
 #define MAX_CPUS 64
 #define MAX_ARRAY MAX_CPUS
 #define MAX_BITMAP 4
