@@ -1,5 +1,15 @@
-#define MAX_ELEMENTS MAX_ARRAY
-#define USE_CACHE_ALIGN
+
+#include <linux/kernel.h>
+
+#define MAX_ELEMENTS NR_CPUS
+
+#include <asm/cache.h>
+
+#ifndef USE_CACHE_ALIGN
+ #define USE_CACHE_ALIGN
+ #define CACHE_ALIGNED
+ #define CACHE_LINE L1_CACHE_BYTES
+#endif
 
 #define MAGIC_CHARS_ROW {'R','O','W',' '}
 
