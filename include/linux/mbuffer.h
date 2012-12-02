@@ -1,5 +1,9 @@
-// bbuffer.h
+// mbuffer.h
 // Author: Antonio Barbalace, Virginia Tech 2012
+#ifndef _MBUFFER_H
+#define _MBUFFER_H
+
+#include <linux/bbuffer.h>
 
 /*
  *
@@ -29,3 +33,5 @@ static inline int mbuffer_count (bbuffer_t * buf)
 {
 	return bbuffer_count(buf);
 }
+
+#endif //_MBUFFER_H

@@ -12,9 +12,9 @@
 
 #include <linux/smp.h>
 
-#define MAX_CPUS 64
-#define MAX_ARRAY MAX_CPUS
-#define MAX_BITMAP 4
+//#define MAX_CPUS 64
+//#define MAX_ARRAY MAX_CPUS
+//#define MAX_BITMAP 4
 
 //#if (WORLD_BYTES == 4)
 // #define BIT_PER_BITMASK 32
@@ -22,7 +22,7 @@
 #define BIT_PER_BITMASK 64
 //#endif
 
-
+#include <linux/mcomm.h>
 #define USE_MBUFFER
 #include <linux/bbuffer.h>
 #ifdef USE_MBUFFER
@@ -33,7 +33,7 @@
 // bitmask support
 /////////////////////////////////////////////////////////////////////
 
-typedef unsigned int bitmask_t;
+//typedef unsigned int bitmask_t;
 
 static inline void clear_bit_bitmap(bitmask_t* pbitmap, int id)
 {

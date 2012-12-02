@@ -1,7 +1,18 @@
 
 #include <linux/kernel.h>
+#include <linux/mbuffer.h>
+#include <linux/bbuffer.h>
 
-#define MAX_ELEMENTS NR_CPUS
+#ifndef _MCOMM_H
+#define _MCOMM_H
+
+#define MAX_CPUS 64
+#define MAX_ARRAY MAX_CPUS
+#define MAX_BITMAP 4
+
+#define MAX_ELEMENTS MAX_CPUS //NR_CPUS
+
+typedef unsigned int bitmask_t;
 
 #include <asm/cache.h>
 
@@ -126,3 +137,5 @@ int matrix_send_self(comm_buffers * buffs, char *buff, int count);
 
 int matrix_recv_from(comm_buffers* buffs, int src, char* buff, int count);
 int matrix_recv_self(comm_buffers* buffs, char* buff, int count);
+
+#endif //_MCOMM_H

@@ -1,6 +1,9 @@
 // bbuffer.h
 // Author: Antonio Barbalace, Virginia Tech 2012
 
+#ifndef _BBUFFER_H
+#define _BBUFFER_H
+
 //
 //#define WORLD_BYTES (sizeof(long))
 #ifndef WORLD_BYTES
@@ -78,3 +81,5 @@ int bbuffer_put (bbuffer_t* bb, char* src, int count);
 int bbuffer_get (bbuffer_t* bb, char* dst, int count);
 
 int bbuffer_count (bbuffer_t * buf);
+
+#endif //_BBUFFER_H
