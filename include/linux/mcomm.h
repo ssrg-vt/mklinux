@@ -2,11 +2,12 @@
 #include <linux/kernel.h>
 #include <linux/mbuffer.h>
 #include <linux/bbuffer.h>
+#include <linux/threads.h>
 
 #ifndef _MCOMM_H
 #define _MCOMM_H
 
-#define MAX_CPUS 64
+#define MAX_CPUS NR_CPUS //64
 #define MAX_ARRAY MAX_CPUS
 #define MAX_BITMAP 4
 

@@ -8,11 +8,40 @@
 #include <linux/kthread.h>
 #include <linux/export.h>
 #include <linux/delay.h>
+#include <linux/smp.h>
+#include <linux/threads.h> // NR_CPUS
+#include <linux/process_server.h>
+
+#define RCV_BUF_SZ 1024
 
 /**
  * Module variables
  */
 static struct task_struct* process_server_task;     // Remember the kthread task_struct
+static comm_buffers* _comm_buf = NULL;
+static comm_mapping* _comm_map = NULL;
+static int _initialized = 0;
+static int _cpu = -1;
+static char _rcv_buf[RCV_BUF_SZ];
+
+/**
+ *
+ * Public API
+ */
+int test_process_server() {
+    if(!_initialized) {
+        return -1;
+    }
+
+
+
+    return 1;
+}
+
+
+/**
+ * Kthread implementation
+ */
 
 /**
  * process_server
@@ -20,23 +49,60 @@ static struct task_struct* process_server_task;     // Remember the kthread task
  */
 static int process_server(void* dummy) {
 
-    
+    int rcved = -1;
+    int i = 0;
     unsigned long timeout = 1;  // Process loop wait duration
 
+    // Initialize knowledge of local environment
+    printk("kmkprocsrv: Getting processor ID\r\n");
+    _cpu = smp_processor_id();
+    printk("kmkprocsrv: Processor ID: %d\r\n",_cpu);
+    printk("kmkprocsrv: Number of cpus detected: %d\r\n",NR_CPUS);
+
     // Initialize the communications module
+    _comm_map = matrix_init_mapping(RCV_BUF_SZ,NR_CPUS);
+    _comm_buf = matrix_init_buffers(_comm_map , _cpu );
+    if(NULL == &_comm_buf) goto error_init_buffers;
+    if(NULL == &_comm_map) goto error_init_mapping;
+    printk("kmkprocsrv: Initialized local process server\r\n");
+    _initialized = 1;
 
     while (1) {
 
         // Check for work to do.
+        // Look for input from all CPUs
+        for(i = 0; i < NR_CPUS; i++) {
+            
+            // Hello!
+            //printk("kmkprocsrv: Checking for messages\r\n");
+
+            // Don't read from self.
+            if( i == _cpu) continue;
+
+            rcved = matrix_recv_from( _comm_buf, i, _rcv_buf, RCV_BUF_SZ);
+
+            // If input was found on this CPU, handle it.
+            if (rcved > 0) {
+                printk( "kmkprocsrv: Received data from %d\r\n", i );
+                printk( _rcv_buf );
+
+            }
+        }
 
         // Sleep a while
-		while (schedule_timeout_interruptible(timeout*HZ));
+		while ( schedule_timeout_interruptible( timeout*HZ ) );
 
     }
 
-error:
 
-    // Finalize the communications module
+    // Should not reach
+
+    matrix_finalize_mapping( _comm_map );
+
+error_init_mapping:
+error_init_buffers:
+
+    printk("pmkprocsrv: Error, exiting\r\n");
 
     return 0;
 }
@@ -56,7 +122,7 @@ static int __init process_server_init(void) {
  * Register process server init function as
  * module initialization function.
  */
-module_init(process_server_init);
+late_initcall(process_server_init);
 
 
 
