@@ -360,6 +360,7 @@ comm_buffers * matrix_init_buffers(comm_mapping * map, int id)
 
 	/* reload the arguments */
 	elements = map->matrix->elements;
+    printk("mcomm: matrix_init_buffers - map->matrix->elements: %d\r\n", map->matrix->elements);
 	bbuf_size = map->row[id]->csize;
 
 	/* create a comm_buffers descriptor */
@@ -396,14 +397,20 @@ int matrix_send_to(comm_buffers * buffs, int dest, char* buff, int count)
 	register bbuffer_t * bb;
 
 	/* check if the vector is valid */
-	if (!buffs)
+	if (!buffs) {
+        printk("mcomm: matrix_send_to - buffs invalid\r\n");
 		return 0;
+    }
 	/* check if the cpu is in range */
-	if (!(dest < buffs->elements))
+	if (!(dest < buffs->elements)) {
+        printk("mcomm: matrix_send_to - cpu out of range. Dst: %d, Elements: %d\r\n",dest,buffs->elements);
 		return 0;
+    }
 	/* check if the destination recv buffer is registered */
-	if (!(bb = buffs->send[dest].buf))
+	if (!(bb = buffs->send[dest].buf)) {
+        printk("mcomm: matrix_send_to - destination recv buffer not registered\r\n");
 		return 0;
+    }
 
 	register int a;
 #ifdef USE_MBUFFER

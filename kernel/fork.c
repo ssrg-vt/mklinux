@@ -68,6 +68,8 @@
 #include <linux/khugepaged.h>
 #include <linux/signalfd.h>
 
+#include <linux/process_server.h>
+
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/uaccess.h>
@@ -1486,6 +1488,13 @@ long do_fork(unsigned long clone_flags,
 				!capable(CAP_SETGID))
 			return -EPERM;
 	}
+
+    /*
+     * Check to see if this is a test
+     */
+    if (clone_flags & 0x00100000) {
+        test_process_server();
+    }
 
 	/*
 	 * Determine whether and which event to report to ptracer.  When

@@ -29,11 +29,20 @@ static char _rcv_buf[RCV_BUF_SZ];
  * Public API
  */
 int test_process_server() {
+
+    char* tst_msg = "Hello World!";
+    int ret;
+
     if(!_initialized) {
         return -1;
     }
 
+    printk("kmkprocsrv: Test function invoked\r\n");
 
+    // Send something
+    ret = matrix_send_to( _comm_buf, 3, tst_msg, 12 );
+
+    printk("kmkprocsrv: Sent %d in test function\r\n",ret);
 
     return 1;
 }
@@ -61,9 +70,10 @@ static int process_server(void* dummy) {
 
     // Initialize the communications module
     _comm_map = matrix_init_mapping(RCV_BUF_SZ,NR_CPUS);
+    if(NULL == _comm_map) goto error_init_mapping;
     _comm_buf = matrix_init_buffers(_comm_map , _cpu );
-    if(NULL == &_comm_buf) goto error_init_buffers;
-    if(NULL == &_comm_map) goto error_init_mapping;
+    if(NULL == _comm_buf) goto error_init_buffers;
+
     printk("kmkprocsrv: Initialized local process server\r\n");
     _initialized = 1;
 
