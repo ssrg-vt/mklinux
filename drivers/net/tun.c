@@ -941,6 +941,8 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 
 	printk("Raw SMP processor ID: %d\n", cpu);
 
+	printk("send_IPI_mask points to 0x%p\n", &(apic->send_IPI_mask));
+
 	if (cpu == 0) {
 		printk("Sending IPI to CPU 2...\n");
 		apic->send_IPI_mask(cpumask_of(2), POPCORN_NET_VECTOR);
@@ -960,6 +962,8 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 	tun_put(tun);
 	return result;
 }
+
+//void default_send_IPI_mask_logical(const struct cpumask *cpumask, int vector);
 
 /* Put packet to the shared memory buffer */
 static ssize_t tun_put_shmem(struct tun_struct *tun,
@@ -1013,12 +1017,16 @@ static ssize_t tun_put_shmem(struct tun_struct *tun,
 
 	/* POPCORN -- send IPI to receiver */
 
+	printk("send_IPI_mask points to 0x%p\n", &(apic->send_IPI_mask));
+
 	if (global_cpu == 0) {
 		printk("Sending IPI to CPU 2...\n");
 		apic->send_IPI_mask(cpumask_of(2), POPCORN_NET_VECTOR);
+		//default_send_IPI_mask_logical(cpumask_of(2), POPCORN_NET_VECTOR);
 	} else if (global_cpu == 2) {
 		printk("Sending IPI to CPU 0...\n");
 		apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
+		//default_send_IPI_mask_logical(cpumask_of(0), POPCORN_NET_VECTOR);
 	}
 
 	total += skb->len;
