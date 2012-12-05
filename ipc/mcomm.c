@@ -174,19 +174,29 @@ static int matrix_init_matrix (matrix_comm ** pmatrix, int elements)
 		}
 	}
 	else {
+        printk("mcomm: Initializing matrix\n");
 		// it was never initialized before,
 		need_init =1;
 
 		//Initialize the main matrix descriptor
 		memcpy(matrix, matrix_magic, 4);
+        matrix->lock = 0;
 		matrix->elements = elements;
-		matrix->lock = 0;
-		memset (&(matrix->present), 0, sizeof(bitmask_t));
-		memset (&(matrix->desc[0]), 0, sizeof(void*) * elements);
+        printk("mcomm: Set matrix elements to %d\n",matrix->elements);
+		//matrix->lock = 0;
+        printk("mcomm: Verified(0) matrix elements to be %d\n",matrix->elements);
+		//memset (&(matrix->present), 0, sizeof(bitmask_t));
+        memset (matrix->present, 0, sizeof(matrix->present));
+        printk("mcomm: Verified(1) matrix elements to be %d\n",matrix->elements);
+		//memset (&(matrix->desc[0]), 0, sizeof(void*) * elements);
+        memset (matrix->desc, 0, sizeof(matrix->desc));
+        printk("mcomm: Verified(2) matrix elements to be %d\n",matrix->elements);
 	}
 
-	if (pmatrix)
+	if (pmatrix) {
+        printk("mcomm: Setting pmatrix out\n");
 		*pmatrix = matrix;
+    }
 
 	return need_init;
 }
@@ -306,6 +316,8 @@ comm_mapping * matrix_init_mapping (int size, int elements )
 	need_init = matrix_init_matrix( &matrix, elements);
 	if (need_init == -1)
 		return 0;
+
+    printk("mcomm: matrix_init_mapping - matrix->elements: %d\r\n", matrix->elements);
 
 	// create a comm_mapping descriptor
 	comm_mapping * map = (comm_mapping*)
@@ -471,9 +483,6 @@ int matrix_recv_self(comm_buffers* buffs, char* buff, int count)
 static comm_mapping* cmap;
 static comm_buffers* cbuf;
 
-#define COMM_BUFFS_SIZE 0x2000
-#define COMM_CPU_NUM 8
-
 static int __init mcomm_init(void)
 {
 	if ( !mcomm_address ) {
@@ -485,7 +494,9 @@ static int __init mcomm_init(void)
 	printk("MATRIX Communicator @ 0x%lx cpuid %d. Initialization\n",
 			mcomm_address, smp_processor_id());
 
-	alloc_init((void*)mcomm_address, 0);
+	if(-1 == alloc_init((void*)mcomm_address, 0)) {
+        printk("MATRIX Communicator alloc_init error\n");
+    }
 
 	cmap = matrix_init_mapping(COMM_BUFFS_SIZE, COMM_CPU_NUM);
 	cbuf = matrix_init_buffers(cmap, smp_processor_id());

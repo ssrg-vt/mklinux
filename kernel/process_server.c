@@ -69,7 +69,7 @@ static int process_server(void* dummy) {
     printk("kmkprocsrv: Number of cpus detected: %d\r\n",NR_CPUS);
 
     // Initialize the communications module
-    _comm_map = matrix_init_mapping(RCV_BUF_SZ,NR_CPUS);
+    _comm_map = matrix_init_mapping(COMM_BUFFS_SIZE,COMM_CPU_NUM);
     if(NULL == _comm_map) goto error_init_mapping;
     _comm_buf = matrix_init_buffers(_comm_map , _cpu );
     if(NULL == _comm_buf) goto error_init_buffers;
