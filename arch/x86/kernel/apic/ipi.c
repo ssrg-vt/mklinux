@@ -30,12 +30,14 @@ void default_send_IPI_mask_sequence_phys(const struct cpumask *mask, int vector)
 	 * - mbligh
 	 */
 
-	printk("Called default_send_IPI_mask_sequence_phys, vector %d\n", vector);
+	//printk("Called default_send_IPI_mask_sequence_phys, vector %d\n", vector);
 
 	local_irq_save(flags);
 	for_each_cpu(query_cpu, mask) {
+		/*
 		printk("Looping through mask; sending IPI to CPU %lu, apicid %d\n",
 			query_cpu, per_cpu(x86_bios_cpu_apicid, query_cpu));
+		*/
 		__default_send_IPI_dest_field(per_cpu(x86_bios_cpu_apicid,
 				query_cpu), vector, APIC_DEST_PHYSICAL);
 	}
@@ -114,7 +116,7 @@ void default_send_IPI_mask_logical(const struct cpumask *cpumask, int vector)
 	if (WARN_ONCE(!mask, "empty IPI mask"))
 		return;
 
-	printk("default_send_IPI_mask_logical: mask 0x%lx, dest_logical %d\n", mask, apic->dest_logical);
+	//printk("default_send_IPI_mask_logical: mask 0x%lx, dest_logical %d\n", mask, apic->dest_logical);
 
 	local_irq_save(flags);
 	WARN_ON(mask & ~cpumask_bits(cpu_online_mask)[0]);

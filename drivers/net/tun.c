@@ -179,7 +179,7 @@ int rb_put(rb_t *rbuf, char *data, int len) {
 		rbuf->buffer[rbuf->head & RB_MASK].pkt_len = len;
 		memcpy(&(rbuf->buffer[(rbuf->head & RB_MASK)].data), data, len);
 		rbuf->head++;
-		printk("RBUF PUT: head %lld, tail %lld\n", rbuf->head, rbuf->tail);
+		//printk("RBUF PUT: size %lld, head %lld, tail %lld\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
 		return 0;
 	} else {
 		return -1;
@@ -192,7 +192,7 @@ int rb_get(rb_t *rbuf, shmem_pkt_t **pkt) {
 		//pkt->pkt_len = rbuf->buffer[rbuf->tail & RB_MASK].pkt_len;
 		//memcpy(&(pkt->data), &(rbuf->buffer[(rbuf->tail & RB_MASK)].data), pkt->pkt_len);
 		//rbuf->tail++;
-		printk("RBUF GET: head %lld, tail %lld\n", rbuf->head, rbuf->tail);
+		//printk("RBUF GET: size %lld, head %lld, tail %lld\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
 		return 0;
 	} else {
 		return -1;
@@ -224,7 +224,11 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 	int i;
 
 	ack_APIC_irq();
-	printk("Interrupt received!\n");
+	//printk("Interrupt received!\n");
+
+	inc_irq_stat(irq_popcorn_net_count);
+
+	irq_enter();
 
 	if (SHMTUN_IS_SERVER) {
 		/* need to go through all the buffers round-robin */
@@ -232,7 +236,7 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 			cycle_again = 0;
 			for (i = 0; i < SHMTUN_MAX_CPUS; i++) {
 				if (tun_get_shmem(&(shmem_window[i].to_host))) {
-					printk("HOST: got a packet from buffer %d\n", i);
+					//printk("HOST: got a packet from buffer %d\n", i);
 					cycle_again = 1;
 				}
 			}
@@ -240,9 +244,15 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 	} else {
 		/* only need to check my own buffer */
 		while (tun_get_shmem(&(shmem_window[global_cpu].to_guest))) {
-			printk("GUEST: Got a packet out, trying for another...\n");
+			//printk("GUEST: Got a packet out, trying for another...\n");
 		}
 	}
+
+	/* Need to do this last! */
+	//ack_APIC_irq();
+	//inc_irq_stat(irq_popcorn_net_count);
+
+	irq_exit();
 
 	return;
 }
@@ -750,11 +760,11 @@ static ssize_t tun_get_shmem(rb_t *rbuf)
 	rc = rb_get(rbuf, &pkt);
 
 	if (rc) {
-		printk("No packet in ring buffer, returning...\n");
+		//printk("No packet in ring buffer, returning...\n");
 		return 0;
 	}
 
-	printk("Received packet of pkt_len %d\n", pkt->pkt_len);
+	//printk("Received packet of pkt_len %d\n", pkt->pkt_len);
 
 	skb = dev_alloc_skb(pkt->pkt_len + 2);
 
@@ -787,7 +797,7 @@ static ssize_t tun_get_shmem(rb_t *rbuf)
 	}
 
 	/* finally, receive packet */
-	printk("Handing off packet...\n");
+	//printk("Handing off packet...\n");
 	netif_rx(skb);
 
 	return pkt->pkt_len;	
@@ -974,7 +984,7 @@ static ssize_t tun_put_shmem(struct tun_struct *tun,
 	ssize_t total = 0;
 	rb_t *send_buf;
 
-	printk("Called tun_put_shmem, len = %d\n", skb->len);
+	//printk("Called tun_put_shmem, len = %d\n", skb->len);
 
 	/* code from LDD3 example */
 	data = skb->data;
@@ -985,12 +995,12 @@ static ssize_t tun_put_shmem(struct tun_struct *tun,
 		len = ETH_ZLEN;
 		data = shortpkt;
 	}
-
+	/*
 	printk("SEND from %d.%d.%d.%d to %d.%d.%d.%d\n",
 			(int) data[12], (int) data[13], (int) data[14], (int) data[15],
 			(int) data[16], (int) data[17], (int) data[18], (int) data[19]
 	      );
-
+	*/
 	if (0) { /* enable this conditional to look at the data */
 		int i;
 		printk("len is %i\n" KERN_DEBUG "data:",len);
@@ -1017,14 +1027,14 @@ static ssize_t tun_put_shmem(struct tun_struct *tun,
 
 	/* POPCORN -- send IPI to receiver */
 
-	printk("send_IPI_mask points to 0x%p\n", &(apic->send_IPI_mask));
+	//printk("send_IPI_mask points to 0x%p\n", &(apic->send_IPI_mask));
 
 	if (global_cpu == 0) {
-		printk("Sending IPI to CPU 2...\n");
+		//printk("Sending IPI to CPU 2...\n");
 		apic->send_IPI_mask(cpumask_of(2), POPCORN_NET_VECTOR);
 		//default_send_IPI_mask_logical(cpumask_of(2), POPCORN_NET_VECTOR);
 	} else if (global_cpu == 2) {
-		printk("Sending IPI to CPU 0...\n");
+		//printk("Sending IPI to CPU 0...\n");
 		apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
 		//default_send_IPI_mask_logical(cpumask_of(0), POPCORN_NET_VECTOR);
 	}
