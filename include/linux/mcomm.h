@@ -132,6 +132,8 @@ typedef struct _comm_mapping {
 comm_mapping * matrix_init_mapping (int size, int elements);
 comm_buffers * matrix_init_buffers (comm_mapping * map, int id);
 
+comm_buffers* matrix_get_buffers(void);
+
 void matrix_finalize_buffers(comm_mapping * map);
 void matrix_finalize_mapping(comm_mapping * map);
 

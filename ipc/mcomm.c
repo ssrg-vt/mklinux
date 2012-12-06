@@ -29,6 +29,9 @@
  #include <linux/mbuffer.h>
 #endif /* USE_MBUFFER */
 
+static comm_mapping* cmap;
+static comm_buffers* cbuf;
+
 /////////////////////////////////////////////////////////////////////
 // bitmask support
 /////////////////////////////////////////////////////////////////////
@@ -480,8 +483,10 @@ int matrix_recv_self(comm_buffers* buffs, char* buff, int count)
 	return matrix_recv_from(buffs, buffs->id, buff, count);
 }
 
-static comm_mapping* cmap;
-static comm_buffers* cbuf;
+comm_buffers* matrix_get_buffers() {
+    return cbuf;
+}
+
 
 static int __init mcomm_init(void)
 {
