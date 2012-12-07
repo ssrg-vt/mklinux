@@ -170,11 +170,11 @@ typedef struct shmem_tun {
 	int	int_enabled;
 } shmem_tun_t;
 
-unsigned long rb_inuse(rb_t *rbuf) {
+static inline unsigned long rb_inuse(rb_t *rbuf) {
 	return rbuf->head - rbuf->tail;
 }
 
-int rb_put(rb_t *rbuf, char *data, int len) {
+static inline int rb_put(rb_t *rbuf, char *data, int len) {
 	if (rb_inuse(rbuf) != RB_SIZE) {
 		rbuf->buffer[rbuf->head & RB_MASK].pkt_len = len;
 		memcpy(&(rbuf->buffer[(rbuf->head & RB_MASK)].data), data, len);
@@ -186,7 +186,7 @@ int rb_put(rb_t *rbuf, char *data, int len) {
 	}
 }
 
-int rb_get(rb_t *rbuf, shmem_pkt_t **pkt) {
+static inline int rb_get(rb_t *rbuf, shmem_pkt_t **pkt) {
 	if (rb_inuse(rbuf) != 0) {
 		*pkt = &(rbuf->buffer[rbuf->tail & RB_MASK]);
 		//pkt->pkt_len = rbuf->buffer[rbuf->tail & RB_MASK].pkt_len;
@@ -199,7 +199,7 @@ int rb_get(rb_t *rbuf, shmem_pkt_t **pkt) {
 	}
 }
 
-void rb_advance_tail(rb_t *rbuf) {
+static inline void rb_advance_tail(rb_t *rbuf) {
 	rbuf->tail++;	
 }
 
@@ -955,10 +955,10 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 
 	if (cpu == 0) {
 		printk("Sending IPI to CPU 2...\n");
-		apic->send_IPI_mask(cpumask_of(2), POPCORN_NET_VECTOR);
+		apic->send_IPI_single(2, POPCORN_NET_VECTOR);
 	} else if (cpu == 2) {
 		printk("Sending IPI to CPU 0...\n");
-		apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
+		apic->send_IPI_single(0, POPCORN_NET_VECTOR);
 	}
 
 	if (!tun)
@@ -973,13 +973,11 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 	return result;
 }
 
-//void default_send_IPI_mask_logical(const struct cpumask *cpumask, int vector);
-
 /* Put packet to the shared memory buffer */
 static ssize_t tun_put_shmem(struct tun_struct *tun,
 		struct sk_buff *skb)
 {
-	int rc, len;
+	int rc, len, sendto_cpu = 0;
 	char *data, shortpkt[ETH_ZLEN];
 	ssize_t total = 0;
 	rb_t *send_buf;
@@ -1009,8 +1007,11 @@ static ssize_t tun_put_shmem(struct tun_struct *tun,
 		printk("\n");
 	}
 
+	
+
 	if (SHMTUN_IS_SERVER) {
-		send_buf = &(shmem_window[data[19] - 1].to_guest);
+		sendto_cpu = data[19] - 1;
+		send_buf = &(shmem_window[sendto_cpu].to_guest);
 	} else {
 		/* client sends to server and server forwards */
 		send_buf = &(shmem_window[data[15] - 1].to_host);
@@ -1028,15 +1029,17 @@ static ssize_t tun_put_shmem(struct tun_struct *tun,
 	/* POPCORN -- send IPI to receiver */
 
 	//printk("send_IPI_mask points to 0x%p\n", &(apic->send_IPI_mask));
+	//printk("send_IPI_single points to 0x%p\n", &(apic->send_IPI_single));
 
-	if (global_cpu == 0) {
+
+	if (SHMTUN_IS_SERVER) {
 		//printk("Sending IPI to CPU 2...\n");
-		apic->send_IPI_mask(cpumask_of(2), POPCORN_NET_VECTOR);
-		//default_send_IPI_mask_logical(cpumask_of(2), POPCORN_NET_VECTOR);
-	} else if (global_cpu == 2) {
+		apic->send_IPI_single(sendto_cpu, POPCORN_NET_VECTOR);
+		//apic->send_IPI_mask(cpumask_of(sendto_cpu), POPCORN_NET_VECTOR);
+	} else {
 		//printk("Sending IPI to CPU 0...\n");
-		apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
-		//default_send_IPI_mask_logical(cpumask_of(0), POPCORN_NET_VECTOR);
+		apic->send_IPI_single(0, POPCORN_NET_VECTOR);
+		//apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
 	}
 
 	total += skb->len;

@@ -91,6 +91,13 @@ static void flat_send_IPI_mask(const struct cpumask *cpumask, int vector)
 	_flat_send_IPI_mask(mask, vector);
 }
 
+static void flat_send_IPI_single(int cpu, int vector)
+{
+	unsigned long mask = cpumask_bits(cpumask_of(cpu))[0];
+
+	_flat_send_IPI_mask(mask, vector);
+}
+
 static void
  flat_send_IPI_mask_allbutself(const struct cpumask *cpumask, int vector)
 {
@@ -212,6 +219,7 @@ static struct apic apic_flat =  {
 	.send_IPI_allbutself		= flat_send_IPI_allbutself,
 	.send_IPI_all			= flat_send_IPI_all,
 	.send_IPI_self			= apic_send_IPI_self,
+	.send_IPI_single		= flat_send_IPI_single,
 
 	.trampoline_phys_low		= DEFAULT_TRAMPOLINE_PHYS_LOW,
 	.trampoline_phys_high		= DEFAULT_TRAMPOLINE_PHYS_HIGH,
@@ -269,6 +277,11 @@ static void physflat_vector_allocation_domain(int cpu, struct cpumask *retmask)
 static void physflat_send_IPI_mask(const struct cpumask *cpumask, int vector)
 {
 	default_send_IPI_mask_sequence_phys(cpumask, vector);
+}
+
+static void physflat_send_IPI_single(int cpu, int vector)
+{
+	default_send_IPI_single_phys(cpu, vector);
 }
 
 static void physflat_send_IPI_mask_allbutself(const struct cpumask *cpumask,
@@ -370,6 +383,7 @@ static struct apic apic_physflat =  {
 	.send_IPI_allbutself		= physflat_send_IPI_allbutself,
 	.send_IPI_all			= physflat_send_IPI_all,
 	.send_IPI_self			= apic_send_IPI_self,
+	.send_IPI_single		= physflat_send_IPI_single,
 
 	.trampoline_phys_low		= DEFAULT_TRAMPOLINE_PHYS_LOW,
 	.trampoline_phys_high		= DEFAULT_TRAMPOLINE_PHYS_HIGH,

@@ -44,8 +44,22 @@ void default_send_IPI_mask_sequence_phys(const struct cpumask *mask, int vector)
 	local_irq_restore(flags);
 }
 
+void default_send_IPI_single_phys(int cpu, int vector)
+{
+	unsigned long flags;
+
+	//printk("Called default_send_IPI_single_phys, cpu = %d, vector %d\n", cpu, vector);
+
+	local_irq_save(flags);
+
+	__default_send_IPI_dest_field(per_cpu(x86_bios_cpu_apicid,
+				cpu), vector, APIC_DEST_PHYSICAL);
+
+	local_irq_restore(flags);
+}
+
 void default_send_IPI_mask_allbutself_phys(const struct cpumask *mask,
-						 int vector)
+		int vector)
 {
 	unsigned int this_cpu = smp_processor_id();
 	unsigned int query_cpu;
@@ -58,7 +72,7 @@ void default_send_IPI_mask_allbutself_phys(const struct cpumask *mask,
 		if (query_cpu == this_cpu)
 			continue;
 		__default_send_IPI_dest_field(per_cpu(x86_cpu_to_apicid,
-				 query_cpu), vector, APIC_DEST_PHYSICAL);
+					query_cpu), vector, APIC_DEST_PHYSICAL);
 	}
 	local_irq_restore(flags);
 }
