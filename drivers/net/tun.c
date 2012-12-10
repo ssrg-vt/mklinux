@@ -204,17 +204,29 @@ static inline void rb_advance_tail(rb_t *rbuf) {
 }
 
 #define SHMTUN_MAX_CPUS 4
-#define SHMEM_PHYS_ADDR 0x100000000LLU
-#define SHMEM_SIZE 0x1000000
+#define SHMEM_SIZE 0x2000000
+
+unsigned long long global_shmtun_phys_addr = 0l;
+
+static int __init _setup_shmtun_offset(char *str)
+{
+	global_shmtun_phys_addr = simple_strtoull(str, 0, 16);
+	printk(KERN_ALERT "SHMTUN offset %llx\n", global_shmtun_phys_addr);
+	return 0;
+}
+early_param("shmtun_offset", _setup_shmtun_offset);
 
 static shmem_tun_t *shmem_window;
 
+static struct sk_buff * tun_get_pkt_from_rbuf(rb_t *rbuf);
 static ssize_t tun_get_shmem(rb_t *rbuf);
 static ssize_t tun_put_shmem(struct tun_struct *tun,
 		                struct sk_buff *skb);
+static int shmtun_napi_handler(struct napi_struct *napi, int budget);
 
 static struct tun_struct *global_tun = NULL;
 static int global_cpu = 0;
+static struct napi_struct global_napi;
 
 #define SHMTUN_IS_SERVER (global_cpu == 0)
 
@@ -227,6 +239,9 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 	//printk("Interrupt received!\n");
 
 	inc_irq_stat(irq_popcorn_net_count);
+
+	
+#if 0
 
 	irq_enter();
 
@@ -253,8 +268,67 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 	//inc_irq_stat(irq_popcorn_net_count);
 
 	irq_exit();
+#endif
+
+	/* NAPI stuff */
+
+	if (likely(napi_schedule_prep(&global_napi))) {
+		/* Disable RX interrupt */
+		shmem_window[global_cpu].int_enabled = 0;	
+
+		/* Schedule NAPI processing */
+		__napi_schedule(&global_napi);
+	}
 
 	return;
+}
+
+static struct sk_buff * shmtun_rx_next_pkt(void)
+{
+	struct sk_buff *skb;
+	static int cur_cpu = 0; 
+	
+	int start_cpu;
+
+	if (SHMTUN_IS_SERVER) {
+
+		start_cpu = cur_cpu;
+
+		/* need to go through all the buffers round-robin */
+		do {
+			if ((skb = tun_get_pkt_from_rbuf(&(shmem_window[cur_cpu % SHMTUN_MAX_CPUS].to_host)))) {
+				break;
+			}
+			cur_cpu = (cur_cpu + 1) % SHMTUN_MAX_CPUS;
+		} while (cur_cpu != start_cpu);
+	} else {
+		/* only need to check my own buffer */
+		skb = tun_get_pkt_from_rbuf(&(shmem_window[global_cpu].to_guest));
+	}
+
+	return skb;
+}
+
+static int shmtun_napi_handler(struct napi_struct *napi, int budget)
+{
+	struct sk_buff *skb;
+	int work_done = 0;
+
+	/* go through ring buffer and get packets, up to budget */
+
+	while ((skb = shmtun_rx_next_pkt()) && work_done < budget) {
+		napi_gro_receive(napi, skb);
+		work_done++;
+	}
+
+	if (work_done < budget) {
+		napi_gro_flush(napi);
+		__napi_complete(napi);
+		/* turn interrupts back on */
+		shmem_window[global_cpu].int_enabled = 1;
+	}
+
+	return work_done;
 }
 
 static int tun_attach(struct tun_struct *tun, struct file *file)
@@ -642,7 +716,7 @@ static void tun_net_init(struct net_device *dev)
 
 	printk("Called tun_net_init!\n");
 
-	shmem_window = ioremap_nocache(SHMEM_PHYS_ADDR, SHMEM_SIZE);
+	shmem_window = ioremap_nocache(global_shmtun_phys_addr, SHMEM_SIZE);
 
 	printk("Mapped shared memory window, virt addr 0x%p\n", shmem_window);
 
@@ -653,9 +727,13 @@ static void tun_net_init(struct net_device *dev)
 
 	if (global_cpu == 0) {
 		printk("We're the server...\n");
-	} else if (global_cpu == 2) {
+	} else {
 		printk("We're the client...\n");
 	}
+
+	netif_napi_add(dev, &global_napi, shmtun_napi_handler, 64);
+
+	napi_enable(&global_napi);
 
 	switch (tun->flags & TUN_TYPE_MASK) {
 		case TUN_TUN_DEV:
@@ -750,8 +828,7 @@ static struct sk_buff *tun_alloc_skb(struct tun_struct *tun,
 	return skb;
 }
 
-/* Get a packet out of the shared memory ring buffer. */
-static ssize_t tun_get_shmem(rb_t *rbuf)
+static struct sk_buff * tun_get_pkt_from_rbuf(rb_t *rbuf)
 {
 	struct sk_buff *skb;
 	struct shmem_pkt *pkt;
@@ -761,7 +838,7 @@ static ssize_t tun_get_shmem(rb_t *rbuf)
 
 	if (rc) {
 		//printk("No packet in ring buffer, returning...\n");
-		return 0;
+		return NULL;
 	}
 
 	//printk("Received packet of pkt_len %d\n", pkt->pkt_len);
@@ -770,7 +847,7 @@ static ssize_t tun_get_shmem(rb_t *rbuf)
 
 	if (!skb) {
 		printk("Unable to allocate skb for received packet; dropping it!\n");
-		return -1;
+		return NULL;
 	}
 
 	skb_reserve(skb, 2);  /* align IP on 16B boundary */
@@ -784,6 +861,24 @@ static ssize_t tun_get_shmem(rb_t *rbuf)
 	skb_reset_mac_header(skb);
 	skb->dev = global_tun->dev;
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
+
+	return skb;
+}
+
+/* Get a packet out of the shared memory ring buffer
+ * and deliver it directly to the networking stack. */
+static ssize_t tun_get_shmem(rb_t *rbuf)
+{
+	struct sk_buff *skb;
+	struct shmem_pkt *pkt;
+	int rc;
+
+	skb = tun_get_pkt_from_rbuf(rbuf);
+
+	if (unlikely(!skb)) {
+		//printk("No packet in ring buffer, returning...\n");
+		return 0;
+	}
 
 	global_tun->dev->stats.rx_packets++;
 	global_tun->dev->stats.rx_bytes += pkt->pkt_len;
@@ -800,7 +895,7 @@ static ssize_t tun_get_shmem(rb_t *rbuf)
 	//printk("Handing off packet...\n");
 	netif_rx(skb);
 
-	return pkt->pkt_len;	
+	return 1;	
 }
 
 /* Get packet from user space buffer */
@@ -1031,15 +1126,18 @@ static ssize_t tun_put_shmem(struct tun_struct *tun,
 	//printk("send_IPI_mask points to 0x%p\n", &(apic->send_IPI_mask));
 	//printk("send_IPI_single points to 0x%p\n", &(apic->send_IPI_single));
 
+	/* POPCORN -- if RX interrupts are disabled, don't send IPI */
 
-	if (SHMTUN_IS_SERVER) {
-		//printk("Sending IPI to CPU 2...\n");
-		apic->send_IPI_single(sendto_cpu, POPCORN_NET_VECTOR);
-		//apic->send_IPI_mask(cpumask_of(sendto_cpu), POPCORN_NET_VECTOR);
-	} else {
-		//printk("Sending IPI to CPU 0...\n");
-		apic->send_IPI_single(0, POPCORN_NET_VECTOR);
-		//apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
+	if (shmem_window[sendto_cpu].int_enabled) {
+		if (SHMTUN_IS_SERVER) {
+			//printk("Sending IPI to CPU 2...\n");
+			apic->send_IPI_single(sendto_cpu, POPCORN_NET_VECTOR);
+			//apic->send_IPI_mask(cpumask_of(sendto_cpu), POPCORN_NET_VECTOR);
+		} else {
+			//printk("Sending IPI to CPU 0...\n");
+			apic->send_IPI_single(0, POPCORN_NET_VECTOR);
+			//apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
+		}
 	}
 
 	total += skb->len;
