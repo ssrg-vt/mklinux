@@ -179,7 +179,7 @@ static inline int rb_put(rb_t *rbuf, char *data, int len) {
 		rbuf->buffer[rbuf->head & RB_MASK].pkt_len = len;
 		memcpy(&(rbuf->buffer[(rbuf->head & RB_MASK)].data), data, len);
 		rbuf->head++;
-		printk("RBUF PUT: size %lu, head %lu, tail %lu\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
+		//printk("RBUF PUT: size %lu, head %lu, tail %lu\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
 		return 0;
 	} else {
 		return -1;
@@ -192,7 +192,7 @@ static inline int rb_get(rb_t *rbuf, shmem_pkt_t **pkt) {
 		//pkt->pkt_len = rbuf->buffer[rbuf->tail & RB_MASK].pkt_len;
 		//memcpy(&(pkt->data), &(rbuf->buffer[(rbuf->tail & RB_MASK)].data), pkt->pkt_len);
 		//rbuf->tail++;
-		printk("RBUF GET: size %lu, head %lu, tail %lu\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
+		//printk("RBUF GET: size %lu, head %lu, tail %lu\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
 		return 0;
 	} else {
 		return -1;
@@ -236,7 +236,7 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 	int i;
 
 	ack_APIC_irq();
-	printk("Interrupt received!\n");
+	//printk("Interrupt received!\n");
 
 	inc_irq_stat(irq_popcorn_net_count);
 
@@ -263,23 +263,27 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 	/* Need to do this last! */
 	//ack_APIC_irq();
 	//inc_irq_stat(irq_popcorn_net_count);
+
+	irq_exit()
+
 #endif
-	irq_exit();
 
 	/* NAPI stuff */
 
 	if (likely(napi_schedule_prep(&global_napi))) {
 		/* Disable RX interrupt */
 
-		printk("Turning off RX interrupt...\n");
+		//printk("Turning off RX interrupt...\n");
 
 		shmem_window[global_cpu].int_enabled = 0;	
 		
-		printk("Calling __napi_schedule...\n");
+		//printk("Calling __napi_schedule...\n");
 
 		/* Schedule NAPI processing */
 		__napi_schedule(&global_napi);
 	}
+
+	irq_exit();
 
 	return;
 }
@@ -315,7 +319,7 @@ static int shmtun_napi_handler(struct napi_struct *napi, int budget)
 	struct sk_buff *skb;
 	int work_done = 0;
 
-	printk("Called shmtun_napi_handler\n");
+	//printk("Called shmtun_napi_handler\n");
 
 	/* go through ring buffer and get packets, up to budget */
 
@@ -324,11 +328,11 @@ static int shmtun_napi_handler(struct napi_struct *napi, int budget)
 		work_done++;
 	}
 
-	printk("Total work done: %d\n", work_done);
+	//printk("Total work done: %d\n", work_done);
 
 	if (work_done < budget) {
 
-		printk("Going back to interrupt mode!\n");
+		//printk("Going back to interrupt mode!\n");
 
 		napi_gro_flush(napi);
 		__napi_complete(napi);
@@ -724,7 +728,7 @@ static void tun_net_init(struct net_device *dev)
 
 	printk("Called tun_net_init!\n");
 
-	shmem_window = ioremap_nocache(global_shmtun_phys_addr, SHMEM_SIZE);
+	shmem_window = ioremap_cache(global_shmtun_phys_addr, SHMEM_SIZE);
 
 	printk("Mapped shared memory window, virt addr 0x%p\n", shmem_window);
 
@@ -851,7 +855,7 @@ static struct sk_buff * tun_get_pkt_from_rbuf(rb_t *rbuf)
 		return NULL;
 	}
 
-	printk("Received packet of pkt_len %d\n", pkt->pkt_len);
+	//printk("Received packet of pkt_len %d\n", pkt->pkt_len);
 
 	skb = dev_alloc_skb(pkt->pkt_len + 2);
 
@@ -1087,7 +1091,7 @@ static ssize_t tun_put_shmem(struct tun_struct *tun,
 	ssize_t total = 0;
 	rb_t *send_buf;
 
-	printk("Called tun_put_shmem, len = %d\n", skb->len);
+	//printk("Called tun_put_shmem, len = %d\n", skb->len);
 
 	/* code from LDD3 example */
 	data = skb->data;
@@ -1141,7 +1145,7 @@ static ssize_t tun_put_shmem(struct tun_struct *tun,
 
 	if (shmem_window[sendto_cpu].int_enabled) {
 
-		printk("Interrupts enabled for CPU %d, sending IPI...\n", sendto_cpu);
+		//printk("Interrupts enabled for CPU %d, sending IPI...\n", sendto_cpu);
 
 		if (SHMTUN_IS_SERVER) {
 			//printk("Sending IPI to CPU 2...\n");
