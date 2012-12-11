@@ -1493,7 +1493,14 @@ long do_fork(unsigned long clone_flags,
      * Check to see if this is a test
      */
     if (clone_flags & 0x00100000) {
-        test_process_server();
+        process_server_clone(clone_flags,
+                             stack_start,
+                             regs,
+                             stack_size,
+                             parent_tidptr,
+                             child_tidptr,
+                             current);
+        //return 0;
     }
 
 	/*
@@ -1546,6 +1553,7 @@ long do_fork(unsigned long clone_flags,
 		p->flags &= ~PF_STARTING;
 
 		wake_up_new_task(p);
+        
 
 		/* forking complete and child started to run, tell ptracer */
 		if (unlikely(trace))

@@ -12,7 +12,7 @@
 #define MAX_BITMAP 4
 
 #define MAX_ELEMENTS MAX_CPUS //NR_CPUS
-#define COMM_BUFFS_SIZE 0x2000
+#define COMM_BUFFS_SIZE 0x4000
 #define COMM_CPU_NUM (NR_CPUS>8?8:NR_CPUS)//8
 
 typedef unsigned int bitmask_t;
