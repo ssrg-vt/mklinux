@@ -15,37 +15,29 @@
 #include <linux/path.h>
 #include <linux/mount.h>
 #include <linux/fs.h>
+#include <linux/slab.h>
 #include <linux/process_server.h>
 
 #define RCV_BUF_SZ 0x4000
 
 /**
- * External prototypes
- */
-long do_fork_specific(unsigned long clone_flags,
-                      unsigned long stack_start,                                                                                                                   
-                      struct pt_regs *regs,
-                      unsigned long stack_size,
-                      int __user *parent_tidptr,
-                      int __user *child_tidptr,
-                      struct task_struct* task);
-
-/**
- * Internal prototypes
- */
-
-/*
  * Message passing data type definitions
  */
 #define MAX_MSG_LEN sizeof(clone_request_t) // should always be the largest msg defined.
 #define PROCESS_SERVER_MSG_CLONE_REQUEST 1
 
+/**
+ *
+ */
 typedef struct _msg_header {
     int msg_type;
     int msg_len; // not including header
     int msg_id;
 } msg_header_t;
 
+/**
+ *
+ */
 typedef struct _clone_request {
     msg_header_t header;
     unsigned long clone_flags;
@@ -57,6 +49,27 @@ typedef struct _clone_request {
     struct task_struct* task_ptr;
     char exe_path[512];
 } clone_request_t;
+
+/**
+ * External prototypes
+ */
+
+/**
+ * Internal prototypes
+ */
+static void handle_clone_request(clone_request_t* request);
+static int msg_tx(int dst, void* data, int data_len);
+static void comms_handler(int source, char* data, int data_len);
+long process_server_clone(unsigned long clone_flags,
+                          unsigned long stack_start,                                                                                                                   
+                          struct pt_regs *regs,
+                          unsigned long stack_size,
+                          int __user *parent_tidptr,
+                          int __user *child_tidptr,
+                          struct task_struct* task);
+static int process_server(void* dummy);
+
+
 
 
 /**
@@ -73,7 +86,9 @@ static int _cpu = -1;
  */
 
 
-
+/**
+ *
+ */
 static void handle_clone_request(clone_request_t* request) {
     printk("Handling clone request: %lu\n",request->clone_flags);
     struct task_struct* ts = request->task_ptr;
@@ -98,6 +113,9 @@ static void handle_clone_request(clone_request_t* request) {
  * Message passing helper functions
  */
 
+/**
+ *
+ */
 static int msg_tx(int dst, void* data, int data_len) {
     int ret = -1;
     msg_header_t* msg = (msg_header_t*)data;
@@ -114,6 +132,9 @@ static int msg_tx(int dst, void* data, int data_len) {
     return ret;
 }
 
+/**
+ *
+ */
 static void comms_handler(int source, char* data, int data_len) {
     msg_header_t* hdr = NULL;
     if (data == NULL) {
@@ -150,6 +171,9 @@ error:
  * Public API
  */
 
+/**
+ *
+ */
 long process_server_clone(unsigned long clone_flags,
                           unsigned long stack_start,                                                                                                                   
                           struct pt_regs *regs,
@@ -202,11 +226,10 @@ long process_server_clone(unsigned long clone_flags,
 
     return 0;
 }
+
 /**
  * Kthread implementation
  */
-
-
 
 /**
  * process_server

@@ -68,7 +68,11 @@
 #include <linux/khugepaged.h>
 #include <linux/signalfd.h>
 
+/**
+ * DK
+ */
 #include <linux/process_server.h>
+#include <linux/sched.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -1489,20 +1493,6 @@ long do_fork(unsigned long clone_flags,
 			return -EPERM;
 	}
 
-    /*
-     * Check to see if this is a test
-     */
-    if (clone_flags & 0x00100000) {
-        process_server_clone(clone_flags,
-                             stack_start,
-                             regs,
-                             stack_size,
-                             parent_tidptr,
-                             child_tidptr,
-                             current);
-        //return 0;
-    }
-
 	/*
 	 * Determine whether and which event to report to ptracer.  When
 	 * called from kernel_thread or CLONE_UNTRACED is explicitly
@@ -1551,20 +1541,42 @@ long do_fork(unsigned long clone_flags,
 		 * and set the child going.
 		 */
 		p->flags &= ~PF_STARTING;
-
-		wake_up_new_task(p);
         
+        p->represents_remote = 0;
 
-		/* forking complete and child started to run, tell ptracer */
-		if (unlikely(trace))
-			ptrace_event(trace, nr);
+        if (clone_flags & 0x02000000) {
+            
+            // This will be a placeholder process for the remote
+            // process that is subsequently going to be started.
+            // Block its execution.
+            sigaddset(&p->pending.signal,SIGSTOP);
+            set_tsk_thread_flag(p,TIF_SIGPENDING);
+            __set_task_state(p,TASK_UNINTERRUPTIBLE);
+            
+            // Spin up remote process.
+            process_server_clone(clone_flags,
+                    stack_start,
+                    regs,
+                    stack_size,
+                    parent_tidptr,
+                    child_tidptr,
+                    current);
+        } else {
+		    wake_up_new_task(p);
+        }
 
-		if (clone_flags & CLONE_VFORK) {
-			freezer_do_not_count();
-			wait_for_completion(&vfork);
-			freezer_count();
-			ptrace_event(PTRACE_EVENT_VFORK_DONE, nr);
-		}
+        /* forking complete and child started to run, tell ptracer */
+        if (unlikely(trace))
+            ptrace_event(trace, nr);
+
+        if (clone_flags & CLONE_VFORK) {
+            freezer_do_not_count();
+            wait_for_completion(&vfork);
+            freezer_count();
+            ptrace_event(PTRACE_EVENT_VFORK_DONE, nr);
+        }
+
+
 	} else {
 		nr = PTR_ERR(p);
 	}

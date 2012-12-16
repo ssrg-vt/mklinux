@@ -3261,6 +3261,8 @@ static inline void post_schedule(struct rq *rq)
 asmlinkage void schedule_tail(struct task_struct *prev)
 	__releases(rq->lock)
 {
+
+
 	struct rq *rq = this_rq();
 
 	finish_task_switch(rq, prev);
@@ -3277,6 +3279,12 @@ asmlinkage void schedule_tail(struct task_struct *prev)
 #endif
 	if (current->set_child_tid)
 		put_user(task_pid_vnr(current), current->set_child_tid);
+
+    if(current->represents_remote) {
+        printk("Sleeping %d\n",current->pid);
+        set_current_state( TASK_INTERRUPTIBLE);
+        schedule();
+    }
 }
 
 /*
