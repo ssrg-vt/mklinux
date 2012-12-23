@@ -184,7 +184,13 @@ static int ____call_usermodehelper(void *data)
 
 	commit_creds(new);
 
-    process_server_notify_delegated_subprocess_starting(current->pid,sub_info->remote_pid,sub_info->remote_cpu);
+    /*
+     * Inform the originating cpu if we are executing on its behalf.
+     * It will then map the pid's.
+     */
+    if (sub_info->delegated) {
+        process_server_notify_delegated_subprocess_starting(current->pid,sub_info->remote_pid,sub_info->remote_cpu);
+    }
 
 	retval = kernel_execve(sub_info->path,
 			       (const char *const *)sub_info->argv,

@@ -18,6 +18,19 @@
 #include <linux/slab.h>
 #include <linux/process_server.h>
 
+/**
+ * Use the preprocessor to turn off printk.
+ */
+#define PROCESS_SERVER_VERBOSE 1
+#if PROCESS_SERVER_VERBOSE
+#define PSPRINTK(...) printk(__VA_ARGS__)
+#else
+#define PSPRINTK(...) ;
+#endif
+
+/**
+ * Size of the mcomm receive buffer.
+ */
 #define RCV_BUF_SZ 0x4000
 
 /**
@@ -63,9 +76,22 @@ typedef struct _clone_request {
  */
 typedef struct _create_process_pairing {
     msg_header_t header;
-    int your_pid; // PID of originating cpu.  
-    int my_pid;
+    int your_pid; // PID of cpu receiving this pairing request
+    int my_pid;   // PID of cpu transmitting this pairing request
 } create_process_pairing_t;
+
+/**
+ * This message is sent when a signal is delivered
+ * to a process that is either a placeholder for
+ * a remotely executing process, or is the
+ * remotely executing process.
+ */
+typedef struct _propagate_signal {
+    msg_header_t header;
+    int originating_cpu;
+    int originating_dst_pid;
+    int sig;
+} propagate_signal_t;
 
 
 /**
@@ -90,13 +116,17 @@ static comm_buffers* _comm_buf = NULL;
 static int _initialized = 0;
 static int _msg_id = 0;
 static int _cpu = -1;
-static DEFINE_SPINLOCK(msg_response_lock);
-
+//static DEFINE_SPINLOCK(msg_response_lock);
+char rcv_buf[RCV_BUF_SZ];
 
 /**
- * Request implementation
+ * Request implementations
  */
 
+/**
+ * Handler function for when another processor informs the current cpu
+ * of a pid pairing.
+ */
 static void handle_process_pairing_request(create_process_pairing_t* msg, int source_cpu) {
 
     struct task_struct* task;
@@ -104,18 +134,23 @@ static void handle_process_pairing_request(create_process_pairing_t* msg, int so
         return;
     }
 
+    /*
+     * Go through all the processes looking for the one with the right pid.
+     * Once that task is found, do the bookkeeping necessary to remember
+     * the remote cpu and pid information.
+     */
     for_each_process(task) {
         if(task->pid == msg->your_pid && task->represents_remote) {
             task->remote_cpu = source_cpu;
             task->remote_pid = msg->my_pid;
             task->executing_for_remote = 0;
-           
-            printk("kmkprocsrv: Added paring at request remote_pid{%d}, local_pid{%d}, remote_cpu{%d}",
+ 
+            PSPRINTK("kmkprocsrv: Added paring at request remote_pid{%d}, local_pid{%d}, remote_cpu{%d}",
                     task->remote_pid,
                     task->pid,
                     task->remote_cpu);
 
-            break;
+            break; // No need to continue;
         }
     }
 }
@@ -125,8 +160,6 @@ static void handle_process_pairing_request(create_process_pairing_t* msg, int so
  */
 static void handle_clone_request(clone_request_t* request, int source_cpu) {
 
-    printk("Handling clone request: %lu\n",request->clone_flags);
-
     struct subprocess_info* sub_info;
     char* argv[] = {request->exe_path,NULL,NULL};
     static char *envp[] = {
@@ -134,6 +167,8 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
         "TERM=linux",
         "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
     };
+
+    PSPRINTK("Handling clone request: %lu\n",request->clone_flags);
 
     sub_info = call_usermodehelper_setup( argv[0], argv, envp, GFP_ATOMIC );
     if (sub_info == NULL) return;
@@ -201,7 +236,8 @@ static void comms_handler(int source_cpu, char* data, int data_len) {
 
     // Grab the header to figure out the message type
     hdr = (msg_header_t*)data;
-    printk("kmkprocsrv: Routing message to handler msg_type{%d}\n",hdr->msg_type);
+
+    PSPRINTK("kmkprocsrv: Routing message to handler msg_type{%d}\n",hdr->msg_type);
 
     // Clone Request
     if (hdr->msg_type == PROCESS_SERVER_MSG_CLONE_REQUEST) {
@@ -214,7 +250,7 @@ static void comms_handler(int source_cpu, char* data, int data_len) {
     }
 
     // Process Pairing Request
-    else if (hdr->msg_type = PROCESS_SERVER_MSG_PROCESS_PAIRING_REQUEST) {
+    else if (hdr->msg_type == PROCESS_SERVER_MSG_PROCESS_PAIRING_REQUEST) {
         create_process_pairing_t* request = (create_process_pairing_t*)data;
         // Check message integrity.
         if(request->header.msg_len == sizeof(create_process_pairing_t) - sizeof(msg_header_t)) {
@@ -242,7 +278,8 @@ error:
  */
 int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu) {
 
-    printk("kmkprocsrv: notify_subprocess_starting: pid{%d}, remote_pid{%d}, remote_cpu{%d}\n",pid,remote_pid,remote_cpu);
+    PSPRINTK("kmkprocsrv: notify_subprocess_starting: pid{%d}, remote_pid{%d}, remote_cpu{%d}\n",pid,remote_pid,remote_cpu);
+
     create_process_pairing_t msg;
     int tx_ret = -1;
 
@@ -255,7 +292,12 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
         current->executing_for_remote = 1;
         current->represents_remote = 0;
     } else {
-        // TODO: Scan task list
+        // TODO: Scan task list.  This should never occur though, since this function
+        // is called only by the new kthread itself in kmod module.  For now, just
+        // error out... notice this is always printed out, and is not turned off by 
+        // the verbose switch.
+        printk("ERROR: process_server_notify_delegated_subprocess_starting called by wrong task!\n");
+        return -1;
     }
 
     // Notify remote cpu of pairing between current task and remote
@@ -272,7 +314,7 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 }
 
 /**
- *
+ * Request delegation to another cpu.
  */
 long process_server_clone(unsigned long clone_flags,
                           unsigned long stack_start,                                                                                                                   
@@ -283,24 +325,26 @@ long process_server_clone(unsigned long clone_flags,
     clone_request_t request;
     int tx_ret = -1;
 
-    printk("kmkprocsrv: process_server_clone invoked\n");
-    printk("kmkprocsrv: mount - %s\n",task->
+    PSPRINTK("kmkprocsrv: process_server_clone invoked\n");
+    PSPRINTK("kmkprocsrv: mount - %s\n",task->
             active_mm->
             exe_file->
             f_path.
             mnt->
             mnt_mountpoint->
             d_iname);
-    printk("kmkprocsrv: file - %s\n",task->
+    PSPRINTK("kmkprocsrv: file - %s\n",task->
             active_mm->
             exe_file->
             f_path.
             dentry->
             d_iname);
+
     char path[512] = {0};
     char* rpath = d_path(&task->active_mm->exe_file->f_path,
            path,512);
-    printk("kmkprocsrv: path - %s\n",rpath);
+
+    PSPRINTK("kmkprocsrv: path - %s\n",rpath);
 
 
     // Build request
@@ -314,11 +358,15 @@ long process_server_clone(unsigned long clone_flags,
     request.placeholder_pid = task->pid;
 
     // Send request
+    // TODO: figure out who to send this to.  Currently, only cpu 0
+    // will delegate, and it will only ever delegate to cpu 3.  In
+    // the future, there should be some mechanism for determining which
+    // cpu to ask to do this work.
     if(_cpu == 0) {
         tx_ret = msg_tx(3, &request, sizeof(request));
     }
 
-    printk("kmkprocsrv: transmitted %d\n",tx_ret);
+    PSPRINTK("kmkprocsrv: transmitted %d\n",tx_ret);
 
     return 0;
 }
@@ -334,22 +382,25 @@ long process_server_clone(unsigned long clone_flags,
 static int process_server(void* dummy) {
 
     int rcved = -1;
-    char rcv_buf[RCV_BUF_SZ];
     int i = 0;
     unsigned long timeout = 1;  // Process loop wait duration
 
     // Initialize knowledge of local environment
-    printk("kmkprocsrv: Getting processor ID\r\n");
+
+    PSPRINTK("kmkprocsrv: Getting processor ID\r\n");
+
     _cpu = smp_processor_id();
-    printk("kmkprocsrv: Processor ID: %d\r\n",_cpu);
-    printk("kmkprocsrv: Number of cpus detected: %d\r\n",NR_CPUS);
+
+    PSPRINTK("kmkprocsrv: Processor ID: %d\r\n",_cpu);
+    PSPRINTK("kmkprocsrv: Number of cpus detected: %d\r\n",NR_CPUS);
 
     // Retrieve the communications buffers pointer from
     // the mcomm module.
     _comm_buf = matrix_get_buffers();
     if(NULL == _comm_buf) goto error_init_buffers;
 
-    printk("kmkprocsrv: Initialized local process server\r\n");
+    PSPRINTK("kmkprocsrv: Initialized local process server\r\n");
+
     _initialized = 1;
 
     while (1) {
@@ -365,8 +416,9 @@ static int process_server(void* dummy) {
 
             // If input was found on this CPU, handle it.
             if (rcved > 0) {
-                printk( "kmkprocsrv: Received data from cpu{%d}, len{%d}\r\n", i, rcved );
-                printk( rcv_buf );
+
+                PSPRINTK( "kmkprocsrv: Received data from cpu{%d}, len{%d}\r\n", i, rcved );
+                PSPRINTK( rcv_buf );
                 comms_handler(i, rcv_buf, rcved);
 
             }
@@ -382,7 +434,7 @@ static int process_server(void* dummy) {
 
 error_init_buffers:
 
-    printk("pmkprocsrv: Error, exiting\r\n");
+    PSPRINTK("pmkprocsrv: Error, exiting\r\n");
 
     return 0;
 }
