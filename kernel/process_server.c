@@ -134,6 +134,10 @@ char rcv_buf[RCV_BUF_SZ];
  * Request implementations
  */
 
+/**
+ * Handler function for when either a remote placeholder or a remote delegate process dies,
+ * and its local counterpart must be killed to reflect that.
+ */
 static void handle_exiting_process_notification(exiting_process_t* msg, int source_cpu) {
 
     struct task_struct* task;
@@ -306,7 +310,9 @@ error:
  */
 
 /**
- *
+ * Notify of the fact that either a delegate or placeholder has died locally.  
+ * In this case, the remote cpu housing its counterpart must be notified, so
+ * that it can kill that counterpart.
  */
 int process_server_task_exit_notification(pid_t pid) {
 
@@ -482,6 +488,7 @@ static int process_server(void* dummy) {
 
                 PSPRINTK( "kmkprocsrv: Received data from cpu{%d}, len{%d}\r\n", i, rcved );
                 PSPRINTK( rcv_buf );
+
                 comms_handler(i, rcv_buf, rcved);
 
             }
