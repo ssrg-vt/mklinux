@@ -39,6 +39,7 @@
 #define MAX_MSG_LEN sizeof(clone_request_t) // should always be the largest msg defined.
 #define PROCESS_SERVER_MSG_CLONE_REQUEST 1
 #define PROCESS_SERVER_MSG_PROCESS_PAIRING_REQUEST 2
+#define PROCESS_SERVER_MSG_PROCESS_EXITING 3
 
 /**
  * Message header.  All messages passed between
@@ -79,6 +80,16 @@ typedef struct _create_process_pairing {
     int your_pid; // PID of cpu receiving this pairing request
     int my_pid;   // PID of cpu transmitting this pairing request
 } create_process_pairing_t;
+
+/**
+ * This message informs the remote cpu of delegated
+ * process death.  This occurs whether the process
+ * is a placeholder or a delegate locally.
+ */
+typedef struct _exiting_process {
+    msg_header_t header;
+    int my_pid; // PID of process on cpu transmitting this exit notification.
+} exiting_process_t;
 
 /**
  * This message is sent when a signal is delivered
@@ -122,6 +133,22 @@ char rcv_buf[RCV_BUF_SZ];
 /**
  * Request implementations
  */
+
+static void handle_exiting_process_notification(exiting_process_t* msg, int source_cpu) {
+
+    struct task_struct* task;
+    PSPRINTK("kmkprocsrv: exiting process remote_pid{%d}, src_cpu{%d}\n",msg->my_pid,source_cpu);
+
+    for_each_process(task) {
+        if(task->remote_pid == msg->my_pid) {
+            PSPRINTK("kmkprocsrv: killing local task pid{%d}\n",task->pid);
+            __set_task_state(task,TASK_INTERRUPTIBLE);
+            kill_pid(task_pid(task),SIGKILL,1);
+
+            break; // No need to continue;
+        }
+    }
+}
 
 /**
  * Handler function for when another processor informs the current cpu
@@ -245,7 +272,7 @@ static void comms_handler(int source_cpu, char* data, int data_len) {
         // Check message integrity.
         if(request->header.msg_len == sizeof(clone_request_t) - sizeof(msg_header_t)) {
             // Handle this message.
-            handle_clone_request((clone_request_t*)data,source_cpu);
+            handle_clone_request(request,source_cpu);
         } 
     }
 
@@ -255,7 +282,16 @@ static void comms_handler(int source_cpu, char* data, int data_len) {
         // Check message integrity.
         if(request->header.msg_len == sizeof(create_process_pairing_t) - sizeof(msg_header_t)) {
             // Handle this message.
-            handle_process_pairing_request((create_process_pairing_t*)data,source_cpu);
+            handle_process_pairing_request(request,source_cpu);
+        }
+    }
+
+    // Process Exiting Notification
+    else if (hdr->msg_type == PROCESS_SERVER_MSG_PROCESS_EXITING) {
+        exiting_process_t* request = (exiting_process_t*)data;
+        if(request->header.msg_len == sizeof(exiting_process_t) - sizeof(msg_header_t)) {
+            // Handle this message
+            handle_exiting_process_notification(request,source_cpu);
         }
     }
 
@@ -269,6 +305,33 @@ error:
  * Public API
  */
 
+/**
+ *
+ */
+int process_server_task_exit_notification(pid_t pid) {
+
+    exiting_process_t msg;
+    int tx_ret = -1;
+    struct task_struct* task;
+
+    PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d}\n",pid);
+    msg.header.msg_type = PROCESS_SERVER_MSG_PROCESS_EXITING;
+    msg.header.msg_len = sizeof(exiting_process_t) - sizeof(msg_header_t);
+    msg.my_pid = pid;
+
+    if(current->pid == pid) {
+        tx_ret = msg_tx(current->remote_cpu, &msg, sizeof(msg));
+    } else {
+        for_each_process(task) {
+            if(task->pid == pid) {
+                tx_ret = msg_tx(task->remote_cpu, &msg, sizeof(msg));
+            }
+        }
+    }
+
+
+    return tx_ret;
+}
 
 /**
  * Create a pairing between a newly created delegate process and the

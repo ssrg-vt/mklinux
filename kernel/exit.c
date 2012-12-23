@@ -52,6 +52,8 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/oom.h>
 
+#include <linux/process_server.h>
+
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/pgtable.h>
@@ -892,6 +894,13 @@ NORET_TYPE void do_exit(long code)
 {
 	struct task_struct *tsk = current;
 	int group_dead;
+
+    /*
+     * Multikernel
+     */
+    if(tsk->executing_for_remote) {
+        process_server_task_exit_notification(tsk->pid);
+    }
 
 	profile_task_exit(tsk);
 
