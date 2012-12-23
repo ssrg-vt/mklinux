@@ -1572,7 +1572,13 @@ struct task_struct {
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 	atomic_t ptrace_bp_refcnt;
 #endif
-    int represents_remote;
+    /*
+     * Multikernel
+     */
+    int represents_remote;    /* Is this a placeholder process? */
+    int executing_for_remote; /* Is this executing on behalf of another cpu? */
+    int remote_pid;           /* What is the pid on the remote cpu? */
+    int remote_cpu;           /* What is the remote cpu? */
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

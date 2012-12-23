@@ -40,6 +40,11 @@
 
 #include <trace/events/module.h>
 
+/*
+ * Multikernel
+ */
+#include <linux/process_server.h>
+
 extern int max_threads;
 
 static struct workqueue_struct *khelper_wq;
@@ -178,6 +183,8 @@ static int ____call_usermodehelper(void *data)
 	}
 
 	commit_creds(new);
+
+    process_server_notify_delegated_subprocess_starting(current->pid,sub_info->remote_pid,sub_info->remote_cpu);
 
 	retval = kernel_execve(sub_info->path,
 			       (const char *const *)sub_info->argv,
@@ -370,6 +377,7 @@ struct subprocess_info *call_usermodehelper_setup(char *path, char **argv,
 	sub_info->path = path;
 	sub_info->argv = argv;
 	sub_info->envp = envp;
+    sub_info->delegated = 0;  // multikernel
   out:
 	return sub_info;
 }

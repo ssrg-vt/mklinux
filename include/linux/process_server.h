@@ -15,8 +15,6 @@ long process_server_clone(unsigned long clone_flags,
                           unsigned long stack_start,
                           struct pt_regs *regs,
                           unsigned long stack_size,
-                          int __user *parent_tidptr,
-                          int __user *child_tidptr,
                           struct task_struct* task);
-
+int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu);
 #endif // _PROCESS_SERVER_H

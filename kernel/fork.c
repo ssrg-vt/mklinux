@@ -1542,10 +1542,11 @@ long do_fork(unsigned long clone_flags,
 		 */
 		p->flags &= ~PF_STARTING;
         
-        p->represents_remote = 0;
-
         if (clone_flags & 0x02000000) {
-            
+           
+            p->represents_remote = 1;
+            p->executing_for_remote = 0;
+
             // This will be a placeholder process for the remote
             // process that is subsequently going to be started.
             // Block its execution.
@@ -1558,10 +1559,10 @@ long do_fork(unsigned long clone_flags,
                     stack_start,
                     regs,
                     stack_size,
-                    parent_tidptr,
-                    child_tidptr,
-                    current);
+                    p);
         } else {
+            p->represents_remote = 0;
+            p->executing_for_remote = 0;
 		    wake_up_new_task(p);
         }
 
