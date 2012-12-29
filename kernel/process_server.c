@@ -127,8 +127,8 @@ static comm_buffers* _comm_buf = NULL;
 static int _initialized = 0;
 static int _msg_id = 0;
 static int _cpu = -1;
-//static DEFINE_SPINLOCK(msg_response_lock);
-char rcv_buf[RCV_BUF_SZ];
+static DEFINE_SPINLOCK(_msg_id_lock);
+char _rcv_buf[RCV_BUF_SZ];
 
 /**
  * Request implementations
@@ -241,7 +241,9 @@ static int msg_tx(int dst, void* data, int data_len) {
     }
 
     // Increase the message ID by one.
+    spin_lock(&_msg_id_lock);
     msg->msg_id = _msg_id++;
+    spin_unlock(&_msg_id_lock);
 
     ret = matrix_send_to( _comm_buf, dst, data, data_len );
 
@@ -347,11 +349,11 @@ int process_server_task_exit_notification(pid_t pid) {
  */
 int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu) {
 
-    PSPRINTK("kmkprocsrv: notify_subprocess_starting: pid{%d}, remote_pid{%d}, remote_cpu{%d}\n",pid,remote_pid,remote_cpu);
-
     create_process_pairing_t msg;
     int tx_ret = -1;
 
+    PSPRINTK("kmkprocsrv: notify_subprocess_starting: pid{%d}, remote_pid{%d}, remote_cpu{%d}\n",pid,remote_pid,remote_cpu);
+    
     // Locally note pairing between current task and remote representative
     // task.
     if(current->pid == pid) {
@@ -393,6 +395,9 @@ long process_server_clone(unsigned long clone_flags,
 
     clone_request_t request;
     int tx_ret = -1;
+    char path[512] = {0};
+    char* rpath = d_path(&task->active_mm->exe_file->f_path,
+           path,512);
 
     PSPRINTK("kmkprocsrv: process_server_clone invoked\n");
     PSPRINTK("kmkprocsrv: mount - %s\n",task->
@@ -408,10 +413,6 @@ long process_server_clone(unsigned long clone_flags,
             f_path.
             dentry->
             d_iname);
-
-    char path[512] = {0};
-    char* rpath = d_path(&task->active_mm->exe_file->f_path,
-           path,512);
 
     PSPRINTK("kmkprocsrv: path - %s\n",rpath);
 
@@ -481,15 +482,15 @@ static int process_server(void* dummy) {
             // Don't read from self.
             if( i == _cpu) continue;
 
-            rcved = matrix_recv_from( _comm_buf, i, rcv_buf, RCV_BUF_SZ);
+            rcved = matrix_recv_from( _comm_buf, i, _rcv_buf, RCV_BUF_SZ);
 
             // If input was found on this CPU, handle it.
             if (rcved > 0) {
 
                 PSPRINTK( "kmkprocsrv: Received data from cpu{%d}, len{%d}\r\n", i, rcved );
-                PSPRINTK( rcv_buf );
+                PSPRINTK( _rcv_buf );
 
-                comms_handler(i, rcv_buf, rcved);
+                comms_handler(i, _rcv_buf, rcved);
 
             }
         }
