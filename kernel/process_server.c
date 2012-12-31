@@ -17,6 +17,7 @@
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/process_server.h>
+#include <linux/mm.h>
 
 /**
  * Use the preprocessor to turn off printk.
@@ -40,6 +41,32 @@
 #define PROCESS_SERVER_MSG_CLONE_REQUEST 1
 #define PROCESS_SERVER_MSG_PROCESS_PAIRING_REQUEST 2
 #define PROCESS_SERVER_MSG_PROCESS_EXITING 3
+
+/**
+ * Library data type definitions
+ */
+#define PROCESS_SERVER_DATA_TYPE_TEST 0
+
+/**
+ * Library
+ */
+
+/**
+ *
+ */
+typedef struct _data_header {
+    struct _data_header* next;
+    struct _data_header* prev;
+    int data_type;
+} data_header_t;
+
+/**
+ *
+ */
+typedef struct _test_data_entry {
+    data_header_t header;
+    int test_data;
+} test_data_entry_t;
 
 /**
  * Message header.  All messages passed between
@@ -129,6 +156,76 @@ static int _msg_id = 0;
 static int _cpu = -1;
 static DEFINE_SPINLOCK(_msg_id_lock);
 char _rcv_buf[RCV_BUF_SZ];
+data_header_t* _data_head;
+DEFINE_SPINLOCK(_data_head_lock);
+
+/**
+ * Data library
+ */
+
+/**
+ * Add data entry
+ */
+static void add_data_entry(void* entry) {
+    data_header_t* hdr = (data_header_t*)entry;
+    data_header_t* curr = NULL;
+
+    if(!entry) return;
+
+    spin_lock(&_data_head_lock);
+    
+    if (!_data_head) {
+        _data_head = hdr;
+    } else {
+        curr = _data_head;
+        while(curr->next != NULL) {
+            curr = curr->next;
+        }
+        curr->next = hdr;
+        hdr->prev = curr;
+    }
+
+    spin_unlock(&_data_head_lock);
+}
+
+/**
+ * Remove a data entry
+ */
+static void remote_data_entry(void* entry) {
+    data_header_t* hdr = entry;
+
+    if(!entry) return;
+    
+    spin_lock(&_data_head_lock);
+
+    if(hdr->next) {
+        hdr->next->prev = hdr->prev;
+    }
+
+    if(hdr->prev) {
+        hdr->prev->next = hdr->next;
+    }
+
+    spin_unlock(&_data_head_lock);
+}
+
+/**
+ * Print information about the list.
+ */
+static void dump_data_list() {
+    data_header_t* curr = NULL;
+
+    spin_lock(&_data_head_lock);
+
+    curr = _data_head;
+
+    while(curr) {
+        printk("Entry of type %d found\n",curr->data_type);
+        curr = curr->next;
+    }
+
+    spin_unlock(&_data_head_lock);
+}
 
 /**
  * Request implementations
@@ -385,6 +482,31 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 }
 
 /**
+ * Process page walk deconstruction callbacks.  These functions handle page walk
+ * entry encounters during deconstruction of a processes page table.
+ */
+
+static int deconstruction_page_walk_pgd_entry_callback(pgd_t *pgd, unsigned long start, unsigned long end, struct mm_walk *walk) {
+    PSPRINTK("pgd_entry start{%lu}, end{%lu}, pgd_t*{%lu}\n",start,end,pgd);
+    return 0;
+}
+
+static int deconstruction_page_walk_pud_entry_callback(pud_t *pud, unsigned long start, unsigned long end, struct mm_walk *walk) {
+    PSPRINTK("pud_entry start{%lu}, end{%lu}, pud_t*{%lu}\n",start,end,pud);
+    return 0;
+}
+
+static int deconstruction_page_walk_pmd_entry_callback(pmd_t *pmd, unsigned long start, unsigned long end, struct mm_walk *walk) {
+    PSPRINTK("pmd_entry start{%lu}, end{%lu}, pmd_t*{%lu}\n",start,end,pmd);
+    return 0;
+}
+
+static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
+    PSPRINTK("pte_entry start{%lu}, end{%lu}, pte_t*{%lu}\n",start,end,pte);
+    return 0;
+}
+
+/**
  * Request delegation to another cpu.
  */
 long process_server_clone(unsigned long clone_flags,
@@ -398,6 +520,15 @@ long process_server_clone(unsigned long clone_flags,
     char path[512] = {0};
     char* rpath = d_path(&task->active_mm->exe_file->f_path,
            path,512);
+    struct vm_area_struct* curr = NULL;
+    struct mm_walk walk = {
+        .pgd_entry = deconstruction_page_walk_pgd_entry_callback,
+        .pud_entry = deconstruction_page_walk_pud_entry_callback,
+        .pmd_entry = deconstruction_page_walk_pmd_entry_callback,
+        .pte_entry = deconstruction_page_walk_pte_entry_callback,
+        .mm = current->mm,
+        .private = NULL
+        };
 
     PSPRINTK("kmkprocsrv: process_server_clone invoked\n");
     PSPRINTK("kmkprocsrv: mount - %s\n",task->
@@ -415,6 +546,36 @@ long process_server_clone(unsigned long clone_flags,
             d_iname);
 
     PSPRINTK("kmkprocsrv: path - %s\n",rpath);
+
+    /**
+     * Print out the vm_area_struct list associated with this task.
+     * Just to see it for now.
+     * NOTE: See remap_pfn_range and io_remap_page_range for re-assembly
+     * on other side.
+     */
+    // Start stack
+    PSPRINTK("Start stack %lu\n",task->mm->start_stack);
+    // Heap
+    PSPRINTK("Heap %lu to %lu\n",task->mm->start_brk, task->mm->brk);
+    // Env
+    PSPRINTK("ENV %lu to %lu\n",task->mm->env_start,task->mm->env_end);
+    // Code
+    PSPRINTK("Code %lu to %lu\n",task->mm->start_code, task->mm->end_code);
+    // Arg
+    PSPRINTK("Arg %lu to %lu\n",task->mm->arg_start, task->mm->arg_end);
+    // VM Entries
+    curr = current->mm->mmap;
+    while(curr) {
+        if(curr->vm_file == NULL) {
+            PSPRINTK("Anonymous VM Entry: start{%lu}, end{%lu}, pgoff{%lu}\n",
+                    curr->vm_start, 
+                    curr->vm_end,
+                    curr->vm_pgoff);
+            walk_page_range(curr->vm_start,curr->vm_end,&walk);
+        }
+        
+        curr = curr->vm_next;
+    }
 
 
     // Build request
