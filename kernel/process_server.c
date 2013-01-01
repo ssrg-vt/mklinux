@@ -48,13 +48,16 @@
  * Library data type definitions
  */
 #define PROCESS_SERVER_DATA_TYPE_TEST 0
+#define PROCESS_SERVER_VMA_DATA_TYPE 1
+#define PROCESS_SERVER_PTE_DATA_TYPE 2
 
 /**
  * Library
  */
 
 /**
- *
+ * Some piping for linking data entries
+ * and identifying data entry types.
  */
 typedef struct _data_header {
     struct _data_header* next;
@@ -63,12 +66,29 @@ typedef struct _data_header {
 } data_header_t;
 
 /**
- *
+ * Hold data about a vma to process
+ * mapping.
  */
-typedef struct _test_data_entry {
+typedef struct _vma_data {
     data_header_t header;
-    int test_data;
-} test_data_entry_t;
+    unsigned long start;
+    unsigned long end;
+    int clone_request_id;
+    int cpu;
+    unsigned long flags;
+    int vma_id;
+    pgprot_t prot;
+} vma_data_t;
+
+/**
+ * Hold data about a pte to vma mapping.
+ */
+typedef struct _pte_data {
+    data_header_t header;
+    int vma_id;
+    int cpu;
+    unsigned long addr;
+} pte_data_t;
 
 /**
  * Message header.  All messages passed between
@@ -90,6 +110,7 @@ typedef struct _msg_header {
  */
 typedef struct _clone_request {
     msg_header_t header;
+    int clone_request_id;
     unsigned long clone_flags;
     unsigned long stack_start;
     struct pt_regs regs;
@@ -126,9 +147,10 @@ typedef struct _exiting_process {
 typedef struct _vma_transfer {
     msg_header_t header;
     int vma_id;
+    int clone_request_id;
     unsigned long start;
     unsigned long end;
-    //pgprot_t prot;
+    pgprot_t prot;
     unsigned long flags;
 } vma_transfer_t;
 
@@ -172,21 +194,24 @@ static int process_server(void* dummy);
 /**
  * Module variables
  */
-static struct task_struct* process_server_task;     // Remember the kthread task_struct
+static struct task_struct* process_server_task = NULL;     // Remember the kthread task_struct
 static comm_buffers* _comm_buf = NULL;
 static int _initialized = 0;
 static int _msg_id = 0;
 static int _vma_id = 0;
+static int _clone_request_id = 0;
 static int _cpu = -1;
-static DEFINE_SPINLOCK(_msg_id_lock);
-static DEFINE_SPINLOCK(_vma_id_lock);
-char _rcv_buf[RCV_BUF_SZ];
-data_header_t* _data_head;
-DEFINE_SPINLOCK(_data_head_lock);
+char _rcv_buf[RCV_BUF_SZ] = {0};
+data_header_t* _data_head = NULL;
+DEFINE_SPINLOCK(_data_head_lock);       // Lock for _data_head
+DEFINE_SPINLOCK(_msg_id_lock);          // Lock for _msg_id
+DEFINE_SPINLOCK(_vma_id_lock);          // Lock for _vma_id
+DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
 
 /**
  * Data library
  */
+
 
 /**
  * Add data entry
@@ -195,18 +220,30 @@ static void add_data_entry(void* entry) {
     data_header_t* hdr = (data_header_t*)entry;
     data_header_t* curr = NULL;
 
-    if(!entry) return;
+    if(!entry) {
+        PSPRINTK("Failed to add null data entry to list\n");
+        return;
+    }
 
     spin_lock(&_data_head_lock);
     
     if (!_data_head) {
         _data_head = hdr;
+        hdr->next = NULL;
+        hdr->prev = NULL;
     } else {
         curr = _data_head;
         while(curr->next != NULL) {
+            if(curr == entry) {
+                PSPRINTK("Skipping data insertion.  Data entry already in list\n");
+                return;// It's already in the list!
+            }
             curr = curr->next;
         }
+        // Now curr should be the last entry.
+        // Append the new entry to curr.
         curr->next = hdr;
+        hdr->next = NULL;
         hdr->prev = curr;
     }
 
@@ -219,7 +256,10 @@ static void add_data_entry(void* entry) {
 static void remote_data_entry(void* entry) {
     data_header_t* hdr = entry;
 
-    if(!entry) return;
+    if(!entry) {
+        PSPRINTK("Failed to remove null data from list\n");
+        return;
+    }
     
     spin_lock(&_data_head_lock);
 
@@ -239,13 +279,30 @@ static void remote_data_entry(void* entry) {
  */
 static void dump_data_list() {
     data_header_t* curr = NULL;
+    pte_data_t* pte_data = NULL;
+    vma_data_t* vma_data = NULL;
 
     spin_lock(&_data_head_lock);
 
     curr = _data_head;
 
+    PSPRINTK("DATA LIST:\n");
     while(curr) {
-        printk("Entry of type %d found\n",curr->data_type);
+        switch(curr->data_type) {
+        case PROCESS_SERVER_VMA_DATA_TYPE:
+            vma_data = (vma_data_t*)curr;
+            PSPRINTK("VMA DATA: start{%lu}, end{%lu}, crid{%d}, vmaid{%d}, cpu{%d}\n",
+                    vma_data->start,vma_data->end,vma_data->clone_request_id,
+                    vma_data->vma_id, vma_data->cpu);
+            break;
+        case PROCESS_SERVER_PTE_DATA_TYPE:
+            pte_data = (pte_data_t*)curr;
+            PSPRINTK("PTE DATA: addr{%lu}, vmaid{%d}, cpu{%d}\n",
+                    pte_data->addr,pte_data->vma_id,pte_data->cpu);
+            break;
+        default:
+            break;
+        }
         curr = curr->next;
     }
 
@@ -256,15 +313,54 @@ static void dump_data_list() {
  * Request implementations
  */
 
+/**
+ *
+ */
 static void handle_pte_transfer(pte_transfer_t* msg, int source_cpu) {
-    PSPRINTK("kmkprocsrv: received pte transfer - addr{%lu}\n",
-            msg->addr);
+    
+    pte_data_t* pte_data = kmalloc(sizeof(pte_data_t),GFP_KERNEL);
+    if(!pte_data) {
+        PSPRINTK("Failed to allocate pte_data_t\n");
+        return;
+    }
+    pte_data->header.data_type = PROCESS_SERVER_PTE_DATA_TYPE;
+
+    // Copy data into new data item.
+    pte_data->cpu = source_cpu;
+    pte_data->vma_id = msg->vma_id;
+    pte_data->addr = msg->addr;
+
+    add_data_entry(pte_data);
+    
+    // Take a look at what we've done
+    dump_data_list();
 }
 
+/**
+ *
+ */
 static void handle_vma_transfer(vma_transfer_t* msg, int source_cpu) {
-    PSPRINTK("kmkprocsrv: received vma transfer - start{%lu}, end{%lu}\n",
-            msg->start,
-            msg->end);
+
+    vma_data_t* vma_data = kmalloc(sizeof(vma_data_t),GFP_KERNEL);
+    if(!vma_data) {
+        PSPRINTK("Failed to allocate vma_data_t\n");
+        return;
+    }
+    vma_data->header.data_type = PROCESS_SERVER_VMA_DATA_TYPE;
+
+    // Copy data into new data item.
+    vma_data->cpu = source_cpu;
+    vma_data->start = msg->start;
+    vma_data->end = msg->end;
+    vma_data->clone_request_id = msg->clone_request_id;
+    vma_data->flags = msg->flags;
+    vma_data->prot = msg->prot;
+    vma_data->vma_id = msg->vma_id;
+
+    add_data_entry(vma_data); 
+    
+    // Take a look at what we've done.
+    dump_data_list();    
 }
 
 /**
@@ -604,6 +700,12 @@ long process_server_clone(unsigned long clone_flags,
         .private = NULL
         };
     vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
+    int lclone_request_id;
+
+    // Pick an id for this remote process request
+    spin_lock(&_clone_request_id_lock);
+    lclone_request_id = _clone_request_id++;
+    spin_unlock(&_clone_request_id_lock);
 
     // if this is not cpu 0, we don't know how to schedule,
     // so bail out.
@@ -644,7 +746,7 @@ long process_server_clone(unsigned long clone_flags,
     // Arg
     PSPRINTK("Arg %lu to %lu\n",task->mm->arg_start, task->mm->arg_end);
     // VM Entries
-    curr = current->mm->mmap;
+    curr = task->mm->mmap;
 
     vma_xfer->header.msg_type = PROCESS_SERVER_VMA_TRANSFER;
     vma_xfer->header.msg_len = sizeof(vma_transfer_t) - sizeof(msg_header_t);
@@ -659,7 +761,8 @@ long process_server_clone(unsigned long clone_flags,
             spin_unlock(&_vma_id_lock);
             vma_xfer->start = curr->vm_start;
             vma_xfer->end = curr->vm_end;
-            //vma_xfer->prot = curr->vm_page_prot;
+            vma_xfer->prot = curr->vm_page_prot;
+            vma_xfer->clone_request_id = lclone_request_id;
             vma_xfer->flags = curr->vm_flags;
             tx_ret = msg_tx(dst_cpu, vma_xfer, sizeof(vma_transfer_t));
             if(tx_ret <= 0) {
@@ -680,12 +783,13 @@ long process_server_clone(unsigned long clone_flags,
 
     // Build request
     request->header.msg_type = PROCESS_SERVER_MSG_CLONE_REQUEST;
-    request->header.msg_len = sizeof(clone_request_t) - sizeof(msg_header_t);
+    request->header.msg_len = sizeof( clone_request_t ) - sizeof( msg_header_t );
     request->clone_flags = clone_flags;
     request->stack_start = stack_start;
-    memcpy(&request->regs,regs,sizeof(struct pt_regs));
+    request->clone_request_id = lclone_request_id;
+    memcpy( &request->regs, regs, sizeof(struct pt_regs) );
     request->stack_size = stack_size;
-    strncpy(request->exe_path,rpath,512);
+    strncpy( request->exe_path, rpath, 512 );
     request->placeholder_pid = task->pid;
 
     // Send request
