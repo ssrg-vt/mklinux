@@ -78,6 +78,7 @@ typedef struct _vma_data {
     unsigned long flags;
     int vma_id;
     pgprot_t prot;
+    unsigned long pgoff;
 } vma_data_t;
 
 /**
@@ -87,7 +88,9 @@ typedef struct _pte_data {
     data_header_t header;
     int vma_id;
     int cpu;
-    unsigned long addr;
+    unsigned long vaddr;
+    unsigned long paddr;
+    unsigned long pfn;
 } pte_data_t;
 
 /**
@@ -152,6 +155,7 @@ typedef struct _vma_transfer {
     unsigned long end;
     pgprot_t prot;
     unsigned long flags;
+    unsigned long pgoff;
 } vma_transfer_t;
 
 /**
@@ -160,7 +164,9 @@ typedef struct _vma_transfer {
 typedef struct _pte_transfer {
     msg_header_t header;
     int vma_id;
-    unsigned long addr;
+    unsigned long vaddr;
+    unsigned long paddr;
+    unsigned long pfn;
 } pte_transfer_t;
 
 /**
@@ -253,7 +259,7 @@ static void add_data_entry(void* entry) {
 /**
  * Remove a data entry
  */
-static void remote_data_entry(void* entry) {
+static void remove_data_entry(void* entry) {
     data_header_t* hdr = entry;
 
     if(!entry) {
@@ -291,14 +297,14 @@ static void dump_data_list() {
         switch(curr->data_type) {
         case PROCESS_SERVER_VMA_DATA_TYPE:
             vma_data = (vma_data_t*)curr;
-            PSPRINTK("VMA DATA: start{%lu}, end{%lu}, crid{%d}, vmaid{%d}, cpu{%d}\n",
+            PSPRINTK("VMA DATA: start{%lx}, end{%lx}, crid{%d}, vmaid{%d}, cpu{%d}, pgoff{%lx}\n",
                     vma_data->start,vma_data->end,vma_data->clone_request_id,
-                    vma_data->vma_id, vma_data->cpu);
+                    vma_data->vma_id, vma_data->cpu, vma_data->pgoff);
             break;
         case PROCESS_SERVER_PTE_DATA_TYPE:
             pte_data = (pte_data_t*)curr;
-            PSPRINTK("PTE DATA: addr{%lu}, vmaid{%d}, cpu{%d}\n",
-                    pte_data->addr,pte_data->vma_id,pte_data->cpu);
+            PSPRINTK("PTE DATA: vaddr{%lx}, paddr{%lx}, pfn{%lx}, vmaid{%d}, cpu{%d}\n",
+                    pte_data->vaddr,pte_data->paddr,pte_data->vma_id,pte_data->cpu);
             break;
         default:
             break;
@@ -328,7 +334,9 @@ static void handle_pte_transfer(pte_transfer_t* msg, int source_cpu) {
     // Copy data into new data item.
     pte_data->cpu = source_cpu;
     pte_data->vma_id = msg->vma_id;
-    pte_data->addr = msg->addr;
+    pte_data->vaddr = msg->vaddr;
+    pte_data->paddr = msg->paddr;
+    pte_data->pfn = msg->pfn;
 
     add_data_entry(pte_data);
     
@@ -356,6 +364,7 @@ static void handle_vma_transfer(vma_transfer_t* msg, int source_cpu) {
     vma_data->flags = msg->flags;
     vma_data->prot = msg->prot;
     vma_data->vma_id = msg->vma_id;
+    vma_data->pgoff = msg->pgoff;
 
     add_data_entry(vma_data); 
     
@@ -641,33 +650,53 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
  * entry encounters during deconstruction of a processes page table.
  */
 
+/**
+ *
+ */
 static int deconstruction_page_walk_pgd_entry_callback(pgd_t *pgd, unsigned long start, unsigned long end, struct mm_walk *walk) {
     PSPRINTK("pgd_entry start{%lu}, end{%lu}, pgd_t*{%lu}\n",start,end,pgd);
     return 0;
 }
 
+/**
+ *
+ */
 static int deconstruction_page_walk_pud_entry_callback(pud_t *pud, unsigned long start, unsigned long end, struct mm_walk *walk) {
     PSPRINTK("pud_entry start{%lu}, end{%lu}, pud_t*{%lu}\n",start,end,pud);
     return 0;
 }
 
+/**
+ *
+ */
 static int deconstruction_page_walk_pmd_entry_callback(pmd_t *pmd, unsigned long start, unsigned long end, struct mm_walk *walk) {
     PSPRINTK("pmd_entry start{%lu}, end{%lu}, pmd_t*{%lu}\n",start,end,pmd);
     return 0;
 }
 
+/**
+ *
+ */
 static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
     int* vma_id_ptr = (int*)walk->private;
     int vma_id = *vma_id_ptr;
     int dst_cpu = 3;
 
+    if(NULL == pte || !pte_present(*pte)) {
+        return 0;
+    }
+
     pte_transfer_t* pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_KERNEL);
 
-    PSPRINTK("pte_entry start{%lu}, end{%lu}, pte_t*{%lu}\n",start,end,pte);
-
+    PSPRINTK("pte_entry start{%lu}, end{%lu}, pte_t*{%lu}\n",start,end,pte_pfn(*pte));
     pte_xfer->header.msg_type = PROCESS_SERVER_PTE_TRANSFER;
     pte_xfer->header.msg_len = sizeof(pte_transfer_t) - sizeof(msg_header_t);
-    pte_xfer->addr = start;
+    pte_xfer->paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));//virt_to_phys(start);
+    // NOTE: Found the above pte to paddr conversion here -
+    // http://wbsun.blogspot.com/2010/12/convert-userspace-virtual-address-to.html
+    pte_xfer->vaddr = start;
+    pte_xfer->vma_id = vma_id;
+    pte_xfer->pfn = pte_pfn(*pte);
     msg_tx(dst_cpu, pte_xfer, sizeof(pte_transfer_t));
 
     kfree(pte_xfer);
@@ -733,7 +762,7 @@ long process_server_clone(unsigned long clone_flags,
      * Print out the vm_area_struct list associated with this task.
      * Just to see it for now.
      * NOTE: See remap_pfn_range and io_remap_page_range for re-assembly
-     * on other side.
+     * on other side.  Or, possibly better, mmap_region.
      */
     // Start stack
     PSPRINTK("Start stack %lu\n",task->mm->start_stack);
@@ -764,6 +793,7 @@ long process_server_clone(unsigned long clone_flags,
             vma_xfer->prot = curr->vm_page_prot;
             vma_xfer->clone_request_id = lclone_request_id;
             vma_xfer->flags = curr->vm_flags;
+            vma_xfer->pgoff = curr->vm_pgoff;
             tx_ret = msg_tx(dst_cpu, vma_xfer, sizeof(vma_transfer_t));
             if(tx_ret <= 0) {
                 PSPRINTK("Unable to send vma transfer message\n");
