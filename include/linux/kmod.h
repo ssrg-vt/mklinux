@@ -73,6 +73,7 @@ struct subprocess_info {
                    // working on behalf of another cpu?
     pid_t remote_pid;
     int   remote_cpu;
+    int   clone_request_id;
 
 };
 

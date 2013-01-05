@@ -455,6 +455,7 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
     sub_info->delegated = 1;
     sub_info->remote_pid = request->placeholder_pid;
     sub_info->remote_cpu = source_cpu;
+    sub_info->clone_request_id = request->clone_request_id;
 
     /*
      * Spin up the new process.
@@ -573,6 +574,65 @@ error:
  */
 
 /**
+ *
+ */
+int process_server_import_address_space() {
+
+    int local_pid = current->pid;
+    int remote_pid = current->remote_pid;
+    int remote_cpu = current->remote_cpu;
+    int clone_request_id = current->clone_request_id; 
+    // TODO: Add clone_request_id field to task_struct
+    data_header_t* data_curr = NULL;
+    data_header_t* inner_data_curr = NULL;
+    pte_data_t* pte_curr = NULL;
+    vma_data_t* vma_curr = NULL;
+
+    // Lock data list
+    spin_lock(&_data_head_lock);
+
+    // Find vma
+    data_curr = _data_head;
+    while(data_curr) {
+
+        if(data_curr->data_type == PROCESS_SERVER_VMA_DATA_TYPE) {
+            vma_curr = (vma_data_t*)data_curr;
+            if(vma_curr->clone_request_id == clone_request_id && 
+               vma_curr->cpu == remote_cpu) {
+                
+                // This is our vma.
+                // Iterate through all pte's looking for vma_id and cpu matches.
+                // We can start at the current place in the list, since VMA is transfered
+                // before any pte's and all new entries are added to the end of the list.
+                inner_data_curr = data_curr->next;
+                while(inner_data_curr) {
+                    if(inner_data_curr->data_type == PROCESS_SERVER_PTE_DATA_TYPE) {
+                        pte_curr = (pte_data_t*)inner_data_curr;
+                        if(pte_curr->vma_id == vma_curr->vma_id) {
+
+                            // This is one of our pte's.
+                            // Map it in to the current task.
+                            PSPRINTK("Reached map location\n");                        
+                        }
+
+                    }
+                    inner_data_curr = inner_data_curr->next;
+                }
+
+            }
+        }
+
+        data_curr = data_curr->next;
+    }
+
+    // Unlock data list
+    spin_unlock(&_data_head_lock);
+
+
+    return 0;
+}
+
+/**
  * Notify of the fact that either a delegate or placeholder has died locally.  
  * In this case, the remote cpu housing its counterpart must be notified, so
  * that it can kill that counterpart.
@@ -615,23 +675,6 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 
     PSPRINTK("kmkprocsrv: notify_subprocess_starting: pid{%d}, remote_pid{%d}, remote_cpu{%d}\n",pid,remote_pid,remote_cpu);
     
-    // Locally note pairing between current task and remote representative
-    // task.
-    if(current->pid == pid) {
-        // should always be the case!
-        current->remote_pid = remote_pid;
-        current->remote_cpu = remote_cpu;
-        current->executing_for_remote = 1;
-        current->represents_remote = 0;
-    } else {
-        // TODO: Scan task list.  This should never occur though, since this function
-        // is called only by the new kthread itself in kmod module.  For now, just
-        // error out... notice this is always printed out, and is not turned off by 
-        // the verbose switch.
-        printk("ERROR: process_server_notify_delegated_subprocess_starting called by wrong task!\n");
-        return -1;
-    }
-
     // Notify remote cpu of pairing between current task and remote
     // representative task.
     msg.header.msg_type = PROCESS_SERVER_MSG_PROCESS_PAIRING_REQUEST;
@@ -651,7 +694,8 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
  */
 
 /**
- *
+ * Page walk has encountered a pgd while deconstructing
+ * the client side processes address space.
  */
 static int deconstruction_page_walk_pgd_entry_callback(pgd_t *pgd, unsigned long start, unsigned long end, struct mm_walk *walk) {
     PSPRINTK("pgd_entry start{%lu}, end{%lu}, pgd_t*{%lu}\n",start,end,pgd);
@@ -659,7 +703,8 @@ static int deconstruction_page_walk_pgd_entry_callback(pgd_t *pgd, unsigned long
 }
 
 /**
- *
+ * Page walk has encountered a pud while deconstructing
+ * the client side processes address space.
  */
 static int deconstruction_page_walk_pud_entry_callback(pud_t *pud, unsigned long start, unsigned long end, struct mm_walk *walk) {
     PSPRINTK("pud_entry start{%lu}, end{%lu}, pud_t*{%lu}\n",start,end,pud);
@@ -667,7 +712,8 @@ static int deconstruction_page_walk_pud_entry_callback(pud_t *pud, unsigned long
 }
 
 /**
- *
+ * Page walk has encoutered a pmd while deconstructing
+ * the client side processes address space.
  */
 static int deconstruction_page_walk_pmd_entry_callback(pmd_t *pmd, unsigned long start, unsigned long end, struct mm_walk *walk) {
     PSPRINTK("pmd_entry start{%lu}, end{%lu}, pmd_t*{%lu}\n",start,end,pmd);
@@ -675,7 +721,8 @@ static int deconstruction_page_walk_pmd_entry_callback(pmd_t *pmd, unsigned long
 }
 
 /**
- *
+ * Page walk has encountered a pte while deconstructing
+ * the client side processes address space.  Transfer it.
  */
 static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
     int* vma_id_ptr = (int*)walk->private;
