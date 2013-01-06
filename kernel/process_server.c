@@ -19,6 +19,7 @@
 #include <linux/process_server.h>
 #include <linux/mm.h>
 #include <linux/io.h> // ioremap
+#include <linux/mman.h> // MAP_ANONYMOUS
 
 /**
  * Use the preprocessor to turn off printk.
@@ -214,6 +215,40 @@ DEFINE_SPINLOCK(_data_head_lock);       // Lock for _data_head
 DEFINE_SPINLOCK(_msg_id_lock);          // Lock for _msg_id
 DEFINE_SPINLOCK(_vma_id_lock);          // Lock for _vma_id
 DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
+
+/**
+ * General helper functions and debugging tools
+ */
+static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
+    PSPRINTK("pte_entry start{%lx}, end{%lx}, phy{%lx}\n",
+            start,
+            end,
+            (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1)));
+}
+/**
+ * Print mm
+ */
+void dump_mm(struct mm_struct* mm) {
+    PSPRINTK("MM DUMP\n");
+    struct vm_area_struct * curr = mm->mmap;
+    struct mm_walk walk = {
+        .pte_entry = dump_page_walk_pte_entry_callback,
+        .mm = current->mm,
+        .private = NULL
+        };
+
+    while(curr) {
+        if(curr->vm_file == NULL) {
+            PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}\n",
+                    curr->vm_start, 
+                    curr->vm_end,
+                    curr->vm_pgoff);
+            // walk    
+            walk_page_range(curr->vm_start,curr->vm_end,&walk);
+        }
+        curr = curr->vm_next;
+    }
+}
 
 /**
  * Data library
@@ -578,6 +613,8 @@ error:
  * If this is a delegated process, look up any records that may
  * exist of the remote placeholder processes page information,
  * and map those pages.
+ *
+ * Assumes current->mm->mmap_sem is already held.
  */
 int process_server_import_address_space() {
 
@@ -589,8 +626,7 @@ int process_server_import_address_space() {
     data_header_t* inner_data_curr = NULL;
     pte_data_t* pte_curr = NULL;
     vma_data_t* vma_curr = NULL;
-    int phy, virt;
-    int err = 0;
+    unsigned long err = 0;
 
     // Verify that we're a delegated task.
     if (!current->executing_for_remote) {
@@ -625,15 +661,23 @@ int process_server_import_address_space() {
                             // This is one of our pte's.
                             // Map it in to the current task.
                             PSPRINTK("Reached map location\n"); 
-                            phy = pte_curr->paddr;
-                            virt = pte_curr->vaddr;
-                            err = ioremap_page_range(virt,
-                                               virt+PAGE_SIZE,
-                                               (phys_addr_t)phy,
+                            err = ioremap_page_range(pte_curr->vaddr,
+                                               pte_curr->vaddr+PAGE_SIZE,
+                                               (phys_addr_t)pte_curr->paddr,
                                                vma_curr->prot);
                             if(err) {
                                 PSPRINTK("ioremap err{%d}\n",err);
                             }
+
+                            err = mmap_region(NULL,
+                                              pte_curr->vaddr,
+                                              PAGE_SIZE,
+                                              MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
+                                              VM_READ|VM_EXEC|
+                                              VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC,
+                                              0);
+                        
+                            dump_mm(current->active_mm);
                         }
 
                     }

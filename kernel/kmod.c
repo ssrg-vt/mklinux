@@ -197,9 +197,6 @@ static int ____call_usermodehelper(void *data)
         current->executing_for_remote = 1;
         current->represents_remote = 0;
 
-        // Pull in this processes anonymous pages.
-        process_server_import_address_space();
-
         // Notify of PID/PID pairing.
         process_server_notify_delegated_subprocess_starting(current->pid,sub_info->remote_pid,sub_info->remote_cpu);
     }

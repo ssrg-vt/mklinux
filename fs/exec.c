@@ -55,6 +55,7 @@
 #include <linux/pipe_fs_i.h>
 #include <linux/oom.h>
 #include <linux/compat.h>
+#include <linux/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -750,6 +751,13 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	ret = expand_stack(vma, stack_base);
 	if (ret)
 		ret = -EFAULT;
+
+    /**
+     * Multikernel
+     */
+    if(current->executing_for_remote) {
+        process_server_import_address_space();
+    }
 
 out_unlock:
 	up_write(&mm->mmap_sem);
