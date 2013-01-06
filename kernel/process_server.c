@@ -18,6 +18,7 @@
 #include <linux/slab.h>
 #include <linux/process_server.h>
 #include <linux/mm.h>
+#include <linux/io.h> // ioremap
 
 /**
  * Use the preprocessor to turn off printk.
@@ -574,7 +575,9 @@ error:
  */
 
 /**
- *
+ * If this is a delegated process, look up any records that may
+ * exist of the remote placeholder processes page information,
+ * and map those pages.
  */
 int process_server_import_address_space() {
 
@@ -582,17 +585,26 @@ int process_server_import_address_space() {
     int remote_pid = current->remote_pid;
     int remote_cpu = current->remote_cpu;
     int clone_request_id = current->clone_request_id; 
-    // TODO: Add clone_request_id field to task_struct
     data_header_t* data_curr = NULL;
     data_header_t* inner_data_curr = NULL;
     pte_data_t* pte_curr = NULL;
     vma_data_t* vma_curr = NULL;
+    int phy, virt;
+    int err = 0;
+
+    // Verify that we're a delegated task.
+    if (!current->executing_for_remote) {
+        return -1;
+    }
 
     // Lock data list
     spin_lock(&_data_head_lock);
 
     // Find vma
     data_curr = _data_head;
+
+    // Go through all of the data entries in the list, looking for
+    // vma records that have been stored for this task.
     while(data_curr) {
 
         if(data_curr->data_type == PROCESS_SERVER_VMA_DATA_TYPE) {
@@ -612,7 +624,16 @@ int process_server_import_address_space() {
 
                             // This is one of our pte's.
                             // Map it in to the current task.
-                            PSPRINTK("Reached map location\n");                        
+                            PSPRINTK("Reached map location\n"); 
+                            phy = pte_curr->paddr;
+                            virt = pte_curr->vaddr;
+                            err = ioremap_page_range(virt,
+                                               virt+PAGE_SIZE,
+                                               (phys_addr_t)phy,
+                                               vma_curr->prot);
+                            if(err) {
+                                PSPRINTK("ioremap err{%d}\n",err);
+                            }
                         }
 
                     }
