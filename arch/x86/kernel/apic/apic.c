@@ -55,7 +55,7 @@
 #include <asm/tsc.h>
 #include <asm/hypervisor.h>
 
-unsigned int num_processors;
+unsigned int num_processors = 0;
 
 unsigned disabled_cpus __cpuinitdata;
 
@@ -2010,8 +2010,8 @@ void __cpuinit generic_processor_info(int apicid, int version)
 		return;
 	}
 
-	num_processors++;
-	if (apicid == boot_cpu_physical_apicid) {
+	cpu = num_processors++;
+//	if (apicid == boot_cpu_physical_apicid) {
 		/*
 		 * x86_bios_cpu_apicid is required to have processors listed
 		 * in same order as logical cpu numbers. Hence the first
@@ -2019,9 +2019,9 @@ void __cpuinit generic_processor_info(int apicid, int version)
 		 * boot_cpu_init() already hold bit 0 in cpu_present_mask
 		 * for BSP.
 		 */
-		cpu = 0;
-	} else
-		cpu = cpumask_next_zero(-1, cpu_present_mask);
+//		cpu = 0;
+//	} else
+//		cpu = cpumask_next_zero(-1, cpu_present_mask);
 
 	/*
 	 * Validate version
