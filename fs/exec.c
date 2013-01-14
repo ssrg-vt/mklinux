@@ -752,13 +752,6 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	if (ret)
 		ret = -EFAULT;
 
-    /**
-     * Multikernel
-     */
-    if(current->executing_for_remote) {
-        process_server_import_address_space();
-    }
-
 out_unlock:
 	up_write(&mm->mmap_sem);
 	return ret;

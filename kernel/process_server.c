@@ -52,6 +52,7 @@
 #define PROCESS_SERVER_DATA_TYPE_TEST 0
 #define PROCESS_SERVER_VMA_DATA_TYPE 1
 #define PROCESS_SERVER_PTE_DATA_TYPE 2
+#define PROCESS_SERVER_CLONE_DATA_TYPE 3
 
 /**
  * Library
@@ -81,6 +82,8 @@ typedef struct _vma_data {
     int vma_id;
     pgprot_t prot;
     unsigned long pgoff;
+    int anonymous;
+    char path[256];
 } vma_data_t;
 
 /**
@@ -96,6 +99,25 @@ typedef struct _pte_data {
 } pte_data_t;
 
 /**
+ *
+ */
+typedef struct _clone_data {
+    data_header_t header;
+    int clone_request_id;
+    unsigned long clone_flags;
+    unsigned long stack_start;
+#ifdef CONFIG_CC_STACKPROTECTOR
+    unsigned long stack_canary;
+#endif
+    unsigned long heap_start;
+    unsigned long heap_end;
+    struct pt_regs regs;
+    unsigned long stack_size;
+    int placeholder_pid;
+    int placeholder_cpu;
+} clone_data_t;
+
+/**
  * Message header.  All messages passed between
  * cpu's must have this header as the first
  * struct member.
@@ -109,7 +131,7 @@ typedef struct _msg_header {
 
 /**
  * This message is sent to a remote cpu in order to 
- * ask it to spin up a process on behalf of the 
+ * ask it to spin up a process on behalf of the
  * requesting cpu.  Some of these fields may go
  * away in the near future.
  */
@@ -118,6 +140,11 @@ typedef struct _clone_request {
     int clone_request_id;
     unsigned long clone_flags;
     unsigned long stack_start;
+#ifdef CONFIG_CC_STACKPROTECTOR
+    unsigned long stack_canary;
+#endif
+    unsigned long heap_start;
+    unsigned long heap_end;
     struct pt_regs regs;
     unsigned long stack_size;
     char exe_path[512];
@@ -158,6 +185,8 @@ typedef struct _vma_transfer {
     pgprot_t prot;
     unsigned long flags;
     unsigned long pgoff;
+    int anonymous;
+    char path[256];
 } vma_transfer_t;
 
 /**
@@ -223,28 +252,37 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
     PSPRINTK("pte_entry start{%lx}, end{%lx}, phy{%lx}\n",
             start,
             end,
-            (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1)));
+            (unsigned long)(pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1)));
+    return 0;
 }
 /**
  * Print mm
  */
 void dump_mm(struct mm_struct* mm) {
-    PSPRINTK("MM DUMP\n");
     struct vm_area_struct * curr = mm->mmap;
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
         .mm = current->mm,
         .private = NULL
         };
+    char buf[256];
+
+    PSPRINTK("MM DUMP\n");
 
     while(curr) {
-        if(curr->vm_file == NULL) {
+        if(!curr->vm_file) {
             PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}\n",
                     curr->vm_start, 
                     curr->vm_end,
                     curr->vm_pgoff);
             // walk    
             walk_page_range(curr->vm_start,curr->vm_end,&walk);
+        } else {
+            PSPRINTK("Page VM Entry: start{%lx}, end{%lx}, pgoff{%lx}, path{%s}\n",
+                    curr->vm_start,
+                    curr->vm_end,
+                    curr->vm_pgoff,
+                    d_path(&curr->vm_file->f_path,buf, 256));
         }
         curr = curr->vm_next;
     }
@@ -323,6 +361,7 @@ static void dump_data_list() {
     data_header_t* curr = NULL;
     pte_data_t* pte_data = NULL;
     vma_data_t* vma_data = NULL;
+    clone_data_t* clone_data = NULL;
 
     spin_lock(&_data_head_lock);
 
@@ -334,13 +373,29 @@ static void dump_data_list() {
         case PROCESS_SERVER_VMA_DATA_TYPE:
             vma_data = (vma_data_t*)curr;
             PSPRINTK("VMA DATA: start{%lx}, end{%lx}, crid{%d}, vmaid{%d}, cpu{%d}, pgoff{%lx}\n",
-                    vma_data->start,vma_data->end,vma_data->clone_request_id,
-                    vma_data->vma_id, vma_data->cpu, vma_data->pgoff);
+                    vma_data->start,
+                    vma_data->end,
+                    vma_data->clone_request_id,
+                    vma_data->vma_id, 
+                    vma_data->cpu, 
+                    vma_data->pgoff);
             break;
         case PROCESS_SERVER_PTE_DATA_TYPE:
             pte_data = (pte_data_t*)curr;
-            PSPRINTK("PTE DATA: vaddr{%lx}, paddr{%lx}, pfn{%lx}, vmaid{%d}, cpu{%d}\n",
-                    pte_data->vaddr,pte_data->paddr,pte_data->vma_id,pte_data->cpu);
+            PSPRINTK("PTE DATA: vaddr{%lx}, paddr{%lx}, vmaid{%d}, cpu{%d}\n",
+                    pte_data->vaddr,
+                    pte_data->paddr,
+                    pte_data->vma_id,
+                    pte_data->cpu);
+            break;
+        case PROCESS_SERVER_CLONE_DATA_TYPE:
+            clone_data = (clone_data_t*)curr;
+            PSPRINTK("CLONE DATA: flags{%lx}, stack_start{%lx}, heap_start{%lx}, heap_end{%lx}, crid{%d}\n",
+                    clone_data->clone_flags,
+                    clone_data->stack_start,
+                    clone_data->heap_start,
+                    clone_data->heap_end,
+                    clone_data->clone_request_id);
             break;
         default:
             break;
@@ -377,7 +432,7 @@ static void handle_pte_transfer(pte_transfer_t* msg, int source_cpu) {
     add_data_entry(pte_data);
     
     // Take a look at what we've done
-    dump_data_list();
+    //dump_data_list();
 }
 
 /**
@@ -401,11 +456,12 @@ static void handle_vma_transfer(vma_transfer_t* msg, int source_cpu) {
     vma_data->prot = msg->prot;
     vma_data->vma_id = msg->vma_id;
     vma_data->pgoff = msg->pgoff;
-
+    vma_data->anonymous = msg->anonymous;
+    strcpy(vma_data->path,msg->path);
     add_data_entry(vma_data); 
     
     // Take a look at what we've done.
-    dump_data_list();    
+    //dump_data_list();    
 }
 
 /**
@@ -464,7 +520,7 @@ static void handle_process_pairing_request(create_process_pairing_t* msg, int so
  * Handle clone requests. 
  */
 static void handle_clone_request(clone_request_t* request, int source_cpu) {
-
+    clone_data_t* clone_data;
     struct subprocess_info* sub_info;
     char* argv[] = {request->exe_path,NULL,NULL};
     static char *envp[] = {
@@ -473,7 +529,7 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
         "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
     };
 
-    PSPRINTK("Handling clone request: %lu\n",request->clone_flags);
+    PSPRINTK("Handling clone request: %lx\n",request->clone_flags);
 
     sub_info = call_usermodehelper_setup( argv[0], argv, envp, GFP_ATOMIC );
     if (sub_info == NULL) return;
@@ -492,6 +548,26 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
     sub_info->remote_pid = request->placeholder_pid;
     sub_info->remote_cpu = source_cpu;
     sub_info->clone_request_id = request->clone_request_id;
+    memcpy(&sub_info->remote_regs, &request->regs, sizeof(struct pt_regs) );
+
+    PSPRINTK("subinfo eip{%lx}\n",sub_info->remote_regs.ip);
+
+    /*
+     * Remember this request
+     */
+    clone_data = kmalloc(sizeof(clone_data_t),GFP_KERNEL);
+    clone_data->header.data_type = PROCESS_SERVER_CLONE_DATA_TYPE;
+    clone_data->clone_request_id = request->clone_request_id;
+    clone_data->clone_flags = request->clone_flags;
+    clone_data->stack_start = request->stack_start;
+    clone_data->stack_canary = request->stack_canary;
+    clone_data->heap_start = request->heap_start;
+    clone_data->heap_end = request->heap_end;
+    memcpy(&clone_data->regs, &request->regs, sizeof(struct pt_regs) );
+    clone_data->stack_size = request->stack_size;
+    clone_data->placeholder_pid = request->placeholder_pid;
+    clone_data->placeholder_cpu = source_cpu;
+    add_data_entry(clone_data);
 
     /*
      * Spin up the new process.
@@ -616,17 +692,18 @@ error:
  *
  * Assumes current->mm->mmap_sem is already held.
  */
-int process_server_import_address_space() {
+int process_server_import_address_space(unsigned long* ip, unsigned long* sp) {
 
-    int local_pid = current->pid;
-    int remote_pid = current->remote_pid;
     int remote_cpu = current->remote_cpu;
     int clone_request_id = current->clone_request_id; 
     data_header_t* data_curr = NULL;
     data_header_t* inner_data_curr = NULL;
     pte_data_t* pte_curr = NULL;
     vma_data_t* vma_curr = NULL;
+    clone_data_t* clone_data = NULL;
     unsigned long err = 0;
+    struct file* f;
+    int mmap_ret = 0;
 
     // Verify that we're a delegated task.
     if (!current->executing_for_remote) {
@@ -635,6 +712,27 @@ int process_server_import_address_space() {
 
     // Lock data list
     spin_lock(&_data_head_lock);
+
+    // Find the original clone request data, and grab stack info, etc.
+    data_curr = _data_head;
+    while(data_curr) {
+        if(data_curr->data_type == PROCESS_SERVER_CLONE_DATA_TYPE) {
+            clone_data = (clone_data_t*)data_curr;
+            if(clone_data->clone_request_id == current->clone_request_id) {
+                current->mm->start_stack = clone_data->stack_start;
+                current->mm->start_brk = clone_data->heap_start;
+                current->mm->brk = clone_data->heap_end;
+                *sp = current->mm->start_stack;
+                *ip = clone_data->regs.ip;
+#ifdef CONFIG_CC_STACKPROTECTOR
+                //current->stack_canary = clone_data->stack_canary;
+#endif
+                break;
+            }
+        }
+        data_curr = data_curr->next;
+    }
+
 
     // Find vma
     data_curr = _data_head;
@@ -652,47 +750,70 @@ int process_server_import_address_space() {
                 // Iterate through all pte's looking for vma_id and cpu matches.
                 // We can start at the current place in the list, since VMA is transfered
                 // before any pte's and all new entries are added to the end of the list.
-                inner_data_curr = data_curr->next;
-                while(inner_data_curr) {
-                    if(inner_data_curr->data_type == PROCESS_SERVER_PTE_DATA_TYPE) {
-                        pte_curr = (pte_data_t*)inner_data_curr;
-                        if(pte_curr->vma_id == vma_curr->vma_id) {
+                if(vma_curr->anonymous) {
+                    inner_data_curr = data_curr->next;
+                    while(inner_data_curr) {
+                        if(inner_data_curr->data_type == PROCESS_SERVER_PTE_DATA_TYPE) {
+                            pte_curr = (pte_data_t*)inner_data_curr;
+                            if(pte_curr->vma_id == vma_curr->vma_id) {
 
-                            // This is one of our pte's.
-                            // Map it in to the current task.
-                            PSPRINTK("Reached map location\n"); 
-                            err = ioremap_page_range(pte_curr->vaddr,
-                                               pte_curr->vaddr+PAGE_SIZE,
-                                               (phys_addr_t)pte_curr->paddr,
-                                               vma_curr->prot);
-                            if(err) {
-                                PSPRINTK("ioremap err{%d}\n",err);
+                                // This is one of our pte's.
+                                // Map it.
+                                err = ioremap_page_range(pte_curr->vaddr,
+                                                   pte_curr->vaddr+PAGE_SIZE,
+                                                   (phys_addr_t)pte_curr->paddr,
+                                                   vma_curr->prot);
+                                if(err) {
+                                    PSPRINTK("ioremap err{%lu}\n",err);
+                                }
+         
+
+                                // Pull this page into the current processes
+                                // address space.
+                                mmap_region(NULL,
+                                                  pte_curr->vaddr,
+                                                  PAGE_SIZE,
+                                                  MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
+                                                  vma_curr->flags,
+                                                  0);
+                            
                             }
 
-                            err = mmap_region(NULL,
-                                              pte_curr->vaddr,
-                                              PAGE_SIZE,
-                                              MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
-                                              VM_READ|VM_EXEC|
-                                              VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC,
-                                              0);
-                        
-                            dump_mm(current->active_mm);
                         }
-
+                        inner_data_curr = inner_data_curr->next;
                     }
-                    inner_data_curr = inner_data_curr->next;
+                } else {
+                    // Not anonymous
+                    // MMAP the file into the correct vma
+                    f = filp_open(vma_curr->path,
+                                  O_RDONLY | O_LARGEFILE,
+                                  0);
+                    if(!IS_ERR(f)) {
+                        PSPRINTK("Attempting to map %s ",vma_curr->path);
+                        mmap_ret = do_mmap(f,
+                                vma_curr->start,
+                                vma_curr->end - vma_curr->start,
+                                PROT_READ | PROT_WRITE | PROT_EXEC,
+                                MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE,
+                                vma_curr->pgoff * PAGE_SIZE);
+                        PSPRINTK("%d [result]\n",mmap_ret);
+                        filp_close(f,NULL);
+                    } else {
+                        PSPRINTK("Failed to open %s\n", vma_curr->path);
+                    }
                 }
-
             }
         }
 
         data_curr = data_curr->next;
     }
 
+    dump_mm(current->mm);
+
     // Unlock data list
     spin_unlock(&_data_head_lock);
 
+    dump_data_list();
 
     return 0;
 }
@@ -763,7 +884,7 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
  * the client side processes address space.
  */
 static int deconstruction_page_walk_pgd_entry_callback(pgd_t *pgd, unsigned long start, unsigned long end, struct mm_walk *walk) {
-    PSPRINTK("pgd_entry start{%lu}, end{%lu}, pgd_t*{%lu}\n",start,end,pgd);
+    //PSPRINTK("pgd_entry start{%lx}, end{%lx}, pgd_t*{%lx}\n",start,end,pgd);
     return 0;
 }
 
@@ -772,7 +893,7 @@ static int deconstruction_page_walk_pgd_entry_callback(pgd_t *pgd, unsigned long
  * the client side processes address space.
  */
 static int deconstruction_page_walk_pud_entry_callback(pud_t *pud, unsigned long start, unsigned long end, struct mm_walk *walk) {
-    PSPRINTK("pud_entry start{%lu}, end{%lu}, pud_t*{%lu}\n",start,end,pud);
+    //PSPRINTK("pud_entry start{%lx}, end{%lx}, pud_t*{%lx}\n",start,end,pud);
     return 0;
 }
 
@@ -781,7 +902,7 @@ static int deconstruction_page_walk_pud_entry_callback(pud_t *pud, unsigned long
  * the client side processes address space.
  */
 static int deconstruction_page_walk_pmd_entry_callback(pmd_t *pmd, unsigned long start, unsigned long end, struct mm_walk *walk) {
-    PSPRINTK("pmd_entry start{%lu}, end{%lu}, pmd_t*{%lu}\n",start,end,pmd);
+    //PSPRINTK("pmd_entry start{%lx}, end{%lx}, pmd_t*{%lx}\n",start,end,pmd);
     return 0;
 }
 
@@ -793,14 +914,15 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
     int* vma_id_ptr = (int*)walk->private;
     int vma_id = *vma_id_ptr;
     int dst_cpu = 3;
+    pte_transfer_t* pte_xfer = NULL;
 
     if(NULL == pte || !pte_present(*pte)) {
         return 0;
     }
 
-    pte_transfer_t* pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_KERNEL);
+    pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_KERNEL);
 
-    PSPRINTK("pte_entry start{%lu}, end{%lu}, pte_t*{%lu}\n",start,end,pte_pfn(*pte));
+    //PSPRINTK("pte_entry start{%lx}, end{%lx}, pte_t*{%lx}\n",start,end,pte_pfn(*pte));
     pte_xfer->header.msg_type = PROCESS_SERVER_PTE_TRANSFER;
     pte_xfer->header.msg_len = sizeof(pte_transfer_t) - sizeof(msg_header_t);
     pte_xfer->paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));//virt_to_phys(start);
@@ -820,7 +942,7 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
  * Request delegation to another cpu.
  */
 long process_server_clone(unsigned long clone_flags,
-                          unsigned long stack_start,                                                                                                                   
+                          unsigned long stack_start,
                           struct pt_regs *regs,
                           unsigned long stack_size,
                           struct task_struct* task) {
@@ -828,9 +950,11 @@ long process_server_clone(unsigned long clone_flags,
     clone_request_t* request = kmalloc(sizeof(clone_request_t),GFP_KERNEL);
     int tx_ret = -1;
     int dst_cpu = 3;
-    char path[512] = {0};
+    char path[256] = {0};
     char* rpath = d_path(&task->active_mm->exe_file->f_path,
-           path,512);
+           path,256);
+    char lpath[256];
+    char *plpath;
     struct vm_area_struct* curr = NULL;
     struct mm_walk walk = {
         .pgd_entry = deconstruction_page_walk_pgd_entry_callback,
@@ -877,15 +1001,15 @@ long process_server_clone(unsigned long clone_flags,
      * on other side.  Or, possibly better, mmap_region.
      */
     // Start stack
-    PSPRINTK("Start stack %lu\n",task->mm->start_stack);
+    PSPRINTK("Start stack %lx\n",task->mm->start_stack);
     // Heap
-    PSPRINTK("Heap %lu to %lu\n",task->mm->start_brk, task->mm->brk);
+    PSPRINTK("Heap %lx to %lx\n",task->mm->start_brk, task->mm->brk);
     // Env
-    PSPRINTK("ENV %lu to %lu\n",task->mm->env_start,task->mm->env_end);
+    PSPRINTK("ENV %lx to %lx\n",task->mm->env_start,task->mm->env_end);
     // Code
-    PSPRINTK("Code %lu to %lu\n",task->mm->start_code, task->mm->end_code);
+    PSPRINTK("Code %lx to %lx\n",task->mm->start_code, task->mm->end_code);
     // Arg
-    PSPRINTK("Arg %lu to %lu\n",task->mm->arg_start, task->mm->arg_end);
+    PSPRINTK("Arg %lx to %lx\n",task->mm->arg_start, task->mm->arg_end);
     // VM Entries
     curr = task->mm->mmap;
 
@@ -906,17 +1030,55 @@ long process_server_clone(unsigned long clone_flags,
             vma_xfer->clone_request_id = lclone_request_id;
             vma_xfer->flags = curr->vm_flags;
             vma_xfer->pgoff = curr->vm_pgoff;
+            vma_xfer->anonymous = 1;
             tx_ret = msg_tx(dst_cpu, vma_xfer, sizeof(vma_transfer_t));
             if(tx_ret <= 0) {
                 PSPRINTK("Unable to send vma transfer message\n");
             }
 
-            PSPRINTK("Anonymous VM Entry: start{%lu}, end{%lu}, pgoff{%lu}\n",
+            PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}\n",
                     curr->vm_start, 
                     curr->vm_end,
                     curr->vm_pgoff);
             walk.private = &vma_xfer->vma_id;
             walk_page_range(curr->vm_start,curr->vm_end,&walk);
+        } else {
+            // If this is not mmap()ed from the exe file, map
+            // it in.  It is probably a dynamically loaded library (libc).
+            // If that is the case it needs to be mapped in now, because
+            // we might need to return to an address within that library
+            // after we create the delegate... i.e. we might need to jump
+            // back to libc, since we were probably called from within
+            // the clone syscall wrapper.
+            PSPRINTK("Txing VM FILE backed entry\n");
+            plpath = d_path(&curr->vm_file->f_path,
+                           lpath,256);           
+            if(strcmp(lpath,rpath) != 0) {
+                spin_lock(&_vma_id_lock);
+                vma_xfer->vma_id = _vma_id++;
+                spin_unlock(&_vma_id_lock);
+                vma_xfer->start = curr->vm_start;
+                vma_xfer->end = curr->vm_end;
+                vma_xfer->prot = curr->vm_page_prot;
+                vma_xfer->clone_request_id = lclone_request_id;
+                vma_xfer->flags = curr->vm_flags;
+                vma_xfer->pgoff = curr->vm_pgoff;
+                vma_xfer->anonymous = 0;
+                strcpy(vma_xfer->path,plpath);
+                tx_ret = msg_tx(dst_cpu, vma_xfer, sizeof(vma_transfer_t));
+                if(tx_ret <= 0) {
+                    PSPRINTK("Unable to send vma transfer message\n");
+                }
+
+                PSPRINTK("PAGE VM Entry: start{%lx}, end{%lx}, pgoff{%lx}, path{%s}\n",
+                        curr->vm_start, 
+                        curr->vm_end,
+                        curr->vm_pgoff,
+                        plpath);
+                //walk.private = &vma_xfer->vma_id;
+                //walk_page_range(curr->vm_start,curr->vm_end,&walk);
+
+            }
         }
         
         curr = curr->vm_next;
@@ -928,6 +1090,12 @@ long process_server_clone(unsigned long clone_flags,
     request->header.msg_len = sizeof( clone_request_t ) - sizeof( msg_header_t );
     request->clone_flags = clone_flags;
     request->stack_start = stack_start;
+    request->heap_start = task->mm->start_brk;
+    request->heap_end = task->mm->brk;
+
+#ifdef CONFIG_CC_STACKPROTECTOR
+    request->stack_canary = task->stack_canary;
+#endif
     request->clone_request_id = lclone_request_id;
     memcpy( &request->regs, regs, sizeof(struct pt_regs) );
     request->stack_size = stack_size;
@@ -1004,7 +1172,7 @@ static int process_server(void* dummy) {
         }
 
         // Sleep a while
-		while ( schedule_timeout_interruptible( timeout*HZ ) );
+		while ( schedule_timeout_interruptible( timeout*HZ / 0x10 ) );
 
     }
 

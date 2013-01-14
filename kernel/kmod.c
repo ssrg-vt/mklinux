@@ -185,8 +185,8 @@ static int ____call_usermodehelper(void *data)
 	commit_creds(new);
 
     /*
-     * Inform the originating cpu if we are executing on its behalf.
-     * It will then map the pid's.
+     * Multikernel
+     * Handle delegation case
      */
     if (sub_info->delegated) {
 
@@ -196,17 +196,23 @@ static int ____call_usermodehelper(void *data)
         current->remote_cpu = sub_info->remote_cpu;
         current->executing_for_remote = 1;
         current->represents_remote = 0;
+        memcpy(&current->remote_regs, &sub_info->remote_regs, sizeof(struct pt_regs) );
+        printk("current->remote_regs.eip{%lx}\n",current->remote_regs.ip);
 
         // Notify of PID/PID pairing.
         process_server_notify_delegated_subprocess_starting(current->pid,sub_info->remote_pid,sub_info->remote_cpu);
-    }
+    } 
 
 	retval = kernel_execve(sub_info->path,
 			       (const char *const *)sub_info->argv,
 			       (const char *const *)sub_info->envp);
+    
 
 	/* Exec failed? */
 fail:
+
+    printk("kmod exec failed retval{%d}\n",retval);
+
 	sub_info->retval = retval;
 	do_exit(0);
 }

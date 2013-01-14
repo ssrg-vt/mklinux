@@ -74,7 +74,7 @@ struct subprocess_info {
     pid_t remote_pid;
     int   remote_cpu;
     int   clone_request_id;
-
+    struct pt_regs remote_regs;
 };
 
 /* Allocate a subprocess_info structure */

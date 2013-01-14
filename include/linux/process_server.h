@@ -9,7 +9,7 @@
 #ifndef _PROCESS_SERVER_H
 #define _PROCESS_SERVER_H
 
-int process_server_import_address_space(void);
+int process_server_import_address_space(unsigned long* ip, unsigned long *sp);
 int test_process_server(void);
 long process_server_clone(unsigned long clone_flags,
                           unsigned long stack_start,
