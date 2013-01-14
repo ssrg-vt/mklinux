@@ -137,6 +137,10 @@
 #define	FIRST_VM86_IRQ			   3
 #define LAST_VM86_IRQ			  15
 
+#ifdef CONFIG_POPCORN_KMSG
+#define POPCORN_KMSG_VECTOR 0xcd
+#endif
+
 #ifndef __ASSEMBLY__
 static inline int invalid_vm86_irq(int irq)
 {
