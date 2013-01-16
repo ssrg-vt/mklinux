@@ -390,11 +390,12 @@ static void dump_data_list() {
             break;
         case PROCESS_SERVER_CLONE_DATA_TYPE:
             clone_data = (clone_data_t*)curr;
-            PSPRINTK("CLONE DATA: flags{%lx}, stack_start{%lx}, heap_start{%lx}, heap_end{%lx}, crid{%d}\n",
+            PSPRINTK("CLONE DATA: flags{%lx}, stack_start{%lx}, heap_start{%lx}, heap_end{%lx}, ip{%lx}, crid{%d}\n",
                     clone_data->clone_flags,
                     clone_data->stack_start,
                     clone_data->heap_start,
                     clone_data->heap_end,
+                    clone_data->regs.ip,
                     clone_data->clone_request_id);
             break;
         default:
@@ -796,7 +797,7 @@ int process_server_import_address_space(unsigned long* ip, unsigned long* sp) {
                                 PROT_READ | PROT_WRITE | PROT_EXEC,
                                 MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE,
                                 vma_curr->pgoff * PAGE_SIZE);
-                        PSPRINTK("%d [result]\n",mmap_ret);
+                        PSPRINTK("%lx [result]\n",mmap_ret);
                         filp_close(f,NULL);
                     } else {
                         PSPRINTK("Failed to open %s\n", vma_curr->path);
@@ -1053,7 +1054,8 @@ long process_server_clone(unsigned long clone_flags,
             PSPRINTK("Txing VM FILE backed entry\n");
             plpath = d_path(&curr->vm_file->f_path,
                            lpath,256);           
-            if(strcmp(lpath,rpath) != 0) {
+            if(strcmp(plpath,rpath) != 0) {
+                PSPRINTK("lpath{%s}, rpath{%s}\n",plpath,rpath);
                 spin_lock(&_vma_id_lock);
                 vma_xfer->vma_id = _vma_id++;
                 spin_unlock(&_vma_id_lock);
@@ -1075,8 +1077,6 @@ long process_server_clone(unsigned long clone_flags,
                         curr->vm_end,
                         curr->vm_pgoff,
                         plpath);
-                //walk.private = &vma_xfer->vma_id;
-                //walk_page_range(curr->vm_start,curr->vm_end,&walk);
 
             }
         }
@@ -1089,7 +1089,7 @@ long process_server_clone(unsigned long clone_flags,
     request->header.msg_type = PROCESS_SERVER_MSG_CLONE_REQUEST;
     request->header.msg_len = sizeof( clone_request_t ) - sizeof( msg_header_t );
     request->clone_flags = clone_flags;
-    request->stack_start = stack_start;
+    request->stack_start = task->mm->start_stack;//stack_start;
     request->heap_start = task->mm->start_brk;
     request->heap_end = task->mm->brk;
 
