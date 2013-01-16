@@ -11,9 +11,6 @@
 
 /* BOOKKEEPING */
 
-/* Typedef for function pointer to callback functions */
-typedef int (*pcn_kmsg_cbftn)(void *);
-
 struct pcn_kmsg_rkinfo {
 	unsigned long phys_addr;
 	struct pcn_kmsg_window *window;
@@ -53,8 +50,22 @@ struct pcn_kmsg_container {
 	char payload[64];	
 };
 
+/* WINDOW / BUFFERING */
+
+#define PCN_KMSG_RBUF_SIZE 64
+
+struct pcn_kmsg_window {
+	int lock;
+	unsigned long head;
+	unsigned long tail;
+	struct pcn_kmsg_message buffer[PCN_KMSG_RBUF_SIZE];
+};
+
+/* Typedef for function pointer to callback functions */
+typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);
+
 /* FUNCTIONS */
-int pcn_kmsg_register_callback(enum pcn_kmsg_type type, int (*callback)(void *));
+int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback);
 int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type);
 
 #endif /* __LINUX_PCN_KMSG_H */

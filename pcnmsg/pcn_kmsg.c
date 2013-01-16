@@ -17,11 +17,16 @@
 #include <asm/system.h>
 #include <asm/apic.h>
 #include <asm/hardirq.h>
+#include <asm/setup.h>
+#include <asm/bootparam.h>
 
 /* COMMON STATE */
 
 /* table of callback functions for handling each message type */
 pcn_kmsg_cbftn callback_table[PCN_KMSG_TYPE_SIZE];
+
+/* number of current kernel */
+int my_cpu = 0;
 
 /* table with phys/virt addresses for remote kernels*/
 struct pcn_kmsg_rkinfo rkinfo[POPCORN_MAX_CPUS];
@@ -31,21 +36,34 @@ struct list_head msglist_hiprio, msglist_normprio;
 
 /* INITIALIZATION */
 
-int pcn_kmsg_checkin_callback(void *message) {
+int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message) {
 	printk("Called Popcorn callback for processing check-in messages\n");
 
+	printk("Type %d, size %d, contents 0x%lx\n", message->hdr.type, message->hdr.size, 
+		*((unsigned long *) message->payload));	
 	return 0;
 }
 
 unsigned long master_kernel_phys_addr;
+
+int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
+{
+
+	return 0;
+}
+
+extern unsigned long orig_boot_params;
 
 void __init pcn_kmsg_init(void)
 {
 	int rc;
 	unsigned long page_addr, phys_addr;
 	void * master_kernel_mapped_addr;
+	struct boot_params * boot_params_va;
 
 	printk("Entered setup_popcorn_kmsg\n");
+
+	my_cpu = raw_smp_processor_id();
 
 	/* Initialize list heads */
 	INIT_LIST_HEAD(&msglist_hiprio);
@@ -55,27 +73,39 @@ void __init pcn_kmsg_init(void)
 	memset(&callback_table, 0, PCN_KMSG_TYPE_SIZE * sizeof(pcn_kmsg_cbftn));
 	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_CHECKIN, &pcn_kmsg_checkin_callback);
 	if (rc) {
-		printk("Something is screwed up here!!!\n");
+		printk("POPCORN: Failed to register initial kmsg recv callback!\n");
 	}
 
 	/* Malloc our own receive buffer and set it up */
-	page_addr = __get_free_pages(GFP_KERNEL | __GFP_ZERO, 2);
-	printk("Allocated 4 pages, addr 0x%lx\n", page_addr); 
-	phys_addr = virt_to_phys(page_addr);
+	page_addr = __get_free_pages(GFP_KERNEL, 2);
+	printk("Allocated 4 pages, virt addr 0x%lx\n", page_addr);
+	rkinfo[my_cpu].window = (struct pcn_kmsg_window *) page_addr;
+	phys_addr = virt_to_phys((void *) page_addr);
 	printk("Physical address: 0x%lx\n", phys_addr);
-	memset(page_addr, 0xbc, 4096);
+
+	rc = pcn_kmsg_window_init(rkinfo[my_cpu].window);
+	if (rc) {
+		printk("POPCORN: Failed to initialize kmsg recv window!\n");
+	}
 
 	/* If we're not the master kernel, we need to map the master kernel's
 	   messaging window and check in */
 	if (mklinux_boot) {
-		printk("Master kernel phys addr: 0x%lx\n", master_kernel_phys_addr);
-		master_kernel_mapped_addr = ioremap_cache(master_kernel_phys_addr, 4096);
-		printk("Master kernel virt addr: 0x%lx\n", master_kernel_mapped_addr);
-		printk("First eight bytes: 0x%lx\n", *((unsigned long *) master_kernel_mapped_addr));
+		printk("Master kernel phys addr: 0x%lx\n", boot_params.pcn_kmsg_master_window);
+
+		rkinfo[0].phys_addr = boot_params.pcn_kmsg_master_window;
+
+		rkinfo[0].window = ioremap_cache(rkinfo[0].phys_addr, sizeof(struct pcn_kmsg_window));
+		printk("Master kernel virt addr: 0x%lx\n", rkinfo[0].window);
+		//printk("First eight bytes: 0x%lx\n", *((unsigned long *) master_kernel_mapped_addr));
 	} else {
+		printk("We're the master; setting boot_params...\n");
 		/* Otherwise, we need to set the boot_params to show the rest
 		   of the kernels where the master kernel's messaging window is. */
-
+		boot_params_va = (struct boot_params *) (0xffffffff80000000 + orig_boot_params);
+		printk("Boot params virtual address: 0x%p\n", boot_params_va);
+		printk("Test: kernel alignment %d\n", boot_params_va->hdr.kernel_alignment);
+		boot_params_va->pcn_kmsg_master_window = phys_addr;
 	}
 
 	return;
@@ -131,14 +161,21 @@ DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
 
 void pcn_kmsg_do_tasklet(unsigned long unused)
 {
+	int rc;
 	struct pcn_kmsg_container *pos = NULL;
 
 	printk("Tasklet handler called...\n");
 
 	/* Process high-priority queue first */
 	list_for_each_entry(pos, &msglist_hiprio, list) {
-		printk("Item in high-prio list; processing it...\n");
-		printk("Size %d, data 0x%lx\n", pos->hdr.size, *((unsigned long *) pos->payload));
+		printk("Item in high-prio list, type %d,  processing it...\n", pos->hdr.type);
+
+		if (pos->hdr.type >= PCN_KMSG_TYPE_SIZE) {
+			printk("Invalid type; continuing!\n");
+			continue;
+		}
+
+		rc = callback_table[pos->hdr.type]((struct pcn_kmsg_message *) &pos->hdr);
 	}
 
 	/* Then process normal-priority queue */
@@ -172,7 +209,7 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 
 	/* TEST -- set it up for testing!!! */
 	incoming->hdr.type = PCN_KMSG_TYPE_CHECKIN;
-	incoming->hdr.prio = PCN_KMSG_PRIO_NORMAL;
+	incoming->hdr.prio = PCN_KMSG_PRIO_HIGH;
 	incoming->hdr.size = 8;
 	memset(&(incoming->payload), 0xab, 8);
 
@@ -200,7 +237,7 @@ out:
 	return;
 }
 
-/* Syscall for testing all this stuff out */
+/* Syscall for testing all this stuff */
 SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 {
 	int rc;
