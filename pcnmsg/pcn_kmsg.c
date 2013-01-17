@@ -34,20 +34,55 @@ struct pcn_kmsg_rkinfo rkinfo[POPCORN_MAX_CPUS];
 /* lists of messages to be processed for each prio */
 struct list_head msglist_hiprio, msglist_normprio;
 
+/* RING BUFFER */
+
+#define RB_SHIFT 6
+#define RB_SIZE (1 << RB_SHIFT)
+#define RB_MASK ((1 << RB_SHIFT) - 1)
+
+static inline unsigned long win_inuse(struct pcn_kmsg_window *win) {
+	return win->head - win->tail;
+}
+
+static inline int win_put(struct pcn_kmsg_window *win, struct pcn_kmsg_message *msg) {
+	if (win_inuse(win) != RB_SIZE) {
+		memcpy(&(win->buffer[(win->head & RB_MASK)]), msg, msg->hdr.size + sizeof(struct pcn_kmsg_hdr));
+		win->head++;
+		return 0;
+	} else {
+		return -1;
+	}
+}
+
+static inline int win_get(struct pcn_kmsg_window *win, struct pcn_kmsg_message **msg) {
+	if (win_inuse(win) != 0) {
+		*msg = &(win->buffer[win->tail & RB_MASK]);
+		return 0;
+	} else {
+		return -1;
+	}
+}
+
+static inline void win_advance_tail(struct pcn_kmsg_window *win) {
+	win->tail++;
+}
+
+
 /* INITIALIZATION */
 
 int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message) {
 	printk("Called Popcorn callback for processing check-in messages\n");
 
 	printk("Type %d, size %d, contents 0x%lx\n", message->hdr.type, message->hdr.size, 
-		*((unsigned long *) message->payload));	
+			*((unsigned long *) message->payload));	
 	return 0;
 }
 
-unsigned long master_kernel_phys_addr;
-
-int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
+inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 {
+	window->lock = 0;
+	window->head = 0;
+	window->tail = 0;
 
 	return 0;
 }
@@ -58,7 +93,6 @@ void __init pcn_kmsg_init(void)
 {
 	int rc;
 	unsigned long page_addr, phys_addr;
-	void * master_kernel_mapped_addr;
 	struct boot_params * boot_params_va;
 
 	printk("Entered setup_popcorn_kmsg\n");
@@ -97,7 +131,6 @@ void __init pcn_kmsg_init(void)
 
 		rkinfo[0].window = ioremap_cache(rkinfo[0].phys_addr, sizeof(struct pcn_kmsg_window));
 		printk("Master kernel virt addr: 0x%lx\n", rkinfo[0].window);
-		//printk("First eight bytes: 0x%lx\n", *((unsigned long *) master_kernel_mapped_addr));
 	} else {
 		printk("We're the master; setting boot_params...\n");
 		/* Otherwise, we need to set the boot_params to show the rest
@@ -139,14 +172,34 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 
 /* SENDING / MARSHALING */
 
-int pcn_kmsg_send(int dest_cpu)
+int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 {
+	int rc;
+	struct pcn_kmsg_window *dest_window;
 
-	/* grab lock */
+	if (dest_cpu >= POPCORN_MAX_CPUS) {
+		printk("POPCORN: Invalid destination CPU %d\n", dest_cpu);
+		return -1;
+	}
+
+	dest_window = rkinfo[dest_cpu].window;
+
+	if (!dest_window) {
+		printk("POPCORN: Destination window for CPU %d not mapped!\n", dest_cpu);
+		return -1;
+	}
+
+	/* TODO -- grab lock */
 
 	/* place message in rbuf */
+	rc = win_put(dest_window, msg);		
 
-	/* unlock */
+	if (rc) {
+		printk("POPCORN: Failed to place message in destination window -- maybe it's full?\n");
+		return -1;
+	}
+
+	/* TODO -- unlock */
 
 	/* send IPI */
 	apic->send_IPI_mask(cpumask_of(dest_cpu), POPCORN_KMSG_VECTOR);
@@ -189,6 +242,8 @@ void pcn_kmsg_do_tasklet(unsigned long unused)
 
 void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 {
+	int rc;
+	struct pcn_kmsg_message *msg;
 	struct pcn_kmsg_container *incoming;
 
 	ack_APIC_irq();
@@ -206,12 +261,32 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 	}
 
 	/* memcpy message from rbuf */
+	rc = win_get(rkinfo[my_cpu].window, &msg);
+
+	if (rc) {
+		printk("No message in ring buffer!\n");
+		goto out;
+	}
+
+	if (msg->hdr.size > PCN_KMSG_PAYLOAD_SIZE) {
+		printk("Invalid message size in header!\n");
+		win_advance_tail(rkinfo[my_cpu].window);
+		goto out;
+	}
+
+	memcpy(&incoming->hdr, msg, msg->hdr.size + sizeof(struct pcn_kmsg_hdr));
+
+	win_advance_tail(rkinfo[my_cpu].window);
+
+	printk("Received message, type %d, prio %d, size %d\n", incoming->hdr.type, incoming->hdr.prio, incoming->hdr.size);
 
 	/* TEST -- set it up for testing!!! */
+#if 0
 	incoming->hdr.type = PCN_KMSG_TYPE_CHECKIN;
 	incoming->hdr.prio = PCN_KMSG_PRIO_HIGH;
 	incoming->hdr.size = 8;
 	memset(&(incoming->payload), 0xab, 8);
+#endif
 
 	/* add container to appropriate list */
 	switch (incoming->hdr.prio) {
@@ -241,10 +316,16 @@ out:
 SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 {
 	int rc;
+	struct pcn_kmsg_message msg;
+
+	msg.hdr.type = PCN_KMSG_TYPE_CHECKIN;
+	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+	msg.hdr.size = 8;
+	memset(&msg.payload, 0xab, 8);
 
 	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", cpu);
 
-	rc = pcn_kmsg_send(cpu);
+	rc = pcn_kmsg_send(cpu, &msg);
 	if (rc) {
 		printk("POPCORN: syscall screwed up!!!\n");
 	}
