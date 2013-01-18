@@ -19,6 +19,7 @@
 #include <asm/hardirq.h>
 #include <asm/setup.h>
 #include <asm/bootparam.h>
+#include <asm/errno.h>
 
 /* COMMON STATE */
 
@@ -28,8 +29,13 @@ pcn_kmsg_cbftn callback_table[PCN_KMSG_TYPE_SIZE];
 /* number of current kernel */
 int my_cpu = 0;
 
-/* table with phys/virt addresses for remote kernels*/
-struct pcn_kmsg_rkinfo rkinfo[POPCORN_MAX_CPUS];
+/* pointer to table with phys addresses for remote kernels' windows,
+ * owned by kernel 0 */
+struct pcn_kmsg_rkinfo *rkinfo;
+
+/* table with virtual (mapped) addresses for remote kernels' windows,
+   one per kernel */
+struct pcn_kmsg_window * rkvirt[POPCORN_MAX_CPUS];
 
 /* lists of messages to be processed for each prio */
 struct list_head msglist_hiprio, msglist_normprio;
@@ -70,11 +76,44 @@ static inline void win_advance_tail(struct pcn_kmsg_window *win) {
 
 /* INITIALIZATION */
 
-int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message) {
+int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message) 
+{
+	struct pcn_kmsg_checkin_message *msg = (struct pcn_kmsg_checkin_message *) message;
+	int from_cpu = msg->hdr.from_cpu;
+
 	printk("Called Popcorn callback for processing check-in messages\n");
 
-	printk("Type %d, size %d, contents 0x%lx\n", message->hdr.type, message->hdr.size, 
-			*((unsigned long *) message->payload));	
+	printk("From CPU %d, type %d, size %d, window phys addr 0x%lx\n", 
+			msg->hdr.from_cpu, msg->hdr.type, msg->hdr.size, 
+			msg->window_phys_addr);
+
+	if (from_cpu >= POPCORN_MAX_CPUS) {
+		printk("Invalid source CPU %d\n", msg->hdr.from_cpu);
+		return -1;
+	}
+
+	if (!msg->window_phys_addr) {
+		printk("Window physical address from CPU %d is NULL!\n", from_cpu);
+		return -1;
+	}
+
+	//rkinfo->phys_addr[from_cpu] = msg->window_phys_addr;
+
+	/* Note that we're not allowed to ioremap anything from a bottom half,
+	   so we'll do it the first time this kernel tries to send a message
+	   to the remote kernel. */
+#if 0
+	rkinfo[from_cpu].window = ioremap_cache(
+			rkinfo[from_cpu].phys_addr, 
+			sizeof(struct pcn_kmsg_window));
+
+	if (!rkinfo[from_cpu].window) {
+		printk("Failed to ioremap kernel %d's window!\n", from_cpu);
+		return -1;
+	}
+
+	printk("Mapped window at virtual address 0x%p\n", rkinfo[from_cpu].window);
+#endif
 	return 0;
 }
 
@@ -89,13 +128,33 @@ inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 
 extern unsigned long orig_boot_params;
 
+int send_checkin_msg(unsigned int to_cpu)
+{
+	int rc;
+	struct pcn_kmsg_checkin_message msg;
+
+	msg.hdr.type = PCN_KMSG_TYPE_CHECKIN;
+	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+	msg.hdr.size = 8;
+	msg.window_phys_addr = rkinfo->phys_addr[my_cpu];
+
+	rc = pcn_kmsg_send(to_cpu, (struct pcn_kmsg_message *) &msg);
+
+	if (rc) {
+		printk("Failed to send checkin message, rc = %d\n", rc);
+		return rc;
+	}
+
+	return 0;
+}
+
 void __init pcn_kmsg_init(void)
 {
 	int rc;
-	unsigned long page_addr, phys_addr;
+	unsigned long win_virt_addr, win_phys_addr, rkinfo_phys_addr;
 	struct boot_params * boot_params_va;
 
-	printk("Entered setup_popcorn_kmsg\n");
+	printk("Entered pcn_kmsg_init\n");
 
 	my_cpu = raw_smp_processor_id();
 
@@ -110,36 +169,66 @@ void __init pcn_kmsg_init(void)
 		printk("POPCORN: Failed to register initial kmsg recv callback!\n");
 	}
 
-	/* Malloc our own receive buffer and set it up */
-	page_addr = __get_free_pages(GFP_KERNEL, 2);
-	printk("Allocated 4 pages, virt addr 0x%lx\n", page_addr);
-	rkinfo[my_cpu].window = (struct pcn_kmsg_window *) page_addr;
-	phys_addr = virt_to_phys((void *) page_addr);
-	printk("Physical address: 0x%lx\n", phys_addr);
+	/* If we're the master kernel, malloc and map the rkinfo structure and put
+	   its physical address in boot_params; otherwise, get it from the boot_params 
+	   and map it */
+	if (!mklinux_boot) {
+		printk("We're the master; mallocing rkinfo...\n");
+		rkinfo = kmalloc(sizeof(struct pcn_kmsg_rkinfo), GFP_KERNEL);
 
-	rc = pcn_kmsg_window_init(rkinfo[my_cpu].window);
-	if (rc) {
-		printk("POPCORN: Failed to initialize kmsg recv window!\n");
-	}
+		if (!rkinfo) {
+			printk("Failed to malloc rkinfo structure -- this is very bad!\n");
+			return;
+		}
 
-	/* If we're not the master kernel, we need to map the master kernel's
-	   messaging window and check in */
-	if (mklinux_boot) {
-		printk("Master kernel phys addr: 0x%lx\n", boot_params.pcn_kmsg_master_window);
+		rkinfo_phys_addr = virt_to_phys(rkinfo);
 
-		rkinfo[0].phys_addr = boot_params.pcn_kmsg_master_window;
+		printk("rkinfo virt addr 0x%lx, phys addr 0x%lx\n", rkinfo, rkinfo_phys_addr);
 
-		rkinfo[0].window = ioremap_cache(rkinfo[0].phys_addr, sizeof(struct pcn_kmsg_window));
-		printk("Master kernel virt addr: 0x%lx\n", rkinfo[0].window);
-	} else {
-		printk("We're the master; setting boot_params...\n");
+		memset(rkinfo, 0x0, sizeof(struct pcn_kmsg_rkinfo));
+
+		printk("Setting boot_params...\n");
 		/* Otherwise, we need to set the boot_params to show the rest
 		   of the kernels where the master kernel's messaging window is. */
 		boot_params_va = (struct boot_params *) (0xffffffff80000000 + orig_boot_params);
 		printk("Boot params virtual address: 0x%p\n", boot_params_va);
 		printk("Test: kernel alignment %d\n", boot_params_va->hdr.kernel_alignment);
-		boot_params_va->pcn_kmsg_master_window = phys_addr;
+		boot_params_va->pcn_kmsg_master_window = rkinfo_phys_addr;
+	} else {
+		printk("Master kernel rkinfo phys addr: 0x%lx\n", boot_params.pcn_kmsg_master_window);
+
+		rkinfo_phys_addr = boot_params.pcn_kmsg_master_window;
+
+		rkinfo = ioremap_cache(rkinfo_phys_addr, sizeof(struct pcn_kmsg_rkinfo));
+
+		if (!rkinfo) {
+			printk("Failed to ioremap rkinfo struct from master kernel!\n");
+		}
+
+		printk("rkinfo virt addr: 0x%lx\n", rkinfo);
 	}
+
+
+	/* Malloc our own receive buffer and set it up */
+	win_virt_addr = __get_free_pages(GFP_KERNEL, 2);
+	printk("Allocated 4 pages for my window, virt addr 0x%lx\n", win_virt_addr);
+	rkvirt[my_cpu] = (struct pcn_kmsg_window *) win_virt_addr;
+	win_phys_addr = virt_to_phys((void *) win_virt_addr);
+	printk("Physical address: 0x%lx\n", win_phys_addr);
+	rkinfo->phys_addr[my_cpu] = win_phys_addr;
+
+	rc = pcn_kmsg_window_init(rkvirt[my_cpu]);
+	if (rc) {
+		printk("POPCORN: Failed to initialize kmsg recv window!\n");
+	}
+
+	/* If we're not the master kernel, we need to check in */
+	if (mklinux_boot) {
+		rc = send_checkin_msg(0);
+		if (rc) { 
+			printk("POPCORN: Failed to check in!\n");
+		}
+	} 
 
 	return;
 }
@@ -182,12 +271,34 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 		return -1;
 	}
 
-	dest_window = rkinfo[dest_cpu].window;
+	dest_window = rkvirt[dest_cpu];
 
 	if (!dest_window) {
 		printk("POPCORN: Destination window for CPU %d not mapped!\n", dest_cpu);
+		/* check if phys addr exists, and if so, map it */
+		if (rkinfo->phys_addr[dest_cpu]) {
+			rkvirt[dest_cpu] = ioremap_cache(rkinfo->phys_addr[dest_cpu], 
+					sizeof(struct pcn_kmsg_rkinfo));
+			if (rkvirt[dest_cpu]) {
+				dest_window = rkvirt[dest_cpu];
+			} else {
+				printk("POPCORN: Failed to ioremap CPU %d's window at phys addr 0x%lx\n",
+						dest_cpu, rkinfo->phys_addr[dest_cpu]);
+			}
+
+		} else {
+			printk("POPCORN: No physical address known for CPU %d's window!\n", dest_cpu);
+			return -1;
+		}
+	}
+
+	if (!msg) {
+		printk("POPCORN: Passed in a null pointer to msg!\n");
 		return -1;
 	}
+
+	/* set source CPU */
+	msg->hdr.from_cpu = my_cpu;
 
 	/* TODO -- grab lock */
 
@@ -261,7 +372,7 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 	}
 
 	/* memcpy message from rbuf */
-	rc = win_get(rkinfo[my_cpu].window, &msg);
+	rc = win_get(rkvirt[my_cpu], &msg);
 
 	if (rc) {
 		printk("No message in ring buffer!\n");
@@ -270,13 +381,13 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 
 	if (msg->hdr.size > PCN_KMSG_PAYLOAD_SIZE) {
 		printk("Invalid message size in header!\n");
-		win_advance_tail(rkinfo[my_cpu].window);
+		win_advance_tail(rkvirt[my_cpu]);
 		goto out;
 	}
 
 	memcpy(&incoming->hdr, msg, msg->hdr.size + sizeof(struct pcn_kmsg_hdr));
 
-	win_advance_tail(rkinfo[my_cpu].window);
+	win_advance_tail(rkvirt[my_cpu]);
 
 	printk("Received message, type %d, prio %d, size %d\n", incoming->hdr.type, incoming->hdr.prio, incoming->hdr.size);
 
@@ -318,7 +429,7 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 	int rc;
 	struct pcn_kmsg_message msg;
 
-	msg.hdr.type = PCN_KMSG_TYPE_CHECKIN;
+	msg.hdr.type = PCN_KMSG_TYPE_TEST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 	msg.hdr.size = 8;
 	memset(&msg.payload, 0xab, 8);
