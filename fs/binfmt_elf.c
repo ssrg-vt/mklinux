@@ -579,9 +579,6 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 		struct elfhdr interp_elf_ex;
 	} *loc;
     unsigned long mk_sp, mk_ip;
-    struct file* libcf = NULL;
-    int libcflags;
-    int libcmode;
 
 	loc = kmalloc(sizeof(*loc), GFP_KERNEL);
 	if (!loc) {
@@ -953,13 +950,6 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 	current->mm->end_data = end_data;
 	current->mm->start_stack = bprm->p;
 
-    /**
-     * Multikernel
-     */                                                                                                                                                                 
-    if(current->executing_for_remote) {
-        process_server_import_address_space(&mk_ip, &mk_sp);
-    }
-
 #ifdef arch_randomize_brk
 	if ((current->flags & PF_RANDOMIZE) && (randomize_va_space > 1)) {
 		current->mm->brk = current->mm->start_brk =
@@ -994,8 +984,12 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 	 */
 	ELF_PLAT_INIT(regs, reloc_func_desc);
 #endif
-    
+   
+    /*
+     * Multikernel
+     */
     if(current->executing_for_remote) {
+        process_server_import_address_space(&mk_ip, &mk_sp, regs);
 	    start_thread(regs, mk_ip, mk_sp);
     } else {
         start_thread(regs, elf_entry, bprm->p);

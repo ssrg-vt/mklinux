@@ -54,6 +54,7 @@
 #define PROCESS_SERVER_PTE_DATA_TYPE 2
 #define PROCESS_SERVER_CLONE_DATA_TYPE 3
 
+
 /**
  * Library
  */
@@ -115,8 +116,17 @@ typedef struct _clone_data {
     unsigned long stack_size;
     int placeholder_pid;
     int placeholder_cpu;
-} clone_data_t;
+    unsigned long thread_fs;
+    unsigned long thread_gs;
+    unsigned long thread_sp0;
+    unsigned long thread_sp;
+    unsigned long thread_usersp;
+    unsigned short thread_es;
+    unsigned short thread_ds;
+    unsigned short thread_fsindex;
+    unsigned short thread_gsindex;
 
+} clone_data_t;
 /**
  * Message header.  All messages passed between
  * cpu's must have this header as the first
@@ -149,6 +159,15 @@ typedef struct _clone_request {
     unsigned long stack_size;
     char exe_path[512];
     int placeholder_pid;
+    unsigned long thread_fs;
+    unsigned long thread_gs;
+    unsigned long thread_sp0;
+    unsigned long thread_sp;
+    unsigned long thread_usersp;
+    unsigned short thread_es;
+    unsigned short thread_ds;
+    unsigned short thread_fsindex;
+    unsigned short thread_gsindex;
 } clone_request_t;
 
 /**
@@ -568,6 +587,15 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
     clone_data->stack_size = request->stack_size;
     clone_data->placeholder_pid = request->placeholder_pid;
     clone_data->placeholder_cpu = source_cpu;
+    clone_data->thread_fs = request->thread_fs;
+    clone_data->thread_gs = request->thread_gs;
+    clone_data->thread_sp0 = request->thread_sp0;
+    clone_data->thread_sp = request->thread_sp;
+    clone_data->thread_usersp = request->thread_usersp;
+    clone_data->thread_es = request->thread_es;
+    clone_data->thread_ds = request->thread_ds;
+    clone_data->thread_fsindex = request->thread_fsindex;
+    clone_data->thread_gsindex = request->thread_gsindex;
     add_data_entry(clone_data);
 
     /*
@@ -693,7 +721,9 @@ error:
  *
  * Assumes current->mm->mmap_sem is already held.
  */
-int process_server_import_address_space(unsigned long* ip, unsigned long* sp) {
+int process_server_import_address_space(unsigned long* ip, 
+        unsigned long* sp, 
+        struct pt_regs* regs) {
 
     int remote_cpu = current->remote_cpu;
     int clone_request_id = current->clone_request_id; 
@@ -717,17 +747,36 @@ int process_server_import_address_space(unsigned long* ip, unsigned long* sp) {
     // Find the original clone request data, and grab stack info, etc.
     data_curr = _data_head;
     while(data_curr) {
+
+        // validate data type
         if(data_curr->data_type == PROCESS_SERVER_CLONE_DATA_TYPE) {
+            
             clone_data = (clone_data_t*)data_curr;
+
+            // validate request id is correct
             if(clone_data->clone_request_id == current->clone_request_id) {
+
+                // install memory info
                 current->mm->start_stack = clone_data->stack_start;
                 current->mm->start_brk = clone_data->heap_start;
                 current->mm->brk = clone_data->heap_end;
+
+                // install thread information
+                current->thread.fs = clone_data->thread_fs;
+                current->thread.gs = clone_data->thread_gs;
+                current->thread.sp0 = clone_data->thread_sp0;
+                current->thread.sp = clone_data->thread_sp;
+                current->thread.usersp = clone_data->thread_usersp;
+                current->thread.es = clone_data->thread_es;
+                current->thread.ds = clone_data->thread_ds;
+                current->thread.fsindex = clone_data->thread_fsindex;
+                current->thread.gsindex = clone_data->thread_gsindex;
+
+                // Set output variables.
                 *sp = current->mm->start_stack;
                 *ip = clone_data->regs.ip;
-#ifdef CONFIG_CC_STACKPROTECTOR
-                //current->stack_canary = clone_data->stack_canary;
-#endif
+                memcpy(regs,&clone_data->regs,sizeof(struct pt_regs)); 
+                
                 break;
             }
         }
@@ -1011,6 +1060,11 @@ long process_server_clone(unsigned long clone_flags,
     PSPRINTK("Code %lx to %lx\n",task->mm->start_code, task->mm->end_code);
     // Arg
     PSPRINTK("Arg %lx to %lx\n",task->mm->arg_start, task->mm->arg_end);
+    // Thread
+    PSPRINTK("fs{%lx}, gs{%lx}\n",
+            task->thread.fs,
+            task->thread.gs);
+
     // VM Entries
     curr = task->mm->mmap;
 
@@ -1101,6 +1155,15 @@ long process_server_clone(unsigned long clone_flags,
     request->stack_size = stack_size;
     strncpy( request->exe_path, rpath, 512 );
     request->placeholder_pid = task->pid;
+    request->thread_fs = task->thread.fs;
+    request->thread_gs = task->thread.gs;
+    request->thread_sp0 = task->thread.sp0;
+    request->thread_sp = task->thread.sp;
+    request->thread_usersp = task->thread.usersp;
+    request->thread_es = task->thread.es;
+    request->thread_ds = task->thread.ds;
+    request->thread_fsindex = task->thread.fsindex;
+    request->thread_gsindex = task->thread.gsindex;
 
     // Send request
     // TODO: figure out who to send this to.  Currently, only cpu 0
