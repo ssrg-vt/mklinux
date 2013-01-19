@@ -9,6 +9,9 @@
 #include <linux/list.h>
 #include <linux/multikernel.h>
 
+/* LOCKING */
+
+
 /* BOOKKEEPING */
 
 struct pcn_kmsg_rkinfo {
@@ -48,14 +51,14 @@ struct pcn_kmsg_hdr {
    an example of how to do this. */
 struct pcn_kmsg_message {
 	struct pcn_kmsg_hdr hdr;
-	char payload[PCN_KMSG_PAYLOAD_SIZE];
+	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
 }__attribute__((packed));
 
 /* List entry to copy message into and pass around in receiving kernel */
 struct pcn_kmsg_container {
 	struct list_head list;
 	struct pcn_kmsg_hdr hdr;
-	char payload[PCN_KMSG_PAYLOAD_SIZE];	
+	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];	
 }__attribute__((packed));
 
 /* Message struct for guest kernels to check in with each other. */
@@ -69,11 +72,10 @@ struct pcn_kmsg_checkin_message {
 #define PCN_KMSG_RBUF_SIZE 64
 
 struct pcn_kmsg_window {
-	int lock;
 	unsigned long head;
 	unsigned long tail;
 	struct pcn_kmsg_message buffer[PCN_KMSG_RBUF_SIZE];
-};
+}__attribute__((packed));
 
 /* Typedef for function pointer to callback functions */
 typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);

@@ -46,30 +46,72 @@ struct list_head msglist_hiprio, msglist_normprio;
 #define RB_SIZE (1 << RB_SHIFT)
 #define RB_MASK ((1 << RB_SHIFT) - 1)
 
-static inline unsigned long win_inuse(struct pcn_kmsg_window *win) {
+inline unsigned long fetch_and_add( unsigned long * variable, unsigned long value )
+{
+	asm volatile( 
+			"lock; xaddq %%rax, %2;"
+			:"=a" (value)                   //Output
+			: "a" (value), "m" (*variable)  //Input
+			:"memory" );
+	return value;
+}
+
+static inline unsigned long win_inuse(struct pcn_kmsg_window *win) 
+{
 	return win->head - win->tail;
 }
 
-static inline int win_put(struct pcn_kmsg_window *win, struct pcn_kmsg_message *msg) {
-	if (win_inuse(win) != RB_SIZE) {
-		memcpy(&(win->buffer[(win->head & RB_MASK)]), msg, msg->hdr.size + sizeof(struct pcn_kmsg_hdr));
-		win->head++;
-		return 0;
-	} else {
-		return -1;
+static inline int win_put(struct pcn_kmsg_window *win, struct pcn_kmsg_message *msg) 
+{
+	unsigned long ticket;
+
+	/* if the queue is already really long, return EAGAIN */
+	if (win_inuse(win) >= RB_SIZE) {
+		printk("Window full, caller should try again...\n");
+		return -EAGAIN;
 	}
+
+	/* grab ticket */
+	ticket = fetch_and_add(&win->head, 1);
+	printk("ticket = %lu, head = %lu\n", ticket, win->head);
+
+	/* spin until there's a spot free for me */
+	while (win_inuse(win) >= RB_SIZE) {}
+
+	/* insert item */
+	memcpy(&win->buffer[ticket & RB_MASK], msg, msg->hdr.size + sizeof(struct pcn_kmsg_hdr));
+
+	/* set completed flag */
+	win->buffer[ticket & RB_MASK].payload[PCN_KMSG_PAYLOAD_SIZE - 1] = 0xab;
+
+	return 0;
 }
 
-static inline int win_get(struct pcn_kmsg_window *win, struct pcn_kmsg_message **msg) {
-	if (win_inuse(win) != 0) {
-		*msg = &(win->buffer[win->tail & RB_MASK]);
-		return 0;
-	} else {
+static inline int win_get(struct pcn_kmsg_window *win, struct pcn_kmsg_message **msg) 
+{
+	struct pcn_kmsg_message *rcvd;
+
+	if (!win_inuse(win)) {
+		printk("Nothing in buffer, returning...\n");
 		return -1;
 	}
+
+	printk("reached win_get, head %lu, tail %lu\n", win->head, win->tail);
+
+	/* spin until entry.ready at end of cache line is set */
+	rcvd = &(win->buffer[win->tail & RB_MASK]);
+	printk("Payload magic number: 0x%hhx\n", rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1]);
+	while (rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1] != 0xab) {}
+
+	rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1] = 0;
+
+	*msg = rcvd;	
+
+	return 0;
 }
 
-static inline void win_advance_tail(struct pcn_kmsg_window *win) {
+static inline void win_advance_tail(struct pcn_kmsg_window *win) 
+{
 	win->tail++;
 }
 
@@ -102,27 +144,15 @@ int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 	/* Note that we're not allowed to ioremap anything from a bottom half,
 	   so we'll do it the first time this kernel tries to send a message
 	   to the remote kernel. */
-#if 0
-	rkinfo[from_cpu].window = ioremap_cache(
-			rkinfo[from_cpu].phys_addr, 
-			sizeof(struct pcn_kmsg_window));
-
-	if (!rkinfo[from_cpu].window) {
-		printk("Failed to ioremap kernel %d's window!\n", from_cpu);
-		return -1;
-	}
-
-	printk("Mapped window at virtual address 0x%p\n", rkinfo[from_cpu].window);
-#endif
+	
 	return 0;
 }
 
 inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 {
-	window->lock = 0;
 	window->head = 0;
 	window->tail = 0;
-
+	memset(&window->buffer, 0, PCN_KMSG_RBUF_SIZE * sizeof(struct pcn_kmsg_message));
 	return 0;
 }
 
@@ -183,7 +213,7 @@ void __init pcn_kmsg_init(void)
 
 		rkinfo_phys_addr = virt_to_phys(rkinfo);
 
-		printk("rkinfo virt addr 0x%lx, phys addr 0x%lx\n", rkinfo, rkinfo_phys_addr);
+		printk("rkinfo virt addr 0x%p, phys addr 0x%lx\n", rkinfo, rkinfo_phys_addr);
 
 		memset(rkinfo, 0x0, sizeof(struct pcn_kmsg_rkinfo));
 
@@ -205,7 +235,7 @@ void __init pcn_kmsg_init(void)
 			printk("Failed to ioremap rkinfo struct from master kernel!\n");
 		}
 
-		printk("rkinfo virt addr: 0x%lx\n", rkinfo);
+		printk("rkinfo virt addr: 0x%p\n", rkinfo);
 	}
 
 
@@ -300,8 +330,6 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	/* set source CPU */
 	msg->hdr.from_cpu = my_cpu;
 
-	/* TODO -- grab lock */
-
 	/* place message in rbuf */
 	rc = win_put(dest_window, msg);		
 
@@ -309,8 +337,6 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 		printk("POPCORN: Failed to place message in destination window -- maybe it's full?\n");
 		return -1;
 	}
-
-	/* TODO -- unlock */
 
 	/* send IPI */
 	apic->send_IPI_mask(cpumask_of(dest_cpu), POPCORN_KMSG_VECTOR);
@@ -390,14 +416,6 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 	win_advance_tail(rkvirt[my_cpu]);
 
 	printk("Received message, type %d, prio %d, size %d\n", incoming->hdr.type, incoming->hdr.prio, incoming->hdr.size);
-
-	/* TEST -- set it up for testing!!! */
-#if 0
-	incoming->hdr.type = PCN_KMSG_TYPE_CHECKIN;
-	incoming->hdr.prio = PCN_KMSG_PRIO_HIGH;
-	incoming->hdr.size = 8;
-	memset(&(incoming->payload), 0xab, 8);
-#endif
 
 	/* add container to appropriate list */
 	switch (incoming->hdr.prio) {
