@@ -27,6 +27,7 @@ static int ioremap_pte_range(pmd_t *pmd, unsigned long addr,
 		BUG_ON(!pte_none(*pte));
 		set_pte_at(&init_mm, addr, pte, pfn_pte(pfn, prot));
 		pfn++;
+        printk("mapped pte @ %lx\n",pte_val(*pte)& PHYSICAL_PAGE_MASK);
 	} while (pte++, addr += PAGE_SIZE, addr != end);
 	return 0;
 }

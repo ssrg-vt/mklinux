@@ -267,11 +267,17 @@ DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
 /**
  * General helper functions and debugging tools
  */
+
 static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
+
+    if(NULL == pte || !pte_present(*pte)) {                                                                                                                             
+        return 0;
+    }
+
     PSPRINTK("pte_entry start{%lx}, end{%lx}, phy{%lx}\n",
             start,
             end,
-            (unsigned long)(pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1)));
+            (unsigned long)(pte_val(*pte) & PHYSICAL_PAGE_MASK)/* | (start & (PAGE_SIZE-1))*/);
     return 0;
 }
 /**
@@ -756,7 +762,7 @@ int process_server_import_address_space(unsigned long* ip,
             // validate request id is correct
             if(clone_data->clone_request_id == current->clone_request_id) {
 
-                // install memory info
+                // install memory information
                 current->mm->start_stack = clone_data->stack_start;
                 current->mm->start_brk = clone_data->heap_start;
                 current->mm->brk = clone_data->heap_end;
@@ -792,7 +798,11 @@ int process_server_import_address_space(unsigned long* ip,
     while(data_curr) {
 
         if(data_curr->data_type == PROCESS_SERVER_VMA_DATA_TYPE) {
+
             vma_curr = (vma_data_t*)data_curr;
+
+            // Correct data type, verify that it is relevant to this
+            // specific clone request.
             if(vma_curr->clone_request_id == clone_request_id && 
                vma_curr->cpu == remote_cpu) {
                 
@@ -809,24 +819,35 @@ int process_server_import_address_space(unsigned long* ip,
 
                                 // This is one of our pte's.
                                 // Map it.
+                        
+                                PSPRINTK("Mapping pte_entry %lx, phys{%lx}, prot{%lx}, flags{%lx}\n",
+                                        pte_curr->vaddr,
+                                        pte_curr->paddr,
+                                        vma_curr->prot,
+                                        vma_curr->flags);
+
                                 err = ioremap_page_range(pte_curr->vaddr,
                                                    pte_curr->vaddr+PAGE_SIZE,
                                                    (phys_addr_t)pte_curr->paddr,
                                                    vma_curr->prot);
                                 if(err) {
                                     PSPRINTK("ioremap err{%lu}\n",err);
-                                }
+                                } else {
          
-
-                                // Pull this page into the current processes
-                                // address space.
-                                mmap_region(NULL,
+                                    // Pull this page into the current processes
+                                    // address space.
+                                    err = mmap_region(NULL,
                                                   pte_curr->vaddr,
                                                   PAGE_SIZE,
-                                                  MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
+                                                  MAP_POPULATE|MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
                                                   vma_curr->flags,
                                                   0);
-                            
+                                    if(err <= 0) {
+                                        PSPRINTK("mmap_region failed err{%lu},vaddr{%lx}\n",err,pte_curr->vaddr);
+                                    } else {
+                                        PSPRINTK("succeeded %lx\n",err);
+                                    }
+                                }
                             }
 
                         }
@@ -972,10 +993,9 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
 
     pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_KERNEL);
 
-    //PSPRINTK("pte_entry start{%lx}, end{%lx}, pte_t*{%lx}\n",start,end,pte_pfn(*pte));
     pte_xfer->header.msg_type = PROCESS_SERVER_PTE_TRANSFER;
     pte_xfer->header.msg_len = sizeof(pte_transfer_t) - sizeof(msg_header_t);
-    pte_xfer->paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));//virt_to_phys(start);
+    pte_xfer->paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK)/* | (start & (PAGE_SIZE-1))*/;
     // NOTE: Found the above pte to paddr conversion here -
     // http://wbsun.blogspot.com/2010/12/convert-userspace-virtual-address-to.html
     pte_xfer->vaddr = start;
@@ -1044,6 +1064,9 @@ long process_server_clone(unsigned long clone_flags,
 
     PSPRINTK("kmkprocsrv: path - %s\n",rpath);
 
+    PSPRINTK("kmkprocsrv: top stack value = %lx\n",
+            *((unsigned long*)stack_start));
+
     /**
      * Print out the vm_area_struct list associated with this task.
      * Just to see it for now.
@@ -1051,9 +1074,12 @@ long process_server_clone(unsigned long clone_flags,
      * on other side.  Or, possibly better, mmap_region.
      */
     // Start stack
-    PSPRINTK("Start stack %lx\n",task->mm->start_stack);
+    PSPRINTK("Start stack %lx\n",
+            task->mm->start_stack);
     // Heap
-    PSPRINTK("Heap %lx to %lx\n",task->mm->start_brk, task->mm->brk);
+    PSPRINTK("Heap %lx to %lx\n",
+            task->mm->start_brk, 
+            task->mm->brk);
     // Env
     PSPRINTK("ENV %lx to %lx\n",task->mm->env_start,task->mm->env_end);
     // Code
@@ -1131,22 +1157,19 @@ long process_server_clone(unsigned long clone_flags,
                         curr->vm_end,
                         curr->vm_pgoff,
                         plpath);
-
             }
         }
         
         curr = curr->vm_next;
     }
 
-
     // Build request
     request->header.msg_type = PROCESS_SERVER_MSG_CLONE_REQUEST;
     request->header.msg_len = sizeof( clone_request_t ) - sizeof( msg_header_t );
     request->clone_flags = clone_flags;
-    request->stack_start = task->mm->start_stack;//stack_start;
+    request->stack_start = task->mm->start_stack;
     request->heap_start = task->mm->start_brk;
     request->heap_end = task->mm->brk;
-
 #ifdef CONFIG_CC_STACKPROTECTOR
     request->stack_canary = task->stack_canary;
 #endif
@@ -1176,6 +1199,8 @@ long process_server_clone(unsigned long clone_flags,
 
     kfree(request);
     kfree(vma_xfer);
+
+    dump_mm(task->mm);
 
     return 0;
 }

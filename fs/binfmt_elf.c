@@ -990,6 +990,8 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
      */
     if(current->executing_for_remote) {
         process_server_import_address_space(&mk_ip, &mk_sp, regs);
+        printk("stack pointer = %lx\n",mk_sp);
+        printk("stack value used = %lx\n",*((unsigned long*)mk_sp));
 	    start_thread(regs, mk_ip, mk_sp);
     } else {
         start_thread(regs, elf_entry, bprm->p);
