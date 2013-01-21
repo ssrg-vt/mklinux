@@ -67,6 +67,12 @@ struct pcn_kmsg_checkin_message {
 	unsigned long window_phys_addr;
 }__attribute__((packed));
 
+/* Message struct for testing */
+struct pcn_kmsg_test_message {
+	struct pcn_kmsg_hdr hdr;
+	unsigned long test_val;
+}__attribute__((packed));
+
 /* WINDOW / BUFFERING */
 
 #define PCN_KMSG_RBUF_SIZE 64

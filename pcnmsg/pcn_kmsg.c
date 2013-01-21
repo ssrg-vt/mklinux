@@ -46,6 +46,7 @@ struct list_head msglist_hiprio, msglist_normprio;
 #define RB_SIZE (1 << RB_SHIFT)
 #define RB_MASK ((1 << RB_SHIFT) - 1)
 
+/* From Wikipedia page "Fetch and add", modified to work for u64 */
 inline unsigned long fetch_and_add( unsigned long * variable, unsigned long value )
 {
 	asm volatile( 
@@ -144,7 +145,9 @@ int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 	/* Note that we're not allowed to ioremap anything from a bottom half,
 	   so we'll do it the first time this kernel tries to send a message
 	   to the remote kernel. */
-	
+
+	kfree(message);
+
 	return 0;
 }
 
@@ -346,37 +349,57 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 
 /* RECEIVING / UNMARSHALING */
 
-void pcn_kmsg_do_tasklet(unsigned long);
-DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
-
-void pcn_kmsg_do_tasklet(unsigned long unused)
+int process_message_list(struct list_head *head) 
 {
-	int rc;
-	struct pcn_kmsg_container *pos = NULL;
+	int rc, rc_overall = 0;
+	struct pcn_kmsg_container *pos = NULL, *n = NULL;
 
-	printk("Tasklet handler called...\n");
+	list_for_each_entry_safe(pos, n, head, list) {
+		printk("Item in list, type %d,  processing it...\n", pos->hdr.type);
 
-	/* Process high-priority queue first */
-	list_for_each_entry(pos, &msglist_hiprio, list) {
-		printk("Item in high-prio list, type %d,  processing it...\n", pos->hdr.type);
+		list_del(&pos->list);
 
-		if (pos->hdr.type >= PCN_KMSG_TYPE_SIZE) {
-			printk("Invalid type; continuing!\n");
+		if (pos->hdr.type >= PCN_KMSG_TYPE_SIZE || !callback_table[pos->hdr.type]) {
+			printk("Invalid type %d; continuing!\n", pos->hdr.type);
 			continue;
 		}
 
 		rc = callback_table[pos->hdr.type]((struct pcn_kmsg_message *) &pos->hdr);
+		if (!rc_overall) {
+			rc_overall = rc;
+		}
+
+		/* NOTE: callback function is responsible for freeing memory
+		   that was kmalloced! */
+	}
+
+	return rc_overall;
+}
+
+void pcn_kmsg_do_tasklet(unsigned long);
+DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
+
+/* bottom half */
+void pcn_kmsg_do_tasklet(unsigned long unused)
+{
+	int rc;
+
+	printk("Tasklet handler called...\n");
+
+	/* Process high-priority queue first */
+	rc = process_message_list(&msglist_hiprio);
+
+	if (list_empty(&msglist_hiprio)) {
+		printk("High-priority queue is empty!\n");
 	}
 
 	/* Then process normal-priority queue */
-	list_for_each_entry(pos, &msglist_normprio, list) {
-		printk("Item in norm-prio list; processing it...\n");
-		printk("Size %d, data 0x%lx\n", pos->hdr.size, *((unsigned long *) pos->payload));
-	}
+	rc = process_message_list(&msglist_normprio);
 
 	return;
 }
 
+/* top half */
 void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 {
 	int rc;
@@ -445,16 +468,16 @@ out:
 SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 {
 	int rc;
-	struct pcn_kmsg_message msg;
+	struct pcn_kmsg_test_message msg;
 
 	msg.hdr.type = PCN_KMSG_TYPE_TEST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 	msg.hdr.size = 8;
-	memset(&msg.payload, 0xab, 8);
+	memset(&msg.test_val, 0xab, 8);
 
 	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", cpu);
 
-	rc = pcn_kmsg_send(cpu, &msg);
+	rc = pcn_kmsg_send(cpu, (struct pcn_kmsg_message *) &msg);
 	if (rc) {
 		printk("POPCORN: syscall screwed up!!!\n");
 	}
