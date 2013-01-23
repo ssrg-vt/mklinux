@@ -137,7 +137,9 @@
 #define	FIRST_VM86_IRQ			   3
 #define LAST_VM86_IRQ			  15
 
+#ifdef CONFIG_POPCORN_SHMTUN
 #define POPCORN_NET_VECTOR 0xce
+#endif
 
 #ifndef __ASSEMBLY__
 static inline int invalid_vm86_irq(int irq)

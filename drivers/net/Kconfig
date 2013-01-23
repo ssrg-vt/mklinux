@@ -216,7 +216,7 @@ config TUN
 
 	  If you don't know what to use this for, you don't need it.
 
-config TUN_POPCORN
+config POPCORN_SHMTUN
 	bool "Popcorn shared memory TUN/TAP device driver support"
 	select CRC32
 	---help---
