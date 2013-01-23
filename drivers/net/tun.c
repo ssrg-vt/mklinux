@@ -149,208 +149,10 @@ static inline struct tun_sock *tun_sk(struct sock *sk)
 	return container_of(sk, struct tun_sock, sk);
 }
 
-#define RB_SHIFT 8
-#define RB_SIZE (1 << RB_SHIFT)
-#define RB_MASK ((1 << RB_SHIFT) - 1)
-
-typedef struct shmem_pkt {
-	int	pkt_len;
-	char	data[ETH_DATA_LEN];
-} shmem_pkt_t;
-
-typedef struct rb {
-	shmem_pkt_t buffer[RB_SIZE];
-	unsigned long head;
-	unsigned long tail;
-} rb_t;
-
-typedef struct shmem_tun {
-	rb_t	to_host;
-	rb_t	to_guest;
-	int	int_enabled;
-} shmem_tun_t;
-
-static inline unsigned long rb_inuse(rb_t *rbuf) {
-	return rbuf->head - rbuf->tail;
-}
-
-static inline int rb_put(rb_t *rbuf, char *data, int len) {
-	if (rb_inuse(rbuf) != RB_SIZE) {
-		rbuf->buffer[rbuf->head & RB_MASK].pkt_len = len;
-		memcpy(&(rbuf->buffer[(rbuf->head & RB_MASK)].data), data, len);
-		rbuf->head++;
-		//printk("RBUF PUT: size %lu, head %lu, tail %lu\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
-		return 0;
-	} else {
-		return -1;
-	}
-}
-
-static inline int rb_get(rb_t *rbuf, shmem_pkt_t **pkt) {
-	if (rb_inuse(rbuf) != 0) {
-		*pkt = &(rbuf->buffer[rbuf->tail & RB_MASK]);
-		//pkt->pkt_len = rbuf->buffer[rbuf->tail & RB_MASK].pkt_len;
-		//memcpy(&(pkt->data), &(rbuf->buffer[(rbuf->tail & RB_MASK)].data), pkt->pkt_len);
-		//rbuf->tail++;
-		//printk("RBUF GET: size %lu, head %lu, tail %lu\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
-		return 0;
-	} else {
-		return -1;
-	}
-}
-
-static inline void rb_advance_tail(rb_t *rbuf) {
-	rbuf->tail++;	
-}
-
-#define SHMTUN_MAX_CPUS 4
-#define SHMEM_SIZE 0x2000000
-
-unsigned long long global_shmtun_phys_addr = 0l;
-
-static int __init _setup_shmtun_offset(char *str)
-{
-	global_shmtun_phys_addr = simple_strtoull(str, 0, 16);
-	printk(KERN_ALERT "SHMTUN offset %llx\n", global_shmtun_phys_addr);
-	return 0;
-}
-early_param("shmtun_offset", _setup_shmtun_offset);
-
-static shmem_tun_t *shmem_window;
-
-static struct sk_buff * tun_get_pkt_from_rbuf(rb_t *rbuf);
-static ssize_t tun_get_shmem(rb_t *rbuf);
-static ssize_t tun_put_shmem(struct tun_struct *tun,
-		                struct sk_buff *skb);
-static int shmtun_napi_handler(struct napi_struct *napi, int budget);
-
-static struct tun_struct *global_tun = NULL;
-static int global_cpu = 0;
-static struct napi_struct global_napi;
-
-#define SHMTUN_IS_SERVER (global_cpu == 0)
-
-void smp_popcorn_net_interrupt(struct pt_regs *regs)
-{
-	int cycle_again = 1;
-	int i;
-
-	ack_APIC_irq();
-	//printk("Interrupt received!\n");
-
-	inc_irq_stat(irq_popcorn_net_count);
-
-	irq_enter();
-#if 0
-	if (SHMTUN_IS_SERVER) {
-		/* need to go through all the buffers round-robin */
-		while (cycle_again) {
-			cycle_again = 0;
-			for (i = 0; i < SHMTUN_MAX_CPUS; i++) {
-				if (tun_get_shmem(&(shmem_window[i].to_host))) {
-					//printk("HOST: got a packet from buffer %d\n", i);
-					cycle_again = 1;
-				}
-			}
-		}
-	} else {
-		/* only need to check my own buffer */
-		while (tun_get_shmem(&(shmem_window[global_cpu].to_guest))) {
-			//printk("GUEST: Got a packet out, trying for another...\n");
-		}
-	}
-
-	/* Need to do this last! */
-	//ack_APIC_irq();
-	//inc_irq_stat(irq_popcorn_net_count);
-
-	irq_exit()
-
-#endif
-
-	/* NAPI stuff */
-
-	if (likely(napi_schedule_prep(&global_napi))) {
-		/* Disable RX interrupt */
-
-		//printk("Turning off RX interrupt...\n");
-
-		shmem_window[global_cpu].int_enabled = 0;	
-		
-		//printk("Calling __napi_schedule...\n");
-
-		/* Schedule NAPI processing */
-		__napi_schedule(&global_napi);
-	}
-
-	irq_exit();
-
-	return;
-}
-
-static struct sk_buff * shmtun_rx_next_pkt(void)
-{
-	struct sk_buff *skb;
-	static int cur_cpu = 0; 
-	
-	int start_cpu;
-
-	if (SHMTUN_IS_SERVER) {
-
-		start_cpu = cur_cpu;
-
-		/* need to go through all the buffers round-robin */
-		do {
-			if ((skb = tun_get_pkt_from_rbuf(&(shmem_window[cur_cpu % SHMTUN_MAX_CPUS].to_host)))) {
-				break;
-			}
-			cur_cpu = (cur_cpu + 1) % SHMTUN_MAX_CPUS;
-		} while (cur_cpu != start_cpu);
-	} else {
-		/* only need to check my own buffer */
-		skb = tun_get_pkt_from_rbuf(&(shmem_window[global_cpu].to_guest));
-	}
-
-	return skb;
-}
-
-static int shmtun_napi_handler(struct napi_struct *napi, int budget)
-{
-	struct sk_buff *skb;
-	int work_done = 0;
-
-	//printk("Called shmtun_napi_handler\n");
-
-	/* go through ring buffer and get packets, up to budget */
-
-	while ((skb = shmtun_rx_next_pkt()) && work_done < budget) {
-		napi_gro_receive(napi, skb);
-		work_done++;
-	}
-
-	//printk("Total work done: %d\n", work_done);
-
-	if (work_done < budget) {
-
-		//printk("Going back to interrupt mode!\n");
-
-		napi_gro_flush(napi);
-		__napi_complete(napi);
-		/* turn interrupts back on */
-		shmem_window[global_cpu].int_enabled = 1;
-	}
-
-	return work_done;
-}
-
 static int tun_attach(struct tun_struct *tun, struct file *file)
 {
 	struct tun_file *tfile = file->private_data;
 	int err;
-
-	printk("Called tun_attach!\n");
-
-	global_tun = tun;
 
 	ASSERT_RTNL();
 
@@ -578,8 +380,6 @@ static int tun_net_close(struct net_device *dev)
 static netdev_tx_t tun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
-	int rc;
-	//printk("Called tun_net_xmit, length %d\n", skb->len);
 
 	tun_debug(KERN_INFO, tun, "tun_net_xmit %d\n", skb->len);
 
@@ -590,7 +390,6 @@ static netdev_tx_t tun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 	/* Drop if the filter does not like it.
 	 * This is a noop if the filter is disabled.
 	 * Filter can be enabled only for the TAP devices. */
-#if 0
 	if (!check_filter(&tun->txflt, skb))
 		goto drop;
 
@@ -613,34 +412,22 @@ static netdev_tx_t tun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 			goto drop;
 		}
 	}
-#endif
 
 	/* Orphan the skb - required as we might hang on to it
 	 * for indefinite time. */
-	//skb_orphan(skb);
+	skb_orphan(skb);
 
 	/* Enqueue packet */
-	//skb_queue_tail(&tun->socket.sk->sk_receive_queue, skb);
+	skb_queue_tail(&tun->socket.sk->sk_receive_queue, skb);
 
 	/* Notify and wake up reader process */
-	
-	/*
 	if (tun->flags & TUN_FASYNC)
 		kill_fasync(&tun->fasync, SIGIO, POLL_IN);
 	wake_up_interruptible_poll(&tun->wq.wait, POLLIN |
 				   POLLRDNORM | POLLRDBAND);
-	*/
-
-	rc = tun_put_shmem(tun, skb);
-
-	//printk("Returning NETDEV_TX_OK, rc = %d\n", rc);
-
-	kfree_skb(skb);
-
 	return NETDEV_TX_OK;
 
 drop:
-	printk("Dropping packet!\n");
 	dev->stats.tx_dropped++;
 	kfree_skb(skb);
 	return NETDEV_TX_OK;
@@ -676,9 +463,6 @@ static u32 tun_net_fix_features(struct net_device *dev, u32 features)
 #ifdef CONFIG_NET_POLL_CONTROLLER
 static void tun_poll_controller(struct net_device *dev)
 {
-
-	printk("Called tun_poll_controller...\n");
-
 	/*
 	 * Tun only receives frames when:
 	 * 1) the char device endpoint gets data from user space
@@ -724,36 +508,12 @@ static const struct net_device_ops tap_netdev_ops = {
 static void tun_net_init(struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
-	//int cpu;
-
-	printk("Called tun_net_init!\n");
-
-	shmem_window = ioremap_cache(global_shmtun_phys_addr, SHMEM_SIZE);
-
-	printk("Mapped shared memory window, virt addr 0x%p\n", shmem_window);
-
-
-	global_cpu = raw_smp_processor_id();
-
-	printk("Raw SMP processor ID: %d\n", global_cpu);
-
-	if (global_cpu == 0) {
-		printk("We're the server...\n");
-	} else {
-		printk("We're the client...\n");
-	}
-
-	shmem_window[global_cpu].int_enabled = 1;
-
-	netif_napi_add(dev, &global_napi, shmtun_napi_handler, 64);
-
-	napi_enable(&global_napi);
 
 	switch (tun->flags & TUN_TYPE_MASK) {
-		case TUN_TUN_DEV:
-			dev->netdev_ops = &tun_netdev_ops;
+	case TUN_TUN_DEV:
+		dev->netdev_ops = &tun_netdev_ops;
 
-			/* Point-to-Point TUN Device */
+		/* Point-to-Point TUN Device */
 		dev->hard_header_len = 0;
 		dev->addr_len = 0;
 		dev->mtu = 1500;
@@ -786,8 +546,6 @@ static unsigned int tun_chr_poll(struct file *file, poll_table * wait)
 	struct tun_struct *tun = __tun_get(tfile);
 	struct sock *sk;
 	unsigned int mask = 0;
-
-	printk("Called tun_chr_poll!\n");
 
 	if (!tun)
 		return POLLERR;
@@ -842,88 +600,16 @@ static struct sk_buff *tun_alloc_skb(struct tun_struct *tun,
 	return skb;
 }
 
-static struct sk_buff * tun_get_pkt_from_rbuf(rb_t *rbuf)
-{
-	struct sk_buff *skb;
-	struct shmem_pkt *pkt;
-	int rc;
-
-	rc = rb_get(rbuf, &pkt);
-
-	if (rc) {
-		//printk("No packet in ring buffer, returning...\n");
-		return NULL;
-	}
-
-	//printk("Received packet of pkt_len %d\n", pkt->pkt_len);
-
-	skb = dev_alloc_skb(pkt->pkt_len + 2);
-
-	if (!skb) {
-		printk("Unable to allocate skb for received packet; dropping it!\n");
-		return NULL;
-	}
-
-	skb_reserve(skb, 2);  /* align IP on 16B boundary */
-
-	memcpy(skb_put(skb, pkt->pkt_len), pkt->data, pkt->pkt_len);
-
-	/* POPCORN -- we're safe to move the tail pointer at this point */
-	rb_advance_tail(rbuf);
-
-	skb->protocol = htons(ETH_P_IP);
-	skb_reset_mac_header(skb);
-	skb->dev = global_tun->dev;
-	skb->ip_summed = CHECKSUM_UNNECESSARY;
-
-	return skb;
-}
-
-/* Get a packet out of the shared memory ring buffer
- * and deliver it directly to the networking stack. */
-static ssize_t tun_get_shmem(rb_t *rbuf)
-{
-	struct sk_buff *skb;
-	struct shmem_pkt *pkt;
-	int rc;
-
-	skb = tun_get_pkt_from_rbuf(rbuf);
-
-	if (unlikely(!skb)) {
-		//printk("No packet in ring buffer, returning...\n");
-		return 0;
-	}
-
-	global_tun->dev->stats.rx_packets++;
-	global_tun->dev->stats.rx_bytes += pkt->pkt_len;
-
-	if (0) { /* enable this conditional to look at the data */
-		int i;
-		printk("len is %i\n" KERN_DEBUG "data:",pkt->pkt_len);
-		for (i=14 ; i<pkt->pkt_len; i++)
-			printk(" %02x",skb->data[i]&0xff);
-		printk("\n");
-	}
-
-	/* finally, receive packet */
-	//printk("Handing off packet...\n");
-	netif_rx(skb);
-
-	return 1;	
-}
-
 /* Get packet from user space buffer */
 static ssize_t tun_get_user(struct tun_struct *tun,
-		const struct iovec *iv, size_t count,
-		int noblock)
+			    const struct iovec *iv, size_t count,
+			    int noblock)
 {
 	struct tun_pi pi = { 0, cpu_to_be16(ETH_P_IP) };
 	struct sk_buff *skb;
 	size_t len = count, align = NET_SKB_PAD;
 	struct virtio_net_hdr gso = { 0 };
 	int offset = 0;
-
-	printk("Called tun_get_user, noblock = %d\n", noblock);
 
 	if (!(tun->flags & TUN_NO_PI)) {
 		if ((len -= sizeof(pi)) > count)
@@ -1052,23 +738,6 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 	struct file *file = iocb->ki_filp;
 	struct tun_struct *tun = tun_get(file);
 	ssize_t result;
-	int cpu;
-
-	printk("Called tun_chr_aio_write!\n");
-
-	cpu = raw_smp_processor_id();
-
-	printk("Raw SMP processor ID: %d\n", cpu);
-
-	printk("send_IPI_mask points to 0x%p\n", &(apic->send_IPI_mask));
-
-	if (cpu == 0) {
-		printk("Sending IPI to CPU 2...\n");
-		apic->send_IPI_single(2, POPCORN_NET_VECTOR);
-	} else if (cpu == 2) {
-		printk("Sending IPI to CPU 0...\n");
-		apic->send_IPI_single(0, POPCORN_NET_VECTOR);
-	}
 
 	if (!tun)
 		return -EBADFD;
@@ -1082,106 +751,15 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 	return result;
 }
 
-/* Put packet to the shared memory buffer */
-static ssize_t tun_put_shmem(struct tun_struct *tun,
-		struct sk_buff *skb)
-{
-	int rc, len, sendto_cpu = 0;
-	char *data, shortpkt[ETH_ZLEN];
-	ssize_t total = 0;
-	rb_t *send_buf;
-
-	//printk("Called tun_put_shmem, len = %d\n", skb->len);
-
-	/* code from LDD3 example */
-	data = skb->data;
-	len = skb->len;
-	if (len < ETH_ZLEN) {
-		memset(shortpkt, 0, ETH_ZLEN);
-		memcpy(shortpkt, skb->data, skb->len);
-		len = ETH_ZLEN;
-		data = shortpkt;
-	}
-	/*
-	printk("SEND from %d.%d.%d.%d to %d.%d.%d.%d\n",
-			(int) data[12], (int) data[13], (int) data[14], (int) data[15],
-			(int) data[16], (int) data[17], (int) data[18], (int) data[19]
-	      );
-	*/
-	if (0) { /* enable this conditional to look at the data */
-		int i;
-		printk("len is %i\n" KERN_DEBUG "data:",len);
-		for (i=14 ; i<len; i++)
-			printk(" %02x",data[i]&0xff);
-		printk("\n");
-	}
-
-	
-
-	if (SHMTUN_IS_SERVER) {
-		sendto_cpu = data[19] - 1;
-		send_buf = &(shmem_window[sendto_cpu].to_guest);
-	} else {
-		sendto_cpu = 0;
-		/* client sends to server and server forwards */
-		send_buf = &(shmem_window[data[15] - 1].to_host);
-	}
-
-	/* POPCORN -- copy to shared memory buffer */
-	rc = rb_put(send_buf, data, len);
-
-	if (rc) {
-		printk("No space in ring buffer, dropping packet...\n");
-		tun->dev->stats.tx_dropped++;
-		return 0;
-	}
-
-	/* POPCORN -- send IPI to receiver */
-
-	//printk("send_IPI_mask points to 0x%p\n", &(apic->send_IPI_mask));
-	//printk("send_IPI_single points to 0x%p\n", &(apic->send_IPI_single));
-
-	/* POPCORN -- if RX interrupts are disabled, don't send IPI */
-
-	if (shmem_window[sendto_cpu].int_enabled) {
-
-		//printk("Interrupts enabled for CPU %d, sending IPI...\n", sendto_cpu);
-
-		if (SHMTUN_IS_SERVER) {
-			//printk("Sending IPI to CPU 2...\n");
-			apic->send_IPI_single(sendto_cpu, POPCORN_NET_VECTOR);
-			//apic->send_IPI_mask(cpumask_of(sendto_cpu), POPCORN_NET_VECTOR);
-		} else {
-			//printk("Sending IPI to CPU 0...\n");
-			apic->send_IPI_single(0, POPCORN_NET_VECTOR);
-			//apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
-		}
-	}
-
-	total += skb->len;
-
-	tun->dev->stats.tx_packets++;
-	tun->dev->stats.tx_bytes += len;
-
-	return total;
-}
-
-
-
 /* Put packet to the user space buffer */
 static ssize_t tun_put_user(struct tun_struct *tun,
-		struct sk_buff *skb,
-		const struct iovec *iv, int len)
+			    struct sk_buff *skb,
+			    const struct iovec *iv, int len)
 {
 	struct tun_pi pi = { 0, skb->protocol };
 	ssize_t total = 0;
 
-	printk("Called tun_put_user, len = %d\n", len);
-
 	if (!(tun->flags & TUN_NO_PI)) {
-
-		printk("TUN_NO_PI is not set!\n");
-
 		if ((len -= sizeof(pi)) < 0)
 			return -EINVAL;
 
@@ -1196,9 +774,6 @@ static ssize_t tun_put_user(struct tun_struct *tun,
 	}
 
 	if (tun->flags & TUN_VNET_HDR) {
-
-		printk("TUN_VNET_HDR set!\n");
-
 		struct virtio_net_hdr gso = { 0 }; /* no info leak */
 		if ((len -= tun->vnet_hdr_sz) < 0)
 			return -EINVAL;
@@ -1313,8 +888,6 @@ static ssize_t tun_chr_aio_read(struct kiocb *iocb, const struct iovec *iv,
 	struct tun_struct *tun = __tun_get(tfile);
 	ssize_t len, ret;
 
-	printk("Called tun_chr_aio_read!\n");
-
 	if (!tun)
 		return -EBADFD;
 	len = iov_length(iv, count);
@@ -1384,7 +957,6 @@ static void tun_sock_destruct(struct sock *sk)
 static int tun_sendmsg(struct kiocb *iocb, struct socket *sock,
 		       struct msghdr *m, size_t total_len)
 {
-	printk("Called tun_sendmsg!\n");
 	struct tun_struct *tun = container_of(sock, struct tun_struct, socket);
 	return tun_get_user(tun, m->msg_iov, total_len,
 			    m->msg_flags & MSG_DONTWAIT);
@@ -1396,9 +968,6 @@ static int tun_recvmsg(struct kiocb *iocb, struct socket *sock,
 {
 	struct tun_struct *tun = container_of(sock, struct tun_struct, socket);
 	int ret;
-
-	printk("Called tun_recvmsg!\n");
-
 	if (flags & ~(MSG_DONTWAIT|MSG_TRUNC))
 		return -EINVAL;
 	ret = tun_do_read(tun, iocb, m->msg_iov, total_len,
@@ -2098,8 +1667,6 @@ static void tun_cleanup(void)
  * holding a reference to the file for as long as the socket is in use. */
 struct socket *tun_get_socket(struct file *file)
 {
-	printk("Called tun_get_socket!\n");
-
 	struct tun_struct *tun;
 	if (file->f_op != &tun_fops)
 		return ERR_PTR(-EINVAL);
