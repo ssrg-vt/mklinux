@@ -91,10 +91,6 @@ struct tun_struct {
 			  NETIF_F_TSO6|NETIF_F_UFO)
 	struct fasync_struct	*fasync;
 
-	//struct tap_filter       txflt;
-	//struct socket		socket;
-	//struct socket_wq	wq;
-
 	int			vnet_hdr_sz;
 
 #ifdef TUN_DEBUG
@@ -294,10 +290,8 @@ static int shmtun_attach(struct tun_struct *tun, struct file *file)
 	err = 0;
 	tfile->tun = tun;
 	tun->tfile = tfile;
-	//tun->socket.file = file;
 	netif_carrier_on(tun->dev);
 	dev_hold(tun->dev);
-	//sock_hold(tun->socket.sk);
 	atomic_inc(&tfile->count);
 
 out:
@@ -311,11 +305,7 @@ static void __shmtun_detach(struct tun_struct *tun)
 	netif_tx_lock_bh(tun->dev);
 	netif_carrier_off(tun->dev);
 	tun->tfile = NULL;
-	//tun->socket.file = NULL;
 	netif_tx_unlock_bh(tun->dev);
-
-	/* Drop read queue */
-	//skb_queue_purge(&tun->socket.sk->sk_receive_queue);
 
 	/* Drop the extra count on the net device */
 	dev_put(tun->dev);
@@ -364,7 +354,6 @@ static void shmtun_net_uninit(struct net_device *dev)
 	/* Inform the methods they need to stop using the dev.
 	 */
 	if (tfile) {
-		//wake_up_all(&tun->wq.wait);
 		if (atomic_dec_and_test(&tfile->count))
 			__shmtun_detach(tun);
 	}
@@ -372,9 +361,7 @@ static void shmtun_net_uninit(struct net_device *dev)
 
 static void shmtun_free_netdev(struct net_device *dev)
 {
-	struct tun_struct *tun = netdev_priv(dev);
-
-	//sock_put(tun->socket.sk);
+	return;
 }
 
 /* Net device open. */
@@ -703,7 +690,6 @@ static DEVICE_ATTR(group, 0444, tun_show_group, NULL);
 
 static int shmtun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 {
-	//struct sock *sk;
 	struct tun_struct *tun;
 	struct net_device *dev;
 	int err;
@@ -725,9 +711,6 @@ static int shmtun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		     (tun->group != -1 && !in_egroup_p(tun->group))) &&
 		    !capable(CAP_NET_ADMIN))
 			return -EPERM;
-		//err = security_tun_dev_attach(tun->socket.sk);
-		//if (err < 0)
-		//	return err;
 
 		err = shmtun_attach(tun, file);
 		if (err < 0)
@@ -770,10 +753,7 @@ static int shmtun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		tun = netdev_priv(dev);
 		tun->dev = dev;
 		tun->flags = flags;
-		//tun->txflt.count = 0;
 		tun->vnet_hdr_sz = sizeof(struct virtio_net_hdr);
-
-		//security_tun_dev_post_create(sk);
 
 		shmtun_net_init(dev);
 
@@ -789,8 +769,6 @@ static int shmtun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		    device_create_file(&tun->dev->dev, &dev_attr_owner) ||
 		    device_create_file(&tun->dev->dev, &dev_attr_group))
 			pr_err("Failed to create tun sysfs files\n");
-
-		//sk->sk_destruct = tun_sock_destruct;
 
 		err = shmtun_attach(tun, file);
 		if (err < 0)
@@ -827,8 +805,6 @@ static int shmtun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 	return 0;
 
  err_free_sk:
-	//sock_put(sk);
- err_free_dev:
 	free_netdev(dev);
  failed:
 	printk("shmtun_set_iff returned error %d\n", err);
@@ -893,9 +869,7 @@ static long __shmtun_chr_ioctl(struct file *file, unsigned int cmd,
 	struct tun_file *tfile = file->private_data;
 	struct tun_struct *tun;
 	void __user* argp = (void __user*)arg;
-	struct sock_fprog fprog;
 	struct ifreq ifr;
-	int sndbuf;
 	int vnet_hdr_sz;
 	int ret;
 
@@ -1007,9 +981,6 @@ static long __shmtun_chr_ioctl(struct file *file, unsigned int cmd,
 	case TUNSETTXFILTER:
 		/* Can be set only for TAPs */
 		ret = -EINVAL;
-		if ((tun->flags & TUN_TYPE_MASK) != TUN_TAP_DEV)
-			break;
-		//ret = update_filter(&tun->txflt, (void __user *)arg);
 		break;
 
 	case SIOCGIFHWADDR:
@@ -1172,10 +1143,6 @@ static int shmtun_chr_close(struct inode *inode, struct file *file)
 		}
 	}
 
-	tun = tfile->tun;
-	if (tun)
-		//sock_put(tun->socket.sk);
-
 	put_net(tfile->net);
 	kfree(tfile);
 
@@ -1185,11 +1152,6 @@ static int shmtun_chr_close(struct inode *inode, struct file *file)
 static const struct file_operations tun_fops = {
 	.owner	= THIS_MODULE,
 	.llseek = no_llseek,
-	//.read  = do_sync_read,
-	//.aio_read  = tun_chr_aio_read,
-	//.write = do_sync_write,
-	//.aio_write = tun_chr_aio_write,
-	//.poll	= tun_chr_poll,
 	.unlocked_ioctl	= shmtun_chr_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = shmtun_chr_compat_ioctl,
