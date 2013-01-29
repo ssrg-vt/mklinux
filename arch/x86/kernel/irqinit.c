@@ -262,6 +262,8 @@ static void __init smp_intr_init(void)
 #ifdef CONFIG_POPCORN_KMSG
 	/* POPCORN -- IPI used for inter-kernel messaging */
 	alloc_intr_gate(POPCORN_KMSG_VECTOR, popcorn_kmsg_interrupt);
+
+	alloc_intr_gate(POPCORN_IPI_LATENCY_VECTOR, popcorn_ipi_latency_interrupt);
 #endif
 #endif
 #endif /* CONFIG_SMP */

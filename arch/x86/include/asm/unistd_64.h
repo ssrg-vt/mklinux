@@ -692,6 +692,8 @@ __SYSCALL(__NR_multikernel_boot, sys_multikernel_boot)
 __SYSCALL(__NR_get_boot_params_addr, sys_get_boot_params_addr)
 #define __NR_popcorn_test_kmsg			314
 __SYSCALL(__NR_popcorn_test_kmsg, sys_popcorn_test_kmsg)
+#define __NR_popcorn_test_ipi_latency		315
+__SYSCALL(__NR_popcorn_test_ipi_latency, sys_popcorn_test_ipi_latency)
 
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR

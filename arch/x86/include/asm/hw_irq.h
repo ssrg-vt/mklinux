@@ -37,6 +37,7 @@ extern void reschedule_interrupt(void);
 
 #ifdef CONFIG_POPCORN_KMSG
 extern void popcorn_kmsg_interrupt(void);
+extern void popcorn_ipi_latency_interrupt(void);
 #endif
 
 extern void invalidate_interrupt(void);

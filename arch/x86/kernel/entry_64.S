@@ -1000,6 +1000,8 @@ apicinterrupt RESCHEDULE_VECTOR \
 #ifdef CONFIG_POPCORN_KMSG
 apicinterrupt POPCORN_KMSG_VECTOR \
 	popcorn_kmsg_interrupt smp_popcorn_kmsg_interrupt
+apicinterrupt POPCORN_IPI_LATENCY_VECTOR \
+	popcorn_ipi_latency_interrupt smp_popcorn_ipi_latency_interrupt
 #endif
 #endif
 
