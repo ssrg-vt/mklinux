@@ -25,15 +25,7 @@ volatile int done;
 
 extern int my_cpu;
 
-/*
-static inline unsigned long rdtscll(void)
-{
-	unsigned int a, d;
-	asm volatile ("rdtsc" : "=a" (a), "=d" (d));
-	return ((unsigned long) a) | (((unsigned long) d) << 32);
-}
-*/
-
+#define NUM_TRIALS 1000
 
 /* Ping-pong interrupt handler */
 void smp_popcorn_ipi_latency_interrupt(struct pt_regs *regs)
@@ -41,7 +33,7 @@ void smp_popcorn_ipi_latency_interrupt(struct pt_regs *regs)
 	ack_APIC_irq();
 
 	//printk("Ping-pong IPI received!\n");
-
+#if 0
 	if (my_cpu) {
 		//printk("Sending IPI back to CPU 0...\n");
 		// send IPI back to sender
@@ -51,27 +43,79 @@ void smp_popcorn_ipi_latency_interrupt(struct pt_regs *regs)
 		rdtscll(tsc);
 		done = 1;
 	}
+#endif
 
 	return;
+}
+
+static unsigned long calculate_tsc_overhead(void)
+{
+	unsigned long t0, t1, overhead = ~0UL;
+	int i;
+
+	for (i = 0; i < 1000; i++) {
+		rdtscll(t0);
+		asm volatile("");
+		rdtscll(t1);
+		if (t1 - t0 < overhead)
+			overhead = t1 - t0;
+	}
+
+	printk("tsc overhead is %ld\n", overhead);
+
+	return overhead;
+}
+
+unsigned long test_ipi_pingpong(int cpu)
+{
+	unsigned long tsc_init, tsc_final;
+
+	done = 0;
+	rdtscll(tsc_init);
+	apic->send_IPI_mask(cpumask_of(cpu), POPCORN_IPI_LATENCY_VECTOR);
+	while (!done) {}
+	rdtscll(tsc_final);
+
+	return tsc_final - tsc_init;
+}
+
+unsigned long test_ipi_send_time(int cpu)
+{
+	unsigned long tsc_init, tsc_final;
+
+	rdtscll(tsc_init);
+	apic->send_IPI_mask(cpumask_of(cpu), POPCORN_IPI_LATENCY_VECTOR);
+	rdtscll(tsc_final);
+
+	return tsc_final - tsc_init;
+
 }
 
 /* Syscall for testing all this stuff */
 SYSCALL_DEFINE1(popcorn_test_ipi_latency, int, cpu)
 {
-	int rc = 0;
-	unsigned long tsc_init;
+	int rc = 0, i;
+	unsigned long result, result_min = ~0UL, result_max = 0;
+	unsigned long overhead = calculate_tsc_overhead();
 
 	printk("Reached IPI latency syscall, sending to CPU %d\n", cpu);
 
 	done = 0;
 
-	rdtscll(tsc_init);
+	for (i = 0; i < NUM_TRIALS; i++) {
+		result = test_ipi_send_time(cpu) - overhead;
 
-	apic->send_IPI_mask(cpumask_of(cpu), POPCORN_IPI_LATENCY_VECTOR);
-	
-	while (!done) {}
+		if (result < result_min) {
+			result_min = result;
+		}
 
-	printk("initial tsc - final tsc: %lu\n", tsc - tsc_init);
+		if (result > result_max) {
+			result_max = result;
+		}
+	}
+
+	printk("Performed %d trials, min time %ld, max time %ld\n",
+			NUM_TRIALS, result_min, result_max);
 
 	return rc;
 }
