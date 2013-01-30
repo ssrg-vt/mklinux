@@ -2266,8 +2266,9 @@ int remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
 	if (addr == vma->vm_start && end == vma->vm_end) {
 		vma->vm_pgoff = pfn;
 		vma->vm_flags |= VM_PFN_AT_MMAP;
-	} else if (is_cow_mapping(vma->vm_flags))
+	} else if (is_cow_mapping(vma->vm_flags) && !current->executing_for_remote) 
 		return -EINVAL;
+    
 
 	vma->vm_flags |= VM_IO | VM_RESERVED | VM_PFNMAP;
 
@@ -2290,8 +2291,9 @@ int remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
 		next = pgd_addr_end(addr, end);
 		err = remap_pud_range(mm, pgd, addr, next,
 				pfn + (addr >> PAGE_SHIFT), prot);
-		if (err)
+		if (err) 
 			break;
+        
 	} while (pgd++, addr = next, addr != end);
 
 	if (err)

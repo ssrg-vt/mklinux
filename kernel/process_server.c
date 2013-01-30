@@ -245,7 +245,8 @@ long process_server_clone(unsigned long clone_flags,
                           unsigned long stack_size,
                           struct task_struct* task);
 static int process_server(void* dummy);
-
+static vma_data_t* find_vma_data(unsigned long addr_start);
+static void dump_mm(struct mm_struct* mm);
 
 /**
  * Module variables
@@ -268,6 +269,36 @@ DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
  * General helper functions and debugging tools
  */
 
+/**
+ *
+ */
+static vma_data_t* find_vma_data(unsigned long addr_start) {
+    data_header_t* curr = _data_head;
+    vma_data_t* ret = NULL;
+    vma_data_t* vma_curr;
+
+    spin_lock(&_data_head_lock);
+
+    while(curr) {
+
+        if(curr->data_type == PROCESS_SERVER_VMA_DATA_TYPE) {
+            vma_curr = (vma_data_t*) curr;
+            if(vma_curr->start == addr_start) {
+                ret = curr;
+                break;
+            }
+        }
+
+        curr = curr->next;
+    }
+
+    spin_unlock(&_data_head_lock);
+
+    return ret;
+}
+/**
+ *
+ */
 static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
 
     if(NULL == pte || !pte_present(*pte)) {                                                                                                                             
@@ -280,10 +311,11 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
             (unsigned long)(pte_val(*pte) & PHYSICAL_PAGE_MASK)/* | (start & (PAGE_SIZE-1))*/);
     return 0;
 }
+
 /**
  * Print mm
  */
-void dump_mm(struct mm_struct* mm) {
+static void dump_mm(struct mm_struct* mm) {
     struct vm_area_struct * curr = mm->mmap;
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
@@ -457,8 +489,6 @@ static void handle_pte_transfer(pte_transfer_t* msg, int source_cpu) {
 
     add_data_entry(pte_data);
     
-    // Take a look at what we've done
-    //dump_data_list();
 }
 
 /**
@@ -486,8 +516,6 @@ static void handle_vma_transfer(vma_transfer_t* msg, int source_cpu) {
     strcpy(vma_data->path,msg->path);
     add_data_entry(vma_data); 
     
-    // Take a look at what we've done.
-    //dump_data_list();    
 }
 
 /**
@@ -741,6 +769,7 @@ int process_server_import_address_space(unsigned long* ip,
     unsigned long err = 0;
     struct file* f;
     int mmap_ret = 0;
+    struct vm_area_struct* vma;
 
     // Verify that we're a delegated task.
     if (!current->executing_for_remote) {
@@ -811,47 +840,38 @@ int process_server_import_address_space(unsigned long* ip,
                 // We can start at the current place in the list, since VMA is transfered
                 // before any pte's and all new entries are added to the end of the list.
                 if(vma_curr->anonymous) {
-                    inner_data_curr = data_curr->next;
-                    while(inner_data_curr) {
-                        if(inner_data_curr->data_type == PROCESS_SERVER_PTE_DATA_TYPE) {
-                            pte_curr = (pte_data_t*)inner_data_curr;
-                            if(pte_curr->vma_id == vma_curr->vma_id) {
+                    PSPRINTK("do_mmap()ing\n");
+                    err = do_mmap(NULL, 
+                            vma_curr->start, 
+                            vma_curr->end - vma_curr->start,
+                            PROT_READ|PROT_WRITE, 
+                            MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE, 
+                            0);
 
-                                // This is one of our pte's.
-                                // Map it.
-                        
-                                PSPRINTK("Mapping pte_entry %lx, phys{%lx}, prot{%lx}, flags{%lx}\n",
-                                        pte_curr->vaddr,
-                                        pte_curr->paddr,
-                                        vma_curr->prot,
-                                        vma_curr->flags);
+                    if(err > 0) {
+                        // mmap_region succeeded
+                        vma = find_vma(current->mm, vma_curr->start);
+                        if(vma) {
+                            PSPRINTK("vma found\n");
+                            for(inner_data_curr = vma_curr->header.next; 
+                                  inner_data_curr != NULL; 
+                                  inner_data_curr = inner_data_curr->next) {
 
-                                err = ioremap_page_range(pte_curr->vaddr,
-                                                   pte_curr->vaddr+PAGE_SIZE,
-                                                   (phys_addr_t)pte_curr->paddr,
-                                                   vma_curr->prot);
-                                if(err) {
-                                    PSPRINTK("ioremap err{%lu}\n",err);
-                                } else {
-         
-                                    // Pull this page into the current processes
-                                    // address space.
-                                    err = mmap_region(NULL,
-                                                  pte_curr->vaddr,
-                                                  PAGE_SIZE,
-                                                  MAP_POPULATE|MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
-                                                  vma_curr->flags,
-                                                  0);
-                                    if(err <= 0) {
-                                        PSPRINTK("mmap_region failed err{%lu},vaddr{%lx}\n",err,pte_curr->vaddr);
-                                    } else {
-                                        PSPRINTK("succeeded %lx\n",err);
+                                if(inner_data_curr->data_type == PROCESS_SERVER_PTE_DATA_TYPE) {
+                                    pte_curr = (pte_data_t*)inner_data_curr;
+                                    if(pte_curr->vma_id == vma_curr->vma_id &&
+                                       pte_curr->cpu == remote_cpu) {
+                                            // MAP it
+                                            remap_pfn_range(vma,
+                                                    pte_curr->vaddr,
+                                                    pte_curr->paddr >> PAGE_SHIFT,
+                                                    PAGE_SIZE,
+                                                    vma_curr->prot);
                                     }
                                 }
-                            }
 
+                            }
                         }
-                        inner_data_curr = inner_data_curr->next;
                     }
                 } else {
                     // Not anonymous
