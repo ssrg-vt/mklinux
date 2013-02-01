@@ -107,6 +107,7 @@ typedef struct _clone_data {
     int clone_request_id;
     unsigned long clone_flags;
     unsigned long stack_start;
+    unsigned long stack_ptr;
 #ifdef CONFIG_CC_STACKPROTECTOR
     unsigned long stack_canary;
 #endif
@@ -150,6 +151,7 @@ typedef struct _clone_request {
     int clone_request_id;
     unsigned long clone_flags;
     unsigned long stack_start;
+    unsigned long stack_ptr;
 #ifdef CONFIG_CC_STACKPROTECTOR
     unsigned long stack_canary;
 #endif
@@ -308,7 +310,7 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
     PSPRINTK("pte_entry start{%lx}, end{%lx}, phy{%lx}\n",
             start,
             end,
-            (unsigned long)(pte_val(*pte) & PHYSICAL_PAGE_MASK)/* | (start & (PAGE_SIZE-1))*/);
+            (unsigned long)(pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1)));
     return 0;
 }
 
@@ -614,6 +616,7 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
     clone_data->clone_request_id = request->clone_request_id;
     clone_data->clone_flags = request->clone_flags;
     clone_data->stack_start = request->stack_start;
+    clone_data->stack_ptr = request->stack_ptr;
     clone_data->stack_canary = request->stack_canary;
     clone_data->heap_start = request->heap_start;
     clone_data->heap_end = request->heap_end;
@@ -808,7 +811,7 @@ int process_server_import_address_space(unsigned long* ip,
                 current->thread.gsindex = clone_data->thread_gsindex;
 
                 // Set output variables.
-                *sp = current->mm->start_stack;
+                *sp = clone_data->stack_ptr;
                 *ip = clone_data->regs.ip;
                 memcpy(regs,&clone_data->regs,sizeof(struct pt_regs)); 
                 
@@ -866,7 +869,7 @@ int process_server_import_address_space(unsigned long* ip,
                                                     pte_curr->vaddr,
                                                     pte_curr->paddr >> PAGE_SHIFT,
                                                     PAGE_SIZE,
-                                                    vma_curr->prot);
+                                                    vma->vm_page_prot);
                                     }
                                 }
 
@@ -1015,7 +1018,7 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
 
     pte_xfer->header.msg_type = PROCESS_SERVER_PTE_TRANSFER;
     pte_xfer->header.msg_len = sizeof(pte_transfer_t) - sizeof(msg_header_t);
-    pte_xfer->paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK)/* | (start & (PAGE_SIZE-1))*/;
+    pte_xfer->paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));
     // NOTE: Found the above pte to paddr conversion here -
     // http://wbsun.blogspot.com/2010/12/convert-userspace-virtual-address-to.html
     pte_xfer->vaddr = start;
@@ -1056,6 +1059,7 @@ long process_server_clone(unsigned long clone_flags,
         };
     vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
     int lclone_request_id;
+    int i;
 
     // Pick an id for this remote process request
     spin_lock(&_clone_request_id_lock);
@@ -1086,6 +1090,9 @@ long process_server_clone(unsigned long clone_flags,
 
     PSPRINTK("kmkprocsrv: top stack value = %lx\n",
             *((unsigned long*)stack_start));
+    for(i = -16; i <= 16; i++) {
+        PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(stack_start + i*8), stack_start + i*8); 
+    }
 
     /**
      * Print out the vm_area_struct list associated with this task.
@@ -1187,7 +1194,8 @@ long process_server_clone(unsigned long clone_flags,
     request->header.msg_type = PROCESS_SERVER_MSG_CLONE_REQUEST;
     request->header.msg_len = sizeof( clone_request_t ) - sizeof( msg_header_t );
     request->clone_flags = clone_flags;
-    request->stack_start = task->mm->start_stack;
+    request->stack_start = stack_start;
+    request->stack_ptr = stack_start;
     request->heap_start = task->mm->start_brk;
     request->heap_end = task->mm->brk;
 #ifdef CONFIG_CC_STACKPROTECTOR
