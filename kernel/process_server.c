@@ -108,6 +108,10 @@ typedef struct _clone_data {
     unsigned long clone_flags;
     unsigned long stack_start;
     unsigned long stack_ptr;
+    unsigned long env_start;
+    unsigned long env_end;
+    unsigned long arg_start;
+    unsigned long arg_end;
 #ifdef CONFIG_CC_STACKPROTECTOR
     unsigned long stack_canary;
 #endif
@@ -152,6 +156,10 @@ typedef struct _clone_request {
     unsigned long clone_flags;
     unsigned long stack_start;
     unsigned long stack_ptr;
+    unsigned long env_start;
+    unsigned long env_end;
+    unsigned long arg_start;
+    unsigned long arg_end;
 #ifdef CONFIG_CC_STACKPROTECTOR
     unsigned long stack_canary;
 #endif
@@ -249,6 +257,10 @@ long process_server_clone(unsigned long clone_flags,
 static int process_server(void* dummy);
 static vma_data_t* find_vma_data(unsigned long addr_start);
 static void dump_mm(struct mm_struct* mm);
+static void dump_task(struct task_struct* task);
+static void dump_thread(struct thread_struct* thread);
+static void dump_regs(struct pt_regs* regs);
+static void dump_stk(unsigned long sp); 
 
 /**
  * Module variables
@@ -271,6 +283,57 @@ DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
  * General helper functions and debugging tools
  */
 
+void dump_task(struct task_struct* task) {
+#if PROCESS_SERVER_VERBOSE
+    if(NULL == task) return;
+
+    PSPRINTK("DUMP TASK\n");
+    PSPRINTK("PID: %d\n",task->pid);
+    PSPRINTK("State: %lx\n",task->state);
+    PSPRINTK("Flags: %lx\n",task->flags);
+    PSPRINTK("Ptrace: %lx\n",task->ptrace);
+#ifdef CONFIG_SMP
+    PSPRINTK("ON_CPU: %d\n",task->on_cpu);
+#endif
+    PSPRINTK("Prio{%d},Static_Prio{%d},Normal_Prio{%d}\n",
+            task->prio,task->static_prio,task->normal_prio);
+    PSPRINTK("Represents_remote{%d}\n",task->represents_remote);
+    PSPRINTK("Executing_for_remote{%d}\n",task->executing_for_remote);
+    PSPRINTK("Remote_pid{%d}\n",task->remote_pid);
+    PSPRINTK("Remote_cpu{%d}\n",task->remote_cpu);
+    PSPRINTK("Clone_request_id{%d}\n",task->clone_request_id);
+    //dump_regs(&task->regs);
+    dump_thread(&task->thread);
+    dump_mm(task->mm);
+    if(task->mm) dump_stk(task->thread.usersp);
+#endif
+}
+
+static void dump_stk(unsigned long sp) {
+    int i;
+    PSPRINTK("DUMP STACK\n");
+    PSPRINTK("sp = %lx\n",sp);
+    for(i = -16; i <= 16; i++) {
+        PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(sp + i*8), sp + i*8); 
+    }
+}
+
+static void dump_regs(struct pt_regs* regs) {
+    PSPRINTK("DUMP REGS\n");
+    //PSPRINTK("r15{%lx}\n",regs->r15);
+}
+
+static void dump_thread(struct thread_struct* thread) {
+    PSPRINTK("DUMP THREAD\n");
+    PSPRINTK("sp0{%lx}, sp{%lx}\n",thread->sp0,thread->sp);
+    PSPRINTK("usersp{%lx}\n",thread->usersp);
+    PSPRINTK("es{%lx}\n",thread->es);
+    PSPRINTK("ds{%lx}\n",thread->ds);
+    PSPRINTK("fsindex{%lx}\n",thread->fsindex);
+    PSPRINTK("gsindex{%lx}\n",thread->gsindex);
+    PSPRINTK("fs{%lx}\n",thread->fs);
+    PSPRINTK("gs{%lx}\n",thread->gs);
+}
 /**
  *
  */
@@ -318,15 +381,29 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
  * Print mm
  */
 static void dump_mm(struct mm_struct* mm) {
-    struct vm_area_struct * curr = mm->mmap;
+
+    struct vm_area_struct * curr;
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
-        .mm = current->mm,
+        .mm = mm,
         .private = NULL
         };
     char buf[256];
 
+    if(NULL == mm) {
+        PSPRINTK("MM IS NULL!\n");
+        return;
+    }
+
+    curr = mm->mmap;
+
     PSPRINTK("MM DUMP\n");
+    PSPRINTK("Stack Growth{%lx}\n",mm->stack_vm);
+    PSPRINTK("Code{%lx - %lx}\n",mm->start_code,mm->end_code);
+    PSPRINTK("Brk{%lx - %lx}\n",mm->start_brk,mm->brk);
+    PSPRINTK("Stack{%lx}\n",mm->start_stack);
+    PSPRINTK("Arg{%lx - %lx}\n",mm->arg_start,mm->arg_end);
+    PSPRINTK("Env{%lx - %lx}\n",mm->env_start,mm->env_end);
 
     while(curr) {
         if(!curr->vm_file) {
@@ -617,6 +694,10 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
     clone_data->clone_flags = request->clone_flags;
     clone_data->stack_start = request->stack_start;
     clone_data->stack_ptr = request->stack_ptr;
+    clone_data->arg_start = request->arg_start;
+    clone_data->arg_end = request->arg_end;
+    clone_data->env_start = request->env_start;
+    clone_data->env_end = request->env_end;
     clone_data->stack_canary = request->stack_canary;
     clone_data->heap_start = request->heap_start;
     clone_data->heap_end = request->heap_end;
@@ -798,6 +879,10 @@ int process_server_import_address_space(unsigned long* ip,
                 current->mm->start_stack = clone_data->stack_start;
                 current->mm->start_brk = clone_data->heap_start;
                 current->mm->brk = clone_data->heap_end;
+                current->mm->env_start = clone_data->env_start;
+                current->mm->env_end = clone_data->env_end;
+                current->mm->arg_start = clone_data->arg_start;
+                current->mm->arg_end = clone_data->arg_end;
 
                 // install thread information
                 current->thread.fs = clone_data->thread_fs;
@@ -809,6 +894,8 @@ int process_server_import_address_space(unsigned long* ip,
                 current->thread.ds = clone_data->thread_ds;
                 current->thread.fsindex = clone_data->thread_fsindex;
                 current->thread.gsindex = clone_data->thread_gsindex;
+
+                PSPRINTK("clone_data usersp = %lx\n",current->thread.usersp);
 
                 // Set output variables.
                 *sp = clone_data->stack_ptr;
@@ -902,12 +989,15 @@ int process_server_import_address_space(unsigned long* ip,
         data_curr = data_curr->next;
     }
 
-    dump_mm(current->mm);
+    if(clone_data) {
+        current->thread.usersp = clone_data->stack_ptr;
+        current->thread.sp = clone_data->thread_sp;
+    }
+
+    dump_task(current);
 
     // Unlock data list
     spin_unlock(&_data_head_lock);
-
-    dump_data_list();
 
     return 0;
 }
@@ -937,6 +1027,8 @@ int process_server_task_exit_notification(pid_t pid) {
             }
         }
     }
+
+    dump_task(current);
 
 
     return tx_ret;
@@ -1161,7 +1253,7 @@ long process_server_clone(unsigned long clone_flags,
             PSPRINTK("Txing VM FILE backed entry\n");
             plpath = d_path(&curr->vm_file->f_path,
                            lpath,256);           
-            if(strcmp(plpath,rpath) != 0) {
+            //if(strcmp(plpath,rpath) != 0) {
                 PSPRINTK("lpath{%s}, rpath{%s}\n",plpath,rpath);
                 spin_lock(&_vma_id_lock);
                 vma_xfer->vma_id = _vma_id++;
@@ -1184,7 +1276,7 @@ long process_server_clone(unsigned long clone_flags,
                         curr->vm_end,
                         curr->vm_pgoff,
                         plpath);
-            }
+            //}
         }
         
         curr = curr->vm_next;
@@ -1194,10 +1286,14 @@ long process_server_clone(unsigned long clone_flags,
     request->header.msg_type = PROCESS_SERVER_MSG_CLONE_REQUEST;
     request->header.msg_len = sizeof( clone_request_t ) - sizeof( msg_header_t );
     request->clone_flags = clone_flags;
-    request->stack_start = stack_start;
+    request->stack_start = task->mm->start_stack;
     request->stack_ptr = stack_start;
     request->heap_start = task->mm->start_brk;
     request->heap_end = task->mm->brk;
+    request->env_start = task->mm->env_start;
+    request->env_end = task->mm->env_end;
+    request->arg_start = task->mm->arg_start;
+    request->arg_end = task->mm->arg_end;
 #ifdef CONFIG_CC_STACKPROTECTOR
     request->stack_canary = task->stack_canary;
 #endif
@@ -1228,7 +1324,7 @@ long process_server_clone(unsigned long clone_flags,
     kfree(request);
     kfree(vma_xfer);
 
-    dump_mm(task->mm);
+    dump_task(task);
 
     return 0;
 }
