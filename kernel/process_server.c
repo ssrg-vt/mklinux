@@ -257,7 +257,7 @@ long process_server_clone(unsigned long clone_flags,
 static int process_server(void* dummy);
 static vma_data_t* find_vma_data(unsigned long addr_start);
 static void dump_mm(struct mm_struct* mm);
-static void dump_task(struct task_struct* task);
+static void dump_task(struct task_struct* task,struct pt_regs* regs);
 static void dump_thread(struct thread_struct* thread);
 static void dump_regs(struct pt_regs* regs);
 static void dump_stk(unsigned long sp); 
@@ -283,7 +283,10 @@ DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
  * General helper functions and debugging tools
  */
 
-void dump_task(struct task_struct* task) {
+/**
+ *
+ */
+void dump_task(struct task_struct* task, struct pt_regs* regs) {
 #if PROCESS_SERVER_VERBOSE
     if(NULL == task) return;
 
@@ -302,13 +305,16 @@ void dump_task(struct task_struct* task) {
     PSPRINTK("Remote_pid{%d}\n",task->remote_pid);
     PSPRINTK("Remote_cpu{%d}\n",task->remote_cpu);
     PSPRINTK("Clone_request_id{%d}\n",task->clone_request_id);
-    //dump_regs(&task->regs);
+    if(regs) dump_regs(regs);
     dump_thread(&task->thread);
     dump_mm(task->mm);
     if(task->mm) dump_stk(task->thread.usersp);
 #endif
 }
 
+/**
+ *
+ */
 static void dump_stk(unsigned long sp) {
     int i;
     PSPRINTK("DUMP STACK\n");
@@ -318,11 +324,37 @@ static void dump_stk(unsigned long sp) {
     }
 }
 
+/**
+ *
+ */
 static void dump_regs(struct pt_regs* regs) {
+    if(NULL == regs) return;
     PSPRINTK("DUMP REGS\n");
-    //PSPRINTK("r15{%lx}\n",regs->r15);
+    PSPRINTK("r15{%lx}\n",regs->r15);   
+    PSPRINTK("r14{%lx}\n",regs->r14);
+    PSPRINTK("r13{%lx}\n",regs->r13);
+    PSPRINTK("r12{%lx}\n",regs->r12);
+    PSPRINTK("r11{%lx}\n",regs->r11);
+    PSPRINTK("r10{%lx}\n",regs->r10);
+    PSPRINTK("r9{%lx}\n",regs->r9);
+    PSPRINTK("r8{%lx}\n",regs->r8);
+    PSPRINTK("bp{%lx}\n",regs->bp);
+    PSPRINTK("bx{%lx}\n",regs->bx);
+    PSPRINTK("ax{%lx}\n",regs->ax);
+    PSPRINTK("cx{%lx}\n",regs->cx);
+    PSPRINTK("dx{%lx}\n",regs->dx);
+    PSPRINTK("di{%lx}\n",regs->di);
+    PSPRINTK("orig_ax{%lx}\n",regs->orig_ax);
+    PSPRINTK("ip{%lx}\n",regs->ip);
+    PSPRINTK("cs{%lx}\n",regs->cs);
+    PSPRINTK("flags{%lx}\n",regs->flags);
+    PSPRINTK("sp{%lx}\n",regs->sp);
+    PSPRINTK("ss{%lx}\n",regs->ss);
 }
 
+/**
+ *
+ */
 static void dump_thread(struct thread_struct* thread) {
     PSPRINTK("DUMP THREAD\n");
     PSPRINTK("sp0{%lx}, sp{%lx}\n",thread->sp0,thread->sp);
@@ -334,6 +366,7 @@ static void dump_thread(struct thread_struct* thread) {
     PSPRINTK("fs{%lx}\n",thread->fs);
     PSPRINTK("gs{%lx}\n",thread->gs);
 }
+
 /**
  *
  */
@@ -407,18 +440,20 @@ static void dump_mm(struct mm_struct* mm) {
 
     while(curr) {
         if(!curr->vm_file) {
-            PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}\n",
+            PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}, flags{%lx}\n",
                     curr->vm_start, 
                     curr->vm_end,
-                    curr->vm_pgoff);
+                    curr->vm_pgoff,
+                    curr->vm_flags);
             // walk    
             walk_page_range(curr->vm_start,curr->vm_end,&walk);
         } else {
-            PSPRINTK("Page VM Entry: start{%lx}, end{%lx}, pgoff{%lx}, path{%s}\n",
+            PSPRINTK("Page VM Entry: start{%lx}, end{%lx}, pgoff{%lx}, path{%s}, flags{%lx}\n",
                     curr->vm_start,
                     curr->vm_end,
                     curr->vm_pgoff,
-                    d_path(&curr->vm_file->f_path,buf, 256));
+                    d_path(&curr->vm_file->f_path,buf, 256),
+                    curr->vm_flags);
         }
         curr = curr->vm_next;
     }
@@ -854,10 +889,21 @@ int process_server_import_address_space(unsigned long* ip,
     struct file* f;
     int mmap_ret = 0;
     struct vm_area_struct* vma;
+    int munmap_ret = 0;
 
     // Verify that we're a delegated task.
     if (!current->executing_for_remote) {
         return -1;
+    }
+
+    // Gut existing mappings
+    PSPRINTK("Removing existing mappings\n");
+    vma = current->mm->mmap;
+    while(vma) {
+        PSPRINTK("Removing entry at %lx - ",vma->vm_start);
+        munmap_ret = do_munmap(current->mm, vma->vm_start, vma->vm_end - vma->vm_start);
+        PSPRINTK("%d\n",munmap_ret);
+        vma = current->mm->mmap;
     }
 
     // Lock data list
@@ -968,14 +1014,15 @@ int process_server_import_address_space(unsigned long* ip,
                     // MMAP the file into the correct vma
                     f = filp_open(vma_curr->path,
                                   O_RDONLY | O_LARGEFILE,
+                                  //vma_curr->flags,
                                   0);
                     if(!IS_ERR(f)) {
                         PSPRINTK("Attempting to map %s ",vma_curr->path);
                         mmap_ret = do_mmap(f,
                                 vma_curr->start,
                                 vma_curr->end - vma_curr->start,
-                                PROT_READ | PROT_WRITE | PROT_EXEC,
-                                MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE,
+                                PROT_READ|PROT_WRITE|PROT_EXEC,
+                                MAP_FIXED | MAP_PRIVATE,
                                 vma_curr->pgoff * PAGE_SIZE);
                         PSPRINTK("%lx [result]\n",mmap_ret);
                         filp_close(f,NULL);
@@ -994,7 +1041,7 @@ int process_server_import_address_space(unsigned long* ip,
         current->thread.sp = clone_data->thread_sp;
     }
 
-    dump_task(current);
+    dump_task(current,regs);
 
     // Unlock data list
     spin_unlock(&_data_head_lock);
@@ -1028,7 +1075,7 @@ int process_server_task_exit_notification(pid_t pid) {
         }
     }
 
-    dump_task(current);
+    dump_task(current,NULL);
 
 
     return tx_ret;
@@ -1324,7 +1371,7 @@ long process_server_clone(unsigned long clone_flags,
     kfree(request);
     kfree(vma_xfer);
 
-    dump_task(task);
+    dump_task(task,regs);
 
     return 0;
 }
