@@ -1013,8 +1013,7 @@ int process_server_import_address_space(unsigned long* ip,
                     // Not anonymous
                     // MMAP the file into the correct vma
                     f = filp_open(vma_curr->path,
-                                  /*O_RDONLY*/O_RDWR | O_LARGEFILE,
-                                  //vma_curr->flags,
+                                  O_RDONLY | O_LARGEFILE,
                                   0);
                     if(!IS_ERR(f)) {
                         PSPRINTK("Attempting to map %s ",vma_curr->path);
