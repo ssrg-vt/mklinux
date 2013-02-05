@@ -83,7 +83,6 @@ typedef struct _vma_data {
     int vma_id;
     pgprot_t prot;
     unsigned long pgoff;
-    int anonymous;
     char path[256];
 } vma_data_t;
 
@@ -214,7 +213,6 @@ typedef struct _vma_transfer {
     pgprot_t prot;
     unsigned long flags;
     unsigned long pgoff;
-    int anonymous;
     char path[256];
 } vma_transfer_t;
 
@@ -626,7 +624,6 @@ static void handle_vma_transfer(vma_transfer_t* msg, int source_cpu) {
     vma_data->prot = msg->prot;
     vma_data->vma_id = msg->vma_id;
     vma_data->pgoff = msg->pgoff;
-    vma_data->anonymous = msg->anonymous;
     strcpy(vma_data->path,msg->path);
     add_data_entry(vma_data); 
     
@@ -890,6 +887,7 @@ int process_server_import_address_space(unsigned long* ip,
     int mmap_ret = 0;
     struct vm_area_struct* vma;
     int munmap_ret = 0;
+    int mmap_flags = 0;
 
     // Verify that we're a delegated task.
     if (!current->executing_for_remote) {
@@ -975,58 +973,54 @@ int process_server_import_address_space(unsigned long* ip,
                 // Iterate through all pte's looking for vma_id and cpu matches.
                 // We can start at the current place in the list, since VMA is transfered
                 // before any pte's and all new entries are added to the end of the list.
-                if(vma_curr->anonymous) {
-                    PSPRINTK("do_mmap()ing\n");
-                    err = do_mmap(NULL, 
-                            vma_curr->start, 
-                            vma_curr->end - vma_curr->start,
-                            PROT_READ|PROT_WRITE, 
-                            MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE, 
-                            0);
+                if(vma_curr->path[0] != '\0') {
+                    mmap_flags = MAP_FIXED|MAP_PRIVATE;
+                } else {
+                    mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
+                }
+                PSPRINTK("do_mmap()ing\n");
+                err = do_mmap(NULL, 
+                        vma_curr->start, 
+                        vma_curr->end - vma_curr->start,
+                        PROT_READ|PROT_WRITE, 
+                        mmap_flags, 
+                        0);
 
-                    if(err > 0) {
-                        // mmap_region succeeded
-                        vma = find_vma(current->mm, vma_curr->start);
-                        if(vma) {
-                            PSPRINTK("vma found\n");
-                            for(inner_data_curr = vma_curr->header.next; 
-                                  inner_data_curr != NULL; 
-                                  inner_data_curr = inner_data_curr->next) {
-
-                                if(inner_data_curr->data_type == PROCESS_SERVER_PTE_DATA_TYPE) {
-                                    pte_curr = (pte_data_t*)inner_data_curr;
-                                    if(pte_curr->vma_id == vma_curr->vma_id &&
-                                       pte_curr->cpu == remote_cpu) {
-                                            // MAP it
-                                            remap_pfn_range(vma,
-                                                    pte_curr->vaddr,
-                                                    pte_curr->paddr >> PAGE_SHIFT,
-                                                    PAGE_SIZE,
-                                                    vma->vm_page_prot);
-                                    }
-                                }
-
+                if(err > 0) {
+                    // mmap_region succeeded
+                    vma = find_vma(current->mm, vma_curr->start);
+                    if(vma) {
+                        if(vma_curr->path[0] != '\0') {
+                            f = filp_open(vma_curr->path,
+                                    O_RDONLY | O_LARGEFILE,
+                                    0);
+                            if(f) {
+                                vma->vm_file = f;
+                                vma->vm_pgoff = vma_curr->pgoff;
+                                vma->vm_page_prot = vma_curr->prot;
+                                vma->vm_flags = vma_curr->flags;
+                            } else {
+                                PSPRINTK("Failed to open vma file\n");
                             }
                         }
-                    }
-                } else {
-                    // Not anonymous
-                    // MMAP the file into the correct vma
-                    f = filp_open(vma_curr->path,
-                                  O_RDONLY | O_LARGEFILE,
-                                  0);
-                    if(!IS_ERR(f)) {
-                        PSPRINTK("Attempting to map %s ",vma_curr->path);
-                        mmap_ret = do_mmap(f,
-                                vma_curr->start,
-                                vma_curr->end - vma_curr->start,
-                                PROT_READ|PROT_WRITE|PROT_EXEC,
-                                MAP_FIXED | MAP_PRIVATE,
-                                vma_curr->pgoff * PAGE_SIZE);
-                        PSPRINTK("%lx [result]\n",mmap_ret);
-                        filp_close(f,NULL);
-                    } else {
-                        PSPRINTK("Failed to open %s\n", vma_curr->path);
+                        PSPRINTK("vma found\n");
+                        for(inner_data_curr = vma_curr->header.next; 
+                              inner_data_curr != NULL; 
+                              inner_data_curr = inner_data_curr->next) {
+
+                            if(inner_data_curr->data_type == PROCESS_SERVER_PTE_DATA_TYPE) {
+                                pte_curr = (pte_data_t*)inner_data_curr;
+                                if(pte_curr->vma_id == vma_curr->vma_id &&
+                                   pte_curr->cpu == remote_cpu) {
+                                        // MAP it
+                                        remap_pfn_range(vma,
+                                                pte_curr->vaddr,
+                                                pte_curr->paddr >> PAGE_SHIFT,
+                                                PAGE_SIZE,
+                                                vma->vm_page_prot);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1111,31 +1105,8 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
  * entry encounters during deconstruction of a processes page table.
  */
 
-/**
- * Page walk has encountered a pgd while deconstructing
- * the client side processes address space.
- */
-static int deconstruction_page_walk_pgd_entry_callback(pgd_t *pgd, unsigned long start, unsigned long end, struct mm_walk *walk) {
-    //PSPRINTK("pgd_entry start{%lx}, end{%lx}, pgd_t*{%lx}\n",start,end,pgd);
-    return 0;
-}
-
-/**
- * Page walk has encountered a pud while deconstructing
- * the client side processes address space.
- */
-static int deconstruction_page_walk_pud_entry_callback(pud_t *pud, unsigned long start, unsigned long end, struct mm_walk *walk) {
-    //PSPRINTK("pud_entry start{%lx}, end{%lx}, pud_t*{%lx}\n",start,end,pud);
-    return 0;
-}
-
-/**
- * Page walk has encoutered a pmd while deconstructing
- * the client side processes address space.
- */
-static int deconstruction_page_walk_pmd_entry_callback(pmd_t *pmd, unsigned long start, unsigned long end, struct mm_walk *walk) {
-    //PSPRINTK("pmd_entry start{%lx}, end{%lx}, pmd_t*{%lx}\n",start,end,pmd);
-    return 0;
+static int file_backed_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
+    PSPRINTK("File backed walk pte entry for %lx at %lx\n",start,(pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1)));
 }
 
 /**
@@ -1188,9 +1159,6 @@ long process_server_clone(unsigned long clone_flags,
     char *plpath;
     struct vm_area_struct* curr = NULL;
     struct mm_walk walk = {
-        .pgd_entry = deconstruction_page_walk_pgd_entry_callback,
-        .pud_entry = deconstruction_page_walk_pud_entry_callback,
-        .pmd_entry = deconstruction_page_walk_pmd_entry_callback,
         .pte_entry = deconstruction_page_walk_pte_entry_callback,
         .mm = current->mm,
         .private = NULL
@@ -1262,69 +1230,42 @@ long process_server_clone(unsigned long clone_flags,
     vma_xfer->header.msg_type = PROCESS_SERVER_VMA_TRANSFER;
     vma_xfer->header.msg_len = sizeof(vma_transfer_t) - sizeof(msg_header_t);
     while(curr) {
+
+        /*
+         * re-initialize path.
+         */
         if(curr->vm_file == NULL) {
-
-            /*
-             * Transfer the vma
-             */
-            spin_lock(&_vma_id_lock);
-            vma_xfer->vma_id = _vma_id++;
-            spin_unlock(&_vma_id_lock);
-            vma_xfer->start = curr->vm_start;
-            vma_xfer->end = curr->vm_end;
-            vma_xfer->prot = curr->vm_page_prot;
-            vma_xfer->clone_request_id = lclone_request_id;
-            vma_xfer->flags = curr->vm_flags;
-            vma_xfer->pgoff = curr->vm_pgoff;
-            vma_xfer->anonymous = 1;
-            tx_ret = msg_tx(dst_cpu, vma_xfer, sizeof(vma_transfer_t));
-            if(tx_ret <= 0) {
-                PSPRINTK("Unable to send vma transfer message\n");
-            }
-
-            PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}\n",
-                    curr->vm_start, 
-                    curr->vm_end,
-                    curr->vm_pgoff);
-            walk.private = &vma_xfer->vma_id;
-            walk_page_range(curr->vm_start,curr->vm_end,&walk);
+            vma_xfer->path[0] = '\0';
         } else {
-            // If this is not mmap()ed from the exe file, map
-            // it in.  It is probably a dynamically loaded library (libc).
-            // If that is the case it needs to be mapped in now, because
-            // we might need to return to an address within that library
-            // after we create the delegate... i.e. we might need to jump
-            // back to libc, since we were probably called from within
-            // the clone syscall wrapper.
-            PSPRINTK("Txing VM FILE backed entry\n");
             plpath = d_path(&curr->vm_file->f_path,
-                           lpath,256);           
-            //if(strcmp(plpath,rpath) != 0) {
-                PSPRINTK("lpath{%s}, rpath{%s}\n",plpath,rpath);
-                spin_lock(&_vma_id_lock);
-                vma_xfer->vma_id = _vma_id++;
-                spin_unlock(&_vma_id_lock);
-                vma_xfer->start = curr->vm_start;
-                vma_xfer->end = curr->vm_end;
-                vma_xfer->prot = curr->vm_page_prot;
-                vma_xfer->clone_request_id = lclone_request_id;
-                vma_xfer->flags = curr->vm_flags;
-                vma_xfer->pgoff = curr->vm_pgoff;
-                vma_xfer->anonymous = 0;
-                strcpy(vma_xfer->path,plpath);
-                tx_ret = msg_tx(dst_cpu, vma_xfer, sizeof(vma_transfer_t));
-                if(tx_ret <= 0) {
-                    PSPRINTK("Unable to send vma transfer message\n");
-                }
-
-                PSPRINTK("PAGE VM Entry: start{%lx}, end{%lx}, pgoff{%lx}, path{%s}\n",
-                        curr->vm_start, 
-                        curr->vm_end,
-                        curr->vm_pgoff,
-                        plpath);
-            //}
+                        lpath,256);
+            strcpy(vma_xfer->path,plpath);
         }
-        
+
+        /*
+         * Transfer the vma
+         */
+        spin_lock(&_vma_id_lock);
+        vma_xfer->vma_id = _vma_id++;
+        spin_unlock(&_vma_id_lock);
+        vma_xfer->start = curr->vm_start;
+        vma_xfer->end = curr->vm_end;
+        vma_xfer->prot = curr->vm_page_prot;
+        vma_xfer->clone_request_id = lclone_request_id;
+        vma_xfer->flags = curr->vm_flags;
+        vma_xfer->pgoff = curr->vm_pgoff;
+        tx_ret = msg_tx(dst_cpu, vma_xfer, sizeof(vma_transfer_t));
+        if(tx_ret <= 0) {
+            PSPRINTK("Unable to send vma transfer message\n");
+        }
+
+        PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}\n",
+                curr->vm_start, 
+                curr->vm_end,
+                curr->vm_pgoff);
+        walk.private = &vma_xfer->vma_id;
+        walk_page_range(curr->vm_start,curr->vm_end,&walk);
+    
         curr = curr->vm_next;
     }
 
