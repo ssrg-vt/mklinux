@@ -21,6 +21,8 @@
 #include <linux/io.h> // ioremap
 #include <linux/mman.h> // MAP_ANONYMOUS
 
+#include <asm/cacheflush.h>
+
 /**
  * Use the preprocessor to turn off printk.
  */
@@ -280,6 +282,31 @@ DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
 /**
  * General helper functions and debugging tools
  */
+
+/**
+ * Copied directly from mm/mmap.c
+ */
+static void __vma_link_file(struct vm_area_struct *vma)
+{   
+    struct file *file;
+
+    file = vma->vm_file;
+    if (file) {
+        struct address_space *mapping = file->f_mapping;
+
+        if (vma->vm_flags & VM_DENYWRITE)
+            atomic_dec(&file->f_path.dentry->d_inode->i_writecount);
+        if (vma->vm_flags & VM_SHARED)
+            mapping->i_mmap_writable++;
+
+        flush_dcache_mmap_lock(mapping);
+        if (unlikely(vma->vm_flags & VM_NONLINEAR))
+            vma_nonlinear_insert(vma, &mapping->i_mmap_nonlinear);
+        else
+            vma_prio_tree_insert(vma, &mapping->i_mmap);                                                                                                                
+        flush_dcache_mmap_unlock(mapping);
+    }
+}
 
 /**
  *
@@ -999,6 +1026,7 @@ int process_server_import_address_space(unsigned long* ip,
                                 vma->vm_pgoff = vma_curr->pgoff;
                                 vma->vm_page_prot = vma_curr->prot;
                                 vma->vm_flags = vma_curr->flags;
+                                __vma_link_file(vma);
                             } else {
                                 PSPRINTK("Failed to open vma file\n");
                             }
