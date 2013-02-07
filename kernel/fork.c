@@ -1543,23 +1543,31 @@ long do_fork(unsigned long clone_flags,
 		p->flags &= ~PF_STARTING;
         
         if (clone_flags & 0x02000000) {
-           
+ 
             p->represents_remote = 1;
-            p->executing_for_remote = 0;
+            p->executing_for_remote = 0;          
 
-            // This will be a placeholder process for the remote
-            // process that is subsequently going to be started.
-            // Block its execution.
-            sigaddset(&p->pending.signal,SIGSTOP);
-            set_tsk_thread_flag(p,TIF_SIGPENDING);
-            __set_task_state(p,TASK_UNINTERRUPTIBLE);
-            
             // Spin up remote process.
-            process_server_clone(clone_flags,
-                    stack_start,
-                    regs,
-                    stack_size,
-                    p);
+            if(PROCESS_SERVER_CLONE_SUCCESS == process_server_clone(clone_flags,
+                                                    stack_start,
+                                                    regs,
+                                                    stack_size,
+                                                    p)) {
+                // This will be a placeholder process for the remote
+                // process that is subsequently going to be started.
+                // Block its execution.
+                sigaddset(&p->pending.signal,SIGSTOP);
+                set_tsk_thread_flag(p,TIF_SIGPENDING);
+                __set_task_state(p,TASK_UNINTERRUPTIBLE);
+
+            
+            // remote clone failed, or aborted for some reason.
+            // Execute the task locally.
+            } else {
+                p->represents_remote = 0;
+                p->executing_for_remote = 0;
+                wake_up_new_task(p);
+            }
         } else {
             p->represents_remote = 0;
             p->executing_for_remote = 0;

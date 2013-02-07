@@ -113,9 +113,6 @@ typedef struct _clone_data {
     unsigned long env_end;
     unsigned long arg_start;
     unsigned long arg_end;
-#ifdef CONFIG_CC_STACKPROTECTOR
-    unsigned long stack_canary;
-#endif
     unsigned long heap_start;
     unsigned long heap_end;
     struct pt_regs regs;
@@ -161,9 +158,6 @@ typedef struct _clone_request {
     unsigned long env_end;
     unsigned long arg_start;
     unsigned long arg_end;
-#ifdef CONFIG_CC_STACKPROTECTOR
-    unsigned long stack_canary;
-#endif
     unsigned long heap_start;
     unsigned long heap_end;
     struct pt_regs regs;
@@ -274,10 +268,12 @@ static int _clone_request_id = 0;
 static int _cpu = -1;
 char _rcv_buf[RCV_BUF_SZ] = {0};
 data_header_t* _data_head = NULL;
+static scheduler_fn_t _scheduler_impl;
 DEFINE_SPINLOCK(_data_head_lock);       // Lock for _data_head
 DEFINE_SPINLOCK(_msg_id_lock);          // Lock for _msg_id
 DEFINE_SPINLOCK(_vma_id_lock);          // Lock for _vma_id
 DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
+
 
 /**
  * General helper functions and debugging tools
@@ -497,7 +493,6 @@ static void add_data_entry(void* entry) {
     data_header_t* curr = NULL;
 
     if(!entry) {
-        PSPRINTK("Failed to add null data entry to list\n");
         return;
     }
 
@@ -511,7 +506,6 @@ static void add_data_entry(void* entry) {
         curr = _data_head;
         while(curr->next != NULL) {
             if(curr == entry) {
-                PSPRINTK("Skipping data insertion.  Data entry already in list\n");
                 return;// It's already in the list!
             }
             curr = curr->next;
@@ -533,7 +527,6 @@ static void remove_data_entry(void* entry) {
     data_header_t* hdr = entry;
 
     if(!entry) {
-        PSPRINTK("Failed to remove null data from list\n");
         return;
     }
     
@@ -757,7 +750,6 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
     clone_data->arg_end = request->arg_end;
     clone_data->env_start = request->env_start;
     clone_data->env_end = request->env_end;
-    clone_data->stack_canary = request->stack_canary;
     clone_data->heap_start = request->heap_start;
     clone_data->heap_end = request->heap_end;
     memcpy(&clone_data->regs, &request->regs, sizeof(struct pt_regs) );
@@ -1031,7 +1023,6 @@ int process_server_import_address_space(unsigned long* ip,
                                 PSPRINTK("Failed to open vma file\n");
                             }
                         }
-                        PSPRINTK("vma found\n");
                         for(inner_data_curr = vma_curr->header.next; 
                               inner_data_curr != NULL; 
                               inner_data_curr = inner_data_curr->next) {
@@ -1129,15 +1120,6 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 }
 
 /**
- * Process page walk deconstruction callbacks.  These functions handle page walk
- * entry encounters during deconstruction of a processes page table.
- */
-
-static int file_backed_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
-    PSPRINTK("File backed walk pte entry for %lx at %lx\n",start,(pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1)));
-}
-
-/**
  * Page walk has encountered a pte while deconstructing
  * the client side processes address space.  Transfer it.
  */
@@ -1193,17 +1175,21 @@ long process_server_clone(unsigned long clone_flags,
         };
     vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
     int lclone_request_id;
-    int i;
+
+    // Set destination cpu
+    if(_scheduler_impl) {
+        dst_cpu = _scheduler_impl();
+    }
+
+    // Execute locally if the scheduler decides to do so.
+    if(dst_cpu == _cpu) {
+        return PROCESS_SERVER_CLONE_FAIL;
+    } 
 
     // Pick an id for this remote process request
     spin_lock(&_clone_request_id_lock);
     lclone_request_id = _clone_request_id++;
     spin_unlock(&_clone_request_id_lock);
-
-    // if this is not cpu 0, we don't know how to schedule,
-    // so bail out.
-    if(_cpu != 0) return 0;
-
 
     PSPRINTK("kmkprocsrv: process_server_clone invoked\n");
     PSPRINTK("kmkprocsrv: mount - %s\n",task->
@@ -1221,36 +1207,6 @@ long process_server_clone(unsigned long clone_flags,
             d_iname);
 
     PSPRINTK("kmkprocsrv: path - %s\n",rpath);
-
-    PSPRINTK("kmkprocsrv: top stack value = %lx\n",
-            *((unsigned long*)stack_start));
-    for(i = -16; i <= 16; i++) {
-        PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(stack_start + i*8), stack_start + i*8); 
-    }
-
-    /**
-     * Print out the vm_area_struct list associated with this task.
-     * Just to see it for now.
-     * NOTE: See remap_pfn_range and io_remap_page_range for re-assembly
-     * on other side.  Or, possibly better, mmap_region.
-     */
-    // Start stack
-    PSPRINTK("Start stack %lx\n",
-            task->mm->start_stack);
-    // Heap
-    PSPRINTK("Heap %lx to %lx\n",
-            task->mm->start_brk, 
-            task->mm->brk);
-    // Env
-    PSPRINTK("ENV %lx to %lx\n",task->mm->env_start,task->mm->env_end);
-    // Code
-    PSPRINTK("Code %lx to %lx\n",task->mm->start_code, task->mm->end_code);
-    // Arg
-    PSPRINTK("Arg %lx to %lx\n",task->mm->arg_start, task->mm->arg_end);
-    // Thread
-    PSPRINTK("fs{%lx}, gs{%lx}\n",
-            task->thread.fs,
-            task->thread.gs);
 
     // VM Entries
     curr = task->mm->mmap;
@@ -1309,9 +1265,6 @@ long process_server_clone(unsigned long clone_flags,
     request->env_end = task->mm->env_end;
     request->arg_start = task->mm->arg_start;
     request->arg_end = task->mm->arg_end;
-#ifdef CONFIG_CC_STACKPROTECTOR
-    request->stack_canary = task->stack_canary;
-#endif
     request->clone_request_id = lclone_request_id;
     memcpy( &request->regs, regs, sizeof(struct pt_regs) );
     request->stack_size = stack_size;
@@ -1328,10 +1281,6 @@ long process_server_clone(unsigned long clone_flags,
     request->thread_gsindex = task->thread.gsindex;
 
     // Send request
-    // TODO: figure out who to send this to.  Currently, only cpu 0
-    // will delegate, and it will only ever delegate to cpu 3.  In
-    // the future, there should be some mechanism for determining which
-    // cpu to ask to do this work.
     tx_ret = msg_tx(dst_cpu, request, sizeof(clone_request_t));
 
     PSPRINTK("kmkprocsrv: transmitted %d\n",tx_ret);
@@ -1341,7 +1290,15 @@ long process_server_clone(unsigned long clone_flags,
 
     dump_task(task,regs);
 
-    return 0;
+    return PROCESS_SERVER_CLONE_SUCCESS;
+}
+
+
+/**
+ *
+ */
+int process_server_register_scheduler(scheduler_fn_t scheduler_impl) {
+    _scheduler_impl = scheduler_impl;
 }
 
 /**
