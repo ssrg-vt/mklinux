@@ -9,8 +9,9 @@
 #include <linux/list.h>
 #include <linux/multikernel.h>
 
-/* LOCKING */
-
+/* LOCKING / SYNCHRONIZATION */
+#define pcn_cpu_relax() __asm__ ("pause":::"memory")
+#define pcn_barrier() __asm__ __volatile__("":::"memory")
 
 /* BOOKKEEPING */
 

@@ -40,6 +40,8 @@ struct pcn_kmsg_window * rkvirt[POPCORN_MAX_CPUS];
 /* lists of messages to be processed for each prio */
 struct list_head msglist_hiprio, msglist_normprio;
 
+void pcn_kmsg_action(struct softirq_action *h);
+
 /* RING BUFFER */
 
 #define RB_SHIFT 6
@@ -102,7 +104,9 @@ static inline int win_get(struct pcn_kmsg_window *win, struct pcn_kmsg_message *
 	/* spin until entry.ready at end of cache line is set */
 	rcvd = &(win->buffer[win->tail & RB_MASK]);
 	printk("Payload magic number: 0x%hhx\n", rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1]);
-	while (rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1] != 0xab) {}
+	while (rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1] != 0xab) {
+		//pcn_cpu_relax();
+	}
 
 	rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1] = 0;
 
@@ -201,6 +205,9 @@ void __init pcn_kmsg_init(void)
 	if (rc) {
 		printk("POPCORN: Failed to register initial kmsg recv callback!\n");
 	}
+
+	/* Register softirq handler */
+	open_softirq(PCN_KMSG_SOFTIRQ, pcn_kmsg_action);
 
 	/* If we're the master kernel, malloc and map the rkinfo structure and put
 	   its physical address in boot_params; otherwise, get it from the boot_params 
@@ -376,15 +383,79 @@ int process_message_list(struct list_head *head)
 	return rc_overall;
 }
 
-void pcn_kmsg_do_tasklet(unsigned long);
-DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
+/* top half */
+void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
+{
+	ack_APIC_irq();
+
+	printk("Reached Popcorn KMSG interrupt handler!\n");
+
+	inc_irq_stat(irq_popcorn_kmsg_count);
+	irq_enter();
+
+	/* We do as little work as possible in here (decoupling notification 
+	   from messaging) */
+
+	/* schedule bottom half */
+	__raise_softirq_irqoff(PCN_KMSG_SOFTIRQ);
+
+	irq_exit();
+	return;
+}
 
 /* bottom half */
-void pcn_kmsg_do_tasklet(unsigned long unused)
+void pcn_kmsg_action(struct softirq_action *h)
 {
 	int rc;
+	struct pcn_kmsg_message *msg;
+	struct pcn_kmsg_container *incoming;
 
-	printk("Tasklet handler called...\n");
+	printk("Popcorn kmsg softirq handler called...\n");
+
+	/* Get messages out of the buffer first */
+
+	while (!win_get(rkvirt[my_cpu], &msg)) {
+		printk("Got a message!\n");
+
+		if (msg->hdr.size > PCN_KMSG_PAYLOAD_SIZE) {
+			printk("Invalid message size in header!\n");
+			win_advance_tail(rkvirt[my_cpu]);
+			continue;
+		}
+
+		/* malloc some memory (don't sleep!) */
+		incoming = kmalloc(sizeof(struct pcn_kmsg_container), GFP_ATOMIC);
+		if (!incoming) {
+			printk("Unable to kmalloc buffer for incoming message!  THIS IS BAD!\n");
+			goto out;
+		}
+
+		/* memcpy message from rbuf */
+		memcpy(&incoming->hdr, msg, msg->hdr.size + sizeof(struct pcn_kmsg_hdr));
+		win_advance_tail(rkvirt[my_cpu]);
+
+		printk("Received message, type %d, prio %d, size %d\n", incoming->hdr.type, incoming->hdr.prio, incoming->hdr.size);
+
+		/* add container to appropriate list */
+		switch (incoming->hdr.prio) {
+			case PCN_KMSG_PRIO_HIGH:
+				printk("Adding to high-priority list...\n");
+				list_add_tail(&(incoming->list), &msglist_hiprio);
+				break;
+
+			case PCN_KMSG_PRIO_NORMAL:
+				printk("Adding to normal-priority list...\n");
+				list_add_tail(&(incoming->list), &msglist_normprio);
+				break;
+
+			default:
+				printk("Priority value %d unknown -- THIS IS BAD!\n", incoming->hdr.prio);
+				goto out;
+		}
+
+	}
+
+	printk("No more messages in ring buffer; done polling\n");
 
 	/* Process high-priority queue first */
 	rc = process_message_list(&msglist_hiprio);
@@ -396,71 +467,7 @@ void pcn_kmsg_do_tasklet(unsigned long unused)
 	/* Then process normal-priority queue */
 	rc = process_message_list(&msglist_normprio);
 
-	return;
-}
-
-/* top half */
-void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
-{
-	int rc;
-	struct pcn_kmsg_message *msg;
-	struct pcn_kmsg_container *incoming;
-
-	ack_APIC_irq();
-
-	printk("Reached Popcorn KMSG handler!\n");
-
-	inc_irq_stat(irq_popcorn_kmsg_count);
-	irq_enter();
-
-	/* malloc some memory (don't sleep!) */
-	incoming = kmalloc(sizeof(struct pcn_kmsg_container), GFP_ATOMIC);
-	if (!incoming) {
-		printk("Unable to kmalloc buffer for incoming message!  THIS IS BAD!\n");
-		goto out;
-	}
-
-	/* memcpy message from rbuf */
-	rc = win_get(rkvirt[my_cpu], &msg);
-
-	if (rc) {
-		printk("No message in ring buffer!\n");
-		goto out;
-	}
-
-	if (msg->hdr.size > PCN_KMSG_PAYLOAD_SIZE) {
-		printk("Invalid message size in header!\n");
-		win_advance_tail(rkvirt[my_cpu]);
-		goto out;
-	}
-
-	memcpy(&incoming->hdr, msg, msg->hdr.size + sizeof(struct pcn_kmsg_hdr));
-
-	win_advance_tail(rkvirt[my_cpu]);
-
-	printk("Received message, type %d, prio %d, size %d\n", incoming->hdr.type, incoming->hdr.prio, incoming->hdr.size);
-
-	/* add container to appropriate list */
-	switch (incoming->hdr.prio) {
-		case PCN_KMSG_PRIO_HIGH:
-			printk("Adding to high-priority list...\n");
-			list_add_tail(&(incoming->list), &msglist_hiprio);
-			break;
-
-		case PCN_KMSG_PRIO_NORMAL:
-			printk("Adding to normal-priority list...\n");
-			list_add_tail(&(incoming->list), &msglist_normprio);
-			break;
-
-		default:
-			printk("Priority value %d unknown -- THIS IS BAD!\n", incoming->hdr.prio);
-			goto out;
-	}
-
-	/* schedule bottom half */
-	tasklet_schedule(&pcn_kmsg_tasklet);
 out:
-	irq_exit();
 	return;
 }
 
