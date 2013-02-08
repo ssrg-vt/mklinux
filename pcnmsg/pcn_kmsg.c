@@ -82,10 +82,12 @@ static inline int win_put(struct pcn_kmsg_window *win, struct pcn_kmsg_message *
 	while (win_inuse(win) >= RB_SIZE) {}
 
 	/* insert item */
-	memcpy(&win->buffer[ticket & RB_MASK], msg, msg->hdr.size + sizeof(struct pcn_kmsg_hdr));
+	memcpy(&win->buffer[ticket & RB_MASK], msg, sizeof(struct pcn_kmsg_message));
+
+	pcn_barrier();
 
 	/* set completed flag */
-	win->buffer[ticket & RB_MASK].payload[PCN_KMSG_PAYLOAD_SIZE - 1] = 0xab;
+	win->buffer[ticket & RB_MASK].hdr.ready = 1;
 
 	return 0;
 }
@@ -103,12 +105,15 @@ static inline int win_get(struct pcn_kmsg_window *win, struct pcn_kmsg_message *
 
 	/* spin until entry.ready at end of cache line is set */
 	rcvd = &(win->buffer[win->tail & RB_MASK]);
-	printk("Payload magic number: 0x%hhx\n", rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1]);
-	while (rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1] != 0xab) {
-		//pcn_cpu_relax();
+	printk("Ready bit: %u\n", rcvd->hdr.ready);
+	while (!rcvd->hdr.ready) {
+		pcn_cpu_relax();
 	}
 
-	rcvd->payload[PCN_KMSG_PAYLOAD_SIZE - 1] = 0;
+	// barrier here?
+	pcn_barrier();
+
+	rcvd->hdr.ready = 0;
 
 	*msg = rcvd;	
 
@@ -130,8 +135,8 @@ int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 
 	printk("Called Popcorn callback for processing check-in messages\n");
 
-	printk("From CPU %d, type %d, size %d, window phys addr 0x%lx\n", 
-			msg->hdr.from_cpu, msg->hdr.type, msg->hdr.size, 
+	printk("From CPU %d, type %d, window phys addr 0x%lx\n", 
+			msg->hdr.from_cpu, msg->hdr.type, 
 			msg->window_phys_addr);
 
 	if (from_cpu >= POPCORN_MAX_CPUS) {
@@ -172,7 +177,6 @@ int send_checkin_msg(unsigned int to_cpu)
 
 	msg.hdr.type = PCN_KMSG_TYPE_CHECKIN;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
-	msg.hdr.size = 8;
 	msg.window_phys_addr = rkinfo->phys_addr[my_cpu];
 
 	rc = pcn_kmsg_send(to_cpu, (struct pcn_kmsg_message *) &msg);
@@ -235,7 +239,7 @@ void __init pcn_kmsg_init(void)
 		printk("Test: kernel alignment %d\n", boot_params_va->hdr.kernel_alignment);
 		boot_params_va->pcn_kmsg_master_window = rkinfo_phys_addr;
 	} else {
-		printk("Master kernel rkinfo phys addr: 0x%lx\n", boot_params.pcn_kmsg_master_window);
+		printk("Master kernel rkinfo phys addr: 0x%lx\n", (unsigned long) boot_params.pcn_kmsg_master_window);
 
 		rkinfo_phys_addr = boot_params.pcn_kmsg_master_window;
 
@@ -371,7 +375,7 @@ int process_message_list(struct list_head *head)
 			continue;
 		}
 
-		rc = callback_table[pos->hdr.type]((struct pcn_kmsg_message *) &pos->hdr);
+		rc = callback_table[pos->hdr.type]((struct pcn_kmsg_message *) &pos->payload);
 		if (!rc_overall) {
 			rc_overall = rc;
 		}
@@ -417,12 +421,6 @@ void pcn_kmsg_action(struct softirq_action *h)
 	while (!win_get(rkvirt[my_cpu], &msg)) {
 		printk("Got a message!\n");
 
-		if (msg->hdr.size > PCN_KMSG_PAYLOAD_SIZE) {
-			printk("Invalid message size in header!\n");
-			win_advance_tail(rkvirt[my_cpu]);
-			continue;
-		}
-
 		/* malloc some memory (don't sleep!) */
 		incoming = kmalloc(sizeof(struct pcn_kmsg_container), GFP_ATOMIC);
 		if (!incoming) {
@@ -431,10 +429,10 @@ void pcn_kmsg_action(struct softirq_action *h)
 		}
 
 		/* memcpy message from rbuf */
-		memcpy(&incoming->hdr, msg, msg->hdr.size + sizeof(struct pcn_kmsg_hdr));
+		memcpy(&incoming->payload, msg, sizeof(struct pcn_kmsg_message));
 		win_advance_tail(rkvirt[my_cpu]);
 
-		printk("Received message, type %d, prio %d, size %d\n", incoming->hdr.type, incoming->hdr.prio, incoming->hdr.size);
+		printk("Received message, type %d, prio %d\n", incoming->hdr.type, incoming->hdr.prio);
 
 		/* add container to appropriate list */
 		switch (incoming->hdr.prio) {
@@ -479,7 +477,6 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 
 	msg.hdr.type = PCN_KMSG_TYPE_TEST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
-	msg.hdr.size = 8;
 	memset(&msg.test_val, 0xab, 8);
 
 	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", cpu);

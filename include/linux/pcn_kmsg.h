@@ -38,41 +38,44 @@ enum pcn_kmsg_prio {
 
 /* Message header */
 struct pcn_kmsg_hdr {
-	unsigned int from_cpu; // 4B
-	enum pcn_kmsg_type type; // 4B
-	enum pcn_kmsg_prio prio; // 4B
-	unsigned int size; // 4B
+	unsigned int from_cpu	:8; // b0
+	enum pcn_kmsg_type type	:8; // b1
+	enum pcn_kmsg_prio prio	:8; // b2
+	unsigned int spare 	:7; // b3
+	unsigned int ready	:1; 
 }__attribute__((packed));
 
-#define PCN_KMSG_PAYLOAD_SIZE 64
+#define PCN_KMSG_PAYLOAD_SIZE 60
 
 /* The actual messages.  The expectation is that developers will create their
    own message structs with the payload replaced with their own fields, and then
    cast them to a struct pkn_kmsg_message.  See the checkin message below for
    an example of how to do this. */
 struct pcn_kmsg_message {
-	struct pcn_kmsg_hdr hdr;
 	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
-}__attribute__((packed));
+	struct pcn_kmsg_hdr hdr;
+}__attribute__((packed)) __attribute__((aligned(64)));
 
 /* List entry to copy message into and pass around in receiving kernel */
 struct pcn_kmsg_container {
 	struct list_head list;
+	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
 	struct pcn_kmsg_hdr hdr;
-	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];	
 }__attribute__((packed));
 
 /* Message struct for guest kernels to check in with each other. */
 struct pcn_kmsg_checkin_message {
-	struct pcn_kmsg_hdr hdr;
 	unsigned long window_phys_addr;
-}__attribute__((packed));
+	char pad[52];
+	struct pcn_kmsg_hdr hdr;
+}__attribute__((packed)) __attribute__((aligned(64)));
 
 /* Message struct for testing */
 struct pcn_kmsg_test_message {
-	struct pcn_kmsg_hdr hdr;
 	unsigned long test_val;
-}__attribute__((packed));
+	char pad[52];
+	struct pcn_kmsg_hdr hdr;
+}__attribute__((packed)) __attribute__((aligned(64)));
 
 /* WINDOW / BUFFERING */
 
