@@ -197,6 +197,11 @@ void __init pcn_kmsg_init(void)
 
 	printk("Entered pcn_kmsg_init\n");
 
+	printk("ALIGNMENT INFO for pcn_kmsg_container: size %lu, list %lu, msg %lu\n",
+			sizeof(struct pcn_kmsg_container),
+			offsetof(struct pcn_kmsg_container, list),
+			offsetof(struct pcn_kmsg_container, msg));
+
 	my_cpu = raw_smp_processor_id();
 
 	/* Initialize list heads */
@@ -364,18 +369,21 @@ int process_message_list(struct list_head *head)
 {
 	int rc, rc_overall = 0;
 	struct pcn_kmsg_container *pos = NULL, *n = NULL;
+	struct pcn_kmsg_message *msg;
 
 	list_for_each_entry_safe(pos, n, head, list) {
-		printk("Item in list, type %d,  processing it...\n", pos->hdr.type);
+		msg = &pos->msg;
+
+		printk("Item in list, type %d,  processing it...\n", msg->hdr.type);
 
 		list_del(&pos->list);
 
-		if (pos->hdr.type >= PCN_KMSG_TYPE_SIZE || !callback_table[pos->hdr.type]) {
-			printk("Invalid type %d; continuing!\n", pos->hdr.type);
+		if (msg->hdr.type >= PCN_KMSG_TYPE_SIZE || !callback_table[msg->hdr.type]) {
+			printk("Invalid type %d; continuing!\n", msg->hdr.type);
 			continue;
 		}
 
-		rc = callback_table[pos->hdr.type]((struct pcn_kmsg_message *) &pos->payload);
+		rc = callback_table[msg->hdr.type](msg);
 		if (!rc_overall) {
 			rc_overall = rc;
 		}
@@ -429,13 +437,13 @@ void pcn_kmsg_action(struct softirq_action *h)
 		}
 
 		/* memcpy message from rbuf */
-		memcpy(&incoming->payload, msg, sizeof(struct pcn_kmsg_message));
+		memcpy(&incoming->msg, msg, sizeof(struct pcn_kmsg_message));
 		win_advance_tail(rkvirt[my_cpu]);
 
-		printk("Received message, type %d, prio %d\n", incoming->hdr.type, incoming->hdr.prio);
+		printk("Received message, type %d, prio %d\n", incoming->msg.hdr.type, incoming->msg.hdr.prio);
 
 		/* add container to appropriate list */
-		switch (incoming->hdr.prio) {
+		switch (incoming->msg.hdr.prio) {
 			case PCN_KMSG_PRIO_HIGH:
 				printk("Adding to high-priority list...\n");
 				list_add_tail(&(incoming->list), &msglist_hiprio);
@@ -447,7 +455,7 @@ void pcn_kmsg_action(struct softirq_action *h)
 				break;
 
 			default:
-				printk("Priority value %d unknown -- THIS IS BAD!\n", incoming->hdr.prio);
+				printk("Priority value %d unknown -- THIS IS BAD!\n", incoming->msg.hdr.prio);
 				goto out;
 		}
 

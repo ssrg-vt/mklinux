@@ -58,9 +58,8 @@ struct pcn_kmsg_message {
 
 /* List entry to copy message into and pass around in receiving kernel */
 struct pcn_kmsg_container {
+	struct pcn_kmsg_message msg;
 	struct list_head list;
-	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
-	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed));
 
 /* Message struct for guest kernels to check in with each other. */
