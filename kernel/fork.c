@@ -1560,7 +1560,7 @@ long do_fork(unsigned long clone_flags,
                 set_tsk_thread_flag(p,TIF_SIGPENDING);
                 __set_task_state(p,TASK_UNINTERRUPTIBLE);
 
-
+            
             // remote clone failed, or aborted for some reason.
             // Execute the task locally.
             } else {
