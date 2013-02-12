@@ -499,33 +499,103 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 
 /* MULTICAST */
 
+struct pcn_kmsg_mcast_map {
+	unsigned char lock;
+	unsigned long mask;
+	unsigned char num_members;
+};
+
+struct pcn_kmsg_mcast_map mcast_map[POPCORN_MAX_MCAST_CHANNELS];
+
 /* Open a multicast group containing the CPUs specified in the mask. */
 int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 {
+	int i, found_id = -1;
+
+	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
+		if (!mcast_map[i].num_members) {
+			found_id = i;
+			break;
+		}
+	}
+
+	if (found_id == -1) {
+		printk("No free multicast channels!\n");
+		return -1;
+	}
+
+	/* TODO -- lock and check if channel is still unused; otherwise, try again */
+
+	mcast_map[found_id].mask = mask;
+	mcast_map[found_id].num_members = 0;
+
+	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
+		if (mcast_map[found_id].mask & (0x1 << i)) {
+			/* TODO -- send message to be included in group */
+			
+			mcast_map[found_id].num_members++;
+		}
+	}
+
+	*id = found_id;
+
 	return 0;
 }
 
 /* Add new members to a multicast group. */
-int pcn_kmsg_mcast_add_members(unsigned long mask)
+int pcn_kmsg_mcast_add_members(pcn_kmsg_mcast_id id, unsigned long mask)
 {
+	/* TODO -- lock! */
+
+	mcast_map[id].mask |= mask; 
+
+	/* TODO -- unlock! */
+
 	return 0;
 }
 
 /* Remove existing members from a multicast group. */
-int pcn_kmsg_mcast_delete_members(unsigned long mask)
+int pcn_kmsg_mcast_delete_members(pcn_kmsg_mcast_id id, unsigned long mask)
 {
+	/* TODO -- lock! */
+
+	mcast_map[id].mask &= !mask;
+
+	/* TODO -- unlock! */
+
+
 	return 0;
 }
 
 /* Close a multicast group. */
 int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 {
+	/* TODO -- lock! */
+
+	mcast_map[id].mask = 0;
+	mcast_map[id].num_members = 0;
+
+	/* TODO --unlock! */
+
 	return 0;
 }
 
 /* Send a message to the specified multicast group. */
 int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 {
+	int i, rc;
+
+	/* quick hack for testing for now; loop through mask and send individual messages */
+	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
+		if (mcast_map[id].mask & (0x1 << i)) {
+			rc = pcn_kmsg_send(i, msg);
+
+			if (rc) {
+				printk("Batch send failed to CPU %d\n", i);
+				return -1;
+			}
+		}
+	}
 
 	return 0;
 }

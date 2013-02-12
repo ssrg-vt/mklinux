@@ -110,14 +110,16 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg);
 
 /* MULTICAST GROUPS */
 
+#define POPCORN_MAX_MCAST_CHANNELS 128
+
 /* Open a multicast group containing the CPUs specified in the mask. */
 int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask);
 
 /* Add new members to a multicast group. */
-int pcn_kmsg_mcast_add_members(unsigned long mask);
+int pcn_kmsg_mcast_add_members(pcn_kmsg_mcast_id id, unsigned long mask);
 
 /* Remove existing members from a multicast group. */
-int pcn_kmsg_mcast_delete_members(unsigned long mask);
+int pcn_kmsg_mcast_delete_members(pcn_kmsg_mcast_id id, unsigned long mask);
 
 /* Close a multicast group. */
 int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id);
