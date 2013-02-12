@@ -22,6 +22,8 @@ struct pcn_kmsg_rkinfo {
 
 /* MESSAGING */
 
+typedef unsigned long pcn_kmsg_mcast_id;
+
 /* Enum for message types.  Modules should add types after
    PCN_KMSG_END. */
 enum pcn_kmsg_type {
@@ -90,8 +92,37 @@ struct pcn_kmsg_window {
 typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);
 
 /* FUNCTIONS */
+
+/* SETUP */
+
+/* Register a callback function to handle a new message type.  Intended to
+   be called when a kernel module is loaded. */
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback);
+
+/* Unregister a callback function for a message type.  Intended to
+   be called when a kernel module is unloaded. */
 int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type);
+
+/* MESSAGING */
+
+/* Send a message to the specified destination CPU. */
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg);
+
+/* MULTICAST GROUPS */
+
+/* Open a multicast group containing the CPUs specified in the mask. */
+int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask);
+
+/* Add new members to a multicast group. */
+int pcn_kmsg_mcast_add_members(unsigned long mask);
+
+/* Remove existing members from a multicast group. */
+int pcn_kmsg_mcast_delete_members(unsigned long mask);
+
+/* Close a multicast group. */
+int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id);
+
+/* Send a message to the specified multicast group. */
+int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg);
 
 #endif /* __LINUX_PCN_KMSG_H */

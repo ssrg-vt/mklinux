@@ -497,3 +497,38 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 	return rc;
 }
 
+/* MULTICAST */
+
+/* Open a multicast group containing the CPUs specified in the mask. */
+int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
+{
+	return 0;
+}
+
+/* Add new members to a multicast group. */
+int pcn_kmsg_mcast_add_members(unsigned long mask)
+{
+	return 0;
+}
+
+/* Remove existing members from a multicast group. */
+int pcn_kmsg_mcast_delete_members(unsigned long mask)
+{
+	return 0;
+}
+
+/* Close a multicast group. */
+int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
+{
+	return 0;
+}
+
+/* Send a message to the specified multicast group. */
+int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
+{
+
+	return 0;
+}
+
+
+
