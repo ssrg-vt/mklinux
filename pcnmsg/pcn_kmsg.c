@@ -24,7 +24,7 @@
 /* COMMON STATE */
 
 /* table of callback functions for handling each message type */
-pcn_kmsg_cbftn callback_table[PCN_KMSG_TYPE_SIZE];
+pcn_kmsg_cbftn callback_table[PCN_KMSG_TYPE_MAX];
 
 /* number of current kernel */
 int my_cpu = 0;
@@ -128,6 +128,8 @@ static inline void win_advance_tail(struct pcn_kmsg_window *win)
 
 /* INITIALIZATION */
 
+int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message);
+
 int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message) 
 {
 	struct pcn_kmsg_checkin_message *msg = (struct pcn_kmsg_checkin_message *) message;
@@ -209,10 +211,15 @@ void __init pcn_kmsg_init(void)
 	INIT_LIST_HEAD(&msglist_normprio);
 
 	/* Clear callback table and register default callback functions */
-	memset(&callback_table, 0, PCN_KMSG_TYPE_SIZE * sizeof(pcn_kmsg_cbftn));
+	memset(&callback_table, 0, PCN_KMSG_TYPE_MAX * sizeof(pcn_kmsg_cbftn));
 	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_CHECKIN, &pcn_kmsg_checkin_callback);
 	if (rc) {
-		printk("POPCORN: Failed to register initial kmsg recv callback!\n");
+		printk("POPCORN: Failed to register initial kmsg checkin callback!\n");
+	}
+
+	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_MCAST, &pcn_kmsg_mcast_callback);
+	if (rc) {
+		printk("POPCORN: Failed to register initial kmsg multicast callback!\n");
 	}
 
 	/* Register softirq handler */
@@ -285,7 +292,7 @@ void __init pcn_kmsg_init(void)
 /* Register a callback function when a kernel module is loaded */
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
 {
-	if (type >= PCN_KMSG_TYPE_SIZE) {
+	if (type >= PCN_KMSG_TYPE_MAX) {
 		printk("POPCORN: Attempted to register callback with bad type %d\n", type);
 		return -1;
 	}
@@ -298,7 +305,7 @@ int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
 /* Unregister a callback function when a kernel module is unloaded */
 int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 {
-	if (type >= PCN_KMSG_TYPE_SIZE) {
+	if (type >= PCN_KMSG_TYPE_MAX) {
 		printk("POPCORN: Attempted to register callback with bad type %d\n", type);
 		return -1;
 	}
@@ -378,7 +385,7 @@ int process_message_list(struct list_head *head)
 
 		list_del(&pos->list);
 
-		if (msg->hdr.type >= PCN_KMSG_TYPE_SIZE || !callback_table[msg->hdr.type]) {
+		if (msg->hdr.type >= PCN_KMSG_TYPE_MAX || !callback_table[msg->hdr.type]) {
 			printk("Invalid type %d; continuing!\n", msg->hdr.type);
 			continue;
 		}
@@ -481,17 +488,15 @@ out:
 SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 {
 	int rc;
-	struct pcn_kmsg_test_message msg;
-
-	msg.hdr.type = PCN_KMSG_TYPE_TEST;
-	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
-	memset(&msg.test_val, 0xab, 8);
+	/* test mask includes specified CPU and CPU 0 */
+	unsigned long mask = (1 << cpu) | 1;
+	pcn_kmsg_mcast_id test_id = -1;
 
 	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", cpu);
 
-	rc = pcn_kmsg_send(cpu, (struct pcn_kmsg_message *) &msg);
+	rc = pcn_kmsg_mcast_open(&test_id, mask);
 	if (rc) {
-		printk("POPCORN: syscall screwed up!!!\n");
+		printk("POPCORN: pcn_kmsg_mcast_open returned %d, test_id %lu\n", rc, test_id);
 	}
 
 	return rc;
@@ -502,15 +507,46 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 struct pcn_kmsg_mcast_map {
 	unsigned char lock;
 	unsigned long mask;
-	unsigned char num_members;
+	unsigned int num_members;
 };
 
 struct pcn_kmsg_mcast_map mcast_map[POPCORN_MAX_MCAST_CHANNELS];
 
+inline int count_members(unsigned long mask)
+{
+	int i, count = 0;
+
+	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
+		if (mask & (1ULL << i)) {
+			count++;
+		}
+	}
+
+	return count;
+}
+
+void print_mcast_map(void)
+{
+	int i;
+
+	printk("ACTIVE MCAST GROUPS ON CPU %d\n:", my_cpu);
+
+	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
+		if (mcast_map[i].mask) {
+			printk("group %d, mask 0x%lx, num_members %d\n", 
+					i, mcast_map[i].mask, mcast_map[i].num_members);
+		}
+	}
+	return;
+}
+
 /* Open a multicast group containing the CPUs specified in the mask. */
 int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 {
-	int i, found_id = -1;
+	int rc, i, found_id = -1;
+	struct pcn_kmsg_mcast_message msg;
+
+	printk("Reached pcn_kmsg_mcast_open, mask 0x%lx\n", mask);
 
 	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
 		if (!mcast_map[i].num_members) {
@@ -518,6 +554,8 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 			break;
 		}
 	}
+
+	printk("Found channel ID %d\n", found_id);
 
 	if (found_id == -1) {
 		printk("No free multicast channels!\n");
@@ -527,13 +565,28 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 	/* TODO -- lock and check if channel is still unused; otherwise, try again */
 
 	mcast_map[found_id].mask = mask;
-	mcast_map[found_id].num_members = 0;
+	mcast_map[found_id].num_members = count_members(mask);
 
+	printk("Found %d members\n", mcast_map[found_id].num_members);
+
+	msg.hdr.type = PCN_KMSG_TYPE_MCAST;
+	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+	msg.type = PCN_KMSG_MCAST_OPEN;
+	msg.id = found_id;
+	msg.mask = mask;
+	msg.num_members = mcast_map[found_id].num_members;
+
+	/* send message to each member except self.  Can't use mcast yet because
+	   group is not yet established, so unicast to each CPU in mask. */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
-		if (mcast_map[found_id].mask & (0x1 << i)) {
-			/* TODO -- send message to be included in group */
-			
-			mcast_map[found_id].num_members++;
+		if ((mcast_map[found_id].mask & (1ULL << i)) && (my_cpu != i)) {
+			printk("Sending message to CPU %d\n", i);
+
+			rc = pcn_kmsg_send(i, (struct pcn_kmsg_message *) &msg);
+
+			if (rc) {
+				printk("Message send failed!\n");
+			}
 		}
 	}
 
@@ -567,8 +620,7 @@ int pcn_kmsg_mcast_delete_members(pcn_kmsg_mcast_id id, unsigned long mask)
 	return 0;
 }
 
-/* Close a multicast group. */
-int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
+inline int __pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 {
 	/* TODO -- lock! */
 
@@ -576,6 +628,30 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 	mcast_map[id].num_members = 0;
 
 	/* TODO --unlock! */
+
+	return 0;
+}
+
+/* Close a multicast group. */
+int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
+{
+	int rc;
+	struct pcn_kmsg_mcast_message msg;
+
+	/* broadcast message to close window globally */
+	msg.hdr.type = PCN_KMSG_TYPE_MCAST;
+	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+	msg.type = PCN_KMSG_MCAST_CLOSE;
+	msg.id = id;
+
+	rc = pcn_kmsg_mcast_send(id, (struct pcn_kmsg_message *) &msg);
+	if (rc) {
+		printk("POPCORN: failed to send mcast close message!\n");
+		return -1;
+	}
+
+	/* close window locally */
+	__pcn_kmsg_mcast_close(id);
 
 	return 0;
 }
@@ -598,6 +674,50 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 	}
 
 	return 0;
+}
+
+int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message) 
+{
+	int rc = 0;
+	struct pcn_kmsg_mcast_message *msg = (struct pcn_kmsg_mcast_message *) message;
+
+	printk("Received mcast message, type %d\n", msg->type);
+
+	switch (msg->type) {
+		case PCN_KMSG_MCAST_OPEN:
+			printk("Processing mcast open message...\n");
+			mcast_map[msg->id].mask = msg->mask;
+			mcast_map[msg->id].num_members = msg->num_members;
+			break;
+
+		case PCN_KMSG_MCAST_ADD_MEMBERS:
+			printk("Processing mcast add members message...\n");
+			mcast_map[msg->id].mask |= msg->mask;
+			mcast_map[msg->id].num_members = count_members(msg->mask);
+			break;
+
+		case PCN_KMSG_MCAST_DEL_MEMBERS:
+			printk("Processing mcast del members message...\n");
+			mcast_map[msg->id].mask &= !(msg->mask);
+			mcast_map[msg->id].num_members = count_members(msg->mask);
+			break;
+
+		case PCN_KMSG_MCAST_CLOSE:
+			printk("Processing mcast close message...\n");
+			__pcn_kmsg_mcast_close(msg->id);
+			break;
+
+		default:
+			printk("Invalid multicast message type %d\n", msg->type);
+			rc = -1;
+			goto out;
+	}
+
+	print_mcast_map();
+
+out:
+	kfree(message);
+	return rc;
 }
 
 

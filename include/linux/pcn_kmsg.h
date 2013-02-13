@@ -29,7 +29,8 @@ typedef unsigned long pcn_kmsg_mcast_id;
 enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_TEST,
 	PCN_KMSG_TYPE_CHECKIN,
-	PCN_KMSG_TYPE_SIZE
+	PCN_KMSG_TYPE_MCAST,
+	PCN_KMSG_TYPE_MAX
 };
 
 /* Enum for message priority. */
@@ -111,6 +112,26 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg);
 /* MULTICAST GROUPS */
 
 #define POPCORN_MAX_MCAST_CHANNELS 128
+
+/* Enum for mcast message type. */
+enum pcn_kmsg_mcast_type {
+	PCN_KMSG_MCAST_OPEN,
+	PCN_KMSG_MCAST_ADD_MEMBERS,
+	PCN_KMSG_MCAST_DEL_MEMBERS,
+	PCN_KMSG_MCAST_CLOSE,
+	PCN_KMSG_MCAST_MAX
+};
+
+/* Message struct for guest kernels to check in with each other. */
+struct pcn_kmsg_mcast_message {
+	enum pcn_kmsg_mcast_type type :32; 
+	pcn_kmsg_mcast_id id;	
+	unsigned long mask;
+	unsigned int num_members;
+	unsigned long window_phys_addr;
+	char pad[28];
+	struct pcn_kmsg_hdr hdr;
+}__attribute__((packed)) __attribute__((aligned(64)));
 
 /* Open a multicast group containing the CPUs specified in the mask. */
 int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask);
