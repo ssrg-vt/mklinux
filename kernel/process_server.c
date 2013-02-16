@@ -465,6 +465,8 @@ static void dump_mm(struct mm_struct* mm) {
         return;
     }
 
+    down_write(&mm->mmap_sem);
+
     curr = mm->mmap;
 
     PSPRINTK("MM DUMP\n");
@@ -495,6 +497,8 @@ static void dump_mm(struct mm_struct* mm) {
         }
         curr = curr->vm_next;
     }
+
+    up_write(&mm->mmap_sem);
 }
 
 /**
@@ -932,6 +936,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     // Gut existing mappings
     PSPRINTK("Removing existing mappings\n");
+    down_write(&current->mm->mmap_sem);
     vma = current->mm->mmap;
     while(vma) {
         PSPRINTK("Removing entry at %lx - ",vma->vm_start);
@@ -939,6 +944,7 @@ int process_server_import_address_space(unsigned long* ip,
         PSPRINTK("%d\n",munmap_ret);
         vma = current->mm->mmap;
     }
+    up_write(&current->mm->mmap_sem);
 
     // Lock data list
     spin_lock(&_data_head_lock);
@@ -1016,22 +1022,26 @@ int process_server_import_address_space(unsigned long* ip,
                                     O_RDONLY | O_LARGEFILE,
                                     0);
                     if(f) {
+                        down_write(&current->mm->mmap_sem);
                         err = do_mmap(f, 
                                 vma_curr->start, 
                                 vma_curr->end - vma_curr->start,
                                 PROT_READ|PROT_WRITE|PROT_EXEC, 
                                 mmap_flags, 
                                 0);
+                        up_write(&current->mm->mmap_sem);
                         filp_close(f,NULL);
                     }
                 } else {
                     mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
+                    down_write(&current->mm->mmap_sem);
                     err = do_mmap(NULL, 
                         vma_curr->start, 
                         vma_curr->end - vma_curr->start,
                         PROT_READ|PROT_WRITE|PROT_EXEC, 
                         mmap_flags, 
                         0);
+                    up_write(&current->mm->mmap_sem);
                 }
                
                 if(err > 0) {
@@ -1239,6 +1249,8 @@ long process_server_clone(unsigned long clone_flags,
 
     PSPRINTK("kmkprocsrv: path - %s\n",rpath);
 
+    down_read(&task->mm->mmap_sem);
+
     // VM Entries
     curr = task->mm->mmap;
 
@@ -1283,6 +1295,8 @@ long process_server_clone(unsigned long clone_flags,
     
         curr = curr->vm_next;
     }
+
+    up_read(&task->mm->mmap_sem);
 
     // Build request
     request->header.msg_type = PROCESS_SERVER_MSG_CLONE_REQUEST;
