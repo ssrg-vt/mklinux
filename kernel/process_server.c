@@ -251,10 +251,10 @@ long process_server_clone(unsigned long clone_flags,
 static int process_server(void* dummy);
 static vma_data_t* find_vma_data(unsigned long addr_start);
 static void dump_mm(struct mm_struct* mm);
-static void dump_task(struct task_struct* task,struct pt_regs* regs);
+static void dump_task(struct task_struct* task,struct pt_regs* regs,unsigned long stack_ptr);
 static void dump_thread(struct thread_struct* thread);
 static void dump_regs(struct pt_regs* regs);
-static void dump_stk(unsigned long sp); 
+static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr); 
 
 /**
  * Module variables
@@ -307,7 +307,7 @@ static void __vma_link_file(struct vm_area_struct *vma)
 /**
  *
  */
-void dump_task(struct task_struct* task, struct pt_regs* regs) {
+void dump_task(struct task_struct* task, struct pt_regs* regs, unsigned long stack_ptr) {
 #if PROCESS_SERVER_VERBOSE
     if(NULL == task) return;
 
@@ -329,20 +329,36 @@ void dump_task(struct task_struct* task, struct pt_regs* regs) {
     if(regs) dump_regs(regs);
     dump_thread(&task->thread);
     dump_mm(task->mm);
-    if(task->mm) dump_stk(task->thread.usersp);
+    dump_stk(&task->thread,stack_ptr);
 #endif
 }
 
 /**
  *
  */
-static void dump_stk(unsigned long sp) {
+static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr) {
     int i;
+    if(!thread) return;
     PSPRINTK("DUMP STACK\n");
-    PSPRINTK("sp = %lx\n",sp);
-    for(i = -16; i <= 16; i++) {
-        PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(sp + i*8), sp + i*8); 
+    if(thread->sp) {
+        PSPRINTK("sp = %lx\n",thread->sp);
+        for(i = 0; i <= 16; i++) {
+            PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(thread->sp + i*8), thread->sp + i*8); 
+        }
     }
+    if(thread->usersp) {
+        PSPRINTK("usersp = %lx\n",thread->usersp);
+        for(i = 0; i <= 16; i++) {
+            PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(thread->usersp + i*8), thread->usersp + i*8);
+        }
+    }
+    if(stack_ptr) {
+        PSPRINTK("stack_ptr = %lx\n",stack_ptr);
+        for(i = 0; i < 16; i++) {
+            PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(stack_ptr + i*8), stack_ptr + i*8);
+        }
+    }
+
 }
 
 /**
@@ -475,6 +491,7 @@ static void dump_mm(struct mm_struct* mm) {
                     curr->vm_pgoff,
                     d_path(&curr->vm_file->f_path,buf, 256),
                     curr->vm_flags);
+            walk_page_range(curr->vm_start,curr->vm_end,&walk);
         }
         curr = curr->vm_next;
     }
@@ -951,7 +968,7 @@ int process_server_import_address_space(unsigned long* ip,
                 current->thread.fs = clone_data->thread_fs;
                 current->thread.gs = clone_data->thread_gs;
                 current->thread.sp0 = clone_data->thread_sp0;
-                current->thread.sp = clone_data->thread_sp;
+                current->thread.sp = clone_data->stack_ptr;//clone_data->thread_sp;
                 current->thread.usersp = clone_data->thread_usersp;
                 current->thread.es = clone_data->thread_es;
                 current->thread.ds = clone_data->thread_ds;
@@ -992,24 +1009,37 @@ int process_server_import_address_space(unsigned long* ip,
                 // Iterate through all pte's looking for vma_id and cpu matches.
                 // We can start at the current place in the list, since VMA is transfered
                 // before any pte's and all new entries are added to the end of the list.
+                PSPRINTK("do_mmap()\n");
                 if(vma_curr->path[0] != '\0') {
-                    mmap_flags = MAP_FIXED|MAP_PRIVATE;
+                    mmap_flags = /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_PRIVATE;
+                    f = filp_open(vma_curr->path,
+                                    O_RDONLY | O_LARGEFILE,
+                                    0);
+                    if(f) {
+                        err = do_mmap(f, 
+                                vma_curr->start, 
+                                vma_curr->end - vma_curr->start,
+                                PROT_READ|PROT_WRITE|PROT_EXEC, 
+                                mmap_flags, 
+                                0);
+                        filp_close(f,NULL);
+                    }
                 } else {
                     mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
-                }
-                PSPRINTK("do_mmap()ing\n");
-                err = do_mmap(NULL, 
+                    err = do_mmap(NULL, 
                         vma_curr->start, 
                         vma_curr->end - vma_curr->start,
-                        PROT_READ|PROT_WRITE, 
+                        PROT_READ|PROT_WRITE|PROT_EXEC, 
                         mmap_flags, 
                         0);
-
+                }
+               
                 if(err > 0) {
+                    PSPRINTK("find_vma\n");
                     // mmap_region succeeded
                     vma = find_vma(current->mm, vma_curr->start);
                     if(vma) {
-                        if(vma_curr->path[0] != '\0') {
+                        /*if(vma_curr->path[0] != '\0') {
                             f = filp_open(vma_curr->path,
                                     O_RDONLY | O_LARGEFILE,
                                     0);
@@ -1022,7 +1052,7 @@ int process_server_import_address_space(unsigned long* ip,
                             } else {
                                 PSPRINTK("Failed to open vma file\n");
                             }
-                        }
+                        }*/
                         for(inner_data_curr = vma_curr->header.next; 
                               inner_data_curr != NULL; 
                               inner_data_curr = inner_data_curr->next) {
@@ -1049,11 +1079,12 @@ int process_server_import_address_space(unsigned long* ip,
     }
 
     if(clone_data) {
-        current->thread.usersp = clone_data->stack_ptr;
-        current->thread.sp = clone_data->thread_sp;
+        current->thread.usersp = clone_data->stack_ptr;//clone_data->thread_usersp;
+        current->thread.sp = clone_data->stack_ptr;//clone_data->thread_sp;
+        regs->sp = clone_data->stack_ptr;
     }
 
-    dump_task(current,regs);
+    dump_task(current,regs, clone_data->stack_ptr);
 
     // Unlock data list
     spin_unlock(&_data_head_lock);
@@ -1087,7 +1118,7 @@ int process_server_task_exit_notification(pid_t pid) {
         }
     }
 
-    dump_task(current,NULL);
+    dump_task(current,NULL,0);
 
 
     return tx_ret;
@@ -1170,7 +1201,7 @@ long process_server_clone(unsigned long clone_flags,
     struct vm_area_struct* curr = NULL;
     struct mm_walk walk = {
         .pte_entry = deconstruction_page_walk_pte_entry_callback,
-        .mm = current->mm,
+        .mm = task->mm,
         .private = NULL
         };
     vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
@@ -1288,7 +1319,7 @@ long process_server_clone(unsigned long clone_flags,
     kfree(request);
     kfree(vma_xfer);
 
-    dump_task(task,regs);
+    dump_task(task,regs,request->stack_ptr);
 
     return PROCESS_SERVER_CLONE_SUCCESS;
 }
