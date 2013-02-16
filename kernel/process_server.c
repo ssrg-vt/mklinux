@@ -465,7 +465,7 @@ static void dump_mm(struct mm_struct* mm) {
         return;
     }
 
-    down_write(&mm->mmap_sem);
+    down_read(&mm->mmap_sem);
 
     curr = mm->mmap;
 
@@ -498,7 +498,7 @@ static void dump_mm(struct mm_struct* mm) {
         curr = curr->vm_next;
     }
 
-    up_write(&mm->mmap_sem);
+    up_read(&mm->mmap_sem);
 }
 
 /**
@@ -632,6 +632,8 @@ static void handle_pte_transfer(pte_transfer_t* msg, int source_cpu) {
         return;
     }
     pte_data->header.data_type = PROCESS_SERVER_PTE_DATA_TYPE;
+    pte_data->header.next = NULL;
+    pte_data->header.prev = NULL;
 
     // Copy data into new data item.
     pte_data->cpu = source_cpu;
@@ -655,6 +657,8 @@ static void handle_vma_transfer(vma_transfer_t* msg, int source_cpu) {
         return;
     }
     vma_data->header.data_type = PROCESS_SERVER_VMA_DATA_TYPE;
+    vma_data->header.next = NULL;
+    vma_data->header.prev = NULL;
 
     // Copy data into new data item.
     vma_data->cpu = source_cpu;
@@ -763,6 +767,9 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
      */
     clone_data = kmalloc(sizeof(clone_data_t),GFP_KERNEL);
     clone_data->header.data_type = PROCESS_SERVER_CLONE_DATA_TYPE;
+    clone_data->header.next = NULL;
+    clone_data->header.prev = NULL;
+
     clone_data->clone_request_id = request->clone_request_id;
     clone_data->clone_flags = request->clone_flags;
     clone_data->stack_start = request->stack_start;
