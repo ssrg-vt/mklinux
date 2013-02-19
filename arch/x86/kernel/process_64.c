@@ -332,7 +332,9 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 		    unsigned long new_sp,
 		    unsigned int _cs, unsigned int _ss, unsigned int _ds)
 {
-	loadsegment(fs, 0);
+	if(!current->executing_for_remote) {
+        loadsegment(fs, 0);
+    }
 	loadsegment(es, _ds);
 	loadsegment(ds, _ds);
 	load_gs_index(0);
