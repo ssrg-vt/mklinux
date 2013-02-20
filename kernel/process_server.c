@@ -76,6 +76,19 @@ typedef struct _data_header {
 } data_header_t;
 
 /**
+ * Hold data about a pte to vma mapping.
+ */
+typedef struct _pte_data {
+    data_header_t header;
+    int vma_id;
+    int clone_request_id;
+    int cpu;
+    unsigned long vaddr;
+    unsigned long paddr;
+    unsigned long pfn;
+} pte_data_t;
+
+/**
  * Hold data about a vma to process
  * mapping.
  */
@@ -89,20 +102,9 @@ typedef struct _vma_data {
     int vma_id;
     pgprot_t prot;
     unsigned long pgoff;
+    pte_data_t* pte_list;
     char path[256];
 } vma_data_t;
-
-/**
- * Hold data about a pte to vma mapping.
- */
-typedef struct _pte_data {
-    data_header_t header;
-    int vma_id;
-    int cpu;
-    unsigned long vaddr;
-    unsigned long paddr;
-    unsigned long pfn;
-} pte_data_t;
 
 /**
  *
@@ -132,6 +134,7 @@ typedef struct _clone_data {
     unsigned short thread_ds;
     unsigned short thread_fsindex;
     unsigned short thread_gsindex;
+    vma_data_t* vma_list;
 
 } clone_data_t;
 /**
@@ -222,6 +225,7 @@ typedef struct _vma_transfer {
 typedef struct _pte_transfer {
     msg_header_t header;
     int vma_id;
+    int clone_request_id;
     unsigned long vaddr;
     unsigned long paddr;
     unsigned long pfn;
@@ -240,6 +244,14 @@ typedef struct _propagate_signal {
     int sig;
 } propagate_signal_t;
 
+/**
+ *
+ */
+typedef struct _deconstruction_data {
+    int clone_request_id;
+    int vma_id;
+    int dst_cpu;
+} deconstruction_data_t;
 
 /**
  * Prototypes
@@ -626,6 +638,7 @@ static void handle_pte_transfer(pte_transfer_t* msg, int source_cpu) {
     pte_data->vaddr = msg->vaddr;
     pte_data->paddr = msg->paddr;
     pte_data->pfn = msg->pfn;
+    pte_data->clone_request_id = msg->clone_request_id;
 
     add_data_entry(pte_data);
     
@@ -1148,9 +1161,10 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
  * the client side processes address space.  Transfer it.
  */
 static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
-    int* vma_id_ptr = (int*)walk->private;
-    int vma_id = *vma_id_ptr;
-    int dst_cpu = 3;
+    deconstruction_data_t* decon_data = (deconstruction_data_t*)walk->private;
+    int vma_id = decon_data->vma_id;
+    int dst_cpu = decon_data->dst_cpu;
+    int clone_request_id = decon_data->clone_request_id;
     pte_transfer_t* pte_xfer = NULL;
 
     if(NULL == pte || !pte_present(*pte)) {
@@ -1166,6 +1180,7 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
     // http://wbsun.blogspot.com/2010/12/convert-userspace-virtual-address-to.html
     pte_xfer->vaddr = start;
     pte_xfer->vma_id = vma_id;
+    pte_xfer->clone_request_id = clone_request_id;
     pte_xfer->pfn = pte_pfn(*pte);
     msg_tx(dst_cpu, pte_xfer, sizeof(pte_transfer_t));
 
@@ -1199,6 +1214,7 @@ long process_server_clone(unsigned long clone_flags,
         };
     vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
     int lclone_request_id;
+    deconstruction_data_t decon_data;
 
     // Set destination cpu
     if(_scheduler_impl) {
@@ -1273,7 +1289,12 @@ long process_server_clone(unsigned long clone_flags,
                 curr->vm_start, 
                 curr->vm_end,
                 curr->vm_pgoff);
-        walk.private = &vma_xfer->vma_id;
+
+        decon_data.clone_request_id = lclone_request_id;
+        decon_data.vma_id = vma_xfer->vma_id;
+        decon_data.dst_cpu = dst_cpu;
+
+        walk.private = &decon_data;
         walk_page_range(curr->vm_start,curr->vm_end,&walk);
     
         curr = curr->vm_next;
