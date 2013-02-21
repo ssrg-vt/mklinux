@@ -30,7 +30,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -424,6 +424,47 @@ static clone_data_t* find_clone_data(int cpu, int clone_request_id) {
     spin_unlock(&_data_head_lock);
 
     return ret;
+}
+
+static void destroy_clone_data(clone_data_t* data) {
+    vma_data_t* vma_data;
+    vma_data_t* vma_to_remove;
+    pte_data_t* pte_data;
+    vma_data = data->vma_list;
+    while(vma_data) {
+        
+        // Destroy this VMA's PTE's
+        pte_data = vma_data->pte_list;
+        while(pte_data) {
+
+            // Remove pte from list
+            vma_data->pte_list = pte_data->header.next;
+            if(vma_data->pte_list) {
+                vma_data->pte_list->header.prev = NULL;
+            }
+
+            // Destroy pte
+            kfree(pte_data);
+
+            // Next is the new list head
+            pte_data = vma_data->pte_list;
+        }
+        
+        // Remove vma from list
+        data->vma_list = vma_data->header.next;
+        if(data->vma_list) {
+            data->vma_list->header.prev = NULL;
+        }
+
+        // Destroy vma
+        kfree(vma_data);
+
+        // Next is the new list head
+        vma_data = data->vma_list;
+    }
+
+    // Destroy clone data
+    kfree(data);
 }
 
 /**
@@ -1163,6 +1204,7 @@ int process_server_task_exit_notification(pid_t pid) {
     exiting_process_t msg;
     int tx_ret = -1;
     struct task_struct* task;
+    clone_data_t* clone_data = find_clone_data(current->remote_cpu, current->clone_request_id);
 
     PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d}\n",pid);
     msg.header.msg_type = PROCESS_SERVER_MSG_PROCESS_EXITING;
@@ -1179,8 +1221,14 @@ int process_server_task_exit_notification(pid_t pid) {
         }
     }
 
-    dump_task(current,NULL,0);
+    //dump_task(current,NULL,0);
 
+    if(clone_data) {
+        spin_lock(&_data_head_lock);
+        remove_data_entry(clone_data);
+        spin_unlock(&_data_head_lock);
+        destroy_clone_data(clone_data);
+    }
 
     return tx_ret;
 }
