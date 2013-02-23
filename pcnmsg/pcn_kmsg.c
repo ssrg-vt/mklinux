@@ -782,6 +782,8 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 {
 	int i, rc;
 
+	printk("Sending mcast message, id %lu\n", id);
+
 	/* quick hack for testing for now; loop through mask and send individual messages */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
 		if (mcast_map[id].mask & (0x1 << i)) {
@@ -796,6 +798,31 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 
 	return 0;
 }
+
+/* Send a message to the specified multicast group. */
+int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id, 
+		struct pcn_kmsg_long_message *msg, 
+		unsigned int payload_size)
+{
+	int i, rc;
+
+	printk("Sending long mcast message, id %lu, size %u\n", id, payload_size);
+
+	/* quick hack for testing for now; loop through mask and send individual messages */
+	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
+		if (mcast_map[id].mask & (0x1 << i)) {
+			rc = pcn_kmsg_send_long(i, msg, payload_size);
+
+			if (rc) {
+				printk("Batch send failed to CPU %d\n", i);
+				return -1;
+			}
+		}
+	}
+
+	return 0;
+}
+
 
 int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message) 
 {
