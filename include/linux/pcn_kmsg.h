@@ -42,9 +42,15 @@ enum pcn_kmsg_prio {
 /* Message header */
 struct pcn_kmsg_hdr {
 	unsigned int from_cpu	:8; // b0
+
 	enum pcn_kmsg_type type	:8; // b1
-	enum pcn_kmsg_prio prio	:8; // b2
-	unsigned int spare 	:7; // b3
+
+	enum pcn_kmsg_prio prio	:5; // b2
+	unsigned int is_lg_msg  :1;
+	unsigned int lg_start   :1;
+	unsigned int lg_end     :1;
+
+	unsigned int lg_seqnum 	:7; // b3
 	unsigned int ready	:1; 
 }__attribute__((packed));
 
@@ -78,6 +84,11 @@ struct pcn_kmsg_test_message {
 	char pad[52];
 	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed)) __attribute__((aligned(64)));
+
+struct pcn_kmsg_long_message {
+	struct pcn_kmsg_hdr hdr;
+	unsigned char payload[512];
+};
 
 /* WINDOW / BUFFERING */
 

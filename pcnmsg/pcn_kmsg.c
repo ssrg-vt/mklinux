@@ -40,6 +40,10 @@ struct pcn_kmsg_window * rkvirt[POPCORN_MAX_CPUS];
 /* lists of messages to be processed for each prio */
 struct list_head msglist_hiprio, msglist_normprio;
 
+/* array to hold pointers to large messages received */
+struct pcn_kmsg_long_message * lg_buf[POPCORN_MAX_CPUS];
+
+/* action for bottom half */
 void pcn_kmsg_action(struct softirq_action *h);
 
 /* RING BUFFER */
@@ -76,7 +80,7 @@ static inline int win_put(struct pcn_kmsg_window *win, struct pcn_kmsg_message *
 
 	/* grab ticket */
 	ticket = fetch_and_add(&win->head, 1);
-	printk("ticket = %lu, head = %lu\n", ticket, win->head);
+	printk(KERN_ERR "ticket = %lu, head = %lu\n", ticket, win->head);
 
 	/* spin until there's a spot free for me */
 	while (win_inuse(win) >= RB_SIZE) {}
@@ -97,15 +101,15 @@ static inline int win_get(struct pcn_kmsg_window *win, struct pcn_kmsg_message *
 	struct pcn_kmsg_message *rcvd;
 
 	if (!win_inuse(win)) {
-		printk("Nothing in buffer, returning...\n");
+		printk(KERN_ERR "Nothing in buffer, returning...\n");
 		return -1;
 	}
 
-	printk("reached win_get, head %lu, tail %lu\n", win->head, win->tail);
+	printk(KERN_ERR "reached win_get, head %lu, tail %lu\n", win->head, win->tail);
 
 	/* spin until entry.ready at end of cache line is set */
 	rcvd = &(win->buffer[win->tail & RB_MASK]);
-	printk("Ready bit: %u\n", rcvd->hdr.ready);
+	printk(KERN_ERR "Ready bit: %u\n", rcvd->hdr.ready);
 	while (!rcvd->hdr.ready) {
 		pcn_cpu_relax();
 	}
@@ -162,6 +166,15 @@ int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 	return 0;
 }
 
+int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
+{
+	struct pcn_kmsg_long_message *lmsg = message;
+
+	printk("Received test long message, payload: %s\n", &lmsg->payload);
+
+	return 0;
+}
+
 inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 {
 	window->head = 0;
@@ -210,6 +223,9 @@ void __init pcn_kmsg_init(void)
 	INIT_LIST_HEAD(&msglist_hiprio);
 	INIT_LIST_HEAD(&msglist_normprio);
 
+	/* Clear out large-message receive buffers */
+	memset(&lg_buf, 0, POPCORN_MAX_CPUS * sizeof(unsigned char *));
+
 	/* Clear callback table and register default callback functions */
 	memset(&callback_table, 0, PCN_KMSG_TYPE_MAX * sizeof(pcn_kmsg_cbftn));
 	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_CHECKIN, &pcn_kmsg_checkin_callback);
@@ -221,6 +237,12 @@ void __init pcn_kmsg_init(void)
 	if (rc) {
 		printk("POPCORN: Failed to register initial kmsg multicast callback!\n");
 	}
+
+	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_TEST, &pcn_kmsg_test_callback);
+	if (rc) {
+		printk("POPCORN: Failed to register initial kmsg test callback!\n");
+	}
+
 
 	/* Register softirq handler */
 	open_softirq(PCN_KMSG_SOFTIRQ, pcn_kmsg_action);
@@ -279,12 +301,14 @@ void __init pcn_kmsg_init(void)
 	}
 
 	/* If we're not the master kernel, we need to check in */
+#if 0
 	if (mklinux_boot) {
 		rc = send_checkin_msg(0);
 		if (rc) { 
 			printk("POPCORN: Failed to check in!\n");
 		}
 	} 
+#endif
 
 	return;
 }
@@ -370,6 +394,43 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	return 0;
 }
 
+int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size)
+{
+	int i;
+	int num_chunks = payload_size / PCN_KMSG_PAYLOAD_SIZE;
+	struct pcn_kmsg_message this_chunk;
+	char test_buf[15];
+
+	if (payload_size % PCN_KMSG_PAYLOAD_SIZE) {
+		num_chunks++;
+	}
+
+	printk("Sending large message, payload size %d bytes, %d chunks\n", payload_size, num_chunks);
+
+	this_chunk.hdr.type = lmsg->hdr.type;
+	this_chunk.hdr.prio = lmsg->hdr.prio;
+	this_chunk.hdr.is_lg_msg = 1;
+
+	for (i = 0; i < num_chunks; i++) {
+		printk("Sending chunk %d\n", i);
+
+		this_chunk.hdr.lg_start = (i == 0) ? 1 : 0;
+		this_chunk.hdr.lg_end = (i == num_chunks - 1) ? 1 : 0;
+		this_chunk.hdr.lg_seqnum = (i == 0) ? num_chunks : i;
+
+		memcpy(&this_chunk.payload, ((unsigned char *) &lmsg->payload) + i * PCN_KMSG_PAYLOAD_SIZE, PCN_KMSG_PAYLOAD_SIZE);
+
+		memcpy(test_buf, &this_chunk.payload, 10);
+		test_buf[11] = '\0';
+
+		printk("First 10 characters: %s\n", test_buf);
+
+		pcn_kmsg_send(dest_cpu, &this_chunk);
+	}
+
+	return 0;
+}
+
 /* RECEIVING / UNMARSHALING */
 
 int process_message_list(struct list_head *head) 
@@ -428,42 +489,89 @@ void pcn_kmsg_action(struct softirq_action *h)
 	int rc;
 	struct pcn_kmsg_message *msg;
 	struct pcn_kmsg_container *incoming;
+	char test_buf[15];
 
-	printk("Popcorn kmsg softirq handler called...\n");
+	printk(KERN_ERR "Popcorn kmsg softirq handler called...\n");
 
 	/* Get messages out of the buffer first */
 
 	while (!win_get(rkvirt[my_cpu], &msg)) {
-		printk("Got a message!\n");
+		printk(KERN_ERR "Got a message!\n");
 
-		/* malloc some memory (don't sleep!) */
-		incoming = kmalloc(sizeof(struct pcn_kmsg_container), GFP_ATOMIC);
-		if (!incoming) {
-			printk("Unable to kmalloc buffer for incoming message!  THIS IS BAD!\n");
-			goto out;
-		}
+		/* Special processing for large messages */
+		if (msg->hdr.is_lg_msg) {
+			printk(KERN_ERR "Got a large message fragment, type %u, from_cpu %u, start %u, end %u, seqnum %u!\n",
+					msg->hdr.type, msg->hdr.from_cpu, msg->hdr.lg_start, msg->hdr.lg_end, msg->hdr.lg_seqnum);
+			
+			memcpy(test_buf, &msg->payload, 10);
+			test_buf[11] = '\0';
 
-		/* memcpy message from rbuf */
-		memcpy(&incoming->msg, msg, sizeof(struct pcn_kmsg_message));
-		win_advance_tail(rkvirt[my_cpu]);
+			printk("First 10 characters: %s\n", test_buf);
 
-		printk("Received message, type %d, prio %d\n", incoming->msg.hdr.type, incoming->msg.hdr.prio);
+			if (msg->hdr.lg_start) {
+				printk("Processing initial message fragment...\n");
 
-		/* add container to appropriate list */
-		switch (incoming->msg.hdr.prio) {
-			case PCN_KMSG_PRIO_HIGH:
-				printk("Adding to high-priority list...\n");
-				list_add_tail(&(incoming->list), &msglist_hiprio);
-				break;
+				lg_buf[msg->hdr.from_cpu] = kmalloc(sizeof(struct pcn_kmsg_hdr) + msg->hdr.lg_seqnum * PCN_KMSG_PAYLOAD_SIZE,
+						GFP_ATOMIC);
 
-			case PCN_KMSG_PRIO_NORMAL:
-				printk("Adding to normal-priority list...\n");
-				list_add_tail(&(incoming->list), &msglist_normprio);
-				break;
+				if (!lg_buf[msg->hdr.from_cpu]) {
+					printk("Unable to kmalloc buffer for incoming message!  THIS IS BAD!\n");
+					goto out;
+				}
 
-			default:
-				printk("Priority value %d unknown -- THIS IS BAD!\n", incoming->msg.hdr.prio);
+				memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu], &msg->hdr, sizeof(struct pcn_kmsg_hdr));
+
+				memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu] + sizeof(struct pcn_kmsg_hdr), &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
+			} else {
+				printk("Processing subsequent message fragment...\n");
+
+				memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu] + sizeof(struct pcn_kmsg_hdr) + PCN_KMSG_PAYLOAD_SIZE * msg->hdr.lg_seqnum,
+						&msg->payload, PCN_KMSG_PAYLOAD_SIZE);
+
+				if (msg->hdr.lg_end) {
+					printk("Last fragment in series...\n");
+
+					rc = callback_table[msg->hdr.type](lg_buf[msg->hdr.from_cpu]);
+
+					if (rc) {
+						printk("Large message callback failed!\n");
+					}
+				}
+			}
+
+			win_advance_tail(rkvirt[my_cpu]);
+		} else {
+			printk(KERN_ERR "Message is a small message!\n");
+
+			/* malloc some memory (don't sleep!) */
+			incoming = kmalloc(sizeof(struct pcn_kmsg_container), GFP_ATOMIC);
+			if (!incoming) {
+				printk("Unable to kmalloc buffer for incoming message!  THIS IS BAD!\n");
 				goto out;
+			}
+
+			/* memcpy message from rbuf */
+			memcpy(&incoming->msg, msg, sizeof(struct pcn_kmsg_message));
+			win_advance_tail(rkvirt[my_cpu]);
+
+			printk("Received message, type %d, prio %d\n", incoming->msg.hdr.type, incoming->msg.hdr.prio);
+
+			/* add container to appropriate list */
+			switch (incoming->msg.hdr.prio) {
+				case PCN_KMSG_PRIO_HIGH:
+					printk("Adding to high-priority list...\n");
+					list_add_tail(&(incoming->list), &msglist_hiprio);
+					break;
+
+				case PCN_KMSG_PRIO_NORMAL:
+					printk("Adding to normal-priority list...\n");
+					list_add_tail(&(incoming->list), &msglist_normprio);
+					break;
+
+				default:
+					printk("Priority value %d unknown -- THIS IS BAD!\n", incoming->msg.hdr.prio);
+					goto out;
+			}
 		}
 
 	}
@@ -487,17 +595,30 @@ out:
 /* Syscall for testing all this stuff */
 SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 {
-	int rc;
+	int rc = 0;
 	/* test mask includes specified CPU and CPU 0 */
-	unsigned long mask = (1 << cpu) | 1;
-	pcn_kmsg_mcast_id test_id = -1;
+	//unsigned long mask = (1 << cpu) | 1;
+	//pcn_kmsg_mcast_id test_id = -1;
+
+	struct pcn_kmsg_long_message lmsg;
+	char *str = "This is a very long test message.  Don't be surprised if it gets corrupted; it probably will.  If it does, you're in for a lot more work, and may not get home to see your wife this weekend.  You should knock on wood before running this test.";
+
+
+	lmsg.hdr.type = PCN_KMSG_TYPE_TEST;
+	lmsg.hdr.prio = PCN_KMSG_PRIO_NORMAL;
+
+	strcpy(&lmsg.payload, str); 
+
+	printk("Message to send: %s\n", &lmsg.payload);
 
 	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", cpu);
 
-	rc = pcn_kmsg_mcast_open(&test_id, mask);
-	if (rc) {
-		printk("POPCORN: pcn_kmsg_mcast_open returned %d, test_id %lu\n", rc, test_id);
-	}
+	pcn_kmsg_send_long(cpu, &lmsg, strlen(str) + 5);
+
+	//rc = pcn_kmsg_mcast_open(&test_id, mask);
+	//if (rc) {
+	//	printk("POPCORN: pcn_kmsg_mcast_open returned %d, test_id %lu\n", rc, test_id);
+	//}
 
 	return rc;
 }
