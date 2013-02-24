@@ -137,12 +137,10 @@
 #define	FIRST_VM86_IRQ			   3
 #define LAST_VM86_IRQ			  15
 
-
-/***MY MODIFICATIONS FOR IPI IMPLEMENTATION**/
-
-//#define MK_VTY 0x36
-
-/****************/
+#ifdef CONFIG_POPCORN_KMSG
+#define POPCORN_IPI_LATENCY_VECTOR 0xcc
+#define POPCORN_KMSG_VECTOR 0xcd
+#endif
 
 #ifndef __ASSEMBLY__
 static inline int invalid_vm86_irq(int irq)

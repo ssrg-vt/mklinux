@@ -329,7 +329,7 @@ static void __init relocate_initrd(void)
 	unsigned long slop, clen, mapaddr;
 	char *p, *q;
 
-	/* MKLINUX -- the BIOS might not zero out the ramdisk_shift
+	/* POPCORN -- the BIOS might not zero out the ramdisk_shift
 	   field, so we need to account for it */
 	if (boot_params.hdr.ramdisk_magic == RAMDISK_MAGIC) {
 		ramdisk_image = boot_params.hdr.ramdisk_image + (ramdisk_shift << 32);
@@ -397,7 +397,7 @@ static void __init reserve_initrd(void)
 	u64 ramdisk_end;
 	u64 end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;
 
-	/* MKLINUX -- the BIOS might not zero out the ramdisk_shift
+	/* POPCORN -- the BIOS might not zero out the ramdisk_shift
 	   field, so we need to account for it */
 	if (boot_params.hdr.ramdisk_magic == RAMDISK_MAGIC) {
 		printk("ramdisk magic number is correct (0x%x), applying shift...\n", boot_params.hdr.ramdisk_magic);
@@ -1052,7 +1052,7 @@ void __init setup_arch(char **cmdline_p)
 		get_smp_config();
 
 	prefill_possible_map(); // cpu_possible_mask fill with other cpus from setup_possible_cpus, disabled_cpus...
-	prefill_present_map(); // MKLINUX -- reset_present_map(); TODO HERE or before prefile_possible in order to set max_cpus from the present_map
+	prefill_present_map(); // POPCORN -- reset_present_map(); TODO HERE or before prefile_possible in order to set max_cpus from the present_map
 
 	init_cpu_to_node();
 

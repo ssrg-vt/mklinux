@@ -1312,6 +1312,7 @@ static int __init parse_pci_dev_flags(char *argv)
 	return pci_dev_add_str(argv);
 }
 early_param("pci_dev_flags", parse_pci_dev_flags);
+/* POPCORN -- TODO -- Antonio needs to figure out what this is for */
 //__setup("pci_dev_flags", parse_pci_dev_flags);
 
 static int pci_device_blacklisted(struct pci_dev *dev)

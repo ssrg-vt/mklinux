@@ -2964,7 +2964,7 @@ struct workqueue_struct *__alloc_workqueue_key(const char *name,
 {
 	struct workqueue_struct *wq;
 	unsigned int cpu;
-printk("%s BEGIN\n", __func__);
+
 	/*
 	 * Workqueues which may be used during memory reclaim should
 	 * have a rescuer to guarantee forward progress.
@@ -2981,7 +2981,7 @@ printk("%s BEGIN\n", __func__);
 
 	max_active = max_active ?: WQ_DFL_ACTIVE;
 	max_active = wq_clamp_max_active(max_active, flags, name);
-printk("%s kzalloc\n", __func__);
+
 	wq = kzalloc(sizeof(*wq), GFP_KERNEL);
 	if (!wq)
 		goto err;
@@ -2992,7 +2992,7 @@ printk("%s kzalloc\n", __func__);
 	atomic_set(&wq->nr_cwqs_to_flush, 0);
 	INIT_LIST_HEAD(&wq->flusher_queue);
 	INIT_LIST_HEAD(&wq->flusher_overflow);
-printk("%s: lockdep_init_map\n", __func__);
+
 	wq->name = name;
 	lockdep_init_map(&wq->lockdep_map, lock_name, key, 0);
 	INIT_LIST_HEAD(&wq->list);
@@ -3001,7 +3001,6 @@ printk("%s: lockdep_init_map\n", __func__);
 		goto err;
 
 	for_each_cwq_cpu(cpu, wq) {
-printk("%s: each_cwq_cpu %d\n", __func__, cpu);
 		struct cpu_workqueue_struct *cwq = get_cwq(cpu, wq);
 		struct global_cwq *gcwq = get_gcwq(cpu);
 
@@ -3022,11 +3021,9 @@ printk("%s: each_cwq_cpu %d\n", __func__, cpu);
 		wq->rescuer = rescuer = alloc_worker();
 		if (!rescuer)
 			goto err;
-printk("%s: kthread_create %s\n", __func__, name);
 		rescuer->task = kthread_create(rescuer_thread, wq, "%s", name);
 		if (IS_ERR(rescuer->task))
 			goto err;
-printk("%s: wake_up_process\n", __func__);
 		rescuer->task->flags |= PF_THREAD_BOUND;
 		wake_up_process(rescuer->task);
 	}
@@ -3037,7 +3034,6 @@ printk("%s: wake_up_process\n", __func__);
 	 * workqueue to workqueues list.
 	 */
 	spin_lock(&workqueue_lock);
-printk("%s: workqueue_freezing\n", __func__);
 	if (workqueue_freezing && wq->flags & WQ_FREEZABLE)
 		for_each_cwq_cpu(cpu, wq)
 			get_cwq(cpu, wq)->max_active = 0;
@@ -3048,14 +3044,12 @@ printk("%s: workqueue_freezing\n", __func__);
 
 	return wq;
 err:
-printk("%s: error creating\n", __func__);
 	if (wq) {
 		free_cwqs(wq);
 		free_mayday_mask(wq->mayday_mask);
 		kfree(wq->rescuer);
 		kfree(wq);
 	}
-printk("%s: error exiting\n", __func__);
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(__alloc_workqueue_key);

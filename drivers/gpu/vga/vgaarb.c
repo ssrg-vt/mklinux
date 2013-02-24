@@ -1304,6 +1304,11 @@ static int __init vga_arb_device_init(void)
 	struct pci_dev *pdev;
 	struct vga_device *vgadev;
 
+	/* POPCORN -- not sure
+	 * TODO -- check this! */
+	if ( !is_bsp_cluster )
+		return -1;
+
 	rc = misc_register(&vga_arb_device);
 	if (rc < 0)
 		pr_err("vgaarb: error %d registering device\n", rc);

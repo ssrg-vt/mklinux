@@ -26,11 +26,12 @@ void __init setup_trampolines(void)
 	printk(KERN_DEBUG "Base memory trampoline at [%p] %llx size %zu\n",
 	       x86_trampoline_base, (unsigned long long)mem, size);
 
-
+	/* POPCORN -- this is commented out because it breaks clustering.
+	 * TODO -- need to fix! */
 //	if (!mklinux_boot) {
 		memcpy(x86_trampoline_base, x86_trampoline_start, size);
 //	} else {
-//		printk("mklinux boot: SMP trampoline will NOT be copied\n");
+//		printk("Popcorn boot: SMP trampoline will NOT be copied\n");
 //	}
 }
 
@@ -55,7 +56,7 @@ void __init setup_trampolines_bsp(void)
 		memcpy(x86_trampoline_bsp_base, x86_trampoline_bsp_start, size);
 
 	} else {
-		printk("mklinux boot: MKLinux trampoline will NOT be copied\n");
+		printk("Popcorn boot: BSP trampoline will NOT be copied\n");
 	}
 }
 

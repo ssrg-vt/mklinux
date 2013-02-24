@@ -346,21 +346,15 @@ early_param("early_ioremap_debug", early_ioremap_debug_setup);
 static __initdata int after_paging_init;
 static pte_t bm_pte[PAGE_SIZE/sizeof(pte_t)] __page_aligned_bss;
 
-pgd_t *ben_base;
-pgd_t *ben_pgd;
-pud_t *ben_pud;
-pmd_t *ben_pmd;
-
-
 static inline pmd_t * __init early_ioremap_pmd(unsigned long addr)
 {
 	/* Don't assume we're using swapper_pg_dir at this point */
-	ben_base = __va(read_cr3());
-	ben_pgd = &ben_base[pgd_index(addr)];
-	ben_pud = pud_offset(ben_pgd, addr);
-	ben_pmd = pmd_offset(ben_pud, addr);
+	pgd_t *base = __va(read_cr3());
+	pgd_t *pgd = &base[pgd_index(addr)];
+	pud_t *pud = pud_offset(pgd, addr);
+	pmd_t *pmd = pmd_offset(pud, addr);
 
-	return ben_pmd;
+	return pmd;
 }
 
 static inline pte_t * __init early_ioremap_pte(unsigned long addr)

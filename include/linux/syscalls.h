@@ -862,4 +862,8 @@ asmlinkage long sys_multikernel_boot(int cpu,
 
 asmlinkage long sys_get_boot_params_addr(void);
 
+asmlinkage long sys_popcorn_test_kmsg(int cpu);
+
+asmlinkage long sys_popcorn_test_ipi_latency(int cpu);
+
 #endif

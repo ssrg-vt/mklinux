@@ -1158,20 +1158,20 @@ void __cpuinit cpu_init( int flags)
 	int cpu, smp_cpu;
 	int i;
 
-	cpu = stack_smp_processor_id(); // original
-	smp_cpu = smp_processor_id(); // Antonio's buggy version
+	cpu = stack_smp_processor_id();
+	smp_cpu = smp_processor_id();
 
-printk("%s: cpu %d smp_cpu %d virtual %p\n",__func__,  cpu, smp_cpu, &cpu);
+	printk("%s: cpu %d smp_cpu %d virtual %p\n",__func__,  cpu, smp_cpu, &cpu);
 
-if (flags)
-  cpu = smp_cpu;
+	if (flags)
+		cpu = smp_cpu;
 
 	t = &per_cpu(init_tss, cpu);
 	oist = &per_cpu(orig_ist, cpu);
 
 #ifdef CONFIG_NUMA
 	if (cpu != 0 && percpu_read(numa_node) == 0 &&
-	    early_cpu_to_node(cpu) != NUMA_NO_NODE)
+			early_cpu_to_node(cpu) != NUMA_NO_NODE)
 		set_numa_node(early_cpu_to_node(cpu));
 #endif
 

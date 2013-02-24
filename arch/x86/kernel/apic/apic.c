@@ -794,13 +794,6 @@ static int __init calibrate_APIC_clock(void)
  */
 void __init setup_boot_APIC_clock(void)
 {
-	/* MKLINUX -- if we're a guest kernel, set lapic_timer_frequency
-	 * to 1000000 */
-/*	if (mklinux_boot) {
-		pr_info("Multikernel boot: setting lapic_timer_frequency to 1000000\n");
-		lapic_timer_frequency = 1000000;
-	}
-*/
 	/*
 	 * The local apic timer can be disabled via the kernel
 	 * commandline or from the CPU detection code. Register the lapic
@@ -2017,16 +2010,15 @@ void __cpuinit generic_processor_info(int apicid, int version)
 		return;
 	}
 
-	cpu = num_processors;
-	num_processors++;
+	cpu = num_processors++;
 //	if (apicid == boot_cpu_physical_apicid) {
-//		/*
-//		 * x86_bios_cpu_apicid is required to have processors listed
-//		 * in same order as logical cpu numbers. Hence the first
-//		 * entry is BSP, and so on.
-//		 * boot_cpu_init() already hold bit 0 in cpu_present_mask
-//		 * for BSP.
-//		 */
+		/*
+		 * x86_bios_cpu_apicid is required to have processors listed
+		 * in same order as logical cpu numbers. Hence the first
+		 * entry is BSP, and so on.
+		 * boot_cpu_init() already hold bit 0 in cpu_present_mask
+		 * for BSP.
+		 */
 //		cpu = 0;
 //	} else
 //		cpu = cpumask_next_zero(-1, cpu_present_mask);

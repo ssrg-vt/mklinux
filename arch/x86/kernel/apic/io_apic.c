@@ -1414,8 +1414,6 @@ static int setup_ioapic_entry(int irq, struct IO_APIC_route_entry *entry,
 	return 0;
 }
 
-int unsigned pin_maskera[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-
 static void setup_ioapic_irq(unsigned int irq, struct irq_cfg *cfg,
 				struct io_apic_irq_attr *attr)
 {
@@ -1437,19 +1435,19 @@ static void setup_ioapic_irq(unsigned int irq, struct irq_cfg *cfg,
 
 	dest = apic->cpu_mask_to_apicid_and(cfg->domain, apic->target_cpus());
 
-		printk("%s: domain %lx target_cpus() %lx dest %x DBG smp id %d is_bsp %d is_bsp_cluster %d\n",
+	printk("%s: domain %lx target_cpus() %lx dest %x DBG smp id %d is_bsp %d is_bsp_cluster %d\n",
 			__func__, cpumask_bits(cfg->domain)[0],
 			cpumask_bits(apic->target_cpus())[0], dest,
 			smp_processor_id(), !(!lapic_is_bsp()), is_bsp_cluster );
 	apic_printk(APIC_VERBOSE,KERN_DEBUG
-		    "IOAPIC[%d]: Set routing entry (%d-%d -> 0x%x -> "
-		    "IRQ %d Mode:%i Active:%i Dest:%d)\n",
-		    attr->ioapic, mpc_ioapic_id(attr->ioapic), attr->ioapic_pin,
-		    cfg->vector, irq, attr->trigger, attr->polarity, dest);
+			"IOAPIC[%d]: Set routing entry (%d-%d -> 0x%x -> "
+			"IRQ %d Mode:%i Active:%i Dest:%d)\n",
+			attr->ioapic, mpc_ioapic_id(attr->ioapic), attr->ioapic_pin,
+			cfg->vector, irq, attr->trigger, attr->polarity, dest);
 
 	if (setup_ioapic_entry(irq, &entry, dest, cfg->vector, attr)) {
 		pr_warn("Failed to setup ioapic entry for ioapic  %d, pin %d\n",
-			mpc_ioapic_id(attr->ioapic), attr->ioapic_pin);
+				mpc_ioapic_id(attr->ioapic), attr->ioapic_pin);
 		__clear_irq_vector(irq, cfg);
 
 		return;
@@ -1460,20 +1458,7 @@ static void setup_ioapic_irq(unsigned int irq, struct irq_cfg *cfg,
 		legacy_pic->mask(irq);
 
 	tmp_entry = ioapic_read_entry(attr->ioapic, attr->ioapic_pin);
-/*	printk("%s: READ%d-%d destM %d dest %d vect %d mask %d trig %d pol %d bsp %d[%d]\n",
-			__func__, attr->ioapic, attr->ioapic_pin,
-			tmp_entry.dest_mode, tmp_entry.dest,
-			tmp_entry.vector, tmp_entry.mask,
-			tmp_entry.trigger, tmp_entry.polarity,
-			lapic_is_bsp(), !(!lapic_is_bsp()) );
-	if(!lapic_is_bsp()) // if we are not on the bsp (the master)
-		entry.dest |= tmp_entry.dest;
-	printk("%s: WRITE%d-%d destM %d dest %d vect %d mask %d trig %d pol %d\n",
-			__func__, attr->ioapic, attr->ioapic_pin,
-			entry.dest_mode, entry.dest,
-			entry.vector, entry.mask,
-			entry.trigger, entry.polarity );
-*/
+
 	if ( !(!lapic_is_bsp()) || is_bsp_cluster) // write only if we are on the bsp (the master)
 		ioapic_write_entry(attr->ioapic, attr->ioapic_pin, entry);
 }
@@ -1495,26 +1480,11 @@ static void __init __io_apic_setup_irqs(unsigned int ioapic_idx)
 	unsigned int pin, irq;
 	char buffer[128];
 	node = cpu_to_node(0); // note: node is always node zero! Have sense in single kernel
-//	node = boot_cpu_physical_apicid; // actually this is always correct because is what we want (APIC)
-/*	node = cpumask_first(cpu_present_mask); // This solution does not work correctly cpu_present_mask
-	cpumask_scnprintf(buffer, 128, cpu_present_mask); // is somewhere overwritten by someone else to
-	pr_info("node %d -%s-\n", node, buffer); */ // a mask of all available cpus..
-	// final note: apparently node is referred to numa, so does not influentiate mklinux
 
 	for (pin = 0; pin < ioapics[ioapic_idx].nr_registers; pin++) {
 		idx = find_irq_entry(ioapic_idx, pin, mp_INT);
 		if (io_apic_pin_not_connected(idx, ioapic_idx, pin))
 			continue;
-
-		// TODO check if it is programmed or not
-		/* the following code is copyed by some other place in this file
-		hard_smp_processor_id(), boot_cpu_physical_apicid, !(!lapic_is_bsp()));
-if(!(!lapic_is_bsp())) { // this maybe substituted with a "mklinux" kernel cmd line parameter
-	printk(KERN_WARNING "clearing the IO APIC content\n");
-	clear_IO_APIC(); // the idea is that only the first kernel will clear the IO APIC content
-	*/
-
-		// idea we can skip some thing that is programmed or set a OR variable if we are not bsp
 
 		irq = pin_2_irq(idx, ioapic_idx, pin);
 
@@ -1526,31 +1496,31 @@ if(!(!lapic_is_bsp())) { // this maybe substituted with a "mklinux" kernel cmd l
 		 * installed and if it returns 1:
 		 */
 		if (apic->multi_timer_check &&
-		    apic->multi_timer_check(ioapic_idx, irq))
+				apic->multi_timer_check(ioapic_idx, irq))
 			continue;
 
 		set_io_apic_irq_attr(&attr, ioapic_idx, pin, irq_trigger(idx),
-				     irq_polarity(idx));
+				irq_polarity(idx));
 
 		io_apic_setup_irq_pin(irq, node, &attr);
 	}
-}
+	}
 
-static void __init setup_IO_APIC_irqs(void)
-{
-	unsigned int ioapic_idx;
+	static void __init setup_IO_APIC_irqs(void)
+	{
+		unsigned int ioapic_idx;
 
-	apic_printk(APIC_VERBOSE, KERN_DEBUG "init IO_APIC IRQs\n");
+		apic_printk(APIC_VERBOSE, KERN_DEBUG "init IO_APIC IRQs\n");
 
-	for (ioapic_idx = 0; ioapic_idx < nr_ioapics; ioapic_idx++)
-		__io_apic_setup_irqs(ioapic_idx);
-}
+		for (ioapic_idx = 0; ioapic_idx < nr_ioapics; ioapic_idx++)
+			__io_apic_setup_irqs(ioapic_idx);
+	}
 
-/*
- * for the gsit that is not in first ioapic
- * but could not use acpi_register_gsi()
- * like some special sci in IBM x3330
- */
+	/*
+	 * for the gsit that is not in first ioapic
+	 * but could not use acpi_register_gsi()
+	 * like some special sci in IBM x3330
+	 */
 void setup_IO_APIC_irq_extra(u32 gsi)
 {
 	int ioapic_idx = 0, pin, idx, irq, node = cpu_to_node(0);
@@ -1772,9 +1742,6 @@ __apicdebuginit(void) print_IO_APICs(void)
 
 	printk(KERN_INFO ".................................... done.\n");
 }
-void NSprint_IO_APICs(void) {
-       NSprint_IO_APICs();
-}
 
 __apicdebuginit(void) print_APIC_field(int base)
 {
@@ -1888,9 +1855,6 @@ __apicdebuginit(void) print_local_APIC(void *dummy)
 		}
 	}
 	printk("\n");
-}
-void NSprint_local_APIC(void *dummy) {
-       NSprint_local_APIC(dummy);
 }
 
 __apicdebuginit(void) print_local_APICs(int maxcpu)
@@ -2032,7 +1996,7 @@ void __init enable_IO_APIC(void)
 	 */
 	printk(KERN_WARNING "hard_smp_processor_id=%d boot_cpu_physical_apicid=%d lapic_is_bsp=%d\n",
 			hard_smp_processor_id(), boot_cpu_physical_apicid, !(!lapic_is_bsp()));
-	if(!(!lapic_is_bsp())) { // this maybe substituted with a "mklinux" kernel cmd line parameter
+	if (lapic_is_bsp()) { // this maybe substituted with a "mklinux" kernel cmd line parameter
 		printk(KERN_WARNING "clearing the IO APIC content\n");
 		clear_IO_APIC(); // the idea is that only the first kernel will clear the IO APIC content
 	}
@@ -2342,7 +2306,8 @@ static void __target_IO_APIC_irq(unsigned int irq, unsigned int dest, struct irq
 	struct irq_pin_list *entry;
 	u8 vector = cfg->vector;
 
-	if (!lapic_is_bsp()) // continue remapping only on the bsp processor (master)
+	/* POPCORN -- continue remapping only on the bsp processor (master) */
+	if (!lapic_is_bsp())
 		return;
 
 	for_each_irq_pin(entry, cfg->irq_2_pin) {
@@ -2355,11 +2320,11 @@ static void __target_IO_APIC_irq(unsigned int irq, unsigned int dest, struct irq
 		 * from interrupt-remapping table entry.
 		 */
 		if (!irq_remapped(cfg)) //original code
-			io_apic_write(apic, 0x11 + pin*2, dest); // WRITE DESTINATION!!!
+			io_apic_write(apic, 0x11 + pin*2, dest); /* WRITE DESTINATION!!! */
 		reg = io_apic_read(apic, 0x10 + pin*2);
 		reg &= ~IO_APIC_REDIR_VECTOR_MASK;
 		reg |= vector;
-		io_apic_modify(apic, 0x10 + pin*2, reg); // WRITE NEW MASK!!!
+		io_apic_modify(apic, 0x10 + pin*2, reg); /* WRITE NEW MASK!!! */
 	}
 }
 
@@ -3043,7 +3008,7 @@ void __init setup_IO_APIC(void)
 	sync_Arb_IDs();
 	setup_IO_APIC_irqs();
 	init_IO_APIC_traps();
-	if (legacy_pic->nr_legacy_irqs && !(!lapic_is_bsp()))
+	if (legacy_pic->nr_legacy_irqs && lapic_is_bsp())
 		check_timer();
 }
 

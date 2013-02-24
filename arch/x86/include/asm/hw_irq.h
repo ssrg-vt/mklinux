@@ -35,7 +35,10 @@ extern void spurious_interrupt(void);
 extern void thermal_interrupt(void);
 extern void reschedule_interrupt(void);
 
-extern void vty_interrupt(void);
+#ifdef CONFIG_POPCORN_KMSG
+extern void popcorn_kmsg_interrupt(void);
+extern void popcorn_ipi_latency_interrupt(void);
+#endif
 
 extern void invalidate_interrupt(void);
 extern void invalidate_interrupt0(void);

@@ -120,7 +120,6 @@ static int allocate_shared_memory() {
 struct tty_driver *master_tty_driver;
 struct timer_list read_function_timer;
 
-//static int tty_dev_read(void);
 static void tty_dev_read(long unsigned int time);
 
 int tty_dev_open(struct tty_struct *tty, struct file *flip) {
@@ -132,8 +131,7 @@ int tty_dev_open(struct tty_struct *tty, struct file *flip) {
 	tty->driver_data = tmp->id;
 	list_add(&(tmp->list), &(current_tty));
 
-	mod_timer(&read_function_timer,
-			jiffies + msecs_to_jiffies(reading_interval));
+	mod_timer(&read_function_timer,	jiffies + msecs_to_jiffies(reading_interval));
 	return SUCCESS;
 }
 
@@ -163,7 +161,6 @@ int tty_dev_write(struct tty_struct * tty, const unsigned char *buf, int count) 
 	 * */
 	int xGrid = tty->index;
 	int yGrid = order;
-//	printk(KERN_ALERT "From write : XGrid :%d   YGrid : %d\n",xGrid,yGrid);
 	if (count > 0 && (ring_buffer_address[xGrid][yGrid] != NULL)) {
 		write_lock(&(ring_buffer_address[xGrid][yGrid]->lock));
 		if (ring_buffer_address[xGrid][yGrid]->current_pos
@@ -189,7 +186,7 @@ void tty_dev_read(long unsigned int time) {
 	struct list_head * cur, *n;
 	vty_desc_t * curt;
 
-	list_for_each_safe(cur, n, &current_tty)
+	list_for_each_safe(cur, n, &current_tty)	
 	{
 		curt = list_entry(cur, vty_desc_t, list);
 

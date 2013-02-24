@@ -75,6 +75,7 @@ config X86
 	select HAVE_BPF_JIT if (X86_64 && NET)
 	select CLKEVT_I8253
 	select ARCH_HAVE_NMI_SAFE_CMPXCHG
+	select HAVE_POPCORN_ARCH_SUPPORT
 
 config INSTRUCTION_DECODER
 	def_bool (KPROBES || PERF_EVENTS)
@@ -236,6 +237,10 @@ config X86_HT
 config X86_32_LAZY_GS
 	def_bool y
 	depends on X86_32 && !CC_STACKPROTECTOR
+
+config HAVE_POPCORN_ARCH_SUPPORT
+	def_bool y
+	depends on X86_64_SMP
 
 config ARCH_HWEIGHT_CFLAGS
 	string
@@ -2177,3 +2182,5 @@ source "crypto/Kconfig"
 source "arch/x86/kvm/Kconfig"
 
 source "lib/Kconfig"
+
+source "kernel/Kconfig.popcorn"
