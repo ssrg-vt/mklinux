@@ -104,6 +104,7 @@ typedef struct _vma_data {
     pgprot_t prot;
     unsigned long pgoff;
     pte_data_t* pte_list;
+    int mmapping_in_progress;
     char path[256];
 } vma_data_t;
 
@@ -126,6 +127,7 @@ typedef struct _clone_data {
     struct pt_regs regs;
     unsigned long stack_size;
     int placeholder_pid;
+    int placeholder_tgid;
     int placeholder_cpu;
     unsigned long thread_fs;
     unsigned long thread_gs;
@@ -137,7 +139,7 @@ typedef struct _clone_data {
     unsigned short thread_fsindex;
     unsigned short thread_gsindex;
     vma_data_t* vma_list;
-
+    vma_data_t* pending_vma_list;
 } clone_data_t;
 /**
  * Message header.  All messages passed between
@@ -173,6 +175,7 @@ typedef struct _clone_request {
     unsigned long stack_size;
     char exe_path[512];
     int placeholder_pid;
+    int placeholder_tgid;
     unsigned long thread_fs;
     unsigned long thread_gs;
     unsigned long thread_sp0;
@@ -267,7 +270,7 @@ long process_server_clone(unsigned long clone_flags,
                           unsigned long stack_size,
                           struct task_struct* task);
 static int process_server(void* dummy);
-static vma_data_t* find_vma_data(unsigned long addr_start);
+static vma_data_t* find_vma_data(clone_data_t* clone_data, unsigned long addr_start);
 static clone_data_t* find_clone_data(int cpu, int clone_request_id);
 static void dump_mm(struct mm_struct* mm);
 static void dump_task(struct task_struct* task,struct pt_regs* regs,unsigned long stack_ptr);
@@ -470,34 +473,24 @@ static void destroy_clone_data(clone_data_t* data) {
 /**
  *
  */
-static vma_data_t* find_vma_data(unsigned long addr_start) {
-    data_header_t* curr = _data_head;
-    int cpu = current->remote_cpu;
-    int clone_request_id = current->clone_request_id;
-    vma_data_t* ret = NULL;
-    vma_data_t* vma_curr;
+static vma_data_t* find_vma_data(clone_data_t* clone_data, unsigned long addr_start) {
 
-    spin_lock(&_data_head_lock);
+    vma_data_t* curr = clone_data->vma_list;
+    vma_data_t* ret = NULL;
 
     while(curr) {
-
-        if(curr->data_type == PROCESS_SERVER_VMA_DATA_TYPE) {
-            vma_curr = (vma_data_t*) curr;
-            if(vma_curr->start == addr_start &&
-               vma_curr->cpu == cpu &&
-               vma_curr->clone_request_id == clone_request_id) {
-                ret = vma_curr;
-                break;
-            }
+        
+        if(curr->start == addr_start) {
+            ret = curr;
+            break;
         }
 
-        curr = curr->next;
+        curr = curr->header.next;
     }
-
-    spin_unlock(&_data_head_lock);
 
     return ret;
 }
+
 /**
  *
  */
@@ -889,6 +882,7 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
     memcpy(&clone_data->regs, &request->regs, sizeof(struct pt_regs) );
     clone_data->stack_size = request->stack_size;
     clone_data->placeholder_pid = request->placeholder_pid;
+    clone_data->placeholder_tgid = request->placeholder_tgid;
     clone_data->placeholder_cpu = source_cpu;
     clone_data->thread_fs = request->thread_fs;
     clone_data->thread_gs = request->thread_gs;
@@ -1113,12 +1107,14 @@ int process_server_import_address_space(unsigned long* ip,
                             0);
             if(f) {
                 down_write(&current->mm->mmap_sem);
+                vma_curr->mmapping_in_progress = 1;
                 err = do_mmap(f, 
                         vma_curr->start, 
                         vma_curr->end - vma_curr->start,
                         PROT_READ|PROT_WRITE|PROT_EXEC, 
                         mmap_flags, 
                         0);
+                vma_curr->mmapping_in_progress = 0;
                 up_write(&current->mm->mmap_sem);
                 filp_close(f,NULL);
             }
@@ -1257,6 +1253,71 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 
     return tx_ret;
 
+}
+
+/**
+ * mmap is being called, check to see if we need to notify remote cpus to keep others
+ * in the current thread group up to date.
+ */
+int process_server_notify_mmap(struct file *file, unsigned long addr,                                                                                                  
+                               unsigned long len, unsigned long prot,
+                               unsigned long flags, unsigned long pgoff) {
+    clone_data_t* clone_data = NULL;
+    vma_data_t* vma_data = NULL;
+    if(!current->executing_for_remote && !current->represents_remote) {
+        return 0; // Don't care
+    }
+
+    clone_data = find_clone_data(current->remote_cpu,
+                                 current->clone_request_id);
+    if(!clone_data) return 0;
+
+    // Check to see if we are possibly sharing VM with anybody.
+    // If not, exit.
+    if(clone_data->clone_flags & CLONE_VM == 0) {
+        return 0;
+    }
+
+    // Check to see if we're mmapping something that is in the vma collection.
+    // If that is the case, and it's mmapping_in_progress flag is set, then 
+    // this mmap call is mmapping a remotely initiated memory mapping.  
+    // In that case, we don't want to act.
+    vma_data = find_vma_data(clone_data,addr);
+    if(vma_data && vma_data->mmapping_in_progress) {
+        return 0; // Don't care
+    }
+
+    // Notify the remote thread group members
+
+    PSPRINTK("process_server_notify_mmap\n");
+    return 1;
+
+}
+
+/**
+ *
+ */
+int process_server_notify_munmap(struct mm_struct *mm, unsigned long start, size_t len) {
+    clone_data_t* clone_data = NULL;
+    vma_data_t* vma_data = NULL;
+    if(!current->executing_for_remote && !current->represents_remote) {
+        return 0; // Don't care
+    }
+
+    clone_data = find_clone_data(current->remote_cpu,
+                                 current->clone_request_id);
+    if(!clone_data) return 0;
+
+    // Check to see if we are possibly sharing VM with anybody.
+    // If not, exit.
+    if(clone_data->clone_flags & CLONE_VM == 0) {
+        return 0;
+    }
+
+    // Notify the remote thread group members
+
+    PSPRINTK("process_server_notify_munmap\n");
+    return 1;
 }
 
 /**
@@ -1422,6 +1483,7 @@ long process_server_clone(unsigned long clone_flags,
     request->stack_size = stack_size;
     strncpy( request->exe_path, rpath, 512 );
     request->placeholder_pid = task->pid;
+    request->placeholder_tgid = task->tgid;
     request->thread_fs = task->thread.fs;
     request->thread_gs = task->thread.gs;
     request->thread_sp0 = task->thread.sp0;

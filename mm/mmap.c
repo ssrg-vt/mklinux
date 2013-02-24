@@ -30,6 +30,7 @@
 #include <linux/perf_event.h>
 #include <linux/audit.h>
 #include <linux/khugepaged.h>
+#include <linux/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -1329,6 +1330,10 @@ out:
 			mm->locked_vm += (len >> PAGE_SHIFT);
 	} else if ((flags & MAP_POPULATE) && !(flags & MAP_NONBLOCK))
 		make_pages_present(addr, addr + len);
+
+    // Success - notify other cpus if necessary
+    process_server_notify_mmap(file, addr, len, flags, vm_flags, pgoff);
+
 	return addr;
 
 unmap_and_free_vma:
@@ -2095,6 +2100,8 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 
 	/* Fix up all other VM information */
 	remove_vma_list(mm, vma);
+
+    process_server_notify_munmap(mm, start, len);
 
 	return 0;
 }
