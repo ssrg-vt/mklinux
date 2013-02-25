@@ -301,7 +301,7 @@ void __init pcn_kmsg_init(void)
 	}
 
 	/* If we're not the master kernel, we need to check in */
-#if 0
+#if 1
 	if (mklinux_boot) {
 		rc = send_checkin_msg(0);
 		if (rc) { 
@@ -379,6 +379,11 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 
 	/* set source CPU */
 	msg->hdr.from_cpu = my_cpu;
+
+	msg->hdr.is_lg_msg = 0;
+	msg->hdr.lg_start = 0;
+	msg->hdr.lg_end = 0;
+	msg->hdr.lg_seqnum = 0;
 
 	/* place message in rbuf */
 	rc = win_put(dest_window, msg);		
