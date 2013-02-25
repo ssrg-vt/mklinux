@@ -601,9 +601,18 @@ out:
 SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 {
 	int rc = 0;
+
+#if 1
 	/* test mask includes specified CPU and CPU 0 */
-	//unsigned long mask = (1 << cpu) | 1;
-	//pcn_kmsg_mcast_id test_id = -1;
+	unsigned long mask = (1 << cpu) | 1;
+	pcn_kmsg_mcast_id test_id = -1;
+
+	rc = pcn_kmsg_mcast_open(&test_id, mask);
+	if (rc) {
+	      printk("POPCORN: pcn_kmsg_mcast_open returned %d, test_id %lu\n", rc, test_id);
+	}
+
+#else
 
 	struct pcn_kmsg_long_message lmsg;
 	char *str = "This is a very long test message.  Don't be surprised if it gets corrupted; it probably will.  If it does, you're in for a lot more work, and may not get home to see your wife this weekend.  You should knock on wood before running this test.";
@@ -618,25 +627,18 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 
 	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", cpu);
 
-	pcn_kmsg_send_long(cpu, &lmsg, strlen(str) + 5);
+	rc = pcn_kmsg_send_long(cpu, &lmsg, strlen(str) + 5);
 
-	//rc = pcn_kmsg_mcast_open(&test_id, mask);
-	//if (rc) {
-	//	printk("POPCORN: pcn_kmsg_mcast_open returned %d, test_id %lu\n", rc, test_id);
-	//}
+	if (rc) {
+		printk("POPCORN: error: pcn_kmsg_send_long returned %d\n", rc);
+	}
+
+#endif
 
 	return rc;
 }
 
 /* MULTICAST */
-
-struct pcn_kmsg_mcast_map {
-	unsigned char lock;
-	unsigned long mask;
-	unsigned int num_members;
-};
-
-struct pcn_kmsg_mcast_map mcast_map[POPCORN_MAX_MCAST_CHANNELS];
 
 inline int count_members(unsigned long mask)
 {
@@ -655,12 +657,12 @@ void print_mcast_map(void)
 {
 	int i;
 
-	printk("ACTIVE MCAST GROUPS ON CPU %d\n:", my_cpu);
+	printk("ACTIVE MCAST GROUPS:\n");
 
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
-		if (mcast_map[i].mask) {
+		if (rkinfo->mcast_window[i].mask) {
 			printk("group %d, mask 0x%lx, num_members %d\n", 
-					i, mcast_map[i].mask, mcast_map[i].num_members);
+					i, rkinfo->mcast_window[i].mask, rkinfo->mcast_window[i].num_members);
 		}
 	}
 	return;
@@ -675,7 +677,7 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 	printk("Reached pcn_kmsg_mcast_open, mask 0x%lx\n", mask);
 
 	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
-		if (!mcast_map[i].num_members) {
+		if (!rkinfo->mcast_window[i].num_members) {
 			found_id = i;
 			break;
 		}
@@ -690,22 +692,22 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 
 	/* TODO -- lock and check if channel is still unused; otherwise, try again */
 
-	mcast_map[found_id].mask = mask;
-	mcast_map[found_id].num_members = count_members(mask);
+	rkinfo->mcast_window[found_id].mask = mask;
+	rkinfo->mcast_window[found_id].num_members = count_members(mask);
 
-	printk("Found %d members\n", mcast_map[found_id].num_members);
+	printk("Found %d members\n", rkinfo->mcast_window[found_id].num_members);
 
 	msg.hdr.type = PCN_KMSG_TYPE_MCAST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 	msg.type = PCN_KMSG_MCAST_OPEN;
 	msg.id = found_id;
 	msg.mask = mask;
-	msg.num_members = mcast_map[found_id].num_members;
+	msg.num_members = rkinfo->mcast_window[found_id].num_members;
 
 	/* send message to each member except self.  Can't use mcast yet because
 	   group is not yet established, so unicast to each CPU in mask. */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
-		if ((mcast_map[found_id].mask & (1ULL << i)) && (my_cpu != i)) {
+		if ((rkinfo->mcast_window[found_id].mask & (1ULL << i)) && (my_cpu != i)) {
 			printk("Sending message to CPU %d\n", i);
 
 			rc = pcn_kmsg_send(i, (struct pcn_kmsg_message *) &msg);
@@ -726,7 +728,7 @@ int pcn_kmsg_mcast_add_members(pcn_kmsg_mcast_id id, unsigned long mask)
 {
 	/* TODO -- lock! */
 
-	mcast_map[id].mask |= mask; 
+	rkinfo->mcast_window[id].mask |= mask; 
 
 	/* TODO -- unlock! */
 
@@ -738,7 +740,7 @@ int pcn_kmsg_mcast_delete_members(pcn_kmsg_mcast_id id, unsigned long mask)
 {
 	/* TODO -- lock! */
 
-	mcast_map[id].mask &= !mask;
+	rkinfo->mcast_window[id].mask &= !mask;
 
 	/* TODO -- unlock! */
 
@@ -750,8 +752,7 @@ inline int __pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 {
 	/* TODO -- lock! */
 
-	mcast_map[id].mask = 0;
-	mcast_map[id].num_members = 0;
+	printk("Closing multicast channel %d on CPU %d\n", id, my_cpu);
 
 	/* TODO --unlock! */
 
@@ -779,6 +780,9 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 	/* close window locally */
 	__pcn_kmsg_mcast_close(id);
 
+	rkinfo->mcast_window[id].mask = 0;
+	rkinfo->mcast_window[id].num_members = 0;
+
 	return 0;
 }
 
@@ -791,7 +795,7 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 
 	/* quick hack for testing for now; loop through mask and send individual messages */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
-		if (mcast_map[id].mask & (0x1 << i)) {
+		if (rkinfo->mcast_window[id].mask & (0x1 << i)) {
 			rc = pcn_kmsg_send(i, msg);
 
 			if (rc) {
@@ -815,7 +819,7 @@ int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id,
 
 	/* quick hack for testing for now; loop through mask and send individual messages */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
-		if (mcast_map[id].mask & (0x1 << i)) {
+		if (rkinfo->mcast_window[id].mask & (0x1 << i)) {
 			rc = pcn_kmsg_send_long(i, msg, payload_size);
 
 			if (rc) {
@@ -839,20 +843,14 @@ int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message)
 	switch (msg->type) {
 		case PCN_KMSG_MCAST_OPEN:
 			printk("Processing mcast open message...\n");
-			mcast_map[msg->id].mask = msg->mask;
-			mcast_map[msg->id].num_members = msg->num_members;
 			break;
 
 		case PCN_KMSG_MCAST_ADD_MEMBERS:
 			printk("Processing mcast add members message...\n");
-			mcast_map[msg->id].mask |= msg->mask;
-			mcast_map[msg->id].num_members = count_members(msg->mask);
 			break;
 
 		case PCN_KMSG_MCAST_DEL_MEMBERS:
 			printk("Processing mcast del members message...\n");
-			mcast_map[msg->id].mask &= !(msg->mask);
-			mcast_map[msg->id].num_members = count_members(msg->mask);
 			break;
 
 		case PCN_KMSG_MCAST_CLOSE:
