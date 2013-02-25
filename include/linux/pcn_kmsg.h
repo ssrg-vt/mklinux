@@ -15,8 +15,18 @@
 
 /* BOOKKEEPING */
 
+#define POPCORN_MAX_MCAST_CHANNELS 128
+
+struct pcn_kmsg_mcast_window {
+	unsigned char lock;
+	unsigned long mask;
+        unsigned int num_members;
+	unsigned long phys_addr;
+};
+
 struct pcn_kmsg_rkinfo {
 	unsigned long phys_addr[POPCORN_MAX_CPUS];
+	struct pcn_kmsg_mcast_window mcast_window[POPCORN_MAX_MCAST_CHANNELS];
 	//struct pcn_kmsg_window *window;
 };
 
@@ -126,8 +136,6 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		unsigned int payload_size);
 
 /* MULTICAST GROUPS */
-
-#define POPCORN_MAX_MCAST_CHANNELS 128
 
 /* Enum for mcast message type. */
 enum pcn_kmsg_mcast_type {
