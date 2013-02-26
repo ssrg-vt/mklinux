@@ -53,7 +53,7 @@ void pcn_kmsg_action(struct softirq_action *h);
 #define RB_MASK ((1 << RB_SHIFT) - 1)
 
 /* From Wikipedia page "Fetch and add", modified to work for u64 */
-inline unsigned long fetch_and_add( unsigned long * variable, unsigned long value )
+inline unsigned long fetch_and_add( volatile unsigned long * variable, unsigned long value )
 {
 	asm volatile( 
 			"lock; xaddq %%rax, %2;"
@@ -71,19 +71,30 @@ static inline unsigned long win_inuse(struct pcn_kmsg_window *win)
 static inline int win_put(struct pcn_kmsg_window *win, struct pcn_kmsg_message *msg) 
 {
 	unsigned long ticket;
+	int cur_wininuse, old_wininuse = 0;
 
 	/* if the queue is already really long, return EAGAIN */
+#if 0
 	if (win_inuse(win) >= RB_SIZE) {
 		printk("Window full, caller should try again...\n");
 		return -EAGAIN;
 	}
+#endif
 
 	/* grab ticket */
 	ticket = fetch_and_add(&win->head, 1);
 	printk(KERN_ERR "ticket = %lu, head = %lu\n", ticket, win->head);
 
 	/* spin until there's a spot free for me */
-	while (win_inuse(win) >= RB_SIZE) {}
+	while ((cur_wininuse = win_inuse(win)) >= RB_SIZE) {
+
+		if (cur_wininuse != old_wininuse) {
+			printk("win_inuse returned %d. spinning...\n", cur_wininuse);
+			old_wininuse = cur_wininuse;
+		}
+	}
+
+	printk("inserting item...\n");
 
 	/* insert item */
 	memcpy(&win->buffer[ticket & RB_MASK], msg, sizeof(struct pcn_kmsg_message));
@@ -168,9 +179,8 @@ int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 
 int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
 {
-	struct pcn_kmsg_long_message *lmsg = message;
 
-	printk("Received test long message, payload: %s\n", &lmsg->payload);
+	printk("Received test message!\n");
 
 	return 0;
 }
@@ -602,7 +612,7 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 {
 	int rc = 0;
 
-#if 1
+#if 0
 	/* test mask includes specified CPU and CPU 0 */
 	unsigned long mask = (1 << cpu) | 1;
 	pcn_kmsg_mcast_id test_id = -1;
@@ -614,23 +624,21 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 
 #else
 
-	struct pcn_kmsg_long_message lmsg;
-	char *str = "This is a very long test message.  Don't be surprised if it gets corrupted; it probably will.  If it does, you're in for a lot more work, and may not get home to see your wife this weekend.  You should knock on wood before running this test.";
+	int i;
+	struct pcn_kmsg_message msg;
 
-
-	lmsg.hdr.type = PCN_KMSG_TYPE_TEST;
-	lmsg.hdr.prio = PCN_KMSG_PRIO_NORMAL;
-
-	strcpy(&lmsg.payload, str); 
-
-	printk("Message to send: %s\n", &lmsg.payload);
+	msg.hdr.type = PCN_KMSG_TYPE_TEST;
+	msg.hdr.prio = PCN_KMSG_PRIO_NORMAL;
 
 	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", cpu);
 
-	rc = pcn_kmsg_send_long(cpu, &lmsg, strlen(str) + 5);
+	for (i = 0; i < 100; i++) {
 
-	if (rc) {
-		printk("POPCORN: error: pcn_kmsg_send_long returned %d\n", rc);
+		rc = pcn_kmsg_send(cpu, &msg);
+
+		if (rc) {
+			printk("POPCORN: error: pcn_kmsg_send_long returned %d\n", rc);
+		}
 	}
 
 #endif
@@ -641,6 +649,7 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 /* MULTICAST */
 
 inline int count_members(unsigned long mask)
+
 {
 	int i, count = 0;
 
