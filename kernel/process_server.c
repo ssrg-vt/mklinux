@@ -20,6 +20,7 @@
 #include <linux/mm.h>
 #include <linux/io.h> // ioremap
 #include <linux/mman.h> // MAP_ANONYMOUS
+#include <linux/pcn_kmsg.h> // Messaging
 
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
@@ -141,17 +142,6 @@ typedef struct _clone_data {
     vma_data_t* vma_list;
     vma_data_t* pending_vma_list;
 } clone_data_t;
-/**
- * Message header.  All messages passed between
- * cpu's must have this header as the first
- * struct member.
- */
-typedef struct _msg_header {
-    int msg_type;
-    int msg_len; // not including header
-    int msg_id;
-    int is_response; // Not sure if this will get used...
-} msg_header_t;
 
 /**
  * This message is sent to a remote cpu in order to 
@@ -160,7 +150,7 @@ typedef struct _msg_header {
  * away in the near future.
  */
 typedef struct _clone_request {
-    msg_header_t header;
+    struct pcn_kmsg_hdr header;
     int clone_request_id;
     unsigned long clone_flags;
     unsigned long stack_start;
@@ -194,7 +184,7 @@ typedef struct _clone_request {
  * requesting cpu.
  */
 typedef struct _create_process_pairing {
-    msg_header_t header;
+    struct pcn_kmsg_hdr header;
     int your_pid; // PID of cpu receiving this pairing request
     int my_pid;   // PID of cpu transmitting this pairing request
 } create_process_pairing_t;
@@ -205,7 +195,7 @@ typedef struct _create_process_pairing {
  * is a placeholder or a delegate locally.
  */
 typedef struct _exiting_process {
-    msg_header_t header;
+    struct pcn_kmsg_hdr header;
     int my_pid; // PID of process on cpu transmitting this exit notification.
 } exiting_process_t;
 
@@ -213,7 +203,7 @@ typedef struct _exiting_process {
  * Inform remote cpu of a vma to process mapping.
  */
 typedef struct _vma_transfer {
-    msg_header_t header;
+    struct pcn_kmsg_hdr header;
     int vma_id;
     int clone_request_id;
     unsigned long start;
@@ -228,26 +218,13 @@ typedef struct _vma_transfer {
  * Inform remote cpu of a pte to vma mapping.
  */
 typedef struct _pte_transfer {
-    msg_header_t header;
+    struct pcn_kmsg_hdr header;
     int vma_id;
     int clone_request_id;
     unsigned long vaddr;
     unsigned long paddr;
     unsigned long pfn;
 } pte_transfer_t;
-
-/**
- * This message is sent when a signal is delivered
- * to a process that is either a placeholder for
- * a remotely executing process, or is the
- * remotely executing process.
- */
-typedef struct _propagate_signal {
-    msg_header_t header;
-    int originating_cpu;
-    int originating_dst_pid;
-    int sig;
-} propagate_signal_t;
 
 /**
  *
@@ -261,9 +238,7 @@ typedef struct _deconstruction_data {
 /**
  * Prototypes
  */
-static void handle_clone_request(clone_request_t* request,int source_cpu);
-static int msg_tx(int dst, void* data, int data_len);
-static void comms_handler(int source, char* data, int data_len);
+static int handle_clone_request(struct pcn_kmsg_message* msg);
 long process_server_clone(unsigned long clone_flags,
                           unsigned long stack_start,                                                                                                                   
                           struct pt_regs *regs,
@@ -282,16 +257,13 @@ static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr);
  * Module variables
  */
 static struct task_struct* process_server_task = NULL;     // Remember the kthread task_struct
-static comm_buffers* _comm_buf = NULL;
 static int _initialized = 0;
-static int _msg_id = 0;
 static int _vma_id = 0;
 static int _clone_request_id = 0;
 static int _cpu = -1;
 char _rcv_buf[RCV_BUF_SZ] = {0};
 data_header_t* _data_head = NULL;        // General purpose data store
 DEFINE_SPINLOCK(_data_head_lock);        // Lock for _data_head
-DEFINE_SPINLOCK(_msg_id_lock);           // Lock for _msg_id
 DEFINE_SPINLOCK(_vma_id_lock);           // Lock for _vma_id
 DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
 static scheduler_fn_t _scheduler_impl;
@@ -431,7 +403,6 @@ static clone_data_t* find_clone_data(int cpu, int clone_request_id) {
 
 static void destroy_clone_data(clone_data_t* data) {
     vma_data_t* vma_data;
-    vma_data_t* vma_to_remove;
     pte_data_t* pte_data;
     vma_data = data->vma_list;
     while(vma_data) {
@@ -441,7 +412,7 @@ static void destroy_clone_data(clone_data_t* data) {
         while(pte_data) {
 
             // Remove pte from list
-            vma_data->pte_list = pte_data->header.next;
+            vma_data->pte_list = (pte_data_t*)pte_data->header.next;
             if(vma_data->pte_list) {
                 vma_data->pte_list->header.prev = NULL;
             }
@@ -454,7 +425,7 @@ static void destroy_clone_data(clone_data_t* data) {
         }
         
         // Remove vma from list
-        data->vma_list = vma_data->header.next;
+        data->vma_list = (vma_data_t*)vma_data->header.next;
         if(data->vma_list) {
             data->vma_list->header.prev = NULL;
         }
@@ -485,7 +456,7 @@ static vma_data_t* find_vma_data(clone_data_t* clone_data, unsigned long addr_st
             break;
         }
 
-        curr = curr->header.next;
+        curr = (vma_data_t*)curr->header.next;
     }
 
     return ret;
@@ -518,7 +489,6 @@ static void dump_mm(struct mm_struct* mm) {
         .mm = mm,
         .private = NULL
         };
-    char buf[256];
 
     if(NULL == mm) {
         PSPRINTK("MM IS NULL!\n");
@@ -689,14 +659,17 @@ static void dump_data_list() {
 /**
  *
  */
-static void handle_pte_transfer(pte_transfer_t* msg, int source_cpu) {
+static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
+    pte_transfer_t* msg = (pte_transfer_t*)inc_msg;
+    unsigned int source_cpu = inc_msg->hdr.from_cpu;
     data_header_t* curr = NULL;
     vma_data_t* vma = NULL;
     pte_data_t* pte_data = kmalloc(sizeof(pte_data_t),GFP_KERNEL);
     if(!pte_data) {
         PSPRINTK("Failed to allocate pte_data_t\n");
-        return;
+        return 0;
     }
+
     pte_data->header.data_type = PROCESS_SERVER_PTE_DATA_TYPE;
     pte_data->header.next = NULL;
     pte_data->header.prev = NULL;
@@ -723,8 +696,8 @@ static void handle_pte_transfer(pte_transfer_t* msg, int source_cpu) {
                 // Add to vma data
                 spin_lock(&vma->lock);
                 if(vma->pte_list) {
-                    pte_data->header.next = vma->pte_list;
-                    vma->pte_list->header.prev = pte_data;
+                    pte_data->header.next = (data_header_t*)vma->pte_list;
+                    vma->pte_list->header.prev = (data_header_t*)pte_data;
                     vma->pte_list = pte_data;
                 } else {
                     vma->pte_list = pte_data;
@@ -737,19 +710,24 @@ static void handle_pte_transfer(pte_transfer_t* msg, int source_cpu) {
     }
 
     spin_unlock(&_data_head_lock);
+
+    kfree(inc_msg);
     
+    return 0;
 }
 
 /**
  *
  */
-static void handle_vma_transfer(vma_transfer_t* msg, int source_cpu) {
-
+static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
+    vma_transfer_t* msg = (vma_transfer_t*)inc_msg;
+    unsigned int source_cpu = inc_msg->hdr.from_cpu;
     vma_data_t* vma_data = kmalloc(sizeof(vma_data_t),GFP_KERNEL);
     if(!vma_data) {
         PSPRINTK("Failed to allocate vma_data_t\n");
-        return;
+        return 0;
     }
+
     vma_data->header.data_type = PROCESS_SERVER_VMA_DATA_TYPE;
     vma_data->header.next = NULL;
     vma_data->header.prev = NULL;
@@ -767,15 +745,18 @@ static void handle_vma_transfer(vma_transfer_t* msg, int source_cpu) {
     vma_data->lock = __SPIN_LOCK_UNLOCKED(&vma_data->lock);
     strcpy(vma_data->path,msg->path);
     add_data_entry(vma_data); 
-    
+   
+    kfree(inc_msg);
+
+    return 0;
 }
 
 /**
  * Handler function for when either a remote placeholder or a remote delegate process dies,
  * and its local counterpart must be killed to reflect that.
  */
-static void handle_exiting_process_notification(exiting_process_t* msg, int source_cpu) {
-
+static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg) {
+    exiting_process_t* msg = (exiting_process_t*)inc_msg;
     struct task_struct* task;
     PSPRINTK("kmkprocsrv: exiting process remote_pid{%d}, src_cpu{%d}\n",msg->my_pid,source_cpu);
 
@@ -788,17 +769,22 @@ static void handle_exiting_process_notification(exiting_process_t* msg, int sour
             break; // No need to continue;
         }
     }
+
+    kfree(inc_msg);
+
+    return 0;
 }
 
 /**
  * Handler function for when another processor informs the current cpu
  * of a pid pairing.
  */
-static void handle_process_pairing_request(create_process_pairing_t* msg, int source_cpu) {
-
+static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
+    create_process_pairing_t* msg = (create_process_pairing_t*)inc_msg;
+    unsigned int source_cpu = inc_msg->hdr.from_cpu;
     struct task_struct* task;
     if(msg == NULL) {
-        return;
+        return 0;
     }
 
     /*
@@ -820,12 +806,18 @@ static void handle_process_pairing_request(create_process_pairing_t* msg, int so
             break; // No need to continue;
         }
     }
+
+    kfree(inc_msg);
+
+    return 0;
 }
 
 /**
  * Handle clone requests. 
  */
-static void handle_clone_request(clone_request_t* request, int source_cpu) {
+static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
+    clone_request_t* request = (clone_request_t*)inc_msg;
+    unsigned int source_cpu = inc_msg->hdr.from_cpu;
     clone_data_t* clone_data;
     struct subprocess_info* sub_info;
     char* argv[] = {request->exe_path,NULL,NULL};
@@ -841,7 +833,7 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
     PSPRINTK("Handling clone request: %lx\n",request->clone_flags);
 
     sub_info = call_usermodehelper_setup( argv[0], argv, envp, GFP_ATOMIC );
-    if (sub_info == NULL) return;
+    if (sub_info == NULL) return 0;
 
     /*
      * This information is passed into kmod in order to
@@ -916,8 +908,8 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
                 // Place data entry in this clone request's vma list
                 spin_lock(&clone_data->lock);
                 if(clone_data->vma_list) {
-                    clone_data->vma_list->header.prev = vma;
-                    vma->header.next = clone_data->vma_list;
+                    clone_data->vma_list->header.prev = (data_header_t*)vma;
+                    vma->header.next = (data_header_t*)clone_data->vma_list;
                 } 
                 clone_data->vma_list = vma;
                 spin_unlock(&clone_data->lock);
@@ -935,112 +927,15 @@ static void handle_clone_request(clone_request_t* request, int source_cpu) {
      * Spin up the new process.
      */
     call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
+
+    kfree(inc_msg);
+
+    return 0;
 }
 
 /**
  * Message passing helper functions
  */
-
-/**
- * Helper function to send a message to some destination
- * cpu.
- */
-static int msg_tx(int dst, void* data, int data_len) {
-    int ret = -1;
-    msg_header_t* msg = (msg_header_t*)data;
-
-    if(data_len <= 0) {
-        return -1;
-    }
-
-    // Increase the message ID by one.
-    spin_lock(&_msg_id_lock);
-    msg->msg_id = _msg_id++;
-    spin_unlock(&_msg_id_lock);
-
-    ret = matrix_send_to( _comm_buf, dst, data, data_len );
-
-    return ret;
-}
-
-/**
- * Routes commands to the appropriate handler.
- */
-static void comms_handler(int source_cpu, char* data, int data_len) {
-    msg_header_t* hdr = NULL;
-    if (data == NULL) {
-        goto error;
-    }
-
-    if (data_len <= 0) {
-        goto error;
-    }
-
-    if (source_cpu < 0) {
-        goto error;
-    }
-
-    // Grab the header to figure out the message type
-    hdr = (msg_header_t*)data;
-
-    PSPRINTK("kmkprocsrv: Routing message to handler msg_type{%d}\n",hdr->msg_type);
-
-    // Clone Request
-    if (hdr->msg_type == PROCESS_SERVER_MSG_CLONE_REQUEST) {
-        clone_request_t* request = (clone_request_t*)data;
-        // Check message integrity.
-        if(request->header.msg_len == sizeof(clone_request_t) - sizeof(msg_header_t)) {
-            // Handle this message.
-            handle_clone_request(request,source_cpu);
-        } 
-    }
-
-    // Process Pairing Request
-    else if (hdr->msg_type == PROCESS_SERVER_MSG_PROCESS_PAIRING_REQUEST) {
-        create_process_pairing_t* request = (create_process_pairing_t*)data;
-        // Check message integrity.
-        if(request->header.msg_len == sizeof(create_process_pairing_t) - sizeof(msg_header_t)) {
-            // Handle this message.
-            handle_process_pairing_request(request,source_cpu);
-        }
-    }
-
-    // Process Exiting Notification
-    else if (hdr->msg_type == PROCESS_SERVER_MSG_PROCESS_EXITING) {
-        exiting_process_t* request = (exiting_process_t*)data;
-        if(request->header.msg_len == sizeof(exiting_process_t) - sizeof(msg_header_t)) {
-            // Handle this message
-            handle_exiting_process_notification(request,source_cpu);
-        }
-    }
-
-    else if (hdr->msg_type == PROCESS_SERVER_VMA_TRANSFER) {
-        vma_transfer_t* msg = (vma_transfer_t*)data;
-        if(msg->header.msg_len == sizeof(vma_transfer_t) - sizeof(msg_header_t)) {
-            // Handle this message
-            handle_vma_transfer(msg,source_cpu);
-        }
-    }
-
-    else if (hdr->msg_type == PROCESS_SERVER_PTE_TRANSFER) {
-        pte_transfer_t* msg = (pte_transfer_t*)data;
-        if(msg->header.msg_len == sizeof(pte_transfer_t) - sizeof(msg_header_t)) {
-            // Handle this message
-            handle_pte_transfer(msg,source_cpu);
-        }
-    }
-
-    else {
-        PSPRINTK("error parsing message id{%d},len{%d},type{%d}\n",
-                hdr->msg_id,
-                hdr->msg_len,
-                hdr->msg_type);
-    }
-
-error:
-    return;
-}
-
 
 
 /**
@@ -1060,7 +955,7 @@ int process_server_import_address_space(unsigned long* ip,
         struct pt_regs* regs) {
     pte_data_t* pte_curr = NULL;
     vma_data_t* vma_curr = NULL;
-    clone_data_t* clone_data = NULL;;
+    clone_data_t* clone_data = NULL;
     unsigned long err = 0;
     struct file* f;
     struct vm_area_struct* vma;
@@ -1144,11 +1039,11 @@ int process_server_import_address_space(unsigned long* ip,
                             pte_curr->paddr >> PAGE_SHIFT,
                             PAGE_SIZE,
                             vma->vm_page_prot);
-                    pte_curr = pte_curr->header.next;
+                    pte_curr = (pte_data_t*)pte_curr->header.next;
                 }
             }
         }
-        vma_curr = vma_curr->header.next;
+        vma_curr = (vma_data_t*)vma_curr->header.next;
     }
 
     // install memory information
@@ -1203,16 +1098,20 @@ int process_server_task_exit_notification(pid_t pid) {
     clone_data_t* clone_data = find_clone_data(current->remote_cpu, current->clone_request_id);
 
     PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d}\n",pid);
-    msg.header.msg_type = PROCESS_SERVER_MSG_PROCESS_EXITING;
-    msg.header.msg_len = sizeof(exiting_process_t) - sizeof(msg_header_t);
+    msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
+    msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = pid;
 
     if(current->pid == pid) {
-        tx_ret = msg_tx(current->remote_cpu, &msg, sizeof(msg));
+        tx_ret = pcn_kmsg_send_long(current->remote_cpu, 
+                    (struct pcn_kmsg_long_message*)&msg, 
+                    sizeof(msg) - sizeof(msg.header));
     } else {
         for_each_process(task) {
             if(task->pid == pid) {
-                tx_ret = msg_tx(task->remote_cpu, &msg, sizeof(msg));
+                tx_ret = pcn_kmsg_send_long(task->remote_cpu, 
+                            (struct pcn_kmsg_long_message*)&msg, 
+                            sizeof(msg) - sizeof(msg.header));
             }
         }
     }
@@ -1244,12 +1143,14 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
     
     // Notify remote cpu of pairing between current task and remote
     // representative task.
-    msg.header.msg_type = PROCESS_SERVER_MSG_PROCESS_PAIRING_REQUEST;
-    msg.header.msg_len = sizeof(create_process_pairing_t) - sizeof(msg_header_t);
+    msg.header.type = PCN_KMSG_TYPE_PROC_SRV_CREATE_PROCESS_PAIRING;
+    msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.your_pid = remote_pid; 
     msg.my_pid = pid;
     
-    tx_ret = msg_tx(remote_cpu, &msg, sizeof(msg));
+    tx_ret = pcn_kmsg_send_long(remote_cpu, 
+                (struct pcn_kmsg_long_message*)&msg, 
+                sizeof(msg) - sizeof(msg.header));
 
     return tx_ret;
 
@@ -1264,7 +1165,7 @@ int process_server_notify_mmap(struct file *file, unsigned long addr,
                                unsigned long flags, unsigned long pgoff) {
     clone_data_t* clone_data = NULL;
     vma_data_t* vma_data = NULL;
-    if(!current->executing_for_remote && !current->represents_remote) {
+    if((!current->executing_for_remote) && (!current->represents_remote)) {
         return 0; // Don't care
     }
 
@@ -1274,7 +1175,7 @@ int process_server_notify_mmap(struct file *file, unsigned long addr,
 
     // Check to see if we are possibly sharing VM with anybody.
     // If not, exit.
-    if(clone_data->clone_flags & CLONE_VM == 0) {
+    if(!(clone_data->clone_flags & CLONE_VM)) {
         return 0;
     }
 
@@ -1299,7 +1200,6 @@ int process_server_notify_mmap(struct file *file, unsigned long addr,
  */
 int process_server_notify_munmap(struct mm_struct *mm, unsigned long start, size_t len) {
     clone_data_t* clone_data = NULL;
-    vma_data_t* vma_data = NULL;
     if(!current->executing_for_remote && !current->represents_remote) {
         return 0; // Don't care
     }
@@ -1310,7 +1210,7 @@ int process_server_notify_munmap(struct mm_struct *mm, unsigned long start, size
 
     // Check to see if we are possibly sharing VM with anybody.
     // If not, exit.
-    if(clone_data->clone_flags & CLONE_VM == 0) {
+    if((clone_data->clone_flags & CLONE_VM) == 0) {
         return 0;
     }
 
@@ -1337,8 +1237,8 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
 
     pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_KERNEL);
 
-    pte_xfer->header.msg_type = PROCESS_SERVER_PTE_TRANSFER;
-    pte_xfer->header.msg_len = sizeof(pte_transfer_t) - sizeof(msg_header_t);
+    pte_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER;
+    pte_xfer->header.prio = PCN_KMSG_PRIO_NORMAL;
     pte_xfer->paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));
     // NOTE: Found the above pte to paddr conversion here -
     // http://wbsun.blogspot.com/2010/12/convert-userspace-virtual-address-to.html
@@ -1346,7 +1246,9 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
     pte_xfer->vma_id = vma_id;
     pte_xfer->clone_request_id = clone_request_id;
     pte_xfer->pfn = pte_pfn(*pte);
-    msg_tx(dst_cpu, pte_xfer, sizeof(pte_transfer_t));
+    pcn_kmsg_send_long(dst_cpu, 
+            (struct pcn_kmsg_long_message*)pte_xfer, 
+            sizeof(pte_transfer_t) - sizeof(pte_xfer->header));
 
     kfree(pte_xfer);
 
@@ -1383,6 +1285,9 @@ long process_server_clone(unsigned long clone_flags,
     // Set destination cpu
     if(_scheduler_impl) {
         dst_cpu = _scheduler_impl();
+    } else {
+        if(_cpu == 3) dst_cpu = 0;
+        if(_cpu == 0) dst_cpu = 3;
     }
 
     // Execute locally if the scheduler decides to do so.
@@ -1417,8 +1322,8 @@ long process_server_clone(unsigned long clone_flags,
     // VM Entries
     curr = task->mm->mmap;
 
-    vma_xfer->header.msg_type = PROCESS_SERVER_VMA_TRANSFER;
-    vma_xfer->header.msg_len = sizeof(vma_transfer_t) - sizeof(msg_header_t);
+    vma_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER;
+    vma_xfer->header.prio = PCN_KMSG_PRIO_NORMAL;
     while(curr) {
 
         /*
@@ -1444,7 +1349,9 @@ long process_server_clone(unsigned long clone_flags,
         vma_xfer->clone_request_id = lclone_request_id;
         vma_xfer->flags = curr->vm_flags;
         vma_xfer->pgoff = curr->vm_pgoff;
-        tx_ret = msg_tx(dst_cpu, vma_xfer, sizeof(vma_transfer_t));
+        tx_ret = pcn_kmsg_send_long(dst_cpu, 
+                    (struct pcn_kmsg_long_message*)vma_xfer, 
+                    sizeof(vma_transfer_t) - sizeof(vma_xfer->header));
         if(tx_ret <= 0) {
             PSPRINTK("Unable to send vma transfer message\n");
         }
@@ -1467,8 +1374,8 @@ long process_server_clone(unsigned long clone_flags,
     up_read(&task->mm->mmap_sem);
 
     // Build request
-    request->header.msg_type = PROCESS_SERVER_MSG_CLONE_REQUEST;
-    request->header.msg_len = sizeof( clone_request_t ) - sizeof( msg_header_t );
+    request->header.type = PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST;
+    request->header.prio = PCN_KMSG_PRIO_NORMAL;
     request->clone_flags = clone_flags;
     request->stack_start = task->mm->start_stack;
     request->stack_ptr = stack_start;
@@ -1495,7 +1402,9 @@ long process_server_clone(unsigned long clone_flags,
     request->thread_gsindex = task->thread.gsindex;
 
     // Send request
-    tx_ret = msg_tx(dst_cpu, request, sizeof(clone_request_t));
+    tx_ret = pcn_kmsg_send_long(dst_cpu, 
+                (struct pcn_kmsg_long_message*)request, 
+                sizeof(clone_request_t) - sizeof(request->header));
 
     PSPRINTK("kmkprocsrv: transmitted %d\n",tx_ret);
 
@@ -1517,81 +1426,20 @@ int process_server_register_scheduler(scheduler_fn_t scheduler_impl) {
 }
 
 /**
- * Kthread implementation
- */
-
-/**
- * process_server
- * The kthread process loop.
- */
-static int process_server(void* dummy) {
-
-    int rcved = -1;
-    int i = 0;
-    unsigned long timeout = 1;  // Process loop wait duration
-
-    // Initialize knowledge of local environment
-
-    PSPRINTK("kmkprocsrv: Getting processor ID\r\n");
-
-    _cpu = smp_processor_id();
-
-    PSPRINTK("kmkprocsrv: Processor ID: %d\r\n",_cpu);
-    PSPRINTK("kmkprocsrv: Number of cpus detected: %d\r\n",NR_CPUS);
-
-    // Retrieve the communications buffers pointer from
-    // the mcomm module.
-    _comm_buf = matrix_get_buffers();
-    if(NULL == _comm_buf) goto error_init_buffers;
-
-    PSPRINTK("kmkprocsrv: Initialized local process server\r\n");
-
-    _initialized = 1;
-
-    while (1) {
-
-        // Check for work to do.
-        // Look for input from all CPUs
-        for(i = 0; i < NR_CPUS; i++) {
-            
-            // Don't read from self.
-            if( i == _cpu) continue;
-
-            rcved = matrix_recv_from( _comm_buf, i, _rcv_buf, RCV_BUF_SZ);
-
-            // If input was found on this CPU, handle it.
-            if (rcved > 0) {
-
-                PSPRINTK( "kmkprocsrv: Received data from cpu{%d}, len{%d}\n", i, rcved );
-                PSPRINTK( _rcv_buf );
-
-                comms_handler(i, _rcv_buf, rcved);
-
-            }
-        }
-
-        // Sleep a while
-		while ( schedule_timeout_interruptible( timeout*HZ / 0x40 ) );
-
-    }
-
-
-    // Should not reach
-
-error_init_buffers:
-
-    PSPRINTK("pmkprocsrv: Error, exiting\r\n");
-
-    return 0;
-}
-
-/**
  * process_server_init
  * Start the process loop in a new kthread.
  */
 static int __init process_server_init(void) {
 
-    process_server_task = kthread_run(process_server, NULL, "kmkprocsrv"); 
+    _cpu = smp_processor_id();
+
+    printk("POPCORN: subscribing to comms\n");
+
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER, handle_pte_transfer);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER, handle_vma_transfer);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS, handle_exiting_process_notification);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CREATE_PROCESS_PAIRING, handle_process_pairing_request);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST, handle_clone_request);
 
     return 0;
 }
