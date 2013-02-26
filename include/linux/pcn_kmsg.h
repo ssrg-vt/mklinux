@@ -110,8 +110,8 @@ struct pcn_kmsg_long_message {
 #define PCN_KMSG_RBUF_SIZE 64
 
 struct pcn_kmsg_window {
-	unsigned long head;
-	unsigned long tail;
+	volatile unsigned long head;
+	volatile unsigned long tail;
 	struct pcn_kmsg_message buffer[PCN_KMSG_RBUF_SIZE];
 }__attribute__((packed));
 

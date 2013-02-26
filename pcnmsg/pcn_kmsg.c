@@ -53,7 +53,7 @@ void pcn_kmsg_action(struct softirq_action *h);
 #define RB_MASK ((1 << RB_SHIFT) - 1)
 
 /* From Wikipedia page "Fetch and add", modified to work for u64 */
-inline unsigned long fetch_and_add( unsigned long * variable, unsigned long value )
+inline unsigned long fetch_and_add( volatile unsigned long * variable, unsigned long value )
 {
 	asm volatile( 
 			"lock; xaddq %%rax, %2;"
@@ -80,7 +80,7 @@ static inline int win_put(struct pcn_kmsg_window *win, struct pcn_kmsg_message *
 
 	/* grab ticket */
 	ticket = fetch_and_add(&win->head, 1);
-	printk(KERN_ERR "ticket = %lu, head = %lu\n", ticket, win->head);
+	printk(KERN_ERR "ticket = %lu, head = %lu, tail = %lu\n", ticket, win->head, win->tail);
 
 	/* spin until there's a spot free for me */
 	while (win_inuse(win) >= RB_SIZE) {}
@@ -109,7 +109,7 @@ static inline int win_get(struct pcn_kmsg_window *win, struct pcn_kmsg_message *
 
 	/* spin until entry.ready at end of cache line is set */
 	rcvd = &(win->buffer[win->tail & RB_MASK]);
-	printk(KERN_ERR "Ready bit: %u\n", rcvd->hdr.ready);
+	//printk(KERN_ERR "Ready bit: %u\n", rcvd->hdr.ready);
 	while (!rcvd->hdr.ready) {
 		pcn_cpu_relax();
 	}
@@ -341,7 +341,7 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 
 /* SENDING / MARSHALING */
 
-int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
+int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 {
 	int rc;
 	struct pcn_kmsg_window *dest_window;
@@ -380,11 +380,6 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	/* set source CPU */
 	msg->hdr.from_cpu = my_cpu;
 
-	msg->hdr.is_lg_msg = 0;
-	msg->hdr.lg_start = 0;
-	msg->hdr.lg_end = 0;
-	msg->hdr.lg_seqnum = 0;
-
 	/* place message in rbuf */
 	rc = win_put(dest_window, msg);		
 
@@ -399,18 +394,28 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	return 0;
 }
 
+int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
+{
+	msg->hdr.is_lg_msg = 0;
+	msg->hdr.lg_start = 0;
+	msg->hdr.lg_end = 0;
+	msg->hdr.lg_seqnum = 0;
+
+	return __pcn_kmsg_send(dest_cpu, msg);
+}
+
 int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size)
 {
 	int i;
 	int num_chunks = payload_size / PCN_KMSG_PAYLOAD_SIZE;
 	struct pcn_kmsg_message this_chunk;
-	char test_buf[15];
+	//char test_buf[15];
 
 	if (payload_size % PCN_KMSG_PAYLOAD_SIZE) {
 		num_chunks++;
 	}
 
-	printk("Sending large message, payload size %d bytes, %d chunks\n", payload_size, num_chunks);
+	printk("Sending large message to CPU %d, type %d, payload size %d bytes, %d chunks\n", dest_cpu, lmsg->hdr.type, payload_size, num_chunks);
 
 	this_chunk.hdr.type = lmsg->hdr.type;
 	this_chunk.hdr.prio = lmsg->hdr.prio;
@@ -425,12 +430,12 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 
 		memcpy(&this_chunk.payload, ((unsigned char *) &lmsg->payload) + i * PCN_KMSG_PAYLOAD_SIZE, PCN_KMSG_PAYLOAD_SIZE);
 
-		memcpy(test_buf, &this_chunk.payload, 10);
-		test_buf[11] = '\0';
+		//memcpy(test_buf, &this_chunk.payload, 10);
+		//test_buf[11] = '\0';
 
-		printk("First 10 characters: %s\n", test_buf);
+		//printk("First 10 characters: %s\n", test_buf);
 
-		pcn_kmsg_send(dest_cpu, &this_chunk);
+		__pcn_kmsg_send(dest_cpu, &this_chunk);
 	}
 
 	return 0;
@@ -468,6 +473,9 @@ int process_message_list(struct list_head *head)
 	return rc_overall;
 }
 
+//void pcn_kmsg_do_tasklet(unsigned long);
+//DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
+
 /* top half */
 void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 {
@@ -483,6 +491,7 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 
 	/* schedule bottom half */
 	__raise_softirq_irqoff(PCN_KMSG_SOFTIRQ);
+	//tasklet_schedule(&pcn_kmsg_tasklet);
 
 	irq_exit();
 	return;
@@ -494,7 +503,7 @@ void pcn_kmsg_action(struct softirq_action *h)
 	int rc;
 	struct pcn_kmsg_message *msg;
 	struct pcn_kmsg_container *incoming;
-	char test_buf[15];
+	//char test_buf[15];
 
 	printk(KERN_ERR "Popcorn kmsg softirq handler called...\n");
 
@@ -508,10 +517,10 @@ void pcn_kmsg_action(struct softirq_action *h)
 			printk(KERN_ERR "Got a large message fragment, type %u, from_cpu %u, start %u, end %u, seqnum %u!\n",
 					msg->hdr.type, msg->hdr.from_cpu, msg->hdr.lg_start, msg->hdr.lg_end, msg->hdr.lg_seqnum);
 			
-			memcpy(test_buf, &msg->payload, 10);
-			test_buf[11] = '\0';
+			//memcpy(test_buf, &msg->payload, 10);
+			//test_buf[11] = '\0';
 
-			printk("First 10 characters: %s\n", test_buf);
+			//printk("First 10 characters: %s\n", test_buf);
 
 			if (msg->hdr.lg_start) {
 				printk("Processing initial message fragment...\n");
@@ -526,7 +535,17 @@ void pcn_kmsg_action(struct softirq_action *h)
 
 				memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu], &msg->hdr, sizeof(struct pcn_kmsg_hdr));
 
-				memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu] + sizeof(struct pcn_kmsg_hdr), &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
+				memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu] + sizeof(struct pcn_kmsg_hdr), 
+						&msg->payload, PCN_KMSG_PAYLOAD_SIZE);
+
+				if (msg->hdr.lg_end) {
+					printk("NOTE: Long message of length 1 received; this isn't efficient!\n");
+					rc = callback_table[msg->hdr.type](lg_buf[msg->hdr.from_cpu]);
+
+					if (rc) {
+						printk("Large message callback failed!\n");
+					}
+				}
 			} else {
 				printk("Processing subsequent message fragment...\n");
 
@@ -535,6 +554,11 @@ void pcn_kmsg_action(struct softirq_action *h)
 
 				if (msg->hdr.lg_end) {
 					printk("Last fragment in series...\n");
+
+					printk("from_cpu %d, type %d, prio %d\n", lg_buf[msg->hdr.from_cpu]->hdr.from_cpu,
+							lg_buf[msg->hdr.from_cpu]->hdr.type,
+							lg_buf[msg->hdr.from_cpu]->hdr.prio);
+
 
 					rc = callback_table[msg->hdr.type](lg_buf[msg->hdr.from_cpu]);
 
