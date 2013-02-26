@@ -664,7 +664,7 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
     unsigned int source_cpu = inc_msg->hdr.from_cpu;
     data_header_t* curr = NULL;
     vma_data_t* vma = NULL;
-    pte_data_t* pte_data = kmalloc(sizeof(pte_data_t),GFP_KERNEL);
+    pte_data_t* pte_data = kmalloc(sizeof(pte_data_t),GFP_ATOMIC);
     if(!pte_data) {
         PSPRINTK("Failed to allocate pte_data_t\n");
         return 0;
@@ -722,11 +722,16 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
 static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
     vma_transfer_t* msg = (vma_transfer_t*)inc_msg;
     unsigned int source_cpu = inc_msg->hdr.from_cpu;
-    vma_data_t* vma_data = kmalloc(sizeof(vma_data_t),GFP_KERNEL);
+    vma_data_t* vma_data = kmalloc(sizeof(vma_data_t),GFP_ATOMIC);
+
+    printk("Reached PROC_SRV_VMA_TRANSFER handler!\n");
+    
     if(!vma_data) {
         PSPRINTK("Failed to allocate vma_data_t\n");
         return 0;
     }
+
+printk("cpu %u, start 0x%lx, end 0x%lx, path %s\n", source_cpu, msg->start, msg->end, msg->path);
 
     vma_data->header.data_type = PROCESS_SERVER_VMA_DATA_TYPE;
     vma_data->header.next = NULL;
@@ -744,8 +749,13 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
     vma_data->pte_list = NULL;
     vma_data->lock = __SPIN_LOCK_UNLOCKED(&vma_data->lock);
     strcpy(vma_data->path,msg->path);
+
+    printk("Going to add data entry...\n");
+
     add_data_entry(vma_data); 
    
+	printk("Reached end of handle_vma_transfer ftn!\n");
+
     kfree(inc_msg);
 
     return 0;
@@ -856,7 +866,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     /*
      * Remember this request
      */
-    clone_data = kmalloc(sizeof(clone_data_t),GFP_KERNEL);
+    clone_data = kmalloc(sizeof(clone_data_t),GFP_ATOMIC);
     clone_data->header.data_type = PROCESS_SERVER_CLONE_DATA_TYPE;
     clone_data->header.next = NULL;
     clone_data->header.prev = NULL;
@@ -1235,7 +1245,7 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
         return 0;
     }
 
-    pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_KERNEL);
+    pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_ATOMIC);
 
     pte_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER;
     pte_xfer->header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -1264,7 +1274,7 @@ long process_server_clone(unsigned long clone_flags,
                           unsigned long stack_size,
                           struct task_struct* task) {
 
-    clone_request_t* request = kmalloc(sizeof(clone_request_t),GFP_KERNEL);
+    clone_request_t* request = kmalloc(sizeof(clone_request_t),GFP_ATOMIC);
     int tx_ret = -1;
     int dst_cpu = 3;
     char path[256] = {0};
@@ -1278,7 +1288,7 @@ long process_server_clone(unsigned long clone_flags,
         .mm = task->mm,
         .private = NULL
         };
-    vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
+    vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_ATOMIC);
     int lclone_request_id;
     deconstruction_data_t decon_data;
 
