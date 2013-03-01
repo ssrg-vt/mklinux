@@ -41,6 +41,9 @@
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
+#include <linux/multikernel.h>
+#include <asm/bootparam.h>
+#include <asm/setup.h>
 
 /* Uncomment to enable debugging */
 /* #define TUN_DEBUG 1 */
@@ -108,75 +111,125 @@ static inline struct tun_sock *tun_sk(struct sock *sk)
 	return container_of(sk, struct tun_sock, sk);
 }
 
-#define RB_SHIFT 8
+#define SHMTUN_MAX_CPUS 64
+
+#define RB_SHIFT 6 // 64 packets per ring buffer
 #define RB_SIZE (1 << RB_SHIFT)
 #define RB_MASK ((1 << RB_SHIFT) - 1)
+
+enum shmtun_dir {
+	SHMTUN_TO_HOST,
+	SHMTUN_TO_GUEST
+};
 
 typedef struct shmem_pkt {
 	int	pkt_len;
 	char	data[ETH_DATA_LEN];
 } shmem_pkt_t;
 
-typedef struct rb {
+/*
+typedef struct rb_buf {
 	shmem_pkt_t buffer[RB_SIZE];
+} rb_buf_t;
+*/
+
+typedef struct rb_ht {
 	unsigned long head;
 	unsigned long tail;
-} rb_t;
+} rb_ht_t;
 
-typedef struct shmem_tun {
-	rb_t	to_host;
-	rb_t	to_guest;
-	int	int_enabled;
-} shmem_tun_t;
+typedef struct shmtun_percpu {
+	shmem_pkt_t buf[2][RB_SIZE];
+} shmtun_percpu_t;
 
-static inline unsigned long rb_inuse(rb_t *rbuf) {
-	return rbuf->head - rbuf->tail;
+typedef struct shmtun_directory {
+	rb_ht_t 	ht[2][SHMTUN_MAX_CPUS];
+	unsigned long	percpu_phys_addr[SHMTUN_MAX_CPUS];
+	unsigned char	int_enabled[SHMTUN_MAX_CPUS];
+} shmtun_directory_t;
+
+static shmtun_directory_t *shmem_directory;
+
+static shmtun_percpu_t *shmem_percpu[SHMTUN_MAX_CPUS];
+
+extern unsigned long orig_boot_params;
+
+#define HEAD(_dir_, _cpu_) (shmem_directory->ht[(_dir_)][(_cpu_)].head)
+#define TAIL(_dir_, _cpu_) (shmem_directory->ht[(_dir_)][(_cpu_)].tail)
+#define BUF(_dir_, _cpu_, _entry_) (shmem_percpu[_cpu_]->buf[(_dir_)][(_entry_)])
+
+static inline unsigned long rb_inuse(enum shmtun_dir dir, int cpu) {
+	return HEAD(dir, cpu) - TAIL(dir, cpu);
 }
 
-static inline int rb_put(rb_t *rbuf, char *data, int len) {
-	if (rb_inuse(rbuf) != RB_SIZE) {
-		rbuf->buffer[rbuf->head & RB_MASK].pkt_len = len;
-		memcpy(&(rbuf->buffer[(rbuf->head & RB_MASK)].data), data, len);
-		rbuf->head++;
-		printk("RBUF PUT: size %lu, head %lu, tail %lu\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
+static inline int rb_put(enum shmtun_dir dir, int cpu, char *data, int len) {
+	if (rb_inuse(dir, cpu) != RB_SIZE) {
+
+		if (unlikely(!shmem_percpu[cpu])) {
+			printk("percpu window for cpu %d not yet mapped, mapping it...\n", cpu);
+
+			printk("phys addr: 0x%lx\n", shmem_directory->percpu_phys_addr[cpu]);
+
+			if (!shmem_directory->percpu_phys_addr[cpu]) {
+				printk("Phys addr for cpu %d not set -- THIS IS BAD!\n", cpu);
+				return -1;
+			}
+
+			shmem_percpu[cpu] = ioremap_cache(shmem_directory->percpu_phys_addr[cpu],
+					sizeof(shmtun_percpu_t));
+
+			printk("ioremap_cache returned 0x%lx\n", shmem_percpu[cpu]);
+
+			if (!shmem_percpu[cpu]) {
+				printk("Failed to map percpu window for cpu %d at 0x%lx -- THIS IS BAD!\n",
+						cpu, shmem_directory->percpu_phys_addr[cpu]);
+				return -1;
+			}
+		}
+
+		BUF(dir, cpu, HEAD(dir, cpu) & RB_MASK).pkt_len = len;
+		memcpy(&(BUF(dir, cpu, HEAD(dir, cpu) & RB_MASK).data), data, len);
+		HEAD(dir, cpu)++;
+		printk("RBUF PUT: size %lu, head %lu, tail %lu\n", rb_inuse(dir, cpu), 
+				HEAD(dir, cpu), TAIL(dir, cpu));
 		return 0;
 	} else {
 		return -1;
 	}
 }
 
-static inline int rb_get(rb_t *rbuf, shmem_pkt_t **pkt) {
-	if (rb_inuse(rbuf) != 0) {
-		*pkt = &(rbuf->buffer[rbuf->tail & RB_MASK]);
-		printk("RBUF GET: size %lu, head %lu, tail %lu\n", rbuf->head - rbuf->tail, rbuf->head, rbuf->tail);
+static inline int rb_get(enum shmtun_dir dir, int cpu, shmem_pkt_t **pkt) {
+	if (rb_inuse(dir, cpu) != 0) {
+		*pkt = &(BUF(dir, cpu, TAIL(dir, cpu) & RB_MASK));
+		printk("RBUF GET: size %lu, head %lu, tail %lu\n", rb_inuse(dir, cpu),                                          
+				HEAD(dir, cpu), TAIL(dir, cpu));;
 		return 0;
 	} else {
 		return -1;
 	}
 }
 
-static inline void rb_advance_tail(rb_t *rbuf) {
-	rbuf->tail++;	
+static inline void rb_advance_tail(enum shmtun_dir dir, int cpu) {
+	TAIL(dir, cpu)++;	
 }
 
-#define SHMTUN_MAX_CPUS 4
-#define SHMEM_SIZE 0x2000000
-
-unsigned long long global_shmtun_phys_addr = 0x0;
-
-static int __init _setup_shmtun_offset(char *str)
-{
-	global_shmtun_phys_addr = simple_strtoull(str, 0, 16);
-	printk(KERN_ALERT "SHMTUN offset %llx\n", global_shmtun_phys_addr);
-	return 0;
+static inline void shmtun_enable_int(int cpu) {
+	shmem_directory->int_enabled[cpu] = 1;
 }
-early_param("shmtun_offset", _setup_shmtun_offset);
 
-static shmem_tun_t *shmem_window;
+static inline void shmtun_disable_int(int cpu) {
+	shmem_directory->int_enabled[cpu] = 0;
+}
 
-static struct sk_buff * shmtun_get_pkt_from_rbuf(rb_t *rbuf);
+static inline unsigned char shmtun_int_enabled(int cpu) {
+	return shmem_directory->int_enabled[cpu];
+}
+
+unsigned long long shmtun_phys_addr = 0x0;
+
+static struct sk_buff * shmtun_get_pkt_from_rbuf(enum shmtun_dir dir, int cpu);
 static ssize_t shmtun_put_shmem(struct tun_struct *tun,
-		                struct sk_buff *skb);
+		struct sk_buff *skb);
 static int shmtun_napi_handler(struct napi_struct *napi, int budget);
 
 static struct tun_struct *global_tun = NULL;
@@ -189,18 +242,16 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 {
 	ack_APIC_irq();
 	printk("Interrupt received!\n");
-
 	inc_irq_stat(irq_popcorn_net_count);
-
 	irq_enter();
-	
+
 	/* NAPI stuff */
 
 	if (likely(napi_schedule_prep(&global_napi))) {
 		/* Disable RX interrupt */
 		printk("Turning off RX interrupt...\n");
-		shmem_window[global_cpu].int_enabled = 0;	
-		
+		shmtun_disable_int(global_cpu);
+
 		printk("Calling __napi_schedule...\n");
 		/* Schedule NAPI processing */
 		__napi_schedule(&global_napi);
@@ -215,7 +266,7 @@ static struct sk_buff * shmtun_rx_next_pkt(void)
 {
 	struct sk_buff *skb;
 	static int cur_cpu = 0; 
-	
+
 	int start_cpu;
 
 	if (SHMTUN_IS_SERVER) {
@@ -224,14 +275,14 @@ static struct sk_buff * shmtun_rx_next_pkt(void)
 
 		/* need to go through all the buffers round-robin */
 		do {
-			if ((skb = shmtun_get_pkt_from_rbuf(&shmem_window[cur_cpu % SHMTUN_MAX_CPUS].to_host))) {
+			if ((skb = shmtun_get_pkt_from_rbuf(SHMTUN_TO_HOST, cur_cpu % SHMTUN_MAX_CPUS))) {
 				break;
 			}
 			cur_cpu = (cur_cpu + 1) % SHMTUN_MAX_CPUS;
 		} while (cur_cpu != start_cpu);
 	} else {
 		/* only need to check my own buffer */
-		skb = shmtun_get_pkt_from_rbuf(&(shmem_window[global_cpu].to_guest));
+		skb = shmtun_get_pkt_from_rbuf(SHMTUN_TO_GUEST, global_cpu);
 	}
 
 	return skb;
@@ -245,7 +296,6 @@ static int shmtun_napi_handler(struct napi_struct *napi, int budget)
 	printk("Called shmtun_napi_handler\n");
 
 	/* go through ring buffer and get packets, up to budget */
-
 	while ((skb = shmtun_rx_next_pkt()) && work_done < budget) {
 		napi_gro_receive(napi, skb);
 		work_done++;
@@ -260,7 +310,7 @@ static int shmtun_napi_handler(struct napi_struct *napi, int budget)
 		napi_gro_flush(napi);
 		__napi_complete(napi);
 		/* turn interrupts back on */
-		shmem_window[global_cpu].int_enabled = 1;
+		shmtun_enable_int(global_cpu);
 	}
 
 	return work_done;
@@ -459,27 +509,7 @@ static const struct net_device_ops shmtun_netdev_ops = {
 /* Initialize net device. */
 static void shmtun_net_init(struct net_device *dev)
 {
-	//struct tun_struct *tun = netdev_priv(dev);
-	//int cpu;
-
-	printk("Called shmtun_net_init!\n");
-
-	shmem_window = ioremap_cache(global_shmtun_phys_addr, SHMEM_SIZE);
-
-	printk("Mapped shared memory window, virt addr 0x%p\n", shmem_window);
-
-
-	global_cpu = raw_smp_processor_id();
-
-	printk("Raw SMP processor ID: %d\n", global_cpu);
-
-	if (global_cpu == 0) {
-		printk("We're the server...\n");
-	} else {
-		printk("We're the client...\n");
-	}
-
-	shmem_window[global_cpu].int_enabled = 1;
+	shmtun_enable_int(global_cpu);
 
 	netif_napi_add(dev, &global_napi, shmtun_napi_handler, 64);
 
@@ -500,13 +530,13 @@ static void shmtun_net_init(struct net_device *dev)
 
 /* Character device part */
 
-static struct sk_buff * shmtun_get_pkt_from_rbuf(rb_t *rbuf)
+static struct sk_buff * shmtun_get_pkt_from_rbuf(enum shmtun_dir dir, int cpu)
 {
 	struct sk_buff *skb;
 	struct shmem_pkt *pkt;
 	int rc;
 
-	rc = rb_get(rbuf, &pkt);
+	rc = rb_get(dir, cpu, &pkt);
 
 	if (rc) {
 		//printk("No packet in ring buffer, returning...\n");
@@ -519,6 +549,9 @@ static struct sk_buff * shmtun_get_pkt_from_rbuf(rb_t *rbuf)
 
 	if (!skb) {
 		printk("Unable to allocate skb for received packet; dropping it!\n");
+
+		rb_advance_tail(dir, cpu);
+
 		return NULL;
 	}
 
@@ -527,7 +560,7 @@ static struct sk_buff * shmtun_get_pkt_from_rbuf(rb_t *rbuf)
 	memcpy(skb_put(skb, pkt->pkt_len), pkt->data, pkt->pkt_len);
 
 	/* POPCORN -- we're safe to move the tail pointer at this point */
-	rb_advance_tail(rbuf);
+	rb_advance_tail(dir, cpu);
 
 	skb->protocol = htons(ETH_P_IP);
 	skb_reset_mac_header(skb);
@@ -544,7 +577,7 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 	int rc, len, sendto_cpu = 0;
 	char *data, shortpkt[ETH_ZLEN];
 	ssize_t total = 0;
-	rb_t *send_buf;
+	enum shmtun_dir dir;
 
 	printk("Called tun_put_shmem, len = %d\n", skb->len);
 
@@ -575,15 +608,20 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 
 	if (SHMTUN_IS_SERVER) {
 		sendto_cpu = data[19] - 1;
-		send_buf = &(shmem_window[sendto_cpu].to_guest);
+		dir = SHMTUN_TO_GUEST;
+		//send_buf = &(shmem_window[sendto_cpu].to_guest);
 	} else {
-		sendto_cpu = 0;
+		sendto_cpu = data[15] - 1;
 		/* client sends to server and server forwards */
-		send_buf = &(shmem_window[data[15] - 1].to_host);
+		dir = SHMTUN_TO_HOST;
+
+		printk("Original sendto cpu: %d\n", data[15] - 1);
+
+		//send_buf = &(shmem_window[data[15] - 1].to_host);
 	}
 
 	/* POPCORN -- copy to shared memory buffer */
-	rc = rb_put(send_buf, data, len);
+	rc = rb_put(dir, sendto_cpu, data, len);
 
 	if (rc) {
 		printk("No space in ring buffer, dropping packet...\n");
@@ -593,16 +631,14 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 
 	/* POPCORN -- if RX interrupts are enabled, send IPI to receiver */
 
-	if (shmem_window[sendto_cpu].int_enabled) {
+	if (shmtun_int_enabled(sendto_cpu)) {
 
 		printk("Interrupts enabled for CPU %d, sending IPI...\n", sendto_cpu);
 
 		if (SHMTUN_IS_SERVER) {
-			printk("Sending IPI to CPU 2...\n");
 			apic->send_IPI_single(sendto_cpu, POPCORN_NET_VECTOR);
 			//apic->send_IPI_mask(cpumask_of(sendto_cpu), POPCORN_NET_VECTOR);
 		} else {
-			printk("Sending IPI to CPU 0...\n");
 			apic->send_IPI_single(0, POPCORN_NET_VECTOR);
 			//apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
 		}
@@ -1230,9 +1266,12 @@ static const struct ethtool_ops shmtun_ethtool_ops = {
 };
 
 
-static int __init tun_init(void)
+static int __init shmtun_init(void)
 {
 	int ret = 0;
+	unsigned long dir_phys_addr, percpu_phys_addr;
+	shmtun_percpu_t *percpu_virt_addr;
+	struct boot_params *boot_params_va;
 
 	pr_info("%s, %s\n", DRV_DESCRIPTION, DRV_VERSION);
 	pr_info("%s\n", DRV_COPYRIGHT);
@@ -1248,7 +1287,69 @@ static int __init tun_init(void)
 		pr_err("Can't register misc device %d\n", SHMTUN_MINOR);
 		goto err_misc;
 	}
-	return  0;
+
+	printk("Called shmtun_init!\n");
+
+	global_cpu = raw_smp_processor_id();
+
+	printk("Raw SMP processor ID: %d\n", global_cpu);
+
+	if (global_cpu == 0) {
+		printk("We're the server...\n");
+
+		/* Need to kmalloc directory and put physical address in boot_params */
+		shmem_directory = kmalloc(sizeof(shmtun_directory_t), GFP_KERNEL);
+
+		if (!shmem_directory) {
+			printk("Failed to kmalloc shmtun directory -- this is VERY BAD!\n");
+			return -1;
+		}
+
+		dir_phys_addr = virt_to_phys(shmem_directory);
+
+		printk("shmtun directory virt addr 0x%p, phys addr 0x%lx\n", shmem_directory, dir_phys_addr);
+
+		memset(shmem_directory, 0x0, sizeof(shmtun_directory_t));
+
+		printk("Setting boot_params...\n");
+
+		boot_params_va = (struct boot_params *) (0xffffffff80000000ULL + orig_boot_params);
+		printk("Boot params virtual address: 0x%p\n", boot_params_va);
+		boot_params_va->shmtun_phys_addr = dir_phys_addr;
+	} else {
+		printk("We're the client...\n");
+
+		/* Need to map window from boot_params */
+		printk("Master kernel shmtun directory phys addr: 0x%lx\n", (unsigned long) boot_params.shmtun_phys_addr);
+
+		dir_phys_addr = boot_params.shmtun_phys_addr;
+
+		shmem_directory = ioremap_cache(dir_phys_addr, sizeof(shmtun_directory_t));
+
+		if (!shmem_directory) {
+			printk("Failed to ioremap shmtun window -- this is VERY BAD!\n");
+			return -1;
+		}
+
+		printk("shmtun directory virt addr: 0x%p\n", shmem_directory);
+
+		/* Malloc this CPU's buffers */
+		percpu_virt_addr = kmalloc(sizeof(shmtun_percpu_t), GFP_KERNEL);
+
+		if (!percpu_virt_addr) {
+			printk("Failed to kmalloc shmtun percpu window -- this is VERY BAD!\n");
+			return -1;
+		}
+
+		percpu_phys_addr = virt_to_phys(percpu_virt_addr);
+		printk("shmtun percpu window virt addr 0x%p, phys addr 0x%lx\n", percpu_virt_addr, percpu_phys_addr);
+
+		memset(percpu_virt_addr, 0x0, sizeof(shmtun_percpu_t));
+
+		shmem_directory->percpu_phys_addr[global_cpu] = percpu_phys_addr;
+	}	
+
+	return 0;
 err_misc:
 	rtnl_link_unregister(&tun_link_ops);
 err_linkops:
@@ -1261,7 +1362,7 @@ static void tun_cleanup(void)
 	rtnl_link_unregister(&tun_link_ops);
 }
 
-module_init(tun_init);
+module_init(shmtun_init);
 module_exit(tun_cleanup);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_COPYRIGHT);
