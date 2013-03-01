@@ -31,27 +31,12 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
 #define PSPRINTK(...) ;
 #endif
-
-/**
- * Size of the mcomm receive buffer.
- */
-#define RCV_BUF_SZ 0x10000
-
-/**
- * Message passing data type definitions
- */
-#define MAX_MSG_LEN sizeof(clone_request_t) // should always be the largest msg defined.
-#define PROCESS_SERVER_MSG_CLONE_REQUEST 1
-#define PROCESS_SERVER_MSG_PROCESS_PAIRING_REQUEST 2
-#define PROCESS_SERVER_MSG_PROCESS_EXITING 3
-#define PROCESS_SERVER_VMA_TRANSFER 4
-#define PROCESS_SERVER_PTE_TRANSFER 5
 
 /**
  * Library data type definitions
@@ -60,7 +45,6 @@
 #define PROCESS_SERVER_VMA_DATA_TYPE 1
 #define PROCESS_SERVER_PTE_DATA_TYPE 2
 #define PROCESS_SERVER_CLONE_DATA_TYPE 3
-
 
 /**
  * Library
@@ -116,6 +100,8 @@ typedef struct _clone_data {
     data_header_t header;
     spinlock_t lock;
     int clone_request_id;
+    int requesting_cpu;
+    char exe_path[512];
     unsigned long clone_flags;
     unsigned long stack_start;
     unsigned long stack_ptr;
@@ -235,6 +221,11 @@ typedef struct _deconstruction_data {
     int dst_cpu;
 } deconstruction_data_t;
 
+typedef struct {
+    struct work_struct work;
+    clone_data_t* clone_data;
+} clone_exec_work_t;
+
 /**
  * Prototypes
  */
@@ -244,7 +235,6 @@ long process_server_clone(unsigned long clone_flags,
                           struct pt_regs *regs,
                           unsigned long stack_size,
                           struct task_struct* task);
-static int process_server(void* dummy);
 static vma_data_t* find_vma_data(clone_data_t* clone_data, unsigned long addr_start);
 static clone_data_t* find_clone_data(int cpu, int clone_request_id);
 static void dump_mm(struct mm_struct* mm);
@@ -252,21 +242,24 @@ static void dump_task(struct task_struct* task,struct pt_regs* regs,unsigned lon
 static void dump_thread(struct thread_struct* thread);
 static void dump_regs(struct pt_regs* regs);
 static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr); 
+void process_exec_item(struct work_struct* work);
 
 /**
  * Module variables
  */
 static struct task_struct* process_server_task = NULL;     // Remember the kthread task_struct
-static int _initialized = 0;
 static int _vma_id = 0;
 static int _clone_request_id = 0;
 static int _cpu = -1;
-char _rcv_buf[RCV_BUF_SZ] = {0};
 data_header_t* _data_head = NULL;        // General purpose data store
 DEFINE_SPINLOCK(_data_head_lock);        // Lock for _data_head
 DEFINE_SPINLOCK(_vma_id_lock);           // Lock for _vma_id
 DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
 static scheduler_fn_t _scheduler_impl;
+
+// Exec list
+static struct workqueue_struct *clone_wq;
+
 
 
 /**
@@ -331,8 +324,8 @@ static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr) {
  */
 static void dump_regs(struct pt_regs* regs) {
     unsigned long fs, gs;
+    PSPRINTK("DUMP REGS\n");
     if(NULL != regs) {
-        PSPRINTK("DUMP REGS\n");
         PSPRINTK("r15{%lx}\n",regs->r15);   
         PSPRINTK("r14{%lx}\n",regs->r14);
         PSPRINTK("r13{%lx}\n",regs->r13);
@@ -373,6 +366,63 @@ static void dump_thread(struct thread_struct* thread) {
     PSPRINTK("gsindex{%x}\n",thread->gsindex);
     PSPRINTK("fs{%lx}\n",thread->fs);
     PSPRINTK("gs{%lx}\n",thread->gs);
+}
+
+static void dump_pte_data(pte_data_t* p) {
+    printk("PTE_DATA\n");
+    printk("vma_id{%x}\n",p->vma_id);
+    printk("clone_request_id{%x}\n",p->clone_request_id);
+    printk("cpu{%x}\n",p->cpu);
+    printk("vaddr{%lx}\n",p->vaddr);
+    printk("paddr{%lx}\n",p->paddr);
+    printk("pfn{%lx}\n",p->pfn);
+}
+
+static void dump_vma_data(vma_data_t* v) {
+    pte_data_t* p;
+    printk("VMA_DATA\n");
+    printk("start{%lx}\n",v->start);
+    printk("end{%lx}\n",v->end);
+    printk("clone_request_id{%x}\n",v->clone_request_id);
+    printk("cpu{%x}\n",v->cpu);
+    printk("flags{%lx}\n",v->flags);
+    printk("vma_id{%x}\n",v->vma_id);
+    printk("path{%s}\n",v->path);
+
+    p = v->pte_list;
+    while(p) {
+        dump_pte_data(p);
+        p = (pte_data_t*)p->header.next;
+    }
+}
+
+static void dump_clone_data(clone_data_t* r) {
+    vma_data_t* v;
+    printk("CLONE REQUEST\n");
+    printk("clone_request_id{%x}\n",r->clone_request_id);
+    printk("clone_flags{%lx}\n",r->clone_flags);
+    printk("stack_start{%lx}\n",r->stack_start);
+    printk("stack_ptr{%lx}\n",r->stack_ptr);
+    printk("env_start{%lx}\n",r->env_start);
+    printk("env_end{%lx}\n",r->env_end);
+    printk("arg_start{%lx}\n",r->arg_start);
+    printk("arg_end{%lx}\n",r->arg_end);
+    printk("heap_start{%lx}\n",r->heap_start);
+    printk("heap_end{%lx}\n",r->heap_end);
+    dump_regs(&r->regs);
+    printk("placeholder_pid{%x}\n",r->placeholder_pid);
+    printk("placeholder_tgid{%x}\n",r->placeholder_tgid);
+    printk("thread_fs{%lx}\n",r->thread_fs);
+    printk("thread_gs{%lx}\n",r->thread_gs);
+    printk("thread_sp0{%lx}\n",r->thread_sp0);
+    printk("thread_sp{%lx}\n",r->thread_sp);
+    printk("thread_usersp{%lx}\n",r->thread_usersp);
+
+    v = r->vma_list;
+    while(v) {
+        dump_vma_data(v);
+        v = (vma_data_t*)v->header.next;
+    }
 }
 
 /**
@@ -489,6 +539,7 @@ static void dump_mm(struct mm_struct* mm) {
         .mm = mm,
         .private = NULL
         };
+    char buf[256];
 
     if(NULL == mm) {
         PSPRINTK("MM IS NULL!\n");
@@ -652,6 +703,50 @@ static void dump_data_list() {
     spin_unlock(&_data_head_lock);
 }
 
+
+/*
+ * Work exec
+ */
+
+void process_exec_item(struct work_struct* work) {
+    clone_exec_work_t* w = work;
+    clone_data_t* c = w->clone_data;
+    struct subprocess_info* sub_info;
+    char* argv[] = {/*c->exe_path,*/NULL};
+    static char *envp[] = { NULL };
+    /*    "HOME=/",
+        "TERM=linux",
+        "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
+    };*/
+
+    sub_info = call_usermodehelper_setup( c->exe_path /*argv[0]*/, 
+            argv, envp, 
+            GFP_ATOMIC );
+    if (sub_info == NULL) return;
+
+    /*
+     * This information is passed into kmod in order to
+     * act as closure information for when the process
+     * is spun up.  Once that occurs, this cpu must
+     * notify the requesting cpu of the local pid of the
+     * delegate process so that it can maintain its records.
+     * That information will be used to maintain the link
+     * between the placeholder process on the requesting cpu
+     * and the delegate process on the executing cpu.
+     */
+    sub_info->delegated = 1;
+    sub_info->remote_pid = c->placeholder_pid;
+    sub_info->remote_cpu = c->requesting_cpu;
+    sub_info->clone_request_id = c->clone_request_id;
+    memcpy(&sub_info->remote_regs, &c->regs, sizeof(struct pt_regs) );
+
+    /*
+     * Spin up the new process.
+     */
+    call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
+ 
+}
+
 /**
  * Request implementations
  */
@@ -661,7 +756,7 @@ static void dump_data_list() {
  */
 static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
     pte_transfer_t* msg = (pte_transfer_t*)inc_msg;
-    unsigned int source_cpu = inc_msg->hdr.from_cpu;
+    unsigned int source_cpu = msg->header.from_cpu;
     data_header_t* curr = NULL;
     vma_data_t* vma = NULL;
     pte_data_t* pte_data = kmalloc(sizeof(pte_data_t),GFP_ATOMIC);
@@ -669,6 +764,10 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
         PSPRINTK("Failed to allocate pte_data_t\n");
         return 0;
     }
+
+    printk("pte transfer: src{%d}, vaddr{%lx}, paddr{%lx}, vma_id{%d}, pfn{%lx}\n",
+            source_cpu,
+            msg->vaddr, msg->paddr, msg->vma_id, msg->pfn);
 
     pte_data->header.data_type = PROCESS_SERVER_PTE_DATA_TYPE;
     pte_data->header.next = NULL;
@@ -721,7 +820,7 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
  */
 static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
     vma_transfer_t* msg = (vma_transfer_t*)inc_msg;
-    unsigned int source_cpu = inc_msg->hdr.from_cpu;
+    unsigned int source_cpu = msg->header.from_cpu;
     vma_data_t* vma_data = kmalloc(sizeof(vma_data_t),GFP_ATOMIC);
 
     printk("Reached PROC_SRV_VMA_TRANSFER handler!\n");
@@ -731,7 +830,8 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
         return 0;
     }
 
-printk("cpu %u, start 0x%lx, end 0x%lx, path %s\n", source_cpu, msg->start, msg->end, msg->path);
+    printk("cpu %u, start 0x%lx, end 0x%lx, path %s\n", 
+            source_cpu, msg->start, msg->end, msg->path);
 
     vma_data->header.data_type = PROCESS_SERVER_VMA_DATA_TYPE;
     vma_data->header.next = NULL;
@@ -768,7 +868,6 @@ printk("cpu %u, start 0x%lx, end 0x%lx, path %s\n", source_cpu, msg->start, msg-
 static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg) {
     exiting_process_t* msg = (exiting_process_t*)inc_msg;
     struct task_struct* task;
-    PSPRINTK("kmkprocsrv: exiting process remote_pid{%d}, src_cpu{%d}\n",msg->my_pid,source_cpu);
 
     for_each_process(task) {
         if(task->remote_pid == msg->my_pid) {
@@ -791,7 +890,7 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
  */
 static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
     create_process_pairing_t* msg = (create_process_pairing_t*)inc_msg;
-    unsigned int source_cpu = inc_msg->hdr.from_cpu;
+    unsigned int source_cpu = msg->header.from_cpu;
     struct task_struct* task;
     if(msg == NULL) {
         return 0;
@@ -827,41 +926,12 @@ static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
  */
 static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     clone_request_t* request = (clone_request_t*)inc_msg;
-    unsigned int source_cpu = inc_msg->hdr.from_cpu;
+    clone_exec_work_t* clone_work = NULL;
+    unsigned int source_cpu = request->header.from_cpu;
     clone_data_t* clone_data;
-    struct subprocess_info* sub_info;
-    char* argv[] = {request->exe_path,NULL,NULL};
-    static char *envp[] = {
-        "HOME=/",
-        "TERM=linux",
-        "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
-    };
-    data_header_t* curr = NULL;
-    data_header_t* next = NULL;
-    vma_data_t* vma = NULL;
-
-    PSPRINTK("Handling clone request: %lx\n",request->clone_flags);
-
-    sub_info = call_usermodehelper_setup( argv[0], argv, envp, GFP_ATOMIC );
-    if (sub_info == NULL) return 0;
-
-    /*
-     * This information is passed into kmod in order to
-     * act as closure information for when the process
-     * is spun up.  Once that occurs, this cpu must
-     * notify the requesting cpu of the local pid of the
-     * delegate process so that it can maintain its records.
-     * That information will be used to maintain the link
-     * between the placeholder process on the requesting cpu
-     * and the delegate process on the executing cpu.
-     */
-    sub_info->delegated = 1;
-    sub_info->remote_pid = request->placeholder_pid;
-    sub_info->remote_cpu = source_cpu;
-    sub_info->clone_request_id = request->clone_request_id;
-    memcpy(&sub_info->remote_regs, &request->regs, sizeof(struct pt_regs) );
-
-    PSPRINTK("subinfo eip{%lx}\n",sub_info->remote_regs.ip);
+    data_header_t* curr;
+    data_header_t* next;
+    vma_data_t* vma;
 
     /*
      * Remember this request
@@ -872,6 +942,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     clone_data->header.prev = NULL;
 
     clone_data->clone_request_id = request->clone_request_id;
+    clone_data->requesting_cpu = source_cpu;
     clone_data->clone_flags = request->clone_flags;
     clone_data->stack_start = request->stack_start;
     clone_data->stack_ptr = request->stack_ptr;
@@ -882,6 +953,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     clone_data->heap_start = request->heap_start;
     clone_data->heap_end = request->heap_end;
     memcpy(&clone_data->regs, &request->regs, sizeof(struct pt_regs) );
+    memcpy(&clone_data->exe_path, &request->exe_path, sizeof(request->exe_path));
     clone_data->stack_size = request->stack_size;
     clone_data->placeholder_pid = request->placeholder_pid;
     clone_data->placeholder_tgid = request->placeholder_tgid;
@@ -933,10 +1005,12 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 
     add_data_entry(clone_data);
 
-    /*
-     * Spin up the new process.
-     */
-    call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
+    clone_work = kmalloc(sizeof(clone_exec_work_t),GFP_ATOMIC);
+    if(clone_work) {
+        INIT_WORK( (struct work_struct*)clone_work, process_exec_item);
+        clone_work->clone_data = clone_data;
+        queue_work(clone_wq, (struct work_struct*)clone_work);
+    }
 
     kfree(inc_msg);
 
@@ -1440,16 +1514,22 @@ int process_server_register_scheduler(scheduler_fn_t scheduler_impl) {
  * Start the process loop in a new kthread.
  */
 static int __init process_server_init(void) {
-
+    struct task_struct *proc_start_task = NULL;
     _cpu = smp_processor_id();
 
-    printk("POPCORN: subscribing to comms\n");
+    clone_wq = create_workqueue("clone_wq");
+    
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER, 
+            handle_pte_transfer);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER, 
+            handle_vma_transfer);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS, 
+            handle_exiting_process_notification);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CREATE_PROCESS_PAIRING, 
+            handle_process_pairing_request);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST, 
+            handle_clone_request);
 
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER, handle_pte_transfer);
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER, handle_vma_transfer);
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS, handle_exiting_process_notification);
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CREATE_PROCESS_PAIRING, handle_process_pairing_request);
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST, handle_clone_request);
 
     return 0;
 }

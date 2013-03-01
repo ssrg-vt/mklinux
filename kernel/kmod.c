@@ -197,7 +197,6 @@ static int ____call_usermodehelper(void *data)
         current->executing_for_remote = 1;
         current->represents_remote = 0;
         memcpy(&current->remote_regs, &sub_info->remote_regs, sizeof(struct pt_regs) );
-        printk("current->remote_regs.eip{%lx}\n",current->remote_regs.ip);
 
         // Notify of PID/PID pairing.
         process_server_notify_delegated_subprocess_starting(current->pid,sub_info->remote_pid,sub_info->remote_cpu);

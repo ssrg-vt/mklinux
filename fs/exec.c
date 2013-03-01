@@ -1524,14 +1524,16 @@ static int do_execve_common(const char *filename,
 	if (retval < 0)
 		goto out;
 
-	bprm->exec = bprm->p;
-	retval = copy_strings(bprm->envc, envp, bprm);
-	if (retval < 0)
-		goto out;
+    if(!current->executing_for_remote) {
+        bprm->exec = bprm->p;
+        retval = copy_strings(bprm->envc, envp, bprm);
+        if (retval < 0)
+            goto out;
 
-	retval = copy_strings(bprm->argc, argv, bprm);
-	if (retval < 0)
-		goto out;
+        retval = copy_strings(bprm->argc, argv, bprm);
+        if (retval < 0)
+            goto out;
+    }
 
 	retval = search_binary_handler(bprm,regs);
 	if (retval < 0)
