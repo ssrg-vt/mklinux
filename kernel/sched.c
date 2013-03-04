@@ -72,6 +72,7 @@
 #include <linux/ftrace.h>
 #include <linux/slab.h>
 #include <linux/init_task.h>
+#include <linux/process_server.h>
 
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>
@@ -5554,6 +5555,8 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	cpumask_var_t cpus_allowed, new_mask;
 	struct task_struct *p;
 	int retval;
+    int current_cpu = smp_processor_id();
+    int i;
 
 	get_online_cpus();
 	rcu_read_lock();
@@ -5564,6 +5567,22 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 		put_online_cpus();
 		return -ESRCH;
 	}
+
+    /*
+     * Multikernel
+     */
+    printk("hello sched_setaffinity\n");
+    // For now, migrate to the first cpu in the mask that
+    // is not the current cpu
+    for(i = 0; i < NR_CPUS; i++) {
+        printk("testing %d for cpu mask\n",i);
+        if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
+            printk("found that %d is the cpu\n",i);
+            // do the migration
+            process_server_do_migration(p,i);
+            return 0;
+        }
+    }
 
 	/* Prevent p going away */
 	get_task_struct(p);
@@ -5634,6 +5653,8 @@ SYSCALL_DEFINE3(sched_setaffinity, pid_t, pid, unsigned int, len,
 {
 	cpumask_var_t new_mask;
 	int retval;
+
+    printk("sys_sched_setaffinity\n");
 
 	if (!alloc_cpumask_var(&new_mask, GFP_KERNEL))
 		return -ENOMEM;

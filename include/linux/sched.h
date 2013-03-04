@@ -1583,6 +1583,7 @@ struct task_struct {
                                  * address space and other information for this task.
                                  */
     struct pt_regs remote_regs; /* regs copied from placeholder process. */
+    unsigned long clone_flags;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

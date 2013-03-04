@@ -585,7 +585,7 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 		retval = -ENOMEM;
 		goto out_ret;
 	}
-	
+
 	/* Get the exec-header */
 	loc->elf_ex = *((struct elfhdr *)bprm->buf);
 
@@ -738,7 +738,7 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 		send_sig(SIGKILL, current, 0);
 		goto out_free_dentry;
 	}
-	
+
 	current->mm->start_stack = bprm->p;
 
 	/* Now we do a little grungy work by mmapping the ELF image into
@@ -937,12 +937,15 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 
 	install_exec_creds(bprm);
 	current->flags &= ~PF_FORKNOEXEC;
-	retval = create_elf_tables(bprm, &loc->elf_ex,
+	if(!current->executing_for_remote) {
+        retval = create_elf_tables(bprm, &loc->elf_ex,
 			  load_addr, interp_load_addr);
-	if (retval < 0) {
-		send_sig(SIGKILL, current, 0);
-		goto out;
-	}
+	    if (retval < 0) {
+		    send_sig(SIGKILL, current, 0);
+		    goto out;
+	    }
+    }
+
 	/* N.B. passed_fileno might not be initialized? */
 	current->mm->end_code = end_code;
 	current->mm->start_code = start_code;
