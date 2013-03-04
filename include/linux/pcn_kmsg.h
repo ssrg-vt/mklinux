@@ -20,15 +20,28 @@
 struct pcn_kmsg_mcast_window {
 	unsigned char lock;
 	unsigned long mask;
-        unsigned int num_members;
+	unsigned int num_members;
 	unsigned long phys_addr;
 };
 
 struct pcn_kmsg_rkinfo {
 	unsigned long phys_addr[POPCORN_MAX_CPUS];
 	struct pcn_kmsg_mcast_window mcast_window[POPCORN_MAX_MCAST_CHANNELS];
-	//struct pcn_kmsg_window *window;
 };
+
+enum pcn_kmsg_wq_ops {
+	PCN_KMSG_WQ_OP_MAP_MSG_WIN,
+	PCN_KMSG_WQ_OP_UNMAP_MSG_WIN,
+	PCN_KMSG_WQ_OP_MAP_MCAST_WIN,
+	PCN_KMSG_WQ_OP_UNMAP_MCAST_WIN
+};
+
+typedef struct {
+	struct work_struct work;
+	enum pcn_kmsg_wq_ops op;
+	int from_cpu;
+	int cpu_to_add;
+} pcn_kmsg_work_t;
 
 /* MESSAGING */
 
@@ -84,7 +97,8 @@ struct pcn_kmsg_container {
 /* Message struct for guest kernels to check in with each other. */
 struct pcn_kmsg_checkin_message {
 	unsigned long window_phys_addr;
-	char pad[52];
+	unsigned char cpu_to_add;
+	char pad[51];
 	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed)) __attribute__((aligned(64)));
 
@@ -119,7 +133,8 @@ typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);
 
 /* Register a callback function to handle a new message type.  Intended to
    be called when a kernel module is loaded. */
-int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback);
+int pcn_kmsg_register_callback(enum pcn_kmsg_type type, 
+			       pcn_kmsg_cbftn callback);
 
 /* Unregister a callback function for a message type.  Intended to
    be called when a kernel module is unloaded. */
@@ -132,8 +147,8 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg);
 
 /* Send a long message to the specified destination CPU. */
 int pcn_kmsg_send_long(unsigned int dest_cpu, 
-		struct pcn_kmsg_long_message *lmsg, 
-		unsigned int payload_size);
+		       struct pcn_kmsg_long_message *lmsg, 
+		       unsigned int payload_size);
 
 /* MULTICAST GROUPS */
 
@@ -174,7 +189,7 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg);
 
 /* Send a long message to the specified multicast group. */
 int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id, 
-		struct pcn_kmsg_long_message *msg,
-		unsigned int payload_size);
+			     struct pcn_kmsg_long_message *msg,
+			     unsigned int payload_size);
 
 #endif /* __LINUX_PCN_KMSG_H */
