@@ -644,7 +644,7 @@ asmlinkage void __init start_kernel(void)
 	ftrace_init();
 
 #ifdef CONFIG_POPCORN_KMSG
-	pcn_kmsg_init();
+	//pcn_kmsg_init();
 #endif
 
 	/* Do the rest non-__init'ed, we're now alive */
