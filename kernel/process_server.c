@@ -362,7 +362,7 @@ static void dump_thread(struct thread_struct* thread) {
     PSPRINTK("ds{%x}\n",thread->ds);
     PSPRINTK("fsindex{%x}\n",thread->fsindex);
     PSPRINTK("gsindex{%x}\n",thread->gsindex);
-    PSPRINTK("fs{%lx}\n",thread->fs);
+    PSPRINTK("fs{%lx} - %lx\n",thread->fs,*((unsigned long*)thread->fs));
     PSPRINTK("gs{%lx}\n",thread->gs);
     PSPRINTK("THREAD DUMP COMPLETE\n");
 }
@@ -720,7 +720,7 @@ void process_exec_item(struct work_struct* work) {
 
     sub_info = call_usermodehelper_setup( c->exe_path /*argv[0]*/, 
             argv, envp, 
-            GFP_ATOMIC );
+            GFP_KERNEL );
 
     PSPRINTK("process_exec_item: %s\n",c->exe_path);
 
@@ -750,7 +750,8 @@ void process_exec_item(struct work_struct* work) {
      * Spin up the new process.
      */
     call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
- 
+
+    kfree(work);
 }
 
 /**
@@ -1354,7 +1355,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     // TODO: THIS IS WRONG, task flags is not what I want here.
     unsigned long clone_flags = task->clone_flags;
     unsigned long stack_start = task->mm->start_stack;
-    clone_request_t* request = kmalloc(sizeof(clone_request_t),GFP_ATOMIC);
+    clone_request_t* request = kmalloc(sizeof(clone_request_t),GFP_KERNEL);
     int tx_ret = -1;
     int dst_cpu = cpu;
     char path[256] = {0};
@@ -1368,7 +1369,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         .mm = task->mm,
         .private = NULL
         };
-    vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_ATOMIC);
+    vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
     int lclone_request_id;
     deconstruction_data_t decon_data;
 
@@ -1379,6 +1380,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     if(dst_cpu == _cpu) {
         return PROCESS_SERVER_CLONE_FAIL;
     }
+
     // This will be a placeholder process for the remote
     // process that is subsequently going to be started.
     //  Block its execution.
