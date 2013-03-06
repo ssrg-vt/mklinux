@@ -15,10 +15,11 @@
 
 /* BOOKKEEPING */
 
-#define POPCORN_MAX_MCAST_CHANNELS 128
+#define POPCORN_MAX_MCAST_CHANNELS 32
 
-struct pcn_kmsg_mcast_window {
+struct pcn_kmsg_mcast_wininfo {
 	unsigned char lock;
+	unsigned char owner_cpu;
 	unsigned long mask;
 	unsigned int num_members;
 	unsigned long phys_addr;
@@ -26,7 +27,7 @@ struct pcn_kmsg_mcast_window {
 
 struct pcn_kmsg_rkinfo {
 	unsigned long phys_addr[POPCORN_MAX_CPUS];
-	struct pcn_kmsg_mcast_window mcast_window[POPCORN_MAX_MCAST_CHANNELS];
+	struct pcn_kmsg_mcast_wininfo mcast_wininfo[POPCORN_MAX_MCAST_CHANNELS];
 };
 
 enum pcn_kmsg_wq_ops {
@@ -36,16 +37,17 @@ enum pcn_kmsg_wq_ops {
 	PCN_KMSG_WQ_OP_UNMAP_MCAST_WIN
 };
 
+typedef unsigned long pcn_kmsg_mcast_id;
+
 typedef struct {
 	struct work_struct work;
 	enum pcn_kmsg_wq_ops op;
 	int from_cpu;
 	int cpu_to_add;
+	pcn_kmsg_mcast_id id_to_join;
 } pcn_kmsg_work_t;
 
 /* MESSAGING */
-
-typedef unsigned long pcn_kmsg_mcast_id;
 
 /* Enum for message types.  Modules should add types after
    PCN_KMSG_END. */
@@ -81,7 +83,7 @@ struct pcn_kmsg_hdr {
 
 /* The actual messages.  The expectation is that developers will create their
    own message structs with the payload replaced with their own fields, and then
-   cast them to a struct pkn_kmsg_message.  See the checkin message below for
+   cast them to a struct pcn_kmsg_message.  See the checkin message below for
    an example of how to do this. */
 struct pcn_kmsg_message {
 	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
@@ -171,6 +173,20 @@ struct pcn_kmsg_mcast_message {
 	char pad[28];
 	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed)) __attribute__((aligned(64)));
+
+
+
+struct pcn_kmsg_mcast_window {
+	volatile unsigned long head;
+	volatile unsigned long tail;
+	int read_counter[PCN_KMSG_RBUF_SIZE];
+	struct pcn_kmsg_message buffer[PCN_KMSG_RBUF_SIZE];
+}__attribute__((packed));
+
+struct pcn_kmsg_mcast_local {
+	struct pcn_kmsg_mcast_window * mcastvirt;
+	unsigned long local_tail;
+};
 
 /* Open a multicast group containing the CPUs specified in the mask. */
 int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask);

@@ -20,6 +20,7 @@
 #include <asm/setup.h>
 #include <asm/bootparam.h>
 #include <asm/errno.h>
+#include <asm/atomic.h>
 
 /* COMMON STATE */
 
@@ -36,6 +37,9 @@ struct pcn_kmsg_rkinfo *rkinfo;
 /* table with virtual (mapped) addresses for remote kernels' windows,
    one per kernel */
 struct pcn_kmsg_window * rkvirt[POPCORN_MAX_CPUS];
+
+/* Same thing, but for mcast windows */
+struct pcn_kmsg_mcast_local mcastlocal[POPCORN_MAX_MCAST_CHANNELS];
 
 /* lists of messages to be processed for each prio */
 struct list_head msglist_hiprio, msglist_normprio;
@@ -138,6 +142,93 @@ static inline void win_advance_tail(struct pcn_kmsg_window *win)
 	win->tail++;
 }
 
+#define MCASTWIN(_id_) (mcastlocal[(_id_)].mcastvirt)
+#define LOCAL_TAIL(_id_) (mcastlocal[(_id_)].local_tail)
+
+/* MULTICAST RING BUFFER */
+static inline unsigned long mcastwin_inuse(pcn_kmsg_mcast_id id)
+{
+	        return MCASTWIN(id)->head - MCASTWIN(id)->tail;
+}
+
+static inline int mcastwin_put(pcn_kmsg_mcast_id id,
+			  struct pcn_kmsg_message *msg)
+{
+	unsigned long ticket;
+
+	/* if the queue is already really long, return EAGAIN */
+	if (mcastwin_inuse(id) >= RB_SIZE) {
+		printk("Window full, caller should try again...\n");
+		return -EAGAIN;
+	}
+
+	/* grab ticket */
+	ticket = fetch_and_add(&MCASTWIN(id)->head, 1);
+	printk(KERN_ERR "ticket = %lu, head = %lu, tail = %lu\n",
+	       ticket, MCASTWIN(id)->head, MCASTWIN(id)->tail);
+
+	/* spin until there's a spot free for me */
+	while (mcastwin_inuse(id) >= RB_SIZE) {}
+
+	/* insert item */
+	memcpy(&MCASTWIN(id)->buffer[ticket & RB_MASK], msg,
+	       sizeof(struct pcn_kmsg_message));
+
+	/* set counter to (# in group - self) */
+	MCASTWIN(id)->read_counter[ticket & RB_MASK] = 
+		rkinfo->mcast_wininfo[id].num_members - 1;
+
+	pcn_barrier();
+
+	/* set completed flag */
+	MCASTWIN(id)->buffer[ticket & RB_MASK].hdr.ready = 1;
+
+	return 0;
+}
+
+static inline int mcastwin_get(pcn_kmsg_mcast_id id,
+			  struct pcn_kmsg_message **msg)
+{
+	struct pcn_kmsg_message *rcvd;
+
+	if (!mcastwin_inuse(id)) {
+		printk("Nothing in buffer, returning...\n");
+		return -1;
+	}
+
+	printk(KERN_ERR "reached mcastwin_get, head %lu, tail %lu\n",
+	       MCASTWIN(id)->head, MCASTWIN(id)->tail);
+
+	/* spin until entry.ready at end of cache line is set */
+	rcvd = &(MCASTWIN(id)->buffer[MCASTWIN(id)->tail & RB_MASK]);
+	//printk(KERN_ERR "Ready bit: %u\n", rcvd->hdr.ready);
+	while (!rcvd->hdr.ready) {
+		pcn_cpu_relax();
+	}
+
+	// barrier here?
+	pcn_barrier();
+
+	rcvd->hdr.ready = 0;
+
+	*msg = rcvd;
+
+	return 0;
+}
+
+static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
+{
+	unsigned long slot = LOCAL_TAIL(id) & RB_MASK;
+
+	printk("Advancing tail; local tail currently on slot %lu\n", LOCAL_TAIL(id));
+
+	if (atomic_dec_and_test((atomic_t *) &MCASTWIN(id)->read_counter[slot])) {
+		printk("We're the last reader to go; advancing global tail\n");
+		atomic64_inc((atomic64_t *) &MCASTWIN(id)->tail);
+	}
+
+	LOCAL_TAIL(id)++;
+}
 
 /* INITIALIZATION */
 
@@ -147,6 +238,7 @@ static int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message);
 static void process_kmsg_wq_item(struct work_struct * work)
 {
 	int cpu;
+	pcn_kmsg_mcast_id id;
 	pcn_kmsg_work_t *w = (pcn_kmsg_work_t *) work;
 
 	printk("Processing kmsg wq item, op %d\n", w->op);
@@ -155,14 +247,13 @@ static void process_kmsg_wq_item(struct work_struct * work)
 		case PCN_KMSG_WQ_OP_MAP_MSG_WIN:
 			cpu = w->cpu_to_add;
 
-			/* TODO -- use right define here */
-			if (cpu < 0 || cpu > 64) {
+			if (cpu < 0 || cpu >= POPCORN_MAX_CPUS) {
 				printk("Invalid CPU %d specified!\n", cpu);
 				return;
 			}
 
 			rkvirt[cpu] = ioremap_cache(rkinfo->phys_addr[cpu],
-						    sizeof(struct pcn_kmsg_rkinfo));
+						    sizeof(struct pcn_kmsg_window));
 			if (rkvirt[cpu]) {
 				printk("POPCORN: ioremapped window, virt addr 0x%p\n", 
 				       rkvirt[cpu]);
@@ -177,7 +268,25 @@ static void process_kmsg_wq_item(struct work_struct * work)
 			break;
 
 		case PCN_KMSG_WQ_OP_MAP_MCAST_WIN:
-			printk("MAP_MCAST_WIN not yet implemented!\n");
+			id = w->id_to_join;
+
+			/* map window */
+			if (id < 0 || id > POPCORN_MAX_MCAST_CHANNELS) {
+				printk("Invalid mcast channel id %lu specified!\n", id);
+				return;
+			}
+
+			MCASTWIN(id) = ioremap_cache(rkinfo->mcast_wininfo[id].phys_addr,
+						    sizeof(struct pcn_kmsg_mcast_window));
+			if (MCASTWIN(id)) {
+				printk("POPCORN: ioremapped mcast window, virt addr 0x%p\n",
+				       MCASTWIN(id));
+			} else {
+				printk("POPCORN: Failed to ioremap mcast window %lu at phys addr 0x%lx\n",
+				       id, rkinfo->mcast_wininfo[id].phys_addr);
+			}
+
+
 			break;
 
 		case PCN_KMSG_WQ_OP_UNMAP_MCAST_WIN:
@@ -188,7 +297,7 @@ static void process_kmsg_wq_item(struct work_struct * work)
 			printk("Invalid work queue operation %d\n", w->op);
 
 	}
-	
+
 	kfree(work);
 }
 
@@ -251,6 +360,17 @@ static inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 	window->head = 0;
 	window->tail = 0;
 	memset(&window->buffer, 0, 
+	       PCN_KMSG_RBUF_SIZE * sizeof(struct pcn_kmsg_message));
+	return 0;
+}
+
+static inline int pcn_kmsg_mcast_window_init(struct pcn_kmsg_mcast_window *window)
+{
+	window->head = 0;
+	window->tail = 0;
+	memset(&window->read_counter, 0, 
+	       PCN_KMSG_RBUF_SIZE * sizeof(int));
+	memset(&window->buffer, 0,
 	       PCN_KMSG_RBUF_SIZE * sizeof(struct pcn_kmsg_message));
 	return 0;
 }
@@ -722,19 +842,30 @@ static int process_small_message(struct pcn_kmsg_message *msg)
 	return rc;
 }
 
+static void process_mcast_queue(pcn_kmsg_mcast_id id)
+{
+	struct pcn_kmsg_message *msg;
+	while (!mcastwin_get(id, &msg)) {
+		printk("Got an mcast message!\n");
+
+		mcastwin_advance_tail(id);
+	}
+
+}
 
 /* bottom half */
 static void pcn_kmsg_action(struct softirq_action *h)
 {
 	int rc;
 	struct pcn_kmsg_message *msg;
+	int i;
 
 	printk(KERN_ERR "Popcorn kmsg softirq handler called...\n");
 
 	/* Get messages out of the buffer first */
 
 	while (!win_get(rkvirt[my_cpu], &msg)) {
-		printk(KERN_ERR "Got a message!\n");
+		printk("Got a message!\n");
 
 		/* Special processing for large messages */
 		if (msg->hdr.is_lg_msg) {
@@ -747,7 +878,16 @@ static void pcn_kmsg_action(struct softirq_action *h)
 
 	}
 
-	printk("No more messages in ring buffer; done polling\n");
+	printk("No more messages in ring buffer; checking multicast queues...\n");
+
+	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
+		if (MCASTWIN(i)) {
+			printk("mcast window %d mapped, processing it...\n", i);
+			process_mcast_queue(i);
+		}
+	}
+
+	printk("Done checking multicast queues; processing messages...\n");
 
 	/* Process high-priority queue first */
 	rc = process_message_list(&msglist_hiprio);
@@ -826,10 +966,10 @@ void print_mcast_map(void)
 	printk("ACTIVE MCAST GROUPS:\n");
 
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
-		if (rkinfo->mcast_window[i].mask) {
+		if (rkinfo->mcast_wininfo[i].mask) {
 			printk("group %d, mask 0x%lx, num_members %d\n", 
-			       i, rkinfo->mcast_window[i].mask, 
-			       rkinfo->mcast_window[i].num_members);
+			       i, rkinfo->mcast_wininfo[i].mask, 
+			       rkinfo->mcast_wininfo[i].num_members);
 		}
 	}
 	return;
@@ -840,11 +980,19 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 {
 	int rc, i, found_id = -1;
 	struct pcn_kmsg_mcast_message msg;
+	struct pcn_kmsg_mcast_wininfo *slot;
+	struct pcn_kmsg_mcast_window * new_win;
 
 	printk("Reached pcn_kmsg_mcast_open, mask 0x%lx\n", mask);
 
+	if (!(mask & (1 << my_cpu))) {
+		printk("This CPU is not a member of the mcast group to be created, cpu %d, mask 0x%lx\n",
+		       my_cpu, mask);
+		return -1;
+	}
+
 	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
-		if (!rkinfo->mcast_window[i].num_members) {
+		if (!rkinfo->mcast_wininfo[i].num_members) {
 			found_id = i;
 			break;
 		}
@@ -860,23 +1008,37 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 	/* TODO -- lock and check if channel is still unused; 
 	   otherwise, try again */
 
-	rkinfo->mcast_window[found_id].mask = mask;
-	rkinfo->mcast_window[found_id].num_members = count_members(mask);
+	slot = &rkinfo->mcast_wininfo[found_id];
 
-	printk("Found %d members\n", 
-	       rkinfo->mcast_window[found_id].num_members);
+	slot->mask = mask;
+	slot->num_members = count_members(mask);
+	slot->owner_cpu = my_cpu;
+
+	printk("Found %d members\n", slot->num_members);
+
+	new_win = kmalloc(sizeof(struct pcn_kmsg_mcast_window), GFP_ATOMIC);
+
+	if (!new_win) {
+		printk("Failed to kmalloc mcast buffer!\n");
+		goto out;
+	}
+
+	MCASTWIN(found_id) = new_win;
+	slot->phys_addr = virt_to_phys(new_win);
+	printk("Malloced mcast receive window %d at phys addr 0x%lx\n",
+	       found_id, slot->phys_addr);
 
 	msg.hdr.type = PCN_KMSG_TYPE_MCAST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 	msg.type = PCN_KMSG_MCAST_OPEN;
 	msg.id = found_id;
 	msg.mask = mask;
-	msg.num_members = rkinfo->mcast_window[found_id].num_members;
+	msg.num_members = slot->num_members;
 
 	/* send message to each member except self.  Can't use mcast yet because
 	   group is not yet established, so unicast to each CPU in mask. */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
-		if ((rkinfo->mcast_window[found_id].mask & (1ULL << i)) && 
+		if ((slot->mask & (1ULL << i)) && 
 		    (my_cpu != i)) {
 			printk("Sending message to CPU %d\n", i);
 
@@ -890,6 +1052,9 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 
 	*id = found_id;
 
+out:
+	/* TODO -- unlock */
+
 	return 0;
 }
 
@@ -898,7 +1063,7 @@ int pcn_kmsg_mcast_add_members(pcn_kmsg_mcast_id id, unsigned long mask)
 {
 	/* TODO -- lock! */
 
-	rkinfo->mcast_window[id].mask |= mask; 
+	rkinfo->mcast_wininfo[id].mask |= mask; 
 
 	/* TODO -- unlock! */
 
@@ -910,7 +1075,7 @@ int pcn_kmsg_mcast_delete_members(pcn_kmsg_mcast_id id, unsigned long mask)
 {
 	/* TODO -- lock! */
 
-	rkinfo->mcast_window[id].mask &= !mask;
+	rkinfo->mcast_wininfo[id].mask &= !mask;
 
 	/* TODO -- unlock! */
 
@@ -950,8 +1115,8 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 	/* close window locally */
 	__pcn_kmsg_mcast_close(id);
 
-	rkinfo->mcast_window[id].mask = 0;
-	rkinfo->mcast_window[id].num_members = 0;
+	rkinfo->mcast_wininfo[id].mask = 0;
+	rkinfo->mcast_wininfo[id].num_members = 0;
 
 	return 0;
 }
@@ -966,7 +1131,7 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 	/* quick hack for testing for now; 
 	   loop through mask and send individual messages */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
-		if (rkinfo->mcast_window[id].mask & (0x1 << i)) {
+		if (rkinfo->mcast_wininfo[id].mask & (0x1 << i)) {
 			rc = pcn_kmsg_send(i, msg);
 
 			if (rc) {
@@ -992,7 +1157,7 @@ int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id,
 	/* quick hack for testing for now; 
 	   loop through mask and send individual messages */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
-		if (rkinfo->mcast_window[id].mask & (0x1 << i)) {
+		if (rkinfo->mcast_wininfo[id].mask & (0x1 << i)) {
 			rc = pcn_kmsg_send_long(i, msg, payload_size);
 
 			if (rc) {
@@ -1011,12 +1176,28 @@ static int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message)
 	int rc = 0;
 	struct pcn_kmsg_mcast_message *msg = 
 		(struct pcn_kmsg_mcast_message *) message;
+	pcn_kmsg_work_t *kmsg_work;
 
 	printk("Received mcast message, type %d\n", msg->type);
 
 	switch (msg->type) {
 		case PCN_KMSG_MCAST_OPEN:
 			printk("Processing mcast open message...\n");
+
+			/* Need to queue work to remap the window in a kernel
+			   thread; it can't happen here */
+			kmsg_work = kmalloc(sizeof(pcn_kmsg_work_t), GFP_ATOMIC);
+			if (kmsg_work) {
+				INIT_WORK((struct work_struct *) kmsg_work,
+					  process_kmsg_wq_item);
+				kmsg_work->op = PCN_KMSG_WQ_OP_MAP_MCAST_WIN;
+				kmsg_work->from_cpu = msg->hdr.from_cpu;
+				kmsg_work->id_to_join = msg->id;
+				queue_work(kmsg_wq, (struct work_struct *) kmsg_work);
+			} else {
+				printk("Failed to kmalloc work structure; this is VERY BAD!\n");
+			}
+
 			break;
 
 		case PCN_KMSG_MCAST_ADD_MEMBERS:
