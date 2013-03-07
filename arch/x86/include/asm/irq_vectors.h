@@ -141,6 +141,11 @@
 #define POPCORN_NET_VECTOR 0xce
 #endif
 
+#ifdef CONFIG_POPCORN_KMSG
+#define POPCORN_IPI_LATENCY_VECTOR 0xcc
+#define POPCORN_KMSG_VECTOR 0xcd
+#endif
+
 #ifndef __ASSEMBLY__
 static inline int invalid_vm86_irq(int irq)
 {
