@@ -42,6 +42,7 @@
 #include <asm/system.h>
 #include <asm/uaccess.h>
 #include <linux/multikernel.h>
+#include <linux/pcn_kmsg.h>
 #include <asm/bootparam.h>
 #include <asm/setup.h>
 
@@ -127,12 +128,6 @@ typedef struct shmem_pkt {
 	char	data[ETH_DATA_LEN];
 } shmem_pkt_t;
 
-/*
-typedef struct rb_buf {
-	shmem_pkt_t buffer[RB_SIZE];
-} rb_buf_t;
-*/
-
 typedef struct rb_ht {
 	unsigned long head;
 	unsigned long tail;
@@ -171,28 +166,8 @@ static inline int rb_put(enum shmtun_dir dir, int cpu, char *data, int len)
 
 
 	if (unlikely(!shmem_percpu[cpu])) {
-		printk("percpu win for cpu %d not yet mapped, mapping it...\n", 
-		       cpu);
-
-		printk("phys addr: 0x%lx\n", 
-		       shmem_directory->percpu_phys_addr[cpu]);
-
-		if (!shmem_directory->percpu_phys_addr[cpu]) {
-			printk("Phys addr for cpu %d not set!\n", cpu);
-			return -1;
-		}
-
-		shmem_percpu[cpu] = 
-			ioremap_cache(shmem_directory->percpu_phys_addr[cpu],
-						  sizeof(shmtun_percpu_t));
-
-		printk("ioremap_cache returned 0x%p\n", shmem_percpu[cpu]);
-
-		if (!shmem_percpu[cpu]) {
-			printk("Failed to map percpu win for cpu %d at 0x%lx\n",
-			       cpu, shmem_directory->percpu_phys_addr[cpu]);
-			return -1;
-		}
+		printk("percpu win for cpu %d not mapped!\n", cpu);
+		return -1;
 	}
 
 	BUF(dir, cpu, HEAD(dir, cpu) & RB_MASK).pkt_len = len;
@@ -251,8 +226,7 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 	inc_irq_stat(irq_popcorn_net_count);
 	irq_enter();
 
-	/* NAPI stuff */
-
+	/* All we do in the handler is switch into polling mode. */
 	if (likely(napi_schedule_prep(&global_napi))) {
 		/* Disable RX interrupt */
 		printk("Turning off RX interrupt...\n");
@@ -276,10 +250,9 @@ static struct sk_buff * shmtun_rx_next_pkt(void)
 	int start_cpu;
 
 	if (SHMTUN_IS_SERVER) {
-
+		/* need to go through all the buffers round-robin, starting
+		   where we left off last time */
 		start_cpu = cur_cpu;
-
-		/* need to go through all the buffers round-robin */
 		do {
 			if ((skb = shmtun_get_pkt_from_rbuf(SHMTUN_TO_HOST, 
 							    cur_cpu % SHMTUN_MAX_CPUS))) {
@@ -311,12 +284,9 @@ static int shmtun_napi_handler(struct napi_struct *napi, int budget)
 	printk("Total work done: %d\n", work_done);
 
 	if (work_done < budget) {
-
 		printk("Going back to interrupt mode!\n");
-
 		napi_gro_flush(napi);
 		__napi_complete(napi);
-		/* turn interrupts back on */
 		shmtun_enable_int(global_cpu);
 	}
 
@@ -464,7 +434,7 @@ drop:
 }
 
 #define MIN_MTU 68
-#define MAX_MTU 65535
+#define MAX_MTU 1500
 
 static int
 shmtun_net_change_mtu(struct net_device *dev, int new_mtu)
@@ -564,7 +534,7 @@ static struct sk_buff * shmtun_get_pkt_from_rbuf(enum shmtun_dir dir, int cpu)
 
 	memcpy(skb_put(skb, pkt->pkt_len), pkt->data, pkt->pkt_len);
 
-	/* POPCORN -- we're safe to move the tail pointer at this point */
+	/* we're safe to move the tail pointer at this point */
 	rb_advance_tail(dir, cpu);
 
 	skb->protocol = htons(ETH_P_IP);
@@ -579,7 +549,7 @@ static struct sk_buff * shmtun_get_pkt_from_rbuf(enum shmtun_dir dir, int cpu)
 static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 		struct sk_buff *skb)
 {
-	int rc, len, sendto_cpu = 0;
+	int rc, len, buf_cpu, ipi_cpu;
 	char *data, shortpkt[ETH_ZLEN];
 	ssize_t total = 0;
 	enum shmtun_dir dir;
@@ -601,6 +571,8 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 			(int) data[16], (int) data[17], (int) data[18], (int) data[19]
 	      );
 	*/
+
+	/* NOTE -- this debug code is from LDD3 */
 	if (0) { /* enable this conditional to look at the data */
 		int i;
 		printk("len is %i\n" KERN_DEBUG "data:",len);
@@ -609,24 +581,21 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 		printk("\n");
 	}
 
-	
-
 	if (SHMTUN_IS_SERVER) {
-		sendto_cpu = data[19] - 1;
+		buf_cpu = data[19] - 1;
+		ipi_cpu = buf_cpu;
 		dir = SHMTUN_TO_GUEST;
-		//send_buf = &(shmem_window[sendto_cpu].to_guest);
 	} else {
-		sendto_cpu = data[15] - 1;
-		/* client sends to server and server forwards */
+		buf_cpu = global_cpu;
+		ipi_cpu = 0;
 		dir = SHMTUN_TO_HOST;
-
-		printk("Original sendto cpu: %d\n", data[15] - 1);
-
-		//send_buf = &(shmem_window[data[15] - 1].to_host);
 	}
 
-	/* POPCORN -- copy to shared memory buffer */
-	rc = rb_put(dir, sendto_cpu, data, len);
+	printk("buf_cpu %d, ipi_cpu %d, dir %d\n",
+	       buf_cpu, ipi_cpu, dir);
+
+	/* copy frame into ring buffer */
+	rc = rb_put(dir, buf_cpu, data, len);
 
 	if (rc) {
 		printk("No space in ring buffer, dropping packet...\n");
@@ -634,17 +603,14 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 		return 0;
 	}
 
-	/* POPCORN -- if RX interrupts are enabled, send IPI to receiver */
-	if (shmtun_int_enabled(sendto_cpu)) {
-
+	/* if RX interrupts are enabled, send IPI to receiver */
+	if (shmtun_int_enabled(ipi_cpu)) {
 		printk("Interrupts enabled for CPU %d, sending IPI...\n", 
-		       sendto_cpu);
+		       ipi_cpu);
 
-		if (SHMTUN_IS_SERVER) {
-			apic->send_IPI_single(sendto_cpu, POPCORN_NET_VECTOR);
-		} else {
-			apic->send_IPI_single(0, POPCORN_NET_VECTOR);
-		}
+		apic->send_IPI_single(ipi_cpu, POPCORN_NET_VECTOR);
+	} else {
+		printk("Interrupts not enabled for CPU %d\n", ipi_cpu);
 	}
 
 	total += skb->len;
@@ -1270,6 +1236,124 @@ static const struct ethtool_ops shmtun_ethtool_ops = {
 	.get_link	= ethtool_op_get_link,
 };
 
+struct pcn_kmsg_shmtun_message {
+	unsigned char cpu_to_add;
+	char pad[59];
+	struct pcn_kmsg_hdr hdr;
+}__attribute__((packed)) __attribute__((aligned(64)));
+
+enum shmtun_wq_ops {
+	SHMTUN_WQ_OP_MAP_MSG_WIN
+};
+
+typedef struct {
+	struct work_struct work;
+	enum shmtun_wq_ops op;
+	unsigned char cpu_to_add;
+} shmtun_work_t;
+
+extern struct workqueue_struct *kmsg_wq;
+
+/* bottom half for workqueue */
+static void process_shmtun_wq_item(struct work_struct * work)
+{
+	int cpu;
+	shmtun_work_t *w = (shmtun_work_t *) work;	
+
+	switch (w->op) {
+		case SHMTUN_WQ_OP_MAP_MSG_WIN:
+
+			cpu = w->cpu_to_add;
+
+			if (cpu < 0 || cpu >= POPCORN_MAX_CPUS) {
+				printk("Invalid CPU %d specified!\n", cpu);
+				goto out;
+			}
+
+			printk("phys addr: 0x%lx\n", 
+			       shmem_directory->percpu_phys_addr[cpu]);
+
+			if (!shmem_directory->percpu_phys_addr[cpu]) {
+				printk("Phys addr for cpu %d not set!\n", cpu);
+				goto out;
+			}
+
+			shmem_percpu[cpu] = 
+				ioremap_cache(shmem_directory->percpu_phys_addr[cpu],
+					      sizeof(shmtun_percpu_t));
+
+			printk("ioremap_cache returned 0x%p\n", 
+			       shmem_percpu[cpu]);
+
+			if (!shmem_percpu[cpu]) {
+				printk("Failed to map percpu win for cpu %d at 0x%lx\n",
+				       cpu, shmem_directory->percpu_phys_addr[cpu]);
+				goto out;
+			}
+			break;
+		default:
+			printk("Invalid work queue operation %d\n", w->op);
+	}
+out:
+	kfree(work);
+}
+
+static int pcn_kmsg_shmtun_callback(struct pcn_kmsg_message *message)
+{
+	struct pcn_kmsg_shmtun_message *msg =
+		(struct pcn_kmsg_shmtun_message *) message;
+	int cpu_to_add = msg->cpu_to_add;
+	shmtun_work_t *shmtun_work = NULL;
+
+	printk("Called Popcorn callback for processing shmtun messages\n");
+
+	printk("From CPU %d, type %d, cpu to add %d\n",
+	       msg->hdr.from_cpu, msg->hdr.type,
+	       msg->cpu_to_add);
+
+	if (cpu_to_add >= POPCORN_MAX_CPUS) {
+		printk("Invalid CPU to add %d\n", msg->cpu_to_add);
+		return -1;
+	}
+
+	/* Note that we're not allowed to ioremap anything from a bottom half,
+	   so we'll add it to a workqueue and do it in a kernel thread. */
+	shmtun_work = kmalloc(sizeof(shmtun_work_t), GFP_ATOMIC);
+	if (shmtun_work) {
+		INIT_WORK((struct work_struct *) shmtun_work,
+			  process_shmtun_wq_item);
+		shmtun_work->op = PCN_KMSG_WQ_OP_MAP_MSG_WIN;
+		shmtun_work->cpu_to_add = msg->cpu_to_add;
+		queue_work(kmsg_wq, (struct work_struct *) shmtun_work);
+	} else {
+		printk("Failed to kmalloc shmtun work structure!\n");
+	}
+
+	kfree(message);
+
+	return 0;
+}
+
+static int send_checkin_msg(void)
+{
+	int rc;
+	struct pcn_kmsg_shmtun_message msg;
+
+	printk("Sending shmtun message to cpu 0...\n");
+
+	msg.hdr.type = PCN_KMSG_TYPE_SHMTUN;
+	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+	msg.cpu_to_add = global_cpu;
+
+	rc = pcn_kmsg_send(0, (struct pcn_kmsg_message *) &msg);
+
+	if (rc) {
+		printk("Failed to send checkin message, rc = %d\n", rc);
+		return rc;
+	}
+
+	return 0;
+}
 
 static int __init shmtun_init(void)
 {
@@ -1299,6 +1383,15 @@ static int __init shmtun_init(void)
 
 	printk("Raw SMP processor ID: %d\n", global_cpu);
 
+	ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_SHMTUN,
+					&pcn_kmsg_shmtun_callback);
+	if (ret) {
+		printk("Failed to register shmtun kmsg callback!\n");
+		return -1;
+	}
+
+	printk("Registered shmtun kmsg callback...\n");
+
 	if (global_cpu == 0) {
 		printk("We're the server...\n");
 
@@ -1306,21 +1399,17 @@ static int __init shmtun_init(void)
 		   boot_params */
 		shmem_directory = kmalloc(sizeof(shmtun_directory_t), 
 					  GFP_KERNEL);
-
 		if (!shmem_directory) {
 			printk("Failed to kmalloc shmtun directory!\n");
 			return -1;
 		}
 
 		dir_phys_addr = virt_to_phys(shmem_directory);
-
 		printk("shmtun directory virt addr 0x%p, phys addr 0x%lx\n", 
 		       shmem_directory, dir_phys_addr);
-
 		memset(shmem_directory, 0x0, sizeof(shmtun_directory_t));
 
 		printk("Setting boot_params...\n");
-
 		boot_params_va = (struct boot_params *) 
 			(0xffffffff80000000ULL + orig_boot_params);
 		printk("Boot params virtual address: 0x%p\n", boot_params_va);
@@ -1333,10 +1422,8 @@ static int __init shmtun_init(void)
 		       (unsigned long) boot_params.shmtun_phys_addr);
 
 		dir_phys_addr = boot_params.shmtun_phys_addr;
-
 		shmem_directory = ioremap_cache(dir_phys_addr, 
 						sizeof(shmtun_directory_t));
-
 		if (!shmem_directory) {
 			printk("Failed to ioremap shmtun window!\n");
 			return -1;
@@ -1360,6 +1447,15 @@ static int __init shmtun_init(void)
 
 		shmem_directory->percpu_phys_addr[global_cpu] = 
 			percpu_phys_addr;
+
+		shmem_percpu[global_cpu] = percpu_virt_addr;
+
+		/* Send a message to CPU 0 to map this CPU's buffers */
+		ret = send_checkin_msg();
+
+		if (ret) {
+			printk("Error sending shmtun checkin msg!\n");
+		}
 	}	
 
 	return 0;

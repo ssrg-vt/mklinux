@@ -51,7 +51,7 @@ struct pcn_kmsg_long_message * lg_buf[POPCORN_MAX_CPUS];
 static void pcn_kmsg_action(struct softirq_action *h);
 
 /* workqueue for operations that can sleep */
-static struct workqueue_struct *kmsg_wq;
+struct workqueue_struct *kmsg_wq;
 
 /* RING BUFFER */
 
@@ -475,7 +475,7 @@ static int __init pcn_kmsg_init(void)
 
 	/* Initialize work queue */
 	printk("Initializing workqueue...\n");
-	kmsg_wq = create_singlethread_workqueue("kmsg_wq");
+	kmsg_wq = create_workqueue("kmsg_wq");
 
 	/* If we're the master kernel, malloc and map the rkinfo structure and 
 	   put its physical address in boot_params; otherwise, get it from the 
@@ -545,7 +545,7 @@ static int __init pcn_kmsg_init(void)
 	return 0;
 }
 
-late_initcall(pcn_kmsg_init);
+subsys_initcall(pcn_kmsg_init);
 
 /* Register a callback function when a kernel module is loaded */
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
