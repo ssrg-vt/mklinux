@@ -158,51 +158,57 @@ extern unsigned long orig_boot_params;
 #define TAIL(_dir_, _cpu_) (shmem_directory->ht[(_dir_)][(_cpu_)].tail)
 #define BUF(_dir_, _cpu_, _entry_) (shmem_percpu[_cpu_]->buf[(_dir_)][(_entry_)])
 
-static inline unsigned long rb_inuse(enum shmtun_dir dir, int cpu) {
+static inline unsigned long rb_inuse(enum shmtun_dir dir, int cpu) 
+{
 	return HEAD(dir, cpu) - TAIL(dir, cpu);
 }
 
-static inline int rb_put(enum shmtun_dir dir, int cpu, char *data, int len) {
-	if (rb_inuse(dir, cpu) != RB_SIZE) {
-
-		if (unlikely(!shmem_percpu[cpu])) {
-			printk("percpu window for cpu %d not yet mapped, mapping it...\n", cpu);
-
-			printk("phys addr: 0x%lx\n", shmem_directory->percpu_phys_addr[cpu]);
-
-			if (!shmem_directory->percpu_phys_addr[cpu]) {
-				printk("Phys addr for cpu %d not set -- THIS IS BAD!\n", cpu);
-				return -1;
-			}
-
-			shmem_percpu[cpu] = ioremap_cache(shmem_directory->percpu_phys_addr[cpu],
-					sizeof(shmtun_percpu_t));
-
-			printk("ioremap_cache returned 0x%lx\n", shmem_percpu[cpu]);
-
-			if (!shmem_percpu[cpu]) {
-				printk("Failed to map percpu window for cpu %d at 0x%lx -- THIS IS BAD!\n",
-						cpu, shmem_directory->percpu_phys_addr[cpu]);
-				return -1;
-			}
-		}
-
-		BUF(dir, cpu, HEAD(dir, cpu) & RB_MASK).pkt_len = len;
-		memcpy(&(BUF(dir, cpu, HEAD(dir, cpu) & RB_MASK).data), data, len);
-		HEAD(dir, cpu)++;
-		printk("RBUF PUT: size %lu, head %lu, tail %lu\n", rb_inuse(dir, cpu), 
-				HEAD(dir, cpu), TAIL(dir, cpu));
-		return 0;
-	} else {
+static inline int rb_put(enum shmtun_dir dir, int cpu, char *data, int len) 
+{
+	if (rb_inuse(dir, cpu) >= RB_SIZE) {
 		return -1;
 	}
+
+
+	if (unlikely(!shmem_percpu[cpu])) {
+		printk("percpu win for cpu %d not yet mapped, mapping it...\n", 
+		       cpu);
+
+		printk("phys addr: 0x%lx\n", 
+		       shmem_directory->percpu_phys_addr[cpu]);
+
+		if (!shmem_directory->percpu_phys_addr[cpu]) {
+			printk("Phys addr for cpu %d not set!\n", cpu);
+			return -1;
+		}
+
+		shmem_percpu[cpu] = 
+			ioremap_cache(shmem_directory->percpu_phys_addr[cpu],
+						  sizeof(shmtun_percpu_t));
+
+		printk("ioremap_cache returned 0x%p\n", shmem_percpu[cpu]);
+
+		if (!shmem_percpu[cpu]) {
+			printk("Failed to map percpu win for cpu %d at 0x%lx\n",
+			       cpu, shmem_directory->percpu_phys_addr[cpu]);
+			return -1;
+		}
+	}
+
+	BUF(dir, cpu, HEAD(dir, cpu) & RB_MASK).pkt_len = len;
+	memcpy(&(BUF(dir, cpu, HEAD(dir, cpu) & RB_MASK).data), data, len);
+	HEAD(dir, cpu)++;
+	printk("RBUF PUT: size %lu, head %lu, tail %lu\n", 
+	       rb_inuse(dir, cpu), HEAD(dir, cpu), TAIL(dir, cpu));
+	return 0;
 }
 
 static inline int rb_get(enum shmtun_dir dir, int cpu, shmem_pkt_t **pkt) {
 	if (rb_inuse(dir, cpu) != 0) {
 		*pkt = &(BUF(dir, cpu, TAIL(dir, cpu) & RB_MASK));
-		printk("RBUF GET: size %lu, head %lu, tail %lu\n", rb_inuse(dir, cpu),                                          
-				HEAD(dir, cpu), TAIL(dir, cpu));;
+		printk("RBUF GET: size %lu, head %lu, tail %lu\n", 
+		       rb_inuse(dir, cpu),                                          
+		       HEAD(dir, cpu), TAIL(dir, cpu));;
 		return 0;
 	} else {
 		return -1;
@@ -229,7 +235,7 @@ unsigned long long shmtun_phys_addr = 0x0;
 
 static struct sk_buff * shmtun_get_pkt_from_rbuf(enum shmtun_dir dir, int cpu);
 static ssize_t shmtun_put_shmem(struct tun_struct *tun,
-		struct sk_buff *skb);
+				struct sk_buff *skb);
 static int shmtun_napi_handler(struct napi_struct *napi, int budget);
 
 static struct tun_struct *global_tun = NULL;
@@ -275,7 +281,8 @@ static struct sk_buff * shmtun_rx_next_pkt(void)
 
 		/* need to go through all the buffers round-robin */
 		do {
-			if ((skb = shmtun_get_pkt_from_rbuf(SHMTUN_TO_HOST, cur_cpu % SHMTUN_MAX_CPUS))) {
+			if ((skb = shmtun_get_pkt_from_rbuf(SHMTUN_TO_HOST, 
+							    cur_cpu % SHMTUN_MAX_CPUS))) {
 				break;
 			}
 			cur_cpu = (cur_cpu + 1) % SHMTUN_MAX_CPUS;
@@ -548,10 +555,8 @@ static struct sk_buff * shmtun_get_pkt_from_rbuf(enum shmtun_dir dir, int cpu)
 	skb = dev_alloc_skb(pkt->pkt_len + 2);
 
 	if (!skb) {
-		printk("Unable to allocate skb for received packet; dropping it!\n");
-
+		printk("Unable to alloc skb for rcvd packet; dropping it!\n");
 		rb_advance_tail(dir, cpu);
-
 		return NULL;
 	}
 
@@ -630,17 +635,15 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 	}
 
 	/* POPCORN -- if RX interrupts are enabled, send IPI to receiver */
-
 	if (shmtun_int_enabled(sendto_cpu)) {
 
-		printk("Interrupts enabled for CPU %d, sending IPI...\n", sendto_cpu);
+		printk("Interrupts enabled for CPU %d, sending IPI...\n", 
+		       sendto_cpu);
 
 		if (SHMTUN_IS_SERVER) {
 			apic->send_IPI_single(sendto_cpu, POPCORN_NET_VECTOR);
-			//apic->send_IPI_mask(cpumask_of(sendto_cpu), POPCORN_NET_VECTOR);
 		} else {
 			apic->send_IPI_single(0, POPCORN_NET_VECTOR);
-			//apic->send_IPI_mask(cpumask_of(0), POPCORN_NET_VECTOR);
 		}
 	}
 
@@ -738,7 +741,8 @@ static int shmtun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 
 		if (ifr->ifr_flags & IFF_TUN_EXCL)
 			return -EBUSY;
-		if ((ifr->ifr_flags & IFF_TUN) && dev->netdev_ops == &shmtun_netdev_ops)
+		if ((ifr->ifr_flags & IFF_TUN) && dev->netdev_ops == 
+		    &shmtun_netdev_ops)
 			tun = netdev_priv(dev);
 		else
 			return -EINVAL;
@@ -1221,7 +1225,8 @@ static int shmtun_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	return 0;
 }
 
-static void shmtun_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
+static void shmtun_get_drvinfo(struct net_device *dev, 
+			       struct ethtool_drvinfo *info)
 {
 	struct tun_struct *tun = netdev_priv(dev);
 
@@ -1297,37 +1302,43 @@ static int __init shmtun_init(void)
 	if (global_cpu == 0) {
 		printk("We're the server...\n");
 
-		/* Need to kmalloc directory and put physical address in boot_params */
-		shmem_directory = kmalloc(sizeof(shmtun_directory_t), GFP_KERNEL);
+		/* Need to kmalloc directory and put physical address in 
+		   boot_params */
+		shmem_directory = kmalloc(sizeof(shmtun_directory_t), 
+					  GFP_KERNEL);
 
 		if (!shmem_directory) {
-			printk("Failed to kmalloc shmtun directory -- this is VERY BAD!\n");
+			printk("Failed to kmalloc shmtun directory!\n");
 			return -1;
 		}
 
 		dir_phys_addr = virt_to_phys(shmem_directory);
 
-		printk("shmtun directory virt addr 0x%p, phys addr 0x%lx\n", shmem_directory, dir_phys_addr);
+		printk("shmtun directory virt addr 0x%p, phys addr 0x%lx\n", 
+		       shmem_directory, dir_phys_addr);
 
 		memset(shmem_directory, 0x0, sizeof(shmtun_directory_t));
 
 		printk("Setting boot_params...\n");
 
-		boot_params_va = (struct boot_params *) (0xffffffff80000000ULL + orig_boot_params);
+		boot_params_va = (struct boot_params *) 
+			(0xffffffff80000000ULL + orig_boot_params);
 		printk("Boot params virtual address: 0x%p\n", boot_params_va);
 		boot_params_va->shmtun_phys_addr = dir_phys_addr;
 	} else {
 		printk("We're the client...\n");
 
 		/* Need to map window from boot_params */
-		printk("Master kernel shmtun directory phys addr: 0x%lx\n", (unsigned long) boot_params.shmtun_phys_addr);
+		printk("Master kernel shmtun directory phys addr: 0x%lx\n", 
+		       (unsigned long) boot_params.shmtun_phys_addr);
 
 		dir_phys_addr = boot_params.shmtun_phys_addr;
 
-		shmem_directory = ioremap_cache(dir_phys_addr, sizeof(shmtun_directory_t));
+		shmem_directory = ioremap_cache(dir_phys_addr, 
+						sizeof(shmtun_directory_t));
 
 		if (!shmem_directory) {
-			printk("Failed to ioremap shmtun window -- this is VERY BAD!\n");
+			printk("Failed to ioremap shmtun window!\n");
 			return -1;
 		}
 
@@ -1337,16 +1348,18 @@ static int __init shmtun_init(void)
 		percpu_virt_addr = kmalloc(sizeof(shmtun_percpu_t), GFP_KERNEL);
 
 		if (!percpu_virt_addr) {
-			printk("Failed to kmalloc shmtun percpu window -- this is VERY BAD!\n");
+			printk("Failed to kmalloc shmtun percpu window!\n");
 			return -1;
 		}
 
 		percpu_phys_addr = virt_to_phys(percpu_virt_addr);
-		printk("shmtun percpu window virt addr 0x%p, phys addr 0x%lx\n", percpu_virt_addr, percpu_phys_addr);
+		printk("shmtun percpu win virt addr 0x%p, phys addr 0x%lx\n", 
+		       percpu_virt_addr, percpu_phys_addr);
 
 		memset(percpu_virt_addr, 0x0, sizeof(shmtun_percpu_t));
 
-		shmem_directory->percpu_phys_addr[global_cpu] = percpu_phys_addr;
+		shmem_directory->percpu_phys_addr[global_cpu] = 
+			percpu_phys_addr;
 	}	
 
 	return 0;
