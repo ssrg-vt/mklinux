@@ -27,6 +27,7 @@
 #include <asm/uaccess.h> // USER_DS
 #include <asm/prctl.h> // prctl
 #include <asm/proto.h> // do_arch_prctl
+#include <asm/msr.h> // wrmsr_safe
 
 /**
  * Use the preprocessor to turn off printk.
@@ -224,6 +225,11 @@ typedef struct {
     clone_data_t* clone_data;
 } clone_exec_work_t;
 
+typedef struct {
+    struct work_struct work;
+    pid_t pid;
+} exit_work_t;
+
 /**
  * Prototypes
  */
@@ -255,6 +261,7 @@ DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
 
 // Exec list
 static struct workqueue_struct *clone_wq;
+static struct workqueue_struct *exit_wq;
 
 
 
@@ -362,7 +369,7 @@ static void dump_thread(struct thread_struct* thread) {
     PSPRINTK("ds{%x}\n",thread->ds);
     PSPRINTK("fsindex{%x}\n",thread->fsindex);
     PSPRINTK("gsindex{%x}\n",thread->gsindex);
-    PSPRINTK("fs{%lx} - %lx\n",thread->fs,*((unsigned long*)thread->fs));
+    if(thread->fs) PSPRINTK("fs{%lx} - %lx\n",thread->fs,*((unsigned long*)thread->fs));
     PSPRINTK("gs{%lx}\n",thread->gs);
     PSPRINTK("THREAD DUMP COMPLETE\n");
 }
@@ -707,6 +714,31 @@ static void dump_data_list() {
  * Work exec
  */
 
+/**
+ *
+ */
+void process_exit_item(struct work_struct* work) {
+    exit_work_t* w = (exit_work_t*) work;
+    pid_t pid = w->pid;
+    struct pid* spid;
+    struct task_struct* task;
+    PSPRINTK("SHIT WORK %d\n",pid);
+    for_each_process(task) {
+        if(task->pid == pid) {
+            PSPRINTK("Found task to kill, killing\n");
+            spid = task_pid(task);
+            __set_task_state(task,TASK_INTERRUPTIBLE);
+            kill_pid(spid,SIGKILL,1);
+            break;
+        }
+    }
+
+    kfree(work);
+}
+
+/**
+ *
+ */
 void process_exec_item(struct work_struct* work) {
     clone_exec_work_t* w = (clone_exec_work_t*)work;
     clone_data_t* c = w->clone_data;
@@ -867,12 +899,20 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
 static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg) {
     exiting_process_t* msg = (exiting_process_t*)inc_msg;
     struct task_struct* task;
+    exit_work_t* exit_work;
 
     for_each_process(task) {
-        if(task->remote_pid == msg->my_pid) {
+        if(task->remote_pid == msg->my_pid &&
+           task->remote_cpu == inc_msg->hdr.from_cpu) {
+
             PSPRINTK("kmkprocsrv: killing local task pid{%d}\n",task->pid);
-            __set_task_state(task,TASK_INTERRUPTIBLE);
-            kill_pid(task_pid(task),SIGKILL,1);
+            
+            exit_work = kmalloc(sizeof(exit_work_t),GFP_ATOMIC);
+            if(exit_work) {
+                INIT_WORK( (struct work_struct*)exit_work, process_exit_item);
+                exit_work->pid = task->pid;
+                queue_work(exit_wq, (struct work_struct*)exit_work);
+            }
 
             break; // No need to continue;
         }
@@ -1095,6 +1135,10 @@ int process_server_import_address_space(unsigned long* ip,
                 vma_curr->mmapping_in_progress = 0;
                 up_write(&current->mm->mmap_sem);
                 filp_close(f,NULL);
+                if(err != vma_curr->start) {
+                    printk("Fault - do_mmap failed to map %lx with error %lx\n",
+                            vma_curr->start,err);
+                }
             }
         } else {
             mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
@@ -1107,6 +1151,10 @@ int process_server_import_address_space(unsigned long* ip,
                 0);
             //PSPRINTK("mmap error for %lx = %lx\n",vma_curr->start,err);
             up_write(&current->mm->mmap_sem);
+            if(err != vma_curr->start) {
+                printk("Fault - do_mmap failed to map %lx with error %lx\n",
+                        vma_curr->start,err);
+            }
         }
        
         if(err > 0) {
@@ -1117,12 +1165,16 @@ int process_server_import_address_space(unsigned long* ip,
                 pte_curr = vma_curr->pte_list;
                 while(pte_curr) {
                     // MAP it
-                    remap_pfn_range(vma,
+                    err = remap_pfn_range(vma,
                             pte_curr->vaddr,
                             pte_curr->paddr >> PAGE_SHIFT,
                             PAGE_SIZE,
                             vma->vm_page_prot);
                     pte_curr = (pte_data_t*)pte_curr->header.next;
+                    if(err) {
+                        printk("Fault - remap_pfn_range failed to map %lx to %lx with error %lx\n",
+                                pte_curr->paddr,pte_curr->vaddr,err);
+                    }
                 }
             }
         }
@@ -1142,7 +1194,7 @@ int process_server_import_address_space(unsigned long* ip,
     // install thread information
     // TODO: Move to arch
     current->thread.fs = clone_data->thread_fs;
-    current->thread.gs = clone_data->thread_gs;
+    //current->thread.gs = clone_data->thread_gs;
     current->thread.sp0 = clone_data->thread_sp0;
     current->thread.sp = clone_data->thread_sp;
     current->thread.usersp = clone_data->thread_usersp;//clone_data->stack_ptr;
@@ -1162,7 +1214,15 @@ int process_server_import_address_space(unsigned long* ip,
 
     // Load fs
     // TODO: Move to arch
-    wrmsrl(MSR_FS_BASE,clone_data->thread_fs);
+    //wrmsrl(MSR_FS_BASE,clone_data->thread_fs);
+    //loadsegment(fs, clone_data->thread_fs);
+    //do_arch_prctl(current,ARCH_SET_FS,clone_data->thread_fs);
+    
+    //get_cpu();
+    //loadsegment(fs,current->thread.fs);
+    //wrmsrl(MSR_FS_BASE,current->thread.fs);
+    //put_cpu();
+    loadsegment(fs,0);
 
     dump_clone_data(clone_data);
     dump_task(current,regs, clone_data->stack_ptr);
@@ -1470,6 +1530,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     strncpy( request->exe_path, rpath, 512 );
     request->placeholder_pid = task->pid;
     request->placeholder_tgid = task->tgid;
+    //rdmsrl(MSR_FS_BASE,request->thread_fs);
     request->thread_fs = task->thread.fs;
     request->thread_gs = task->thread.gs;
     request->thread_sp0 = task->thread.sp0;
@@ -1513,7 +1574,8 @@ static int __init process_server_init(void) {
      * communications module interrupt handlers.
      */
     clone_wq = create_workqueue("clone_wq");
-   
+    exit_wq  = create_workqueue("exit_wq");
+
     /*
      * Register to receive relevant incomming messages.
      */
