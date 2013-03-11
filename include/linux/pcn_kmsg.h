@@ -15,24 +15,39 @@
 
 /* BOOKKEEPING */
 
-#define POPCORN_MAX_MCAST_CHANNELS 128
+#define POPCORN_MAX_MCAST_CHANNELS 32
 
-struct pcn_kmsg_mcast_window {
+struct pcn_kmsg_mcast_wininfo {
 	unsigned char lock;
+	unsigned char owner_cpu;
 	unsigned long mask;
-        unsigned int num_members;
+	unsigned int num_members;
 	unsigned long phys_addr;
 };
 
 struct pcn_kmsg_rkinfo {
 	unsigned long phys_addr[POPCORN_MAX_CPUS];
-	struct pcn_kmsg_mcast_window mcast_window[POPCORN_MAX_MCAST_CHANNELS];
-	//struct pcn_kmsg_window *window;
+	struct pcn_kmsg_mcast_wininfo mcast_wininfo[POPCORN_MAX_MCAST_CHANNELS];
 };
 
-/* MESSAGING */
+enum pcn_kmsg_wq_ops {
+	PCN_KMSG_WQ_OP_MAP_MSG_WIN,
+	PCN_KMSG_WQ_OP_UNMAP_MSG_WIN,
+	PCN_KMSG_WQ_OP_MAP_MCAST_WIN,
+	PCN_KMSG_WQ_OP_UNMAP_MCAST_WIN
+};
 
 typedef unsigned long pcn_kmsg_mcast_id;
+
+typedef struct {
+	struct work_struct work;
+	enum pcn_kmsg_wq_ops op;
+	int from_cpu;
+	int cpu_to_add;
+	pcn_kmsg_mcast_id id_to_join;
+} pcn_kmsg_work_t;
+
+/* MESSAGING */
 
 /* Enum for message types.  Modules should add types after
    PCN_KMSG_END. */
@@ -73,7 +88,7 @@ struct pcn_kmsg_hdr {
 
 /* The actual messages.  The expectation is that developers will create their
    own message structs with the payload replaced with their own fields, and then
-   cast them to a struct pkn_kmsg_message.  See the checkin message below for
+   cast them to a struct pcn_kmsg_message.  See the checkin message below for
    an example of how to do this. */
 struct pcn_kmsg_message {
 	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
@@ -89,7 +104,8 @@ struct pcn_kmsg_container {
 /* Message struct for guest kernels to check in with each other. */
 struct pcn_kmsg_checkin_message {
 	unsigned long window_phys_addr;
-	char pad[52];
+	unsigned char cpu_to_add;
+	char pad[51];
 	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed)) __attribute__((aligned(64)));
 
@@ -124,7 +140,8 @@ typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);
 
 /* Register a callback function to handle a new message type.  Intended to
    be called when a kernel module is loaded. */
-int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback);
+int pcn_kmsg_register_callback(enum pcn_kmsg_type type, 
+			       pcn_kmsg_cbftn callback);
 
 /* Unregister a callback function for a message type.  Intended to
    be called when a kernel module is unloaded. */
@@ -137,8 +154,8 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg);
 
 /* Send a long message to the specified destination CPU. */
 int pcn_kmsg_send_long(unsigned int dest_cpu, 
-		struct pcn_kmsg_long_message *lmsg, 
-		unsigned int payload_size);
+		       struct pcn_kmsg_long_message *lmsg, 
+		       unsigned int payload_size);
 
 /* MULTICAST GROUPS */
 
@@ -162,6 +179,20 @@ struct pcn_kmsg_mcast_message {
 	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed)) __attribute__((aligned(64)));
 
+
+
+struct pcn_kmsg_mcast_window {
+	volatile unsigned long head;
+	volatile unsigned long tail;
+	int read_counter[PCN_KMSG_RBUF_SIZE];
+	struct pcn_kmsg_message buffer[PCN_KMSG_RBUF_SIZE];
+}__attribute__((packed));
+
+struct pcn_kmsg_mcast_local {
+	struct pcn_kmsg_mcast_window * mcastvirt;
+	unsigned long local_tail;
+};
+
 /* Open a multicast group containing the CPUs specified in the mask. */
 int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask);
 
@@ -179,7 +210,7 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg);
 
 /* Send a long message to the specified multicast group. */
 int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id, 
-		struct pcn_kmsg_long_message *msg,
-		unsigned int payload_size);
+			     struct pcn_kmsg_long_message *msg,
+			     unsigned int payload_size);
 
 #endif /* __LINUX_PCN_KMSG_H */
