@@ -75,6 +75,14 @@ do {								\
 } while (0)
 #endif
 
+#define SHMTUN_VERBOSE 0
+
+#if SHMTUN_VERBOSE
+#define SHMTUN_PRINTK(...) printk(__VA_ARGS__)
+#else
+#define SHMTUN_PRINTK(...) ;
+#endif
+
 struct tun_file {
 	atomic_t count;
 	struct tun_struct *tun;
@@ -112,7 +120,7 @@ static inline struct tun_sock *tun_sk(struct sock *sk)
 	return container_of(sk, struct tun_sock, sk);
 }
 
-#define SHMTUN_MAX_CPUS 64
+#define SHMTUN_MAX_CPUS POPCORN_MAX_CPUS
 
 #define RB_SHIFT 6 // 64 packets per ring buffer
 #define RB_SIZE (1 << RB_SHIFT)
@@ -129,8 +137,8 @@ typedef struct shmem_pkt {
 } shmem_pkt_t;
 
 typedef struct rb_ht {
-	unsigned long head;
-	unsigned long tail;
+	volatile unsigned long head;
+	volatile unsigned long tail;
 } rb_ht_t;
 
 typedef struct shmtun_percpu {
@@ -140,7 +148,7 @@ typedef struct shmtun_percpu {
 typedef struct shmtun_directory {
 	rb_ht_t 	ht[2][SHMTUN_MAX_CPUS];
 	unsigned long	percpu_phys_addr[SHMTUN_MAX_CPUS];
-	unsigned char	int_enabled[SHMTUN_MAX_CPUS];
+	volatile unsigned char	int_enabled[SHMTUN_MAX_CPUS];
 } shmtun_directory_t;
 
 static shmtun_directory_t *shmem_directory;
@@ -173,7 +181,7 @@ static inline int rb_put(enum shmtun_dir dir, int cpu, char *data, int len)
 	BUF(dir, cpu, HEAD(dir, cpu) & RB_MASK).pkt_len = len;
 	memcpy(&(BUF(dir, cpu, HEAD(dir, cpu) & RB_MASK).data), data, len);
 	HEAD(dir, cpu)++;
-	printk("RBUF PUT: size %lu, head %lu, tail %lu\n", 
+	SHMTUN_PRINTK("RBUF PUT: size %lu, head %lu, tail %lu\n", 
 	       rb_inuse(dir, cpu), HEAD(dir, cpu), TAIL(dir, cpu));
 	return 0;
 }
@@ -181,7 +189,7 @@ static inline int rb_put(enum shmtun_dir dir, int cpu, char *data, int len)
 static inline int rb_get(enum shmtun_dir dir, int cpu, shmem_pkt_t **pkt) {
 	if (rb_inuse(dir, cpu) != 0) {
 		*pkt = &(BUF(dir, cpu, TAIL(dir, cpu) & RB_MASK));
-		printk("RBUF GET: size %lu, head %lu, tail %lu\n", 
+		SHMTUN_PRINTK("RBUF GET: size %lu, head %lu, tail %lu\n", 
 		       rb_inuse(dir, cpu),                                          
 		       HEAD(dir, cpu), TAIL(dir, cpu));;
 		return 0;
@@ -222,17 +230,17 @@ static struct napi_struct global_napi;
 void smp_popcorn_net_interrupt(struct pt_regs *regs)
 {
 	ack_APIC_irq();
-	printk("Interrupt received!\n");
+	SHMTUN_PRINTK("Interrupt received!\n");
 	inc_irq_stat(irq_popcorn_net_count);
 	irq_enter();
 
 	/* All we do in the handler is switch into polling mode. */
 	if (likely(napi_schedule_prep(&global_napi))) {
 		/* Disable RX interrupt */
-		printk("Turning off RX interrupt...\n");
+		SHMTUN_PRINTK("Turning off RX interrupt...\n");
 		shmtun_disable_int(global_cpu);
 
-		printk("Calling __napi_schedule...\n");
+		SHMTUN_PRINTK("Calling __napi_schedule...\n");
 		/* Schedule NAPI processing */
 		__napi_schedule(&global_napi);
 	}
@@ -273,7 +281,7 @@ static int shmtun_napi_handler(struct napi_struct *napi, int budget)
 	struct sk_buff *skb;
 	int work_done = 0;
 
-	printk("Called shmtun_napi_handler\n");
+	SHMTUN_PRINTK("Called shmtun_napi_handler\n");
 
 	/* go through ring buffer and get packets, up to budget */
 	while ((skb = shmtun_rx_next_pkt()) && work_done < budget) {
@@ -281,10 +289,10 @@ static int shmtun_napi_handler(struct napi_struct *napi, int budget)
 		work_done++;
 	}
 
-	printk("Total work done: %d\n", work_done);
+	SHMTUN_PRINTK("Total work done: %d\n", work_done);
 
 	if (work_done < budget) {
-		printk("Going back to interrupt mode!\n");
+		SHMTUN_PRINTK("Going back to interrupt mode!\n");
 		napi_gro_flush(napi);
 		__napi_complete(napi);
 		shmtun_enable_int(global_cpu);
@@ -410,7 +418,7 @@ static netdev_tx_t shmtun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
 	int rc;
-	//printk("Called tun_net_xmit, length %d\n", skb->len);
+	SHMTUN_PRINTK("Called tun_net_xmit, length %d\n", skb->len);
 
 	tun_debug(KERN_INFO, tun, "tun_net_xmit %d\n", skb->len);
 
@@ -420,7 +428,7 @@ static netdev_tx_t shmtun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	rc = shmtun_put_shmem(tun, skb);
 
-	//printk("Returning NETDEV_TX_OK, rc = %d\n", rc);
+	SHMTUN_PRINTK("Returning NETDEV_TX_OK, rc = %d\n", rc);
 
 	kfree_skb(skb);
 
@@ -455,7 +463,7 @@ static u32 shmtun_net_fix_features(struct net_device *dev, u32 features)
 static void shmtun_poll_controller(struct net_device *dev)
 {
 
-	printk("Called tun_poll_controller...\n");
+	SHMTUN_PRINTK("Called tun_poll_controller...\n");
 
 	/*
 	 * Tun only receives frames when:
@@ -516,11 +524,11 @@ static struct sk_buff * shmtun_get_pkt_from_rbuf(enum shmtun_dir dir, int cpu)
 	rc = rb_get(dir, cpu, &pkt);
 
 	if (rc) {
-		//printk("No packet in ring buffer, returning...\n");
+		//SHMTUN_PRINTK("No packet in ring buffer, returning...\n");
 		return NULL;
 	}
 
-	printk("Received packet of pkt_len %d\n", pkt->pkt_len);
+	SHMTUN_PRINTK("Received packet of pkt_len %d\n", pkt->pkt_len);
 
 	skb = dev_alloc_skb(pkt->pkt_len + 2);
 
@@ -554,7 +562,7 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 	ssize_t total = 0;
 	enum shmtun_dir dir;
 
-	printk("Called tun_put_shmem, len = %d\n", skb->len);
+	SHMTUN_PRINTK("Called tun_put_shmem, len = %d\n", skb->len);
 
 	/* code from LDD3 example */
 	data = skb->data;
@@ -566,7 +574,7 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 		data = shortpkt;
 	}
 	/*
-	printk("SEND from %d.%d.%d.%d to %d.%d.%d.%d\n",
+	SHMTUN_PRINTK("SEND from %d.%d.%d.%d to %d.%d.%d.%d\n",
 			(int) data[12], (int) data[13], (int) data[14], (int) data[15],
 			(int) data[16], (int) data[17], (int) data[18], (int) data[19]
 	      );
@@ -575,10 +583,10 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 	/* NOTE -- this debug code is from LDD3 */
 	if (0) { /* enable this conditional to look at the data */
 		int i;
-		printk("len is %i\n" KERN_DEBUG "data:",len);
+		SHMTUN_PRINTK("len is %i\n" KERN_DEBUG "data:",len);
 		for (i=14 ; i<len; i++)
-			printk(" %02x",data[i]&0xff);
-		printk("\n");
+			SHMTUN_PRINTK(" %02x",data[i]&0xff);
+		SHMTUN_PRINTK("\n");
 	}
 
 	if (SHMTUN_IS_SERVER) {
@@ -591,7 +599,7 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 		dir = SHMTUN_TO_HOST;
 	}
 
-	printk("buf_cpu %d, ipi_cpu %d, dir %d\n",
+	SHMTUN_PRINTK("buf_cpu %d, ipi_cpu %d, dir %d\n",
 	       buf_cpu, ipi_cpu, dir);
 
 	/* copy frame into ring buffer */
@@ -605,12 +613,12 @@ static ssize_t shmtun_put_shmem(struct tun_struct *tun,
 
 	/* if RX interrupts are enabled, send IPI to receiver */
 	if (shmtun_int_enabled(ipi_cpu)) {
-		printk("Interrupts enabled for CPU %d, sending IPI...\n", 
+		SHMTUN_PRINTK("Interrupts enabled for CPU %d, sending IPI...\n", 
 		       ipi_cpu);
 
 		apic->send_IPI_single(ipi_cpu, POPCORN_NET_VECTOR);
 	} else {
-		printk("Interrupts not enabled for CPU %d\n", ipi_cpu);
+		SHMTUN_PRINTK("Interrupts not enabled for CPU %d\n", ipi_cpu);
 	}
 
 	total += skb->len;
@@ -1266,11 +1274,11 @@ static void process_shmtun_wq_item(struct work_struct * work)
 			cpu = w->cpu_to_add;
 
 			if (cpu < 0 || cpu >= POPCORN_MAX_CPUS) {
-				printk("Invalid CPU %d specified!\n", cpu);
+				printk("WQ: Invalid CPU %d specified!\n", cpu);
 				goto out;
 			}
 
-			printk("phys addr: 0x%lx\n", 
+			printk("WQ: phys addr: 0x%lx\n", 
 			       shmem_directory->percpu_phys_addr[cpu]);
 
 			if (!shmem_directory->percpu_phys_addr[cpu]) {
@@ -1282,17 +1290,17 @@ static void process_shmtun_wq_item(struct work_struct * work)
 				ioremap_cache(shmem_directory->percpu_phys_addr[cpu],
 					      sizeof(shmtun_percpu_t));
 
-			printk("ioremap_cache returned 0x%p\n", 
+			printk("WQ: ioremap_cache returned 0x%p\n", 
 			       shmem_percpu[cpu]);
 
 			if (!shmem_percpu[cpu]) {
-				printk("Failed to map percpu win for cpu %d at 0x%lx\n",
+				printk("WQ: Failed to map percpu win for cpu %d at 0x%lx\n",
 				       cpu, shmem_directory->percpu_phys_addr[cpu]);
 				goto out;
 			}
 			break;
 		default:
-			printk("Invalid work queue operation %d\n", w->op);
+			printk("WQ: Invalid work queue operation %d\n", w->op);
 	}
 out:
 	kfree(work);
