@@ -274,7 +274,7 @@ static struct workqueue_struct *exit_wq;
  */
 void dump_task(struct task_struct* task, struct pt_regs* regs, unsigned long stack_ptr) {
 #if PROCESS_SERVER_VERBOSE
-    if(NULL == task) return;
+    if (!task) return;
 
     PSPRINTK("DUMP TASK\n");
     PSPRINTK("PID: %d\n",task->pid);
@@ -1492,8 +1492,8 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         tx_ret = pcn_kmsg_send_long(dst_cpu, 
                     (struct pcn_kmsg_long_message*)vma_xfer, 
                     sizeof(vma_transfer_t) - sizeof(vma_xfer->header));
-        if(tx_ret <= 0) {
-            PSPRINTK("Unable to send vma transfer message\n");
+        if (tx_ret) {
+            PSPRINTK("Unable to send vma transfer message, rc = %d\n", tx_ret);
         }
 
         PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}\n",
@@ -1579,6 +1579,9 @@ static int __init process_server_init(void) {
     /*
      * Register to receive relevant incomming messages.
      */
+
+    printk("BEN: Registering process server callbacks!\n");
+
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER, 
             handle_pte_transfer);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER, 
