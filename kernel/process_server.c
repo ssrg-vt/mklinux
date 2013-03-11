@@ -32,7 +32,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -722,7 +722,6 @@ void process_exit_item(struct work_struct* work) {
     pid_t pid = w->pid;
     struct pid* spid;
     struct task_struct* task;
-    PSPRINTK("SHIT WORK %d\n",pid);
     for_each_process(task) {
         if(task->pid == pid) {
             PSPRINTK("Found task to kill, killing\n");
@@ -1214,15 +1213,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     // Load fs
     // TODO: Move to arch
-    //wrmsrl(MSR_FS_BASE,clone_data->thread_fs);
-    //loadsegment(fs, clone_data->thread_fs);
-    //do_arch_prctl(current,ARCH_SET_FS,clone_data->thread_fs);
-    
-    //get_cpu();
-    //loadsegment(fs,current->thread.fs);
-    //wrmsrl(MSR_FS_BASE,current->thread.fs);
-    //put_cpu();
-    loadsegment(fs,0);
+    wrmsrl(MSR_FS_BASE,current->thread.fs);
 
     dump_clone_data(clone_data);
     dump_task(current,regs, clone_data->stack_ptr);
