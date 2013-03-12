@@ -156,16 +156,18 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 {
 	unsigned long ticket;
 
+	printk("%s: called for id %lu, msg 0x%p\n", __func__, id, msg);
+
 	/* if the queue is already really long, return EAGAIN */
 	if (mcastwin_inuse(id) >= RB_SIZE) {
-		printk("Window full, caller should try again...\n");
+		printk("%s: window full, caller should try again...\n", __func__);
 		return -EAGAIN;
 	}
 
 	/* grab ticket */
 	ticket = fetch_and_add(&MCASTWIN(id)->head, 1);
-	printk(KERN_ERR "ticket = %lu, head = %lu, tail = %lu\n",
-	       ticket, MCASTWIN(id)->head, MCASTWIN(id)->tail);
+	printk("%s: ticket = %lu, head = %lu, tail = %lu\n",
+	       __func__, ticket, MCASTWIN(id)->head, MCASTWIN(id)->tail);
 
 	/* spin until there's a spot free for me */
 	while (mcastwin_inuse(id) >= RB_SIZE) {}
@@ -177,6 +179,9 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 	/* set counter to (# in group - self) */
 	MCASTWIN(id)->read_counter[ticket & RB_MASK] = 
 		rkinfo->mcast_wininfo[id].num_members - 1;
+
+	printk("%s: set counter to %d\n", __func__, 
+	       rkinfo->mcast_wininfo[id].num_members - 1);
 
 	pcn_barrier();
 
@@ -191,23 +196,37 @@ static inline int mcastwin_get(pcn_kmsg_mcast_id id,
 {
 	struct pcn_kmsg_message *rcvd;
 
-	if (!mcastwin_inuse(id)) {
-		printk("Nothing in buffer, returning...\n");
+	printk("%s: called for id %lu, head %lu, tail %lu, local_tail %lu\n", 
+	       __func__, id, MCASTWIN(id)->head, MCASTWIN(id)->tail, LOCAL_TAIL(id));
+
+retry:
+
+	/* if we sent a bunch of messages, it's possible our local_tail
+	   has gotten behind the global tail and we need to update it */
+	/* TODO -- atomicity concerns here? */
+	if (LOCAL_TAIL(id) < MCASTWIN(id)->tail) {
+		LOCAL_TAIL(id) = MCASTWIN(id)->tail;
+	}
+
+	if (MCASTWIN(id)->head == LOCAL_TAIL(id)) {
+		printk("%s: nothing in buffer, returning...\n", __func__);
 		return -1;
 	}
 
-	printk(KERN_ERR "reached mcastwin_get, head %lu, tail %lu\n",
-	       MCASTWIN(id)->head, MCASTWIN(id)->tail);
-
 	/* spin until entry.ready at end of cache line is set */
-	rcvd = &(MCASTWIN(id)->buffer[MCASTWIN(id)->tail & RB_MASK]);
-	//printk(KERN_ERR "Ready bit: %u\n", rcvd->hdr.ready);
+	rcvd = &(MCASTWIN(id)->buffer[LOCAL_TAIL(id) & RB_MASK]);
 	while (!rcvd->hdr.ready) {
 		pcn_cpu_relax();
 	}
 
 	// barrier here?
 	pcn_barrier();
+
+	/* we can't step on our own messages! */
+	if (rcvd->hdr.from_cpu == my_cpu) {
+		LOCAL_TAIL(id)++;
+		goto retry;
+	}
 
 	rcvd->hdr.ready = 0;
 
@@ -220,10 +239,12 @@ static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
 {
 	unsigned long slot = LOCAL_TAIL(id) & RB_MASK;
 
-	printk("Advancing tail; local tail currently on slot %lu\n", LOCAL_TAIL(id));
+	printk("%s: local tail currently on slot %lu\n", 
+	       __func__, LOCAL_TAIL(id));
 
 	if (atomic_dec_and_test((atomic_t *) &MCASTWIN(id)->read_counter[slot])) {
-		printk("We're the last reader to go; advancing global tail\n");
+		printk("%s: we're the last reader to go; advancing global tail\n",
+		       __func__);
 		atomic64_inc((atomic64_t *) &MCASTWIN(id)->tail);
 	}
 
@@ -241,7 +262,7 @@ static void process_kmsg_wq_item(struct work_struct * work)
 	pcn_kmsg_mcast_id id;
 	pcn_kmsg_work_t *w = (pcn_kmsg_work_t *) work;
 
-	printk("Processing kmsg wq item, op %d\n", w->op);
+	printk("%s: called with op %d\n", __func__, w->op);
 
 	switch (w->op) {
 		case PCN_KMSG_WQ_OP_MAP_MSG_WIN:
@@ -869,25 +890,25 @@ static void pcn_kmsg_action(struct softirq_action *h)
 	struct pcn_kmsg_message *msg;
 	int i;
 
-	printk(KERN_ERR "Popcorn kmsg softirq handler called...\n");
+	printk("%s: called...\n", __func__);
 
 	/* Get messages out of the buffer first */
 
 	while (!win_get(rkvirt[my_cpu], &msg)) {
-		printk("Got a message!\n");
+		printk("%s: got a message!\n", __func__);
 
 		/* Special processing for large messages */
 		if (msg->hdr.is_lg_msg) {
-			printk("Message is a large message!\n");
+			printk("%s: message is a large message!\n", __func__);
 			rc = process_large_message(msg);
 		} else {
-			printk("Message is a small message!\n");
+			printk("%s: message is a small message!\n", __func__);
 			rc = process_small_message(msg);
 		}
 
 	}
 
-	printk("No more messages in ring buffer; checking multicast queues...\n");
+	printk("%s: no more messages in ring buffer; checking multicast queues...\n", __func__);
 
 	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
 		if (MCASTWIN(i)) {
@@ -915,16 +936,49 @@ static void pcn_kmsg_action(struct softirq_action *h)
 SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 {
 	int rc = 0;
+	unsigned long mask = (1 << 3) | 1;
+	static pcn_kmsg_mcast_id test_id = -1;
+	struct pcn_kmsg_test_message msg;
 
 #if 1
-	/* test mask includes specified CPU and CPU 0 */
-	unsigned long mask = (1 << cpu) | 1;
-	pcn_kmsg_mcast_id test_id = -1;
+	switch (cpu) {
+		case 0:
+			/* open */
+			printk("%s: open\n", __func__);
+			rc = pcn_kmsg_mcast_open(&test_id, mask);
+			if (rc) {
+				printk("POPCORN: pcn_kmsg_mcast_open returned %d, test_id %lu\n", 
+				       rc, test_id);
+			}
+			break;
 
-	rc = pcn_kmsg_mcast_open(&test_id, mask);
-	if (rc) {
-		printk("POPCORN: pcn_kmsg_mcast_open returned %d, test_id %lu\n", 
-		       rc, test_id);
+		case 1:
+			/* send */
+			printk("%s: send\n", __func__);
+			msg.hdr.type = PCN_KMSG_TYPE_TEST;
+			msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+
+			rc = pcn_kmsg_mcast_send(test_id, (struct pcn_kmsg_message *) &msg);
+			if (rc) {
+				printk("%s: failed to send mcast message to group %lu!\n",
+				       __func__, test_id);
+				return -1;
+			}
+			break;
+
+		case 2:
+			/* close */
+			printk("%s: close\n", __func__);
+
+			rc = pcn_kmsg_mcast_close(test_id);
+
+			printk("%s: mcast close returned %d\n", __func__, rc);
+
+			break;
+
+		default:
+			printk("%s: invalid option %d\n", __func__, cpu);
+			return -1;
 	}
 
 #else
@@ -984,7 +1038,7 @@ void print_mcast_map(void)
 
 	printk("ACTIVE MCAST GROUPS:\n");
 
-	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
+	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
 		if (rkinfo->mcast_wininfo[i].mask) {
 			printk("group %d, mask 0x%lx, num_members %d\n", 
 			       i, rkinfo->mcast_wininfo[i].mask, 
@@ -1180,9 +1234,48 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 	return 0;
 }
 
+static int __pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
+{
+	int i, rc;
+	
+	if (!msg) {
+		printk("%s: Passed in a null pointer to msg!\n", __func__);
+		return -1;
+	}
+
+	/* set source CPU */
+	msg->hdr.from_cpu = my_cpu;
+
+	/* place message in rbuf */
+	rc = mcastwin_put(id, msg);
+
+	if (rc) {
+		printk("%s: failed to place message in mcast window -- maybe it's full?\n",
+		       __func__);
+		return -1;
+	}
+
+	/* send IPI to all in mask but me */
+
+	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
+		if (rkinfo->mcast_wininfo[id].mask & (1ULL << i)) {
+			if (i != my_cpu) {
+				printk("%s: sending IPI to CPU %d\n", __func__, i);
+				apic->send_IPI_mask(cpumask_of(i), POPCORN_KMSG_VECTOR);
+			}
+		}
+	}
+
+	return 0;
+}
+
+#define MCAST_HACK 0
+
 /* Send a message to the specified multicast group. */
 int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 {
+#if MCAST_HACK
+
 	int i, rc;
 
 	printk("Sending mcast message, id %lu\n", id);
@@ -1201,6 +1294,21 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 	}
 
 	return 0;
+#else
+	int rc;
+
+	printk("%s: sending mcast message to group id %lu\n",
+	       __func__, id);
+
+	msg->hdr.is_lg_msg = 0;
+	msg->hdr.lg_start = 0;
+	msg->hdr.lg_end = 0;
+	msg->hdr.lg_seqnum = 0;
+
+	rc = __pcn_kmsg_mcast_send(id, msg);
+
+	return rc;
+#endif
 }
 
 /* Send a message to the specified multicast group. */
@@ -1208,6 +1316,7 @@ int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id,
 			     struct pcn_kmsg_long_message *msg, 
 			     unsigned int payload_size)
 {
+#if MCAST_HACK
 	int i, rc;
 
 	printk("Sending long mcast message, id %lu, size %u\n", 
@@ -1227,6 +1336,13 @@ int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id,
 	}
 
 	return 0;
+#else
+
+	printk("%s: sending long mcast message, id %lu, size %u\n",
+	       __func__, id, payload_size);
+
+	return 0;
+#endif
 }
 
 
