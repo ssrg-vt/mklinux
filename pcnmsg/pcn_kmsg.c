@@ -118,7 +118,7 @@ static inline int win_get(struct pcn_kmsg_window *win,
 	}
 
 	printk(KERN_ERR "reached win_get, head %lu, tail %lu\n", 
-	       win->head, win->tail);
+	       win->head, win->tail);	
 
 	/* spin until entry.ready at end of cache line is set */
 	rcvd = &(win->buffer[win->tail & RB_MASK]);
@@ -848,6 +848,15 @@ static void process_mcast_queue(pcn_kmsg_mcast_id id)
 	while (!mcastwin_get(id, &msg)) {
 		printk("Got an mcast message!\n");
 
+		/* If the mcast message is a window close, handle it right away;
+		   otherwise, put the message in the appropriate queue */
+		if (msg->hdr.type == PCN_KMSG_TYPE_MCAST_CLOSE) {
+
+			printk("Got mcast close message!\n");
+		} else {
+
+		}
+
 		mcastwin_advance_tail(id);
 	}
 
@@ -946,6 +955,16 @@ SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 
 /* MULTICAST */
 
+inline void lock_chan(pcn_kmsg_mcast_id id)
+{
+
+}
+
+inline void unlock_chan(pcn_kmsg_mcast_id id)
+{
+
+}
+
 inline int count_members(unsigned long mask)
 {
 	int i, count = 0;
@@ -978,7 +997,7 @@ void print_mcast_map(void)
 /* Open a multicast group containing the CPUs specified in the mask. */
 int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 {
-	int rc, i, found_id = -1;
+	int rc, i, found_id;
 	struct pcn_kmsg_mcast_message msg;
 	struct pcn_kmsg_mcast_wininfo *slot;
 	struct pcn_kmsg_mcast_window * new_win;
@@ -990,6 +1009,10 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 		       my_cpu, mask);
 		return -1;
 	}
+
+	/* find first unused channel */
+retry:
+	found_id = -1;
 
 	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
 		if (!rkinfo->mcast_wininfo[i].num_members) {
@@ -1005,17 +1028,25 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 		return -1;
 	}
 
-	/* TODO -- lock and check if channel is still unused; 
+	/* lock and check if channel is still unused; 
 	   otherwise, try again */
+	lock_chan(found_id);
 
+	if (rkinfo->mcast_wininfo[i].num_members) {
+		unlock_chan(found_id);
+		printk("Got scooped; trying again...\n");
+		goto retry;
+	}
+
+	/* set slot info */
 	slot = &rkinfo->mcast_wininfo[found_id];
-
 	slot->mask = mask;
 	slot->num_members = count_members(mask);
 	slot->owner_cpu = my_cpu;
 
 	printk("Found %d members\n", slot->num_members);
 
+	/* kmalloc window for slot */
 	new_win = kmalloc(sizeof(struct pcn_kmsg_mcast_window), GFP_ATOMIC);
 
 	if (!new_win) {
@@ -1028,6 +1059,8 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 	printk("Malloced mcast receive window %d at phys addr 0x%lx\n",
 	       found_id, slot->phys_addr);
 
+	/* send message to each member except self.  Can't use mcast yet because
+	   group is not yet established, so unicast to each CPU in mask. */
 	msg.hdr.type = PCN_KMSG_TYPE_MCAST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 	msg.type = PCN_KMSG_MCAST_OPEN;
@@ -1035,8 +1068,6 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 	msg.mask = mask;
 	msg.num_members = slot->num_members;
 
-	/* send message to each member except self.  Can't use mcast yet because
-	   group is not yet established, so unicast to each CPU in mask. */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
 		if ((slot->mask & (1ULL << i)) && 
 		    (my_cpu != i)) {
@@ -1053,7 +1084,7 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 	*id = found_id;
 
 out:
-	/* TODO -- unlock */
+	unlock_chan(found_id);
 
 	return 0;
 }
@@ -1061,35 +1092,44 @@ out:
 /* Add new members to a multicast group. */
 int pcn_kmsg_mcast_add_members(pcn_kmsg_mcast_id id, unsigned long mask)
 {
-	/* TODO -- lock! */
+	lock_chan(id);
 
-	rkinfo->mcast_wininfo[id].mask |= mask; 
+	printk("Operation not yet supported!\n");
 
-	/* TODO -- unlock! */
+	//rkinfo->mcast_wininfo[id].mask |= mask; 
 
+	/* TODO -- notify new members */
+
+	unlock_chan(id);
 	return 0;
 }
 
 /* Remove existing members from a multicast group. */
 int pcn_kmsg_mcast_delete_members(pcn_kmsg_mcast_id id, unsigned long mask)
 {
-	/* TODO -- lock! */
+	lock_chan(id);
 
-	rkinfo->mcast_wininfo[id].mask &= !mask;
+	printk("Operation not yet supported!\n");
 
-	/* TODO -- unlock! */
+	//rkinfo->mcast_wininfo[id].mask &= !mask;
 
+	/* TODO -- notify new members */
+
+	unlock_chan(id);
 
 	return 0;
 }
 
-inline int __pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
+inline int pcn_kmsg_mcast_close_notowner(pcn_kmsg_mcast_id id)
 {
-	/* TODO -- lock! */
-
 	printk("Closing multicast channel %lu on CPU %d\n", id, my_cpu);
 
-	/* TODO --unlock! */
+	/* process remaining messages in queue (should there be any?) */
+
+	/* remove queue from list of queues being polled */
+	iounmap(MCASTWIN(id));
+
+	MCASTWIN(id) = NULL;
 
 	return 0;
 }
@@ -1099,6 +1139,18 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 {
 	int rc;
 	struct pcn_kmsg_mcast_message msg;
+	struct pcn_kmsg_mcast_wininfo *wi = &rkinfo->mcast_wininfo[id];
+
+	if (wi->owner_cpu != my_cpu) {
+		printk("Only the creator (cpu %d) can close mcast group %lu!\n",
+		       wi->owner_cpu, id);
+		return -1;
+	}
+
+	lock_chan(id);
+
+	/* set window to close */
+	wi->is_closing = 1;
 
 	/* broadcast message to close window globally */
 	msg.hdr.type = PCN_KMSG_TYPE_MCAST;
@@ -1112,11 +1164,18 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 		return -1;
 	}
 
-	/* close window locally */
-	__pcn_kmsg_mcast_close(id);
+	/* wait until global_tail == global_head */
+	while (MCASTWIN(id)->tail != MCASTWIN(id)->head) {}
 
-	rkinfo->mcast_wininfo[id].mask = 0;
-	rkinfo->mcast_wininfo[id].num_members = 0;
+	/* free window and set channel as unused */
+	kfree(MCASTWIN(id));
+	MCASTWIN(id) = NULL;
+
+	wi->mask = 0;
+	wi->num_members = 0;
+	wi->is_closing = 0;
+
+	unlock_chan(id);
 
 	return 0;
 }
@@ -1201,16 +1260,16 @@ static int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message)
 			break;
 
 		case PCN_KMSG_MCAST_ADD_MEMBERS:
-			printk("Processing mcast add members message...\n");
+			printk("Mcast add not yet implemented...\n");
 			break;
 
 		case PCN_KMSG_MCAST_DEL_MEMBERS:
-			printk("Processing mcast del members message...\n");
+			printk("Mcast delete not yet implemented...\n");
 			break;
 
 		case PCN_KMSG_MCAST_CLOSE:
 			printk("Processing mcast close message...\n");
-			__pcn_kmsg_mcast_close(msg->id);
+			pcn_kmsg_mcast_close_notowner(msg->id);
 			break;
 
 		default:

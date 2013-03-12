@@ -18,8 +18,9 @@
 #define POPCORN_MAX_MCAST_CHANNELS 32
 
 struct pcn_kmsg_mcast_wininfo {
-	unsigned char lock;
+	volatile unsigned char lock;
 	unsigned char owner_cpu;
+	volatile unsigned char is_closing;
 	unsigned long mask;
 	unsigned int num_members;
 	unsigned long phys_addr;
@@ -55,6 +56,7 @@ enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_TEST,
 	PCN_KMSG_TYPE_CHECKIN,
 	PCN_KMSG_TYPE_MCAST,
+	PCN_KMSG_TYPE_MCAST_CLOSE,
 	PCN_KMSG_TYPE_SHMTUN,
 	PCN_KMSG_TYPE_MAX
 };
