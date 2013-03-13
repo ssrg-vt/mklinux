@@ -5583,6 +5583,9 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	    get_task_struct(p);
 	    rcu_read_unlock();
             process_server_do_migration(p,i);
+	    
+	    schedule();
+	    __set_task_state(p, TASK_RUNNING);	    
 	    put_task_struct(p);
 	    put_online_cpus();
             return 0;
