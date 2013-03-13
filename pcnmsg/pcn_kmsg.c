@@ -253,7 +253,9 @@ static void process_kmsg_wq_item(struct work_struct * work)
 			}
 
 			rkvirt[cpu] = ioremap_cache(rkinfo->phys_addr[cpu],
-						    sizeof(struct pcn_kmsg_window));
+						    ((sizeof(struct pcn_kmsg_window) >> PAGE_SHIFT) +1)<< PAGE_SHIFT);
+printk("POPCORN: ioremap %lx [%d] %ld\n", rkinfo->phys_addr[cpu], cpu, ((sizeof(struct pcn_kmsg_window) >> PAGE_SHIFT) +1) << PAGE_SHIFT);
+
 			if (rkvirt[cpu]) {
 				printk("POPCORN: ioremapped window, virt addr 0x%p\n", 
 				       rkvirt[cpu]);
@@ -409,10 +411,10 @@ static int do_checkin(void)
 
 		if (rkinfo->phys_addr[i]) {
 			rkvirt[i] = ioremap_cache(rkinfo->phys_addr[i],
-						  sizeof(struct pcn_kmsg_rkinfo));
+						  ((sizeof(struct pcn_kmsg_window) >> PAGE_SHIFT ) +1) << PAGE_SHIFT);
 			if (rkvirt[i]) {
-				printk("POPCORN: ioremapped CPU %d's window, virt addr 0x%p\n", 
-				       i, rkvirt[i]);
+				printk("POPCORN: ioremapped CPU %d's window, virt addr 0x%p size %ld(%ld)\n", 
+				       i, rkvirt[i], ((sizeof(struct pcn_kmsg_window) >> PAGE_SHIFT) +1) << PAGE_SHIFT , sizeof(struct pcn_kmsg_window));
 			} else {
 				printk("POPCORN: Failed to ioremap CPU %d's window at phys addr 0x%lx\n",
 				       i, rkinfo->phys_addr[i]);
@@ -519,9 +521,9 @@ static int __init pcn_kmsg_init(void)
 	}
 
 	/* Malloc our own receive buffer and set it up */
-	win_virt_addr = __get_free_pages(GFP_KERNEL, 2);
-	printk("Allocated 4 pages for my window, virt addr 0x%lx\n", 
-	       win_virt_addr);
+	win_virt_addr = kmalloc(sizeof(struct pcn_kmsg_window), GFP_KERNEL);
+	printk("Allocated %ld bytes for my window, virt addr 0x%lx\n", 
+	       sizeof(struct pcn_kmsg_window), win_virt_addr);
 	rkvirt[my_cpu] = (struct pcn_kmsg_window *) win_virt_addr;
 	win_phys_addr = virt_to_phys((void *) win_virt_addr);
 	printk("Physical address: 0x%lx\n", win_phys_addr);
