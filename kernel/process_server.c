@@ -1508,22 +1508,25 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->header.type = PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST;
     request->header.prio = PCN_KMSG_PRIO_NORMAL;
     request->clone_flags = clone_flags;
+    request->clone_request_id = lclone_request_id;
+    memcpy( &request->regs, regs, sizeof(struct pt_regs) );
+    strncpy( request->exe_path, rpath, 512 );
+// struct mm_struct -----------------------------------------------------------
     request->stack_start = task->mm->start_stack;
-    request->stack_ptr = stack_start;
     request->heap_start = task->mm->start_brk;
     request->heap_end = task->mm->brk;
     request->env_start = task->mm->env_start;
     request->env_end = task->mm->env_end;
     request->arg_start = task->mm->arg_start;
     request->arg_end = task->mm->arg_end;
-    request->clone_request_id = lclone_request_id;
-    memcpy( &request->regs, regs, sizeof(struct pt_regs) );
-    strncpy( request->exe_path, rpath, 512 );
+// struct task_struct ---------------------------------------------------------    
+    request->stack_ptr = stack_start;
     request->placeholder_pid = task->pid;
     request->placeholder_tgid = task->tgid;
-    //rdmsrl(MSR_FS_BASE,request->thread_fs);
-    request->thread_fs = task->thread.fs;
-    request->thread_gs = task->thread.gs;
+// struct thread_struct -------------------------------------------------------
+    //rdmsrl(MSR_FS_BASE,request->thread_fs); // you can do this ONLY DURING A TASK SWITCH
+    // have a look at: copy_thread() arch/x86/kernel/process_64.c 
+    // have a look at: struct thread_struct arch/x86/include/asm/processor.h
     request->thread_sp0 = task->thread.sp0;
     request->thread_sp = task->thread.sp;
     request->thread_usersp = task->thread.usersp;
@@ -1531,6 +1534,12 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->thread_ds = task->thread.ds;
     request->thread_fsindex = task->thread.fsindex;
     request->thread_gsindex = task->thread.gsindex;
+    request->thread_fs = task->thread.fs;
+    request->thread_gs = task->thread.gs;
+    // ptrace, debug, dr7: struct perf_event *ptrace_bps[HBP_NUM]; unsigned long debugreg6; unsigned long ptrace_dr7;
+    // Fault info: unsigned long cr2; unsigned long trap_no; unsigned long error_code;
+    // floating point: struct fpu fpu; THIS IS NEEDED
+    // IO permissions: unsigned long *io_bitmap_ptr; unsigned long iopl; unsigned io_bitmap_max;
 
     // Send request
     tx_ret = pcn_kmsg_send_long(dst_cpu, 

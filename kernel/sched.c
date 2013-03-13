@@ -5568,6 +5568,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 		return -ESRCH;
 	}
 
+// TODO migration must be removed from here
     /*
      * Multikernel
      */
@@ -5579,7 +5580,11 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
         if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
             printk("found that %d is the cpu\n",i);
             // do the migration
+	    get_task_struct(p);
+	    rcu_read_unlock();
             process_server_do_migration(p,i);
+	    put_task_struct(p);
+	    put_online_cpus();
             return 0;
         }
     }
