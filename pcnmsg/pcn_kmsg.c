@@ -228,8 +228,6 @@ retry:
 		goto retry;
 	}
 
-	rcvd->hdr.ready = 0;
-
 	*msg = rcvd;
 
 	return 0;
@@ -245,6 +243,7 @@ static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
 	if (atomic_dec_and_test((atomic_t *) &MCASTWIN(id)->read_counter[slot])) {
 		printk("%s: we're the last reader to go; advancing global tail\n",
 		       __func__);
+		MCASTWIN(id)->buffer[LOCAL_TAIL(id) & RB_MASK].hdr.ready = 0;
 		atomic64_inc((atomic64_t *) &MCASTWIN(id)->tail);
 	}
 
@@ -936,7 +935,7 @@ static void pcn_kmsg_action(struct softirq_action *h)
 SYSCALL_DEFINE1(popcorn_test_kmsg, int, cpu)
 {
 	int rc = 0;
-	unsigned long mask = (1 << 3) | 1;
+	unsigned long mask = 0xf;
 	static pcn_kmsg_mcast_id test_id = -1;
 	struct pcn_kmsg_test_message msg;
 
@@ -1107,6 +1106,9 @@ retry:
 		printk("Failed to kmalloc mcast buffer!\n");
 		goto out;
 	}
+
+	/* zero out window */
+	memset(new_win, 0x0, sizeof(struct pcn_kmsg_mcast_window));
 
 	MCASTWIN(found_id) = new_win;
 	slot->phys_addr = virt_to_phys(new_win);
