@@ -59,6 +59,10 @@ static struct workqueue_struct *kmsg_wq;
 #define RB_SIZE (1 << RB_SHIFT)
 #define RB_MASK ((1 << RB_SHIFT) - 1)
 
+#define PCN_DEBUG(...) ;
+#define PCN_WARN(...) printk(__VA_ARGS__)
+#define PCN_ERROR(...) printk(__VA_ARGS__)
+
 /* From Wikipedia page "Fetch and add", modified to work for u64 */
 static inline unsigned long fetch_and_add(volatile unsigned long * variable, 
 				   unsigned long value)
@@ -89,8 +93,8 @@ static inline int win_put(struct pcn_kmsg_window *win,
 
 	/* grab ticket */
 	ticket = fetch_and_add(&win->head, 1);
-	printk(KERN_ERR "ticket = %lu, head = %lu, tail = %lu\n", 
-	       ticket, win->head, win->tail);
+	PCN_DEBUG(KERN_ERR "%s: ticket = %lu, head = %lu, tail = %lu\n", 
+		 __func__, ticket, win->head, win->tail);
 
 	/* spin until there's a spot free for me */
 	while (win_inuse(win) >= RB_SIZE) {}
@@ -113,12 +117,12 @@ static inline int win_get(struct pcn_kmsg_window *win,
 	struct pcn_kmsg_message *rcvd;
 
 	if (!win_inuse(win)) {
-		printk(KERN_ERR "Nothing in buffer, returning...\n");
+		PCN_WARN(KERN_ERR "%s: Nothing in buffer, returning...\n", __func__);
 		return -1;
 	}
 
-	printk(KERN_ERR "reached win_get, head %lu, tail %lu\n", 
-	       win->head, win->tail);
+	PCN_DEBUG(KERN_ERR "%s: reached win_get, head %lu, tail %lu\n", 
+	       __func__, win->head, win->tail);
 
 	/* spin until entry.ready at end of cache line is set */
 	rcvd = &(win->buffer[win->tail & RB_MASK]);
@@ -158,13 +162,13 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 
 	/* if the queue is already really long, return EAGAIN */
 	if (mcastwin_inuse(id) >= RB_SIZE) {
-		printk("Window full, caller should try again...\n");
+		PCN_WARN(KERN_ERR"%s: Window full, caller should try again...\n", __func__);
 		return -EAGAIN;
 	}
 
 	/* grab ticket */
 	ticket = fetch_and_add(&MCASTWIN(id)->head, 1);
-	printk(KERN_ERR "ticket = %lu, head = %lu, tail = %lu\n",
+	PCN_DEBUG(KERN_ERR "%s: ticket = %lu, head = %lu, tail = %lu\n", __func__,
 	       ticket, MCASTWIN(id)->head, MCASTWIN(id)->tail);
 
 	/* spin until there's a spot free for me */
@@ -192,11 +196,11 @@ static inline int mcastwin_get(pcn_kmsg_mcast_id id,
 	struct pcn_kmsg_message *rcvd;
 
 	if (!mcastwin_inuse(id)) {
-		printk("Nothing in buffer, returning...\n");
+		PCN_WARN(KERN_ERR"%s: Nothing in buffer, returning...\n", __func__);
 		return -1;
 	}
 
-	printk(KERN_ERR "reached mcastwin_get, head %lu, tail %lu\n",
+	PCN_DEBUG(KERN_ERR "%s: reached mcastwin_get, head %lu, tail %lu\n", __func__,
 	       MCASTWIN(id)->head, MCASTWIN(id)->tail);
 
 	/* spin until entry.ready at end of cache line is set */
@@ -220,10 +224,10 @@ static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
 {
 	unsigned long slot = LOCAL_TAIL(id) & RB_MASK;
 
-	printk("Advancing tail; local tail currently on slot %lu\n", LOCAL_TAIL(id));
+	PCN_DEBUG(KERN_ERR "%s: Advancing tail; local tail currently on slot %lu\n", __func__, LOCAL_TAIL(id));
 
 	if (atomic_dec_and_test((atomic_t *) &MCASTWIN(id)->read_counter[slot])) {
-		printk("We're the last reader to go; advancing global tail\n");
+		PCN_DEBUG(KERN_ERR"%s: We're the last reader to go; advancing global tail\n", __func__);
 		atomic64_inc((atomic64_t *) &MCASTWIN(id)->tail);
 	}
 
@@ -241,32 +245,33 @@ static void process_kmsg_wq_item(struct work_struct * work)
 	pcn_kmsg_mcast_id id;
 	pcn_kmsg_work_t *w = (pcn_kmsg_work_t *) work;
 
-	printk("Processing kmsg wq item, op %d\n", w->op);
+	PCN_DEBUG(KERN_ERR "%s: Processing kmsg wq item, op %d\n", __func__, w->op);
 
 	switch (w->op) {
 		case PCN_KMSG_WQ_OP_MAP_MSG_WIN:
 			cpu = w->cpu_to_add;
 
 			if (cpu < 0 || cpu >= POPCORN_MAX_CPUS) {
-				printk("Invalid CPU %d specified!\n", cpu);
+				PCN_ERROR(KERN_ERR"%s: Invalid CPU %d specified!\n", __func__, cpu);
 				return;
 			}
 
 			rkvirt[cpu] = ioremap_cache(rkinfo->phys_addr[cpu],
 						    ((sizeof(struct pcn_kmsg_window) >> PAGE_SHIFT) +1)<< PAGE_SHIFT);
-printk("POPCORN: ioremap %lx [%d] %ld\n", rkinfo->phys_addr[cpu], cpu, ((sizeof(struct pcn_kmsg_window) >> PAGE_SHIFT) +1) << PAGE_SHIFT);
+PCN_DEBUG("%s: ioremap %lx [%d] %ld\n", 
+	  __func__, rkinfo->phys_addr[cpu], cpu, ((sizeof(struct pcn_kmsg_window) >> PAGE_SHIFT) +1) << PAGE_SHIFT);
 
 			if (rkvirt[cpu]) {
-				printk("POPCORN: ioremapped window, virt addr 0x%p\n", 
+				PCN_DEBUG("%s: ioremapped window, virt addr 0x%p\n", __func__,
 				       rkvirt[cpu]);
 			} else {
-				printk("POPCORN: Failed to ioremap CPU %d's window at phys addr 0x%lx\n",
-				       cpu, rkinfo->phys_addr[cpu]);
+				PCN_DEBUG("%s: Failed to ioremap CPU %d's window at phys addr 0x%lx\n",
+				       __func__, cpu, rkinfo->phys_addr[cpu]);
 			}
 			break;
 
 		case PCN_KMSG_WQ_OP_UNMAP_MSG_WIN:
-			printk("UNMAP_MSG_WIN not yet implemented!\n");
+			PCN_DEBUG("%s: UNMAP_MSG_WIN not yet implemented!\n", __func__);
 			break;
 
 		case PCN_KMSG_WQ_OP_MAP_MCAST_WIN:
@@ -274,17 +279,17 @@ printk("POPCORN: ioremap %lx [%d] %ld\n", rkinfo->phys_addr[cpu], cpu, ((sizeof(
 
 			/* map window */
 			if (id < 0 || id > POPCORN_MAX_MCAST_CHANNELS) {
-				printk("Invalid mcast channel id %lu specified!\n", id);
+				PCN_ERROR("%s: Invalid mcast channel id %lu specified!\n", __func__, id);
 				return;
 			}
 
 			MCASTWIN(id) = ioremap_cache(rkinfo->mcast_wininfo[id].phys_addr,
 						    sizeof(struct pcn_kmsg_mcast_window));
 			if (MCASTWIN(id)) {
-				printk("POPCORN: ioremapped mcast window, virt addr 0x%p\n",
+				PCN_WARN("%s: ioremapped mcast window, virt addr 0x%p\n", __func__,
 				       MCASTWIN(id));
 			} else {
-				printk("POPCORN: Failed to ioremap mcast window %lu at phys addr 0x%lx\n",
+				PCN_ERROR("%s: Failed to ioremap mcast window %lu at phys addr 0x%lx\n", __func__,
 				       id, rkinfo->mcast_wininfo[id].phys_addr);
 			}
 
@@ -292,11 +297,11 @@ printk("POPCORN: ioremap %lx [%d] %ld\n", rkinfo->phys_addr[cpu], cpu, ((sizeof(
 			break;
 
 		case PCN_KMSG_WQ_OP_UNMAP_MCAST_WIN:
-			printk("UNMAP_MCAST_WIN not yet implemented!\n");
+			PCN_ERROR("%s: UNMAP_MCAST_WIN not yet implemented!\n", __func__);
 			break;
 
 		default:
-			printk("Invalid work queue operation %d\n", w->op);
+			PCN_ERROR("%s: Invalid work queue operation %d\n", __func__, w->op);
 
 	}
 
@@ -310,19 +315,19 @@ static int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 	int from_cpu = msg->hdr.from_cpu;
 	pcn_kmsg_work_t *kmsg_work = NULL;
 
-	printk("Called Popcorn callback for processing check-in messages\n");
+	PCN_DEBUG("%s: Called Popcorn callback for processing check-in messages\n", __func__);
 
-	printk("From CPU %d, type %d, window phys addr 0x%lx\n", 
+	PCN_DEBUG("%s: From CPU %d, type %d, window phys addr 0x%lx\n", __func__,
 	       msg->hdr.from_cpu, msg->hdr.type, 
 	       msg->window_phys_addr);
 
 	if (from_cpu >= POPCORN_MAX_CPUS) {
-		printk("Invalid source CPU %d\n", msg->hdr.from_cpu);
+		PCN_ERROR("%s: Invalid source CPU %d\n", __func__, msg->hdr.from_cpu);
 		return -1;
 	}
 
 	if (!msg->window_phys_addr) {
-		printk("Window physical address from CPU %d is NULL!\n", 
+		PCN_ERROR("%s: Window physical address from CPU %d is NULL!\n", __func__,
 		       from_cpu);
 		return -1;
 	}
@@ -338,7 +343,7 @@ static int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 		kmsg_work->cpu_to_add = msg->cpu_to_add;
 		queue_work(kmsg_wq, (struct work_struct *) kmsg_work);
 	} else {
-		printk("Failed to malloc work structure; this is VERY BAD!\n");
+		PCN_ERROR("%s: Failed to malloc work structure; this is VERY BAD!\n", __func__);
 	}
 
 	kfree(message);
@@ -351,7 +356,7 @@ static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
 	struct pcn_kmsg_long_message *lmsg = 
 		(struct pcn_kmsg_long_message *) message;
 
-	printk("Received test long message, payload: %s\n", 
+	PCN_DEBUG("%s: Received test long message, payload: %s\n", __func__,
 	       (char *) &lmsg->payload);
 
 	return 0;
@@ -392,7 +397,7 @@ static int send_checkin_msg(unsigned int cpu_to_add, unsigned int to_cpu)
 	rc = pcn_kmsg_send(to_cpu, (struct pcn_kmsg_message *) &msg);
 
 	if (rc) {
-		printk("Failed to send checkin message, rc = %d\n", rc);
+		PCN_WARN("%s: Failed to send checkin message, rc = %d\n", __func__, rc);
 		return rc;
 	}
 
@@ -413,18 +418,18 @@ static int do_checkin(void)
 			rkvirt[i] = ioremap_cache(rkinfo->phys_addr[i],
 						  ((sizeof(struct pcn_kmsg_window) >> PAGE_SHIFT ) +1) << PAGE_SHIFT);
 			if (rkvirt[i]) {
-				printk("POPCORN: ioremapped CPU %d's window, virt addr 0x%p size %ld(%ld)\n", 
+				PCN_WARN("%s: ioremapped CPU %d's window, virt addr 0x%p size %ld(%ld)\n", __func__,
 				       i, rkvirt[i], ((sizeof(struct pcn_kmsg_window) >> PAGE_SHIFT) +1) << PAGE_SHIFT , sizeof(struct pcn_kmsg_window));
 			} else {
-				printk("POPCORN: Failed to ioremap CPU %d's window at phys addr 0x%lx\n",
+				PCN_ERROR("%s: Failed to ioremap CPU %d's window at phys addr 0x%lx\n", __func__,
 				       i, rkinfo->phys_addr[i]);
 				return -1;
 			}
 
-			printk("Sending checkin message to kernel %d\n", i);			
+			PCN_DEBUG("%s: Sending checkin message to kernel %d\n", __func__, i);			
 			rc = send_checkin_msg(my_cpu, i);
 			if (rc) {
-				printk("POPCORN: Checkin failed for CPU %d!\n", i);
+				PCN_ERROR("%s: POPCORN: Checkin failed for CPU %d!\n", __func__, i);
 				return rc;
 			}
 		}
@@ -439,7 +444,7 @@ static int __init pcn_kmsg_init(void)
 	unsigned long win_virt_addr, win_phys_addr, rkinfo_phys_addr;
 	struct boot_params * boot_params_va;
 
-	printk("Entered pcn_kmsg_init\n");
+	PCN_DEBUG("%s: Entered pcn_kmsg_init\n", __func__);
 
 	my_cpu = raw_smp_processor_id();
 
@@ -451,7 +456,7 @@ static int __init pcn_kmsg_init(void)
 	memset(&lg_buf, 0, POPCORN_MAX_CPUS * sizeof(unsigned char *));
 
 	/* Clear callback table and register default callback functions */
-	printk("Registering initial callbacks...\n");
+	PCN_DEBUG("%s: Registering initial callbacks...\n", __func__);
 	memset(&callback_table, 0, PCN_KMSG_TYPE_MAX * sizeof(pcn_kmsg_cbftn));
 	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_CHECKIN, 
 					&pcn_kmsg_checkin_callback);
@@ -472,41 +477,41 @@ static int __init pcn_kmsg_init(void)
 	}
 
 	/* Register softirq handler */
-	printk("Registering softirq handler...\n");
+	PCN_DEBUG("%s: Registering softirq handler...\n", __func__);
 	open_softirq(PCN_KMSG_SOFTIRQ, pcn_kmsg_action);
 
 	/* Initialize work queue */
-	printk("Initializing workqueue...\n");
+	PCN_DEBUG("%s: Initializing workqueue...\n", __func__);
 	kmsg_wq = create_singlethread_workqueue("kmsg_wq");
 
 	/* If we're the master kernel, malloc and map the rkinfo structure and 
 	   put its physical address in boot_params; otherwise, get it from the 
 	   boot_params and map it */
 	if (!mklinux_boot) {
-		printk("We're the master; mallocing rkinfo...\n");
+		PCN_DEBUG("%s: We're the master; mallocing rkinfo...\n", __func__);
 		rkinfo = kmalloc(sizeof(struct pcn_kmsg_rkinfo), GFP_KERNEL);
 
 		if (!rkinfo) {
-			printk("Failed to malloc rkinfo structure -- this is very bad!\n");
+			PCN_ERROR("%s: Failed to malloc rkinfo structure -- this is very bad!\n", __func__);
 			return -1;
 		}
 
 		rkinfo_phys_addr = virt_to_phys(rkinfo);
 
-		printk("rkinfo virt addr 0x%p, phys addr 0x%lx\n", 
+		PCN_DEBUG("%s: rkinfo virt addr 0x%p, phys addr 0x%lx\n", __func__,
 		       rkinfo, rkinfo_phys_addr);
 
 		memset(rkinfo, 0x0, sizeof(struct pcn_kmsg_rkinfo));
 
-		printk("Setting boot_params...\n");
+		PCN_DEBUG("%s: Setting boot_params...\n", __func__);
 		/* Otherwise, we need to set the boot_params to show the rest
 		   of the kernels where the master kernel's messaging window is. */
 		boot_params_va = (struct boot_params *) 
 			(0xffffffff80000000 + orig_boot_params);
-		printk("Boot params virtual address: 0x%p\n", boot_params_va);
+		PCN_DEBUG("%s: Boot params virtual address: 0x%p\n", __func__, boot_params_va);
 		boot_params_va->pcn_kmsg_master_window = rkinfo_phys_addr;
 	} else {
-		printk("Master kernel rkinfo phys addr: 0x%lx\n", 
+		PCN_DEBUG("%s: Master kernel rkinfo phys addr: 0x%lx\n", __func__, 
 		       (unsigned long) boot_params.pcn_kmsg_master_window);
 
 		rkinfo_phys_addr = boot_params.pcn_kmsg_master_window;
@@ -514,24 +519,24 @@ static int __init pcn_kmsg_init(void)
 				       sizeof(struct pcn_kmsg_rkinfo));
 
 		if (!rkinfo) {
-			printk("Failed to ioremap rkinfo struct from master kernel!\n");
+			PCN_ERROR("%s: Failed to ioremap rkinfo struct from master kernel! Continuing..\n", __func__);
 		}
 
-		printk("rkinfo virt addr: 0x%p\n", rkinfo);
+		PCN_DEBUG("%s: rkinfo virt addr: 0x%p\n", __func__, rkinfo);
 	}
 
 	/* Malloc our own receive buffer and set it up */
 	win_virt_addr = kmalloc(sizeof(struct pcn_kmsg_window), GFP_KERNEL);
-	printk("Allocated %ld bytes for my window, virt addr 0x%lx\n", 
+	PCN_DEBUG("%s: Allocated %ld bytes for my window, virt addr 0x%lx\n", __func__, 
 	       sizeof(struct pcn_kmsg_window), win_virt_addr);
 	rkvirt[my_cpu] = (struct pcn_kmsg_window *) win_virt_addr;
 	win_phys_addr = virt_to_phys((void *) win_virt_addr);
-	printk("Physical address: 0x%lx\n", win_phys_addr);
+	PCN_DEBUG("%s: Physical address: 0x%lx\n", __func__, win_phys_addr);
 	rkinfo->phys_addr[my_cpu] = win_phys_addr;
 
 	rc = pcn_kmsg_window_init(rkvirt[my_cpu]);
 	if (rc) {
-		printk("POPCORN: Failed to initialize kmsg recv window!\n");
+		printk("POPCORN: Failed to initialize kmsg recv window! Continuing..\n");
 	}
 
 	/* If we're not the master kernel, we need to check in */
@@ -552,10 +557,10 @@ subsys_initcall(pcn_kmsg_init);
 /* Register a callback function when a kernel module is loaded */
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
 {
-	printk("POPCORN: registering callback for type %d, ptr 0x%p\n", type, callback);
+	PCN_WARN("%s: registering callback for type %d, ptr 0x%p\n", __func__, type, callback);
 
 	if (type >= PCN_KMSG_TYPE_MAX) {
-		printk("POPCORN: Attempted to register callback with bad type %d\n", type);
+		PCN_ERROR("%s: Attempted to register callback with bad type %d\n", __func__, type);
 		return -1;
 	}
 
@@ -568,7 +573,7 @@ int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
 int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 {
 	if (type >= PCN_KMSG_TYPE_MAX) {
-		printk("POPCORN: Attempted to register callback with bad type %d\n", type);
+		PCN_ERROR("%s: Attempted to register callback with bad type %d\n", __func__, type);
 		return -1;
 	}
 
@@ -585,20 +590,20 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	struct pcn_kmsg_window *dest_window;
 
 	if (dest_cpu >= POPCORN_MAX_CPUS) {
-		printk("POPCORN: Invalid destination CPU %d\n", dest_cpu);
+		PCN_ERROR("%s: Invalid destination CPU %d\n", __func__, dest_cpu);
 		return -1;
 	}
 
 	dest_window = rkvirt[dest_cpu];
 
 	if (!rkvirt[dest_cpu]) {
-		printk("POPCORN: Destination window for CPU %d not mapped -- this is VERY BAD!\n", dest_cpu);
+		PCN_ERROR("%s: Destination window for CPU %d not mapped -- this is VERY BAD!\n", __func__, dest_cpu);
 		/* check if phys addr exists, and if so, map it */
 		return -1;
 	}
 
 	if (!msg) {
-		printk("POPCORN: Passed in a null pointer to msg!\n");
+		PCN_ERROR("%s: Passed in a null pointer to msg!\n", __func__);
 		return -1;
 	}
 
@@ -609,7 +614,7 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	rc = win_put(dest_window, msg);		
 
 	if (rc) {
-		printk("POPCORN: Failed to place message in destination window -- maybe it's full?\n");
+		PCN_WARN("%s: Failed to place message in destination window -- maybe it's full?\n", __func__);
 		return -1;
 	}
 
@@ -642,15 +647,14 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		num_chunks++;
 	}
 
-	printk("Sending large message to CPU %d, type %d, payload size %d bytes, %d chunks\n", 
-	       dest_cpu, lmsg->hdr.type, payload_size, num_chunks);
+	PCN_DEBUG("%s: Sending large message to CPU %d, type %d, payload size %d bytes, %d chunks\n", __func__, dest_cpu, lmsg->hdr.type, payload_size, num_chunks);
 
 	this_chunk.hdr.type = lmsg->hdr.type;
 	this_chunk.hdr.prio = lmsg->hdr.prio;
 	this_chunk.hdr.is_lg_msg = 1;
 
 	for (i = 0; i < num_chunks; i++) {
-		printk("Sending chunk %d\n", i);
+		PCN_DEBUG("%s: Sending chunk %d\n", __func__, i);
 
 		this_chunk.hdr.lg_start = (i == 0) ? 1 : 0;
 		this_chunk.hdr.lg_end = (i == num_chunks - 1) ? 1 : 0;
@@ -683,14 +687,14 @@ static int process_message_list(struct list_head *head)
 	list_for_each_entry_safe(pos, n, head, list) {
 		msg = &pos->msg;
 
-		printk("Item in list, type %d,  processing it...\n", 
+		PCN_DEBUG("%s: Item in list, type %d,  processing it...\n", __func__,
 		       msg->hdr.type);
 
 		list_del(&pos->list);
 
 		if (msg->hdr.type >= PCN_KMSG_TYPE_MAX || 
 		    !callback_table[msg->hdr.type]) {
-			printk("Invalid type %d; continuing!\n", msg->hdr.type);
+			PCN_WARN("%s: Invalid type %d; continuing!\n", __func__, msg->hdr.type);
 			continue;
 		}
 
@@ -714,7 +718,7 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 {
 	ack_APIC_irq();
 
-	printk("Reached Popcorn KMSG interrupt handler!\n");
+	PCN_DEBUG("%s: Reached Popcorn KMSG interrupt handler!\n", __func__);
 
 	inc_irq_stat(irq_popcorn_kmsg_count);
 	irq_enter();
@@ -735,13 +739,13 @@ static int process_large_message(struct pcn_kmsg_message *msg)
 	int rc = 0;
 	int recv_buf_size;
 
-	printk(KERN_ERR "Got a large message fragment, type %u, from_cpu %u, start %u, end %u, seqnum %u!\n",
+	PCN_DEBUG( "%s: Got a large message fragment, type %u, from_cpu %u, start %u, end %u, seqnum %u!\n", __func__,
 	       msg->hdr.type, msg->hdr.from_cpu,
 	       msg->hdr.lg_start, msg->hdr.lg_end,
 	       msg->hdr.lg_seqnum);
 
 	if (msg->hdr.lg_start) {
-		printk("Processing initial message fragment...\n");
+		PCN_DEBUG("%s: Processing initial message fragment...\n", __func__);
 
 		recv_buf_size = sizeof(struct pcn_kmsg_hdr) + 
 			msg->hdr.lg_seqnum * PCN_KMSG_PAYLOAD_SIZE;
@@ -749,7 +753,7 @@ static int process_large_message(struct pcn_kmsg_message *msg)
 		lg_buf[msg->hdr.from_cpu] = kmalloc(recv_buf_size, GFP_ATOMIC);
 
 		if (!lg_buf[msg->hdr.from_cpu]) {
-			printk("Unable to kmalloc buffer for incoming message!  THIS IS BAD!\n");
+			PCN_ERROR("%s: Unable to kmalloc buffer for incoming message!  THIS IS BAD!\n", __func__);
 			goto out;
 		}
 
@@ -763,10 +767,10 @@ static int process_large_message(struct pcn_kmsg_message *msg)
 		       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
 
 		if (msg->hdr.lg_end) {
-			printk("NOTE: Long message of length 1 received; this isn't efficient!\n");
+			PCN_WARN("%s: NOTE: Long message of length 1 received; this isn't efficient!\n", __func__);
 			
 			if (unlikely(!callback_table[msg->hdr.type])) {
-				printk("Callback function for message type %d not registered!\n",
+				PCN_WARN("%s: Callback function for message type %d not registered!\n", __func__,
 						msg->hdr.type);
 				goto out;
 			}
@@ -774,12 +778,12 @@ static int process_large_message(struct pcn_kmsg_message *msg)
 			rc = callback_table[msg->hdr.type]((struct pcn_kmsg_message *)lg_buf[msg->hdr.from_cpu]);
 
 			if (rc) {
-				printk("Large message callback failed!\n");
+				PCN_ERROR("%s: Large message callback failed!\n", __func__);
 			}
 		}
 	} else {
 		
-		printk("Processing subsequent message fragment...\n");
+		PCN_DEBUG("%s: Processing subsequent message fragment...\n", __func__);
 
 		memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu] + 
 		       sizeof(struct pcn_kmsg_hdr) + 
@@ -787,23 +791,23 @@ static int process_large_message(struct pcn_kmsg_message *msg)
 		       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
 
 		if (msg->hdr.lg_end) {
-			printk("Last fragment in series...\n");
+			PCN_DEBUG("%s: Last fragment in series...\n", __func__);
 
-			printk("from_cpu %d, type %d, prio %d\n",
+			PCN_DEBUG("%s: from_cpu %d, type %d, prio %d\n", __func__,
 			       lg_buf[msg->hdr.from_cpu]->hdr.from_cpu,
 			       lg_buf[msg->hdr.from_cpu]->hdr.type,
 			       lg_buf[msg->hdr.from_cpu]->hdr.prio);
 
 			if (unlikely(!callback_table[msg->hdr.type])) {
-				printk("Callback function for message type %d not registered!\n",
-						msg->hdr.type);
+				PCN_WARN("%s: Callback function for message type %d not registered!\n",
+						__func__, msg->hdr.type);
 				goto out;
 			}
 
 			rc = callback_table[msg->hdr.type]((struct pcn_kmsg_message *)lg_buf[msg->hdr.from_cpu]);
 
 			if (rc) {
-				printk("Large message callback failed!\n");
+				PCN_ERROR("%s: Large message callback failed!\n", __func__);
 			}
 		}
 	}
@@ -823,7 +827,7 @@ static int process_small_message(struct pcn_kmsg_message *msg)
 	/* malloc some memory (don't sleep!) */
 	incoming = kmalloc(sizeof(struct pcn_kmsg_container), GFP_ATOMIC);
 	if (!incoming) {
-		printk("Unable to kmalloc buffer for incoming message!  THIS IS BAD!\n");
+		PCN_ERROR("%s: Unable to kmalloc buffer for incoming message!  THIS IS BAD!\n", __func__);
 		win_advance_tail(rkvirt[my_cpu]);
 		return -1;
 	}
@@ -833,25 +837,25 @@ static int process_small_message(struct pcn_kmsg_message *msg)
 	       sizeof(struct pcn_kmsg_message));
 	win_advance_tail(rkvirt[my_cpu]);
 
-	printk("Received message, type %d, prio %d\n",
+	PCN_DEBUG("%s: Received message, type %d, prio %d\n", __func__,
 	       incoming->msg.hdr.type, incoming->msg.hdr.prio);
 
 	/* add container to appropriate list */
 	switch (incoming->msg.hdr.prio) {
 		case PCN_KMSG_PRIO_HIGH:
-			printk("Adding to high-priority list...\n");
+			PCN_DEBUG("%s: Adding to high-priority list...\n", __func__);
 			list_add_tail(&(incoming->list),
 				      &msglist_hiprio);
 			break;
 
 		case PCN_KMSG_PRIO_NORMAL:
-			printk("Adding to normal-priority list...\n");
+			PCN_DEBUG("%s: Adding to normal-priority list...\n", __func__);
 			list_add_tail(&(incoming->list),
 				      &msglist_normprio);
 			break;
 
 		default:
-			printk("Priority value %d unknown -- THIS IS BAD!\n",
+			PCN_ERROR("%s: Priority value %d unknown -- THIS IS BAD!\n", __func__,
 			       incoming->msg.hdr.prio);
 	}
 
@@ -862,7 +866,7 @@ static void process_mcast_queue(pcn_kmsg_mcast_id id)
 {
 	struct pcn_kmsg_message *msg;
 	while (!mcastwin_get(id, &msg)) {
-		printk("Got an mcast message!\n");
+		PCN_DEBUG("%s: Got an mcast message!\n", __func__);
 
 		mcastwin_advance_tail(id);
 	}
@@ -876,40 +880,39 @@ static void pcn_kmsg_action(struct softirq_action *h)
 	struct pcn_kmsg_message *msg;
 	int i;
 
-	printk(KERN_ERR "Popcorn kmsg softirq handler called...\n");
+	PCN_DEBUG("%s: Popcorn kmsg softirq handler called...\n", __func__);
 
 	/* Get messages out of the buffer first */
 
 	while (!win_get(rkvirt[my_cpu], &msg)) {
-		printk("Got a message!\n");
-
+		PCN_DEBUG("%s: Got a message!\n", __func__);
 		/* Special processing for large messages */
 		if (msg->hdr.is_lg_msg) {
-			printk("Message is a large message!\n");
+			PCN_DEBUG("%s: Message is a large message!\n", __func__);
 			rc = process_large_message(msg);
 		} else {
-			printk("Message is a small message!\n");
+			PCN_DEBUG("%s: Message is a small message!\n",  __func__);
 			rc = process_small_message(msg);
 		}
 
 	}
 
-	printk("No more messages in ring buffer; checking multicast queues...\n");
+	PCN_DEBUG("%s: No more messages in ring buffer; checking multicast queues...\n", __func__);
 
 	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
 		if (MCASTWIN(i)) {
-			printk("mcast window %d mapped, processing it...\n", i);
+			PCN_DEBUG("%s: mcast window %d mapped, processing it...\n", __func__, i);
 			process_mcast_queue(i);
 		}
 	}
 
-	printk("Done checking multicast queues; processing messages...\n");
+	PCN_DEBUG("%s: Done checking multicast queues; processing messages...\n", __func__);
 
 	/* Process high-priority queue first */
 	rc = process_message_list(&msglist_hiprio);
 
 	if (list_empty(&msglist_hiprio)) {
-		printk("High-priority queue is empty!\n");
+		PCN_WARN("%s: High-priority queue is empty!\n", __func__);
 	}
 
 	/* Then process normal-priority queue */
@@ -999,10 +1002,10 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 	struct pcn_kmsg_mcast_wininfo *slot;
 	struct pcn_kmsg_mcast_window * new_win;
 
-	printk("Reached pcn_kmsg_mcast_open, mask 0x%lx\n", mask);
+	PCN_DEBUG("%s: Reached pcn_kmsg_mcast_open, mask 0x%lx\n", __func__, mask);
 
 	if (!(mask & (1 << my_cpu))) {
-		printk("This CPU is not a member of the mcast group to be created, cpu %d, mask 0x%lx\n",
+		PCN_ERROR("%s: This CPU is not a member of the mcast group to be created, cpu %d, mask 0x%lx\n", __func__,
 		       my_cpu, mask);
 		return -1;
 	}
@@ -1014,10 +1017,10 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 		}
 	}
 
-	printk("Found channel ID %d\n", found_id);
+	PCN_DEBUG("%s: Found channel ID %d\n", __func__, found_id);
 
 	if (found_id == -1) {
-		printk("No free multicast channels!\n");
+		PCN_ERROR("%s: No free multicast channels!\n", __func__);
 		return -1;
 	}
 
@@ -1030,18 +1033,18 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 	slot->num_members = count_members(mask);
 	slot->owner_cpu = my_cpu;
 
-	printk("Found %d members\n", slot->num_members);
+	PCN_DEBUG("%s: Found %d members\n", __func__, slot->num_members);
 
 	new_win = kmalloc(sizeof(struct pcn_kmsg_mcast_window), GFP_ATOMIC);
 
 	if (!new_win) {
-		printk("Failed to kmalloc mcast buffer!\n");
+		PCN_ERROR("%s: Failed to kmalloc mcast buffer!\n", __func__);
 		goto out;
 	}
 
 	MCASTWIN(found_id) = new_win;
 	slot->phys_addr = virt_to_phys(new_win);
-	printk("Malloced mcast receive window %d at phys addr 0x%lx\n",
+	PCN_DEBUG("%s: Malloced mcast receive window %d at phys addr 0x%lx\n", __func__,
 	       found_id, slot->phys_addr);
 
 	msg.hdr.type = PCN_KMSG_TYPE_MCAST;
@@ -1056,12 +1059,12 @@ int pcn_kmsg_mcast_open(pcn_kmsg_mcast_id *id, unsigned long mask)
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
 		if ((slot->mask & (1ULL << i)) && 
 		    (my_cpu != i)) {
-			printk("Sending message to CPU %d\n", i);
+			PCN_DEBUG("%s: Sending message to CPU %d\n", __func__, i);
 
 			rc = pcn_kmsg_send(i, (struct pcn_kmsg_message *) &msg);
 
 			if (rc) {
-				printk("Message send failed!\n");
+				PCN_ERROR("%s: Message send failed!\n", __func__);
 			}
 		}
 	}
@@ -1103,7 +1106,7 @@ inline int __pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 {
 	/* TODO -- lock! */
 
-	printk("Closing multicast channel %lu on CPU %d\n", id, my_cpu);
+	PCN_DEBUG("%s: Closing multicast channel %lu on CPU %d\n", __func__, id, my_cpu);
 
 	/* TODO --unlock! */
 
@@ -1124,7 +1127,7 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 
 	rc = pcn_kmsg_mcast_send(id, (struct pcn_kmsg_message *) &msg);
 	if (rc) {
-		printk("POPCORN: failed to send mcast close message!\n");
+		PCN_ERROR("%s: POPCORN: failed to send mcast close message!\n", __func__);
 		return -1;
 	}
 
@@ -1142,7 +1145,7 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 {
 	int i, rc;
 
-	printk("Sending mcast message, id %lu\n", id);
+	PCN_DEBUG("%s: Sending mcast message, id %lu\n", __func__, id);
 
 	/* quick hack for testing for now; 
 	   loop through mask and send individual messages */
@@ -1151,7 +1154,7 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg)
 			rc = pcn_kmsg_send(i, msg);
 
 			if (rc) {
-				printk("Batch send failed to CPU %d\n", i);
+				PCN_ERROR("%s: Batch send failed to CPU %d\n", __func__,  i);
 				return -1;
 			}
 		}
@@ -1167,8 +1170,8 @@ int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id,
 {
 	int i, rc;
 
-	printk("Sending long mcast message, id %lu, size %u\n", 
-	       id, payload_size);
+	PCN_DEBUG("%s: Sending long mcast message, id %lu, size %u\n", 
+	       __func__, id, payload_size);
 
 	/* quick hack for testing for now; 
 	   loop through mask and send individual messages */
@@ -1177,7 +1180,7 @@ int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id,
 			rc = pcn_kmsg_send_long(i, msg, payload_size);
 
 			if (rc) {
-				printk("Batch send failed to CPU %d\n", i);
+				PCN_ERROR("%s: Batch send failed to CPU %d\n", __func__, i);
 				return -1;
 			}
 		}
@@ -1198,7 +1201,7 @@ static int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message)
 
 	switch (msg->type) {
 		case PCN_KMSG_MCAST_OPEN:
-			printk("Processing mcast open message...\n");
+			PCN_DEBUG("%s: Processing mcast open message...\n", __func__);
 
 			/* Need to queue work to remap the window in a kernel
 			   thread; it can't happen here */
@@ -1211,26 +1214,26 @@ static int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message)
 				kmsg_work->id_to_join = msg->id;
 				queue_work(kmsg_wq, (struct work_struct *) kmsg_work);
 			} else {
-				printk("Failed to kmalloc work structure; this is VERY BAD!\n");
+				PCN_ERROR("%s: Failed to kmalloc work structure; this is VERY BAD!\n", __func__);
 			}
 
 			break;
 
 		case PCN_KMSG_MCAST_ADD_MEMBERS:
-			printk("Processing mcast add members message...\n");
+			PCN_DEBUG("%s: Processing mcast add members message...\n", __func__);
 			break;
 
 		case PCN_KMSG_MCAST_DEL_MEMBERS:
-			printk("Processing mcast del members message...\n");
+			PCN_DEBUG("%s: Processing mcast del members message...\n", __func__);
 			break;
 
 		case PCN_KMSG_MCAST_CLOSE:
-			printk("Processing mcast close message...\n");
+			PCN_DEBUG("%s: Processing mcast close message...\n", __func__);
 			__pcn_kmsg_mcast_close(msg->id);
 			break;
 
 		default:
-			printk("Invalid multicast message type %d\n", 
+			PCN_ERROR("%s: Invalid multicast message type %d\n", __func__,
 			       msg->type);
 			rc = -1;
 			goto out;

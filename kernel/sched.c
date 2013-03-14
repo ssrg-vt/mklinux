@@ -5583,11 +5583,15 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	    get_task_struct(p);
 	    rcu_read_unlock();
             process_server_do_migration(p,i);
-	    
-	    schedule();
-	    __set_task_state(p, TASK_RUNNING);	    
+	    //schedule(); // ANTONIO PREV VERSION
+	    //__set_task_state(p, TASK_RUNNING); // ANTONIO PREV VERSION
 	    put_task_struct(p);
 	    put_online_cpus();
+	    
+	    schedule(); // this will save us from death
+	    
+	    printk("%s: mklinux pid:%d DEATH POINT\n", __func__, pid);
+	    //BUG();
             return 0;
         }
     }

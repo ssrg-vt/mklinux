@@ -1524,22 +1524,54 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->placeholder_pid = task->pid;
     request->placeholder_tgid = task->tgid;
 // struct thread_struct -------------------------------------------------------
-    //rdmsrl(MSR_FS_BASE,request->thread_fs); // you can do this ONLY DURING A TASK SWITCH
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h
+    {
+      	unsigned long fs, gs, shadowgs;
+	unsigned int fsindex, gsindex;
+	unsigned int ds, cs, es;
+	
+	    if (current != task)
+	      printk("DAVEK current is different from task!\n");
+
     request->thread_sp0 = task->thread.sp0;
     request->thread_sp = task->thread.sp;
     request->thread_usersp = task->thread.usersp;
+    
     request->thread_es = task->thread.es;
+    savesegment(es, es);          
+    if ((current == task) && (es != request->thread_es))
+      printk("DAVEK: es %x thread %x\n", es, request->thread_es);
+      
     request->thread_ds = task->thread.ds;
+    savesegment(ds, ds);
+    if (ds != request->thread_ds)
+      printk("DAVEK: ds %x thread %x\n", ds, request->thread_ds);
+      
     request->thread_fsindex = task->thread.fsindex;
+    savesegment(fs, fsindex);
+    if (fsindex != request->thread_fsindex)
+      printk("DAVEK: fsindex %x thread %x\n", fsindex, request->thread_fsindex);
+      
     request->thread_gsindex = task->thread.gsindex;
+    savesegment(gs, gsindex);
+    if (gsindex != request->thread_gsindex)
+      printk("DAVEK: gsindex %x thread %x\n", gsindex, request->thread_gsindex);
+    
     request->thread_fs = task->thread.fs;
+    rdmsrl(MSR_FS_BASE, fs);
+    if (fs != request->thread_fs)
+      printk("DAVEK: fs %lx thread %lx\n", fs, request->thread_fs);
+
     request->thread_gs = task->thread.gs;
+    rdmsrl(MSR_GS_BASE, gs);
+    if (gs != request->thread_gs)
+      printk("DAVEK: gs %lx thread %lx\n", fs, request->thread_gs);
     // ptrace, debug, dr7: struct perf_event *ptrace_bps[HBP_NUM]; unsigned long debugreg6; unsigned long ptrace_dr7;
     // Fault info: unsigned long cr2; unsigned long trap_no; unsigned long error_code;
     // floating point: struct fpu fpu; THIS IS NEEDED
     // IO permissions: unsigned long *io_bitmap_ptr; unsigned long iopl; unsigned io_bitmap_max;
+    }
 
     // Send request
     tx_ret = pcn_kmsg_send_long(dst_cpu, 
