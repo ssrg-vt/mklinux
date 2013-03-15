@@ -444,9 +444,9 @@ static int __init pcn_kmsg_init(void)
 	unsigned long win_virt_addr, win_phys_addr, rkinfo_phys_addr;
 	struct boot_params * boot_params_va;
 
-	PCN_DEBUG("%s: Entered pcn_kmsg_init\n", __func__);
-
 	my_cpu = raw_smp_processor_id();
+	
+	printk("%s: Entered pcn_kmsg_init raw: %d id: %d\n", __func__, my_cpu, smp_processor_id());
 
 	/* Initialize list heads */
 	INIT_LIST_HEAD(&msglist_hiprio);
@@ -739,6 +739,10 @@ static int process_large_message(struct pcn_kmsg_message *msg)
 	int rc = 0;
 	int recv_buf_size;
 
+	
+	// THERE IS NO CHECK FOR AN EXISTENT MESSAGE IN THE BUFFER!!! :-(
+	
+	
 	PCN_DEBUG( "%s: Got a large message fragment, type %u, from_cpu %u, start %u, end %u, seqnum %u!\n", __func__,
 	       msg->hdr.type, msg->hdr.from_cpu,
 	       msg->hdr.lg_start, msg->hdr.lg_end,

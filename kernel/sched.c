@@ -3281,6 +3281,7 @@ asmlinkage void schedule_tail(struct task_struct *prev)
 	if (current->set_child_tid)
 		put_user(task_pid_vnr(current), current->set_child_tid);
 
+	// Multikernel
     if(current->represents_remote) {
         printk("Sleeping %d\n",current->pid);
         set_current_state( TASK_INTERRUPTIBLE);
@@ -5567,30 +5568,32 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 		put_online_cpus();
 		return -ESRCH;
 	}
+	pid = current->pid;
 
 // TODO migration must be removed from here
     /*
      * Multikernel
      */
-    printk("hello sched_setaffinity\n");
+    printk("%s: cpu %d pid %ld task_struct* %p\n",
+	   __func__, current_cpu, (long)pid, p);
     // For now, migrate to the first cpu in the mask that
     // is not the current cpu
     for(i = 0; i < NR_CPUS; i++) {
-        printk("testing %d for cpu mask\n",i);
         if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
-            printk("found that %d is the cpu\n",i);
+            printk("%s: found cpu to migrate to %d\n", __func__, i);
             // do the migration
 	    get_task_struct(p);
 	    rcu_read_unlock();
             process_server_do_migration(p,i);
-	    //schedule(); // ANTONIO PREV VERSION
-	    //__set_task_state(p, TASK_RUNNING); // ANTONIO PREV VERSION
 	    put_task_struct(p);
 	    put_online_cpus();
+
+	    //while (1) {
+	      schedule(); // this will save us from death
+	    //}
 	    
-	    schedule(); // this will save us from death
-	    
-	    printk("%s: mklinux pid:%d DEATH POINT\n", __func__, pid);
+	    printk("%s: cpu %d pid %ld task_struct* %p DEATH POINT REACHED\n",
+		   __func__, current_cpu, (long)pid, p);
 	    //BUG();
             return 0;
         }

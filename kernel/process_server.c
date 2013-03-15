@@ -722,16 +722,30 @@ void process_exit_item(struct work_struct* work) {
     pid_t pid = w->pid;
     struct pid* spid;
     struct task_struct* task;
+    
+    PSPRINTK("%s: process to kill %ld SEARCHING\n", __func__, (long)pid);
+    
     for_each_process(task) {
         if(task->pid == pid) {
-            PSPRINTK("Found task to kill, killing\n");
+            PSPRINTK("%s: for_each_process Found task to kill, killing\n", __func__);
             spid = task_pid(task);
             __set_task_state(task,TASK_INTERRUPTIBLE);
             kill_pid(spid,SIGKILL,1);
-            break;
+            goto happy_end;
         }
     }
+  
+    task = (pid) ? find_task_by_vpid(pid) : current;
+    if (task) {
+            PSPRINTK("%s: find_process_by_pid Found task to kill, killing\n", __func__);
+            spid = task_pid(task);
+            __set_task_state(task,TASK_INTERRUPTIBLE);
+            kill_pid(spid,SIGKILL,1);
+    }
+    else
+	    printk("%s: process to kill %ld NOT FOUND\n", __func__, pid);
 
+happy_end:
     kfree(work);
 }
 
@@ -897,12 +911,16 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
  */
 static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg) {
     exiting_process_t* msg = (exiting_process_t*)inc_msg;
+    unsigned int source_cpu = msg->header.from_cpu;
     struct task_struct* task;
     exit_work_t* exit_work;
 
+    printk("%s: cpu: %d msg: (pid: %d from_cpu: %d [%d])\n", 
+	   __func__, smp_processor_id(), msg->my_pid,  inc_msg->hdr.from_cpu, source_cpu);
+    
     for_each_process(task) {
         if(task->remote_pid == msg->my_pid &&
-           task->remote_cpu == inc_msg->hdr.from_cpu) {
+           task->remote_cpu == source_cpu) {
 
             PSPRINTK("kmkprocsrv: killing local task pid{%d}\n",task->pid);
             
@@ -1211,10 +1229,42 @@ int process_server_import_address_space(unsigned long* ip,
     regs->ax = 0; // Fake success for the "sched_setaffinity" syscall
                   // that this process just "returned from"
 
-    // Load fs
-    // TODO: Move to arch
-    wrmsrl(MSR_FS_BASE,current->thread.fs);
+    // We assume that an exec is going on
+    // and the current process is the one is executing
+    // (a switch will occur if it is not the one that must execute)
+    {
+    unsigned long fs, gs;
+    unsigned int fsindex, gsindex;
+    savesegment(fs, fsindex);
+    savesegment(gs, gsindex);
 
+    /* Switch FS */
+    if (unlikely(fsindex | current->thread.fsindex))
+      loadsegment(fs, current->thread.fsindex);
+    else 
+      loadsegment(fs, 0);
+    
+    rdmsrl(MSR_FS_BASE, fs);
+    if (fs != current->thread.fs)
+      printk("%s: fs %lx thread %lx (idx %d thread %d)\n",
+	     __func__, fs, current->thread.fs, fsindex, current->thread.fsindex);      
+    if (current->thread.fs)
+	wrmsrl(MSR_FS_BASE, current->thread.fs);
+    
+    /* Switch GS */
+    if (unlikely(gsindex | current->thread.gsindex))
+      loadsegment(gs, current->thread.gsindex);
+    else
+      load_gs_index(0);
+
+    rdmsrl(MSR_GS_BASE, gs);
+    if (gs != current->thread.gs)
+      printk("%s: gs %lx thread %lx (idx %d thread %d)\n",
+	     __func__, gs, current->thread.gs, gsindex, current->thread.gsindex);    
+    if (current->thread.gs)
+	wrmsrl(MSR_FS_BASE, current->thread.gs);
+    }
+    
     dump_clone_data(clone_data);
     dump_task(current,regs, clone_data->stack_ptr);
 
@@ -1560,13 +1610,17 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     
     request->thread_fs = task->thread.fs;
     rdmsrl(MSR_FS_BASE, fs);
-    if (fs != request->thread_fs)
+    if (fs != request->thread_fs) {
+      request->thread_fs = fs;
       printk("DAVEK: fs %lx thread %lx\n", fs, request->thread_fs);
+    }
 
     request->thread_gs = task->thread.gs;
     rdmsrl(MSR_GS_BASE, gs);
-    if (gs != request->thread_gs)
+    if (gs != request->thread_gs) {
+      request->thread_gs = gs;
       printk("DAVEK: gs %lx thread %lx\n", fs, request->thread_gs);
+    }
     // ptrace, debug, dr7: struct perf_event *ptrace_bps[HBP_NUM]; unsigned long debugreg6; unsigned long ptrace_dr7;
     // Fault info: unsigned long cr2; unsigned long trap_no; unsigned long error_code;
     // floating point: struct fpu fpu; THIS IS NEEDED

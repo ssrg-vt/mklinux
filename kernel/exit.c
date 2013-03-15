@@ -899,6 +899,7 @@ NORET_TYPE void do_exit(long code)
      * Multikernel
      */
     if(tsk->executing_for_remote) {
+        printk("%s: gonna notify the process server for a dying process pid: %ld", __func__, (long)tsk->pid);
         process_server_task_exit_notification(tsk->pid);
     }
 
