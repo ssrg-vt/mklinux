@@ -60,7 +60,8 @@ static struct workqueue_struct *kmsg_wq;
 #define RB_MASK ((1 << RB_SHIFT) - 1)
 
 #define PCN_DEBUG(...) ;
-#define PCN_WARN(...) printk(__VA_ARGS__)
+//#define PCN_WARN(...) printk(__VA_ARGS__)
+#define PCN_WARN(...) ;
 #define PCN_ERROR(...) printk(__VA_ARGS__)
 
 /* From Wikipedia page "Fetch and add", modified to work for u64 */

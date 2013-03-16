@@ -743,7 +743,7 @@ void process_exit_item(struct work_struct* work) {
             kill_pid(spid,SIGKILL,1);
     }
     else
-	    printk("%s: process to kill %ld NOT FOUND\n", __func__, pid);
+	    PSPRINTK("%s: process to kill %ld NOT FOUND\n", __func__, pid);
 
 happy_end:
     kfree(work);
@@ -915,7 +915,7 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
     struct task_struct* task;
     exit_work_t* exit_work;
 
-    printk("%s: cpu: %d msg: (pid: %d from_cpu: %d [%d])\n", 
+    PSPRINTK("%s: cpu: %d msg: (pid: %d from_cpu: %d [%d])\n", 
 	   __func__, smp_processor_id(), msg->my_pid,  inc_msg->hdr.from_cpu, source_cpu);
     
     for_each_process(task) {
@@ -1159,7 +1159,7 @@ int process_server_import_address_space(unsigned long* ip,
                 up_write(&current->mm->mmap_sem);
                 filp_close(f,NULL);
                 if(err != vma_curr->start) {
-                    printk("Fault - do_mmap failed to map %lx with error %lx\n",
+                    PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
                             vma_curr->start,err);
                 }
             }
@@ -1175,7 +1175,7 @@ int process_server_import_address_space(unsigned long* ip,
             //PSPRINTK("mmap error for %lx = %lx\n",vma_curr->start,err);
             up_write(&current->mm->mmap_sem);
             if(err != vma_curr->start) {
-                printk("Fault - do_mmap failed to map %lx with error %lx\n",
+                PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
                         vma_curr->start,err);
             }
         }
@@ -1195,7 +1195,7 @@ int process_server_import_address_space(unsigned long* ip,
                             vma->vm_page_prot);
                     pte_curr = (pte_data_t*)pte_curr->header.next;
                     if(err) {
-                        printk("Fault - remap_pfn_range failed to map %lx to %lx with error %lx\n",
+                        PSPRINTK("Fault - remap_pfn_range failed to map %lx to %lx with error %lx\n",
                                 pte_curr->paddr,pte_curr->vaddr,err);
                     }
                 }
@@ -1212,21 +1212,11 @@ int process_server_import_address_space(unsigned long* ip,
     current->mm->env_end = clone_data->env_end;
     current->mm->arg_start = clone_data->arg_start;
     current->mm->arg_end = clone_data->arg_end;
-    //current->mm->stack_vm = clone_data->stack_ptr;
 
     // install thread information
     // TODO: Move to arch
     current->thread.es = clone_data->thread_es;
     current->thread.ds = clone_data->thread_ds;
-
-/*    printk("%s: FUNtastic sp0 c:0x%lx r:0x%lx sp c:0x%lx r:0x%lx usersp c:0x%lx r:0x%lx\n",
-      __func__,
-      current->thread.sp0, clone_data->thread_sp0,
-      current->thread.sp, clone_data->thread_sp,
-      current->thread.usersp, clone_data->thread_usersp    
-    );
-*/    //current->thread.sp0 = clone_data->thread_sp0; // Kernel stack pointer base - NOT TO BE COPIED
-    //current->thread.sp = clone_data->thread_sp; // Kernel stack pointer - NOT TO BE COPIED
     current->thread.usersp = clone_data->thread_usersp;//clone_data->stack_ptr;
     
 
@@ -1251,49 +1241,65 @@ int process_server_import_address_space(unsigned long* ip,
     rdmsrl(MSR_GS_BASE, gs);
     rdmsrl(MSR_FS_BASE, fs);
     
-    printk("%s: curr:(fs:0x%lx fsid:0x%x) clone:(fs:0x%lx fsid:0x%x) saved:(fs:0x%lx fsid:0x%x) valid: %d\n",
+    PSPRINTK("%s: curr:(fs:0x%lx fsid:0x%x) clone:(fs:0x%lx fsid:0x%x) saved:(fs:0x%lx fsid:0x%x) valid: %d\n",
 	   __func__, current->thread.fs, current->thread.fsindex,
 	   clone_data->thread_fs, clone_data->thread_fsindex, fs, fsindex,
 	   __user_addr(clone_data->thread_fs) );
-    if (clone_data->thread_fs && __user_addr(clone_data->thread_fs)) { // we update only if the address of the base fs is different from 0 and not represent a kernel address (we are migrating only the virtual address space of the process)
-      current->thread.fs = clone_data->thread_fs;
-      current->thread.fsindex = clone_data->thread_fsindex;
+    if (clone_data->thread_fs && __user_addr(clone_data->thread_fs)) { // we update only if the 
+                                                                       // address of the base fs is different 
+                                                                       // from 0 and not represent a kernel address 
+                                                                       // (we are migrating only the virtual address 
+                                                                       // space of the process)
+        current->thread.fs = clone_data->thread_fs;
+        current->thread.fsindex = clone_data->thread_fsindex;
 
-      if (unlikely(fsindex | current->thread.fsindex))
-	loadsegment(fs, current->thread.fsindex);
-      else 
-	loadsegment(fs, 0);
+        if (unlikely(fsindex | current->thread.fsindex)) {
+	        loadsegment(fs, current->thread.fsindex);
+        }
+        else { 
+	        loadsegment(fs, 0);
+        }
 
-      if (fs != current->thread.fs)
-	printk("%s: fs %lx thread %lx (idx %d thread %d)\n",
-	     __func__, fs, current->thread.fs, fsindex, current->thread.fsindex);      
-      if (current->thread.fs)
-	wrmsrl(MSR_FS_BASE, current->thread.fs);  
+        if (fs != current->thread.fs) {
+	        PSPRINTK("%s: fs %lx thread %lx (idx %d thread %d)\n",
+	            __func__, fs, current->thread.fs, fsindex, current->thread.fsindex);      
+        }
+
+        if (current->thread.fs) {
+	        wrmsrl(MSR_FS_BASE, current->thread.fs);  
+        }
     }
-    else 
-      loadsegment(fs, 0);
+    else { 
+        loadsegment(fs, 0);
+    }
        
-    printk("%s: curr:(gs:0x%lx gsid:0x%x) clone:(gs:0x%lx gsid:0x%x) saved:(gs:0x%lx gsid:0x%x) valid: %d\n",
-	   __func__, current->thread.gs, current->thread.gsindex,
-	   clone_data->thread_gs, clone_data->thread_gsindex, gs, gsindex,
-	   __user_addr(clone_data->thread_gs) );
-    if (clone_data->thread_gs && __user_addr(clone_data->thread_gs)) {
-      current->thread.gs = clone_data->thread_gs;    
-      current->thread.gsindex = clone_data->thread_gsindex;
-      
-      if (unlikely(gsindex | current->thread.gsindex))
-	loadsegment(gs, current->thread.gsindex);
-      else
-	load_gs_index(0);
+    PSPRINTK("%s: curr:(gs:0x%lx gsid:0x%x) clone:(gs:0x%lx gsid:0x%x) saved:(gs:0x%lx gsid:0x%x) valid: %d\n",
+	    __func__, current->thread.gs, current->thread.gsindex,
+	    clone_data->thread_gs, clone_data->thread_gsindex, gs, gsindex,
+	    __user_addr(clone_data->thread_gs) );
 
-      if (gs != current->thread.gs)
-	printk("%s: gs %lx thread %lx (idx %d thread %d)\n",
-	     __func__, gs, current->thread.gs, gsindex, current->thread.gsindex);    
-      if (current->thread.gs)
-	wrmsrl(MSR_FS_BASE, current->thread.gs);
+    if (clone_data->thread_gs && __user_addr(clone_data->thread_gs)) {
+        current->thread.gs = clone_data->thread_gs;    
+        current->thread.gsindex = clone_data->thread_gsindex;
+      
+        if (unlikely(gsindex | current->thread.gsindex)) {
+	        loadsegment(gs, current->thread.gsindex);
+        }
+        else {
+	        load_gs_index(0);
+        }
+
+        if (gs != current->thread.gs) {
+	        PSPRINTK("%s: gs %lx thread %lx (idx %d thread %d)\n",
+	            __func__, gs, current->thread.gs, gsindex, current->thread.gsindex);    
+        }
+        if (current->thread.gs) {
+	        wrmsrl(MSR_FS_BASE, current->thread.gs);
+        }
     }
-    else
-      load_gs_index(0);
+    else {
+        load_gs_index(0);
+    }
     
     }
     
@@ -1614,7 +1620,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 	unsigned int ds, cs, es;
 	
 	    if (current != task)
-	      printk("DAVEK current is different from task!\n");
+	      PSPRINTK("DAVEK current is different from task!\n");
 
     request->thread_sp0 = task->thread.sp0;
     request->thread_sp = task->thread.sp;
@@ -1626,35 +1632,35 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->thread_es = task->thread.es;
     savesegment(es, es);          
     if ((current == task) && (es != request->thread_es))
-      printk("%s: DAVEK: es %x thread %x\n", __func__, es, request->thread_es);
+      PSPRINTK("%s: DAVEK: es %x thread %x\n", __func__, es, request->thread_es);
       
     request->thread_ds = task->thread.ds;
     savesegment(ds, ds);
     if (ds != request->thread_ds)
-      printk("%s: DAVEK: ds %x thread %x\n", __func__, ds, request->thread_ds);
+      PSPRINTK("%s: DAVEK: ds %x thread %x\n", __func__, ds, request->thread_ds);
       
     request->thread_fsindex = task->thread.fsindex;
     savesegment(fs, fsindex);
     if (fsindex != request->thread_fsindex)
-      printk("%s: DAVEK: fsindex %x thread %x\n", __func__, fsindex, request->thread_fsindex);
+      PSPRINTK("%s: DAVEK: fsindex %x thread %x\n", __func__, fsindex, request->thread_fsindex);
       
     request->thread_gsindex = task->thread.gsindex;
     savesegment(gs, gsindex);
     if (gsindex != request->thread_gsindex)
-      printk("%s: DAVEK: gsindex %x thread %x\n", __func__, gsindex, request->thread_gsindex);
+      PSPRINTK("%s: DAVEK: gsindex %x thread %x\n", __func__, gsindex, request->thread_gsindex);
     
     request->thread_fs = task->thread.fs;
     rdmsrl(MSR_FS_BASE, fs);
     if (fs != request->thread_fs) {
       request->thread_fs = fs;
-      printk("%s: DAVEK: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
+      PSPRINTK("%s: DAVEK: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
     }
 
     request->thread_gs = task->thread.gs;
     rdmsrl(MSR_GS_BASE, gs);
     if (gs != request->thread_gs) {
       request->thread_gs = gs;
-      printk("%s: DAVEK: gs %lx thread %lx\n", __func__, fs, request->thread_gs);
+      PSPRINTK("%s: DAVEK: gs %lx thread %lx\n", __func__, fs, request->thread_gs);
     }
     // ptrace, debug, dr7: struct perf_event *ptrace_bps[HBP_NUM]; unsigned long debugreg6; unsigned long ptrace_dr7;
     // Fault info: unsigned long cr2; unsigned long trap_no; unsigned long error_code;
@@ -1701,7 +1707,7 @@ static int __init process_server_init(void) {
      * Register to receive relevant incomming messages.
      */
 
-    printk("BEN: Registering process server callbacks!\n");
+    PSPRINTK("BEN: Registering process server callbacks!\n");
 
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER, 
             handle_pte_transfer);

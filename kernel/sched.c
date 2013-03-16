@@ -5574,13 +5574,10 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
     /*
      * Multikernel
      */
-    printk("%s: cpu %d pid %ld task_struct* %p\n",
-	   __func__, current_cpu, (long)pid, p);
     // For now, migrate to the first cpu in the mask that
     // is not the current cpu
     for(i = 0; i < NR_CPUS; i++) {
         if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
-            printk("%s: found cpu to migrate to %d\n", __func__, i);
             // do the migration
 	    get_task_struct(p);
 	    rcu_read_unlock();
@@ -5592,9 +5589,6 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	      schedule(); // this will save us from death
 	    //}
 	    
-	    printk("%s: cpu %d pid %ld task_struct* %p DEATH POINT REACHED\n",
-		   __func__, current_cpu, (long)pid, p);
-	    //BUG();
             return 0;
         }
     }
@@ -5668,8 +5662,6 @@ SYSCALL_DEFINE3(sched_setaffinity, pid_t, pid, unsigned int, len,
 {
 	cpumask_var_t new_mask;
 	int retval;
-
-    printk("sys_sched_setaffinity\n");
 
 	if (!alloc_cpumask_var(&new_mask, GFP_KERNEL))
 		return -ENOMEM;
