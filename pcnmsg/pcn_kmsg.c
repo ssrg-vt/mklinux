@@ -456,7 +456,7 @@ static int do_checkin(void)
 
 		if (rkinfo->phys_addr[i]) {
 			rkvirt[i] = ioremap_cache(rkinfo->phys_addr[i],
-						  sizeof(struct pcn_kmsg_rkinfo));
+						  sizeof(struct pcn_kmsg_window));
 			if (rkvirt[i]) {
 				KMSG_INIT("ioremapped CPU %d's window, virt addr 0x%p\n", 
 					  i, rkvirt[i]);
@@ -481,7 +481,8 @@ static int do_checkin(void)
 static int __init pcn_kmsg_init(void)
 {
 	int rc;
-	unsigned long win_virt_addr, win_phys_addr, rkinfo_phys_addr;
+	unsigned long win_phys_addr, rkinfo_phys_addr;
+	struct pcn_kmsg_window *win_virt_addr;
 	struct boot_params * boot_params_va;
 
 	KMSG_INIT("entered\n");
@@ -567,10 +568,17 @@ static int __init pcn_kmsg_init(void)
 	}
 
 	/* Malloc our own receive buffer and set it up */
-	win_virt_addr = __get_free_pages(GFP_KERNEL, 2);
-	KMSG_INIT("Allocated 4 pages for my window, virt addr 0x%lx\n", 
-		  win_virt_addr);
-	rkvirt[my_cpu] = (struct pcn_kmsg_window *) win_virt_addr;
+	win_virt_addr = kmalloc(sizeof(struct pcn_kmsg_window), GFP_KERNEL);
+
+	if (win_virt_addr) {
+		KMSG_INIT("Allocated %ld bytes for my win, virt addr 0x%p\n", 
+			  sizeof(struct pcn_kmsg_window), win_virt_addr);
+	} else {
+		KMSG_ERR("Failed to kmalloc kmsg recv window!\n");
+		return -1;
+	}
+
+	rkvirt[my_cpu] = win_virt_addr;
 	win_phys_addr = virt_to_phys((void *) win_virt_addr);
 	KMSG_INIT("Physical address: 0x%lx\n", win_phys_addr);
 	rkinfo->phys_addr[my_cpu] = win_phys_addr;
@@ -578,6 +586,7 @@ static int __init pcn_kmsg_init(void)
 	rc = pcn_kmsg_window_init(rkvirt[my_cpu]);
 	if (rc) {
 		KMSG_ERR("Failed to initialize kmsg recv window!\n");
+		return -1;
 	}
 
 	/* If we're not the master kernel, we need to check in */
