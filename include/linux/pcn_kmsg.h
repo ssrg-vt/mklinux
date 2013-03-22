@@ -211,4 +211,20 @@ int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id,
 			     struct pcn_kmsg_long_message *msg,
 			     unsigned int payload_size);
 
+/* TESTING / BENCHMARKING */
+enum pcn_kmsg_test_op {
+	PCN_KMSG_TEST_SEND_SINGLE,
+	PCN_KMSG_TEST_SEND_BATCH,
+	PCN_KMSG_TEST_SEND_LONG,
+	PCN_KMSG_TEST_OP_MCAST_OPEN,
+	PCN_KMSG_TEST_OP_MCAST_SEND,
+	PCN_KMSG_TEST_OP_MCAST_CLOSE
+};
+
+struct pcn_kmsg_test_args {
+	int cpu;
+	unsigned long mask;
+	pcn_kmsg_mcast_id mcast_id;
+};
+
 #endif /* __LINUX_PCN_KMSG_H */

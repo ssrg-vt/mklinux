@@ -430,14 +430,14 @@ static netdev_tx_t shmtun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	SHMTUN_PRINTK("Returning NETDEV_TX_OK, rc = %d\n", rc);
 
-	kfree_skb(skb);
+	dev_kfree_skb(skb);
 
 	return NETDEV_TX_OK;
 
 drop:
 	printk("Dropping packet!\n");
 	dev->stats.tx_dropped++;
-	kfree_skb(skb);
+	dev_kfree_skb(skb);
 	return NETDEV_TX_OK;
 }
 
