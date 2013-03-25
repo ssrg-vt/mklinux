@@ -66,7 +66,7 @@ struct pcn_kmsg_mcast_local mcastlocal[POPCORN_MAX_MCAST_CHANNELS];
 struct list_head msglist_hiprio, msglist_normprio;
 
 /* array to hold pointers to large messages received */
-struct pcn_kmsg_long_message * lg_buf[POPCORN_MAX_CPUS];
+struct pcn_kmsg_container * lg_buf[POPCORN_MAX_CPUS];
 
 /* action for bottom half */
 static void pcn_kmsg_action(struct softirq_action *h);
@@ -117,8 +117,11 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	while (win_inuse(win) >= RB_SIZE) {}
 
 	/* insert item */
-	memcpy(&win->buffer[ticket & RB_MASK], msg, 
-	       sizeof(struct pcn_kmsg_message));
+	memcpy(&win->buffer[ticket & RB_MASK].payload,
+	       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
+
+	memcpy(&win->buffer[ticket & RB_MASK].hdr,
+	       &msg->hdr, sizeof(struct pcn_kmsg_hdr));
 
 	pcn_barrier();
 
@@ -129,9 +132,9 @@ static inline int win_put(struct pcn_kmsg_window *win,
 }
 
 static inline int win_get(struct pcn_kmsg_window *win, 
-			  struct pcn_kmsg_message **msg) 
+			  struct pcn_kmsg_reverse_message **msg) 
 {
-	struct pcn_kmsg_message *rcvd;
+	struct pcn_kmsg_reverse_message *rcvd;
 
 	if (!win_inuse(win)) {
 		KMSG_PRINTK("nothing in buffer, returning...\n");
@@ -194,8 +197,11 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 	while (mcastwin_inuse(id) >= RB_SIZE) {}
 
 	/* insert item */
-	memcpy(&MCASTWIN(id)->buffer[ticket & RB_MASK], msg,
-	       sizeof(struct pcn_kmsg_message));
+	memcpy(&MCASTWIN(id)->buffer[ticket & RB_MASK].payload, 
+	       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
+
+	memcpy(&MCASTWIN(id)->buffer[ticket & RB_MASK].hdr, 
+	       &msg->hdr, sizeof(struct pcn_kmsg_hdr));
 
 	/* set counter to (# in group - self) */
 	MCASTWIN(id)->read_counter[ticket & RB_MASK] = 
@@ -213,9 +219,9 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 }
 
 static inline int mcastwin_get(pcn_kmsg_mcast_id id,
-			       struct pcn_kmsg_message **msg)
+			       struct pcn_kmsg_reverse_message **msg)
 {
-	struct pcn_kmsg_message *rcvd;
+	struct pcn_kmsg_reverse_message *rcvd;
 
 	MCAST_PRINTK("called for id %lu, head %lu, tail %lu, local_tail %lu\n", 
 		     id, MCASTWIN(id)->head, MCASTWIN(id)->tail, 
@@ -780,10 +786,37 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 	return;
 }
 
-static int process_large_message(struct pcn_kmsg_message *msg)
+static int msg_add_list(struct pcn_kmsg_container *ctr)
+{
+	int rc = 0;
+
+	switch (ctr->msg.hdr.prio) {
+		case PCN_KMSG_PRIO_HIGH:
+			KMSG_PRINTK("%s: Adding to high-priority list...\n", __func__);
+			list_add_tail(&(ctr->list),
+				      &msglist_hiprio);
+			break;
+
+		case PCN_KMSG_PRIO_NORMAL:
+			KMSG_PRINTK("%s: Adding to normal-priority list...\n", __func__);
+			list_add_tail(&(ctr->list),
+				      &msglist_normprio);
+			break;
+
+		default:
+			KMSG_ERR("%s: Priority value %d unknown -- THIS IS BAD!\n", __func__,
+				  ctr->msg.hdr.prio);
+			rc = -1;
+	}
+
+	return rc;
+}
+
+static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 {
 	int rc = 0;
 	int recv_buf_size;
+	struct pcn_kmsg_long_message *lmsg;
 
 	KMSG_PRINTK("Got a large message fragment, type %u, from_cpu %u, start %u, end %u, seqnum %u!\n",
 		    msg->hdr.type, msg->hdr.from_cpu,
@@ -793,7 +826,8 @@ static int process_large_message(struct pcn_kmsg_message *msg)
 	if (msg->hdr.lg_start) {
 		KMSG_PRINTK("Processing initial message fragment...\n");
 
-		recv_buf_size = sizeof(struct pcn_kmsg_hdr) + 
+		recv_buf_size = sizeof(struct list_head) + 
+			sizeof(struct pcn_kmsg_hdr) + 
 			msg->hdr.lg_seqnum * PCN_KMSG_PAYLOAD_SIZE;
 
 		lg_buf[msg->hdr.from_cpu] = kmalloc(recv_buf_size, GFP_ATOMIC);
@@ -803,45 +837,48 @@ static int process_large_message(struct pcn_kmsg_message *msg)
 			goto out;
 		}
 
+		lmsg = (struct pcn_kmsg_long_message *) &lg_buf[msg->hdr.from_cpu]->msg;
+
 		/* copy header first */
-		memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu], 
+		memcpy((unsigned char *) &lmsg->hdr, 
 		       &msg->hdr, sizeof(struct pcn_kmsg_hdr));
 
 		/* copy first chunk of message */
-		memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu] + 
-		       sizeof(struct pcn_kmsg_hdr),
+		memcpy((unsigned char *) &lmsg->payload,
 		       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
 
 		if (msg->hdr.lg_end) {
 			KMSG_PRINTK("NOTE: Long message of length 1 received; this isn't efficient!\n");
-			rc = callback_table[msg->hdr.type]((struct pcn_kmsg_message *)lg_buf[msg->hdr.from_cpu]);
+
+			/* add to appropriate list */
+			rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
 
 			if (rc) {
-				KMSG_ERR("Large message callback failed!\n");
+				KMSG_ERR("Failed to add large message to list!\n");
 			}
 		}
 	} else {
 
 		KMSG_PRINTK("Processing subsequent message fragment...\n");
 
-		memcpy((unsigned char *)lg_buf[msg->hdr.from_cpu] + 
-		       sizeof(struct pcn_kmsg_hdr) + 
-		       PCN_KMSG_PAYLOAD_SIZE * msg->hdr.lg_seqnum,
+		lmsg = (struct pcn_kmsg_long_message *) &lg_buf[msg->hdr.from_cpu]->msg;
+
+		memcpy(&lmsg->payload + PCN_KMSG_PAYLOAD_SIZE * msg->hdr.lg_seqnum,
 		       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
 
 		if (msg->hdr.lg_end) {
 			KMSG_PRINTK("Last fragment in series...\n");
 
 			KMSG_PRINTK("from_cpu %d, type %d, prio %d\n",
-				    lg_buf[msg->hdr.from_cpu]->hdr.from_cpu,
-				    lg_buf[msg->hdr.from_cpu]->hdr.type,
-				    lg_buf[msg->hdr.from_cpu]->hdr.prio);
+				    lmsg->hdr.from_cpu,
+				    lmsg->hdr.type,
+				    lmsg->hdr.prio);
 
-
-			rc = callback_table[msg->hdr.type]((struct pcn_kmsg_message *)lg_buf[msg->hdr.from_cpu]);
+			/* add to appropriate list */
+			rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
 
 			if (rc) {
-				KMSG_ERR("Large message callback failed!\n");
+				KMSG_ERR("Failed to add large message to list!\n");
 			}
 		}
 	}
@@ -853,9 +890,9 @@ out:
 	return rc;
 }
 
-static int process_small_message(struct pcn_kmsg_message *msg)
+static int process_small_message(struct pcn_kmsg_reverse_message *msg)
 {
-	int rc;
+	int rc = 0;
 	struct pcn_kmsg_container *incoming;
 
 	/* malloc some memory (don't sleep!) */
@@ -867,38 +904,26 @@ static int process_small_message(struct pcn_kmsg_message *msg)
 	}
 
 	/* memcpy message from rbuf */
-	memcpy(&incoming->msg, msg,
-	       sizeof(struct pcn_kmsg_message));
+	memcpy(&incoming->msg.hdr, &msg->hdr,
+	       sizeof(struct pcn_kmsg_hdr));
+
+	memcpy(&incoming->msg.payload, &msg->payload,
+	       PCN_KMSG_PAYLOAD_SIZE);
+
 	win_advance_tail(rkvirt[my_cpu]);
 
 	KMSG_PRINTK("Received message, type %d, prio %d\n",
 		    incoming->msg.hdr.type, incoming->msg.hdr.prio);
 
 	/* add container to appropriate list */
-	switch (incoming->msg.hdr.prio) {
-		case PCN_KMSG_PRIO_HIGH:
-			KMSG_PRINTK("Adding to high-priority list...\n");
-			list_add_tail(&(incoming->list),
-				      &msglist_hiprio);
-			break;
-
-		case PCN_KMSG_PRIO_NORMAL:
-			KMSG_PRINTK("Adding to normal-priority list...\n");
-			list_add_tail(&(incoming->list),
-				      &msglist_normprio);
-			break;
-
-		default:
-			KMSG_ERR("Priority value %d unknown!\n",
-				 incoming->msg.hdr.prio);
-	}
+	rc = msg_add_list(incoming);
 
 	return rc;
 }
 
 static void process_mcast_queue(pcn_kmsg_mcast_id id)
 {
-	struct pcn_kmsg_message *msg;
+	struct pcn_kmsg_reverse_message *msg;
 	while (!mcastwin_get(id, &msg)) {
 		MCAST_PRINTK("Got an mcast message!\n");
 
@@ -920,7 +945,7 @@ static void process_mcast_queue(pcn_kmsg_mcast_id id)
 static void pcn_kmsg_action(struct softirq_action *h)
 {
 	int rc;
-	struct pcn_kmsg_message *msg;
+	struct pcn_kmsg_reverse_message *msg;
 	int i;
 
 	KMSG_PRINTK("called\n");

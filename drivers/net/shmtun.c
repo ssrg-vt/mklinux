@@ -1245,9 +1245,9 @@ static const struct ethtool_ops shmtun_ethtool_ops = {
 };
 
 struct pcn_kmsg_shmtun_message {
+	struct pcn_kmsg_hdr hdr;
 	unsigned char cpu_to_add;
 	char pad[59];
-	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 enum shmtun_wq_ops {
