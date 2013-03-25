@@ -356,6 +356,11 @@ static void process_kmsg_wq_item(struct work_struct * work)
 	kfree(work);
 }
 
+static inline void msg_free(void * msg)
+{
+	kfree(msg - sizeof(struct list_head));
+}
+
 static int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message) 
 {
 	struct pcn_kmsg_checkin_message *msg = 
@@ -392,7 +397,7 @@ static int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 		KMSG_ERR("Failed to malloc work structure!\n");
 	}
 
-	kfree(message);
+	msg_free(message);
 
 	return 0;
 }
@@ -404,6 +409,8 @@ static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
 
 	printk("Received test long message, payload: %s\n", 
 	       (char *) &lmsg->payload);
+
+	msg_free(message);
 
 	return 0;
 }
@@ -863,7 +870,9 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 
 		lmsg = (struct pcn_kmsg_long_message *) &lg_buf[msg->hdr.from_cpu]->msg;
 
-		memcpy(&lmsg->payload + PCN_KMSG_PAYLOAD_SIZE * msg->hdr.lg_seqnum,
+		//printk("LMSG FRAGMENT: %s\n", msg->payload);
+
+		memcpy((unsigned char *) &lmsg->payload + PCN_KMSG_PAYLOAD_SIZE * msg->hdr.lg_seqnum,
 		       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
 
 		if (msg->hdr.lg_end) {

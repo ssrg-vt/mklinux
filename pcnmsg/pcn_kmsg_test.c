@@ -83,8 +83,8 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 {
 	int rc = 0;
 
-	printk("Reached test kmsg syscall, op %d, cpu %d, mask 0x%lx, mcast_id %lu\n",
-	       op, args->cpu, args->mask, args->mcast_id);
+	printk("Reached test kmsg syscall, op %d, cpu %d\n",
+	       op, args->cpu);
 
 	switch (op) {
 		case PCN_KMSG_TEST_SEND_SINGLE:

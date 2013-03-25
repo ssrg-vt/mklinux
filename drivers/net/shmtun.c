@@ -1337,7 +1337,7 @@ static int pcn_kmsg_shmtun_callback(struct pcn_kmsg_message *message)
 		printk("Failed to kmalloc shmtun work structure!\n");
 	}
 
-	kfree(message);
+	kfree((char *) message - sizeof(struct list_head));
 
 	return 0;
 }
