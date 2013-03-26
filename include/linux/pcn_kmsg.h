@@ -172,6 +172,9 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       struct pcn_kmsg_long_message *lmsg, 
 		       unsigned int payload_size);
 
+/* Free a received message (called at the end of the callback function) */
+inline void pcn_kmsg_free_msg(void *msg);
+
 /* MULTICAST GROUPS */
 
 /* Enum for mcast message type. */

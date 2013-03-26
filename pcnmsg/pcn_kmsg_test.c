@@ -18,9 +18,9 @@ static int pcn_kmsg_test_long_msg(struct pcn_kmsg_test_args __user *args)
 	lmsg.hdr.type = PCN_KMSG_TYPE_TEST;
 	lmsg.hdr.prio = PCN_KMSG_PRIO_NORMAL;
 
-	strcpy(&lmsg.payload, str);
+	strcpy((char *) &lmsg.payload, str);
 
-	printk("Message to send: %s\n", &lmsg.payload);
+	printk("Message to send: %s\n", (char *) &lmsg.payload);
 
 	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", args->cpu);
 
