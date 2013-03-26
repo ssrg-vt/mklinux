@@ -54,6 +54,7 @@ typedef struct {
    PCN_KMSG_END. */
 enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_TEST,
+	PCN_KMSG_TYPE_TEST_LONG,
 	PCN_KMSG_TYPE_CHECKIN,
 	PCN_KMSG_TYPE_MCAST,
 	PCN_KMSG_TYPE_MCAST_CLOSE,
@@ -125,14 +126,6 @@ struct pcn_kmsg_checkin_message {
 	unsigned char cpu_to_add;
 	char pad[51];
 }__attribute__((packed)) __attribute__((aligned(64)));
-
-/* Message struct for testing */
-struct pcn_kmsg_test_message {
-	struct pcn_kmsg_hdr hdr;
-	unsigned long test_val;
-	char pad[52];
-}__attribute__((packed)) __attribute__((aligned(64)));
-
 
 
 
@@ -228,21 +221,5 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg);
 int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id, 
 			     struct pcn_kmsg_long_message *msg,
 			     unsigned int payload_size);
-
-/* TESTING / BENCHMARKING */
-enum pcn_kmsg_test_op {
-	PCN_KMSG_TEST_SEND_SINGLE,
-	PCN_KMSG_TEST_SEND_BATCH,
-	PCN_KMSG_TEST_SEND_LONG,
-	PCN_KMSG_TEST_OP_MCAST_OPEN,
-	PCN_KMSG_TEST_OP_MCAST_SEND,
-	PCN_KMSG_TEST_OP_MCAST_CLOSE
-};
-
-struct pcn_kmsg_test_args {
-	int cpu;
-	unsigned long mask;
-	pcn_kmsg_mcast_id mcast_id;
-};
 
 #endif /* __LINUX_PCN_KMSG_H */

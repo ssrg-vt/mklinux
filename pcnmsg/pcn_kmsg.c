@@ -402,19 +402,6 @@ static int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 	return 0;
 }
 
-static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
-{
-	struct pcn_kmsg_long_message *lmsg = 
-		(struct pcn_kmsg_long_message *) message;
-
-	printk("Received test long message, payload: %s\n", 
-	       (char *) &lmsg->payload);
-
-	pcn_kmsg_free_msg(message);
-
-	return 0;
-}
-
 static inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 {
 	window->head = 0;
@@ -522,12 +509,6 @@ static int __init pcn_kmsg_init(void)
 					&pcn_kmsg_mcast_callback);
 	if (rc) {
 		KMSG_ERR("Failed to register initial kmsg mcast callback!\n");
-	}
-
-	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_TEST, 
-					&pcn_kmsg_test_callback);
-	if (rc) {
-		KMSG_ERR("Failed to register initial kmsg test callback!\n");
 	}
 
 	/* Register softirq handler */

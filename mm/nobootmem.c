@@ -46,7 +46,7 @@ static void * __init __alloc_memory_core_early(int nid, u64 size, u64 align,
 	addr = find_memory_core_early(nid, size, align, goal, limit);
 
 	if (addr < 0x1000000) {
-		printk("Allocated bootmem below 16 MB, address 0x%lx\n", addr);
+		printk("Allocated bootmem below 16 MB, address 0x%llx\n", addr);
 	}
 
 	if (addr == MEMBLOCK_ERROR)

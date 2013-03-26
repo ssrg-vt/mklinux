@@ -76,6 +76,7 @@ struct file_handle;
 #include <linux/key.h>
 #include <trace/syscall.h>
 #include <linux/pcn_kmsg.h>
+#include <linux/pcn_kmsg_test.h>
 
 #define __SC_DECL1(t1, a1)	t1 a1
 #define __SC_DECL2(t2, a2, ...) t2 a2, __SC_DECL1(__VA_ARGS__)

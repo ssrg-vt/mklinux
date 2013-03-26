@@ -8,6 +8,34 @@
 
 #include <linux/multikernel.h>
 #include <linux/pcn_kmsg.h>
+#include <linux/pcn_kmsg_test.h>
+
+#define KMSG_TEST_VERBOSE 1
+
+#ifdef KMSG_TEST_VERBOSE
+#define TEST_PRINTK(fmt, args...) printk("%s: " fmt, __func__, ##args)
+#else
+#define TEST_PRINTK(...) ;
+#endif
+
+#define TEST_ERR(fmt, args...) printk("%s: ERROR: " fmt, __func__, ##args)
+
+
+static int pcn_kmsg_test_send_single(struct pcn_kmsg_test_args __user *args)
+{
+	int rc = 0;
+
+	return rc;
+}
+
+
+static int pcn_kmsg_test_send_batch(struct pcn_kmsg_test_args __user *args)
+{
+	int rc = 0;
+
+	return rc;
+}
+
 
 static int pcn_kmsg_test_long_msg(struct pcn_kmsg_test_args __user *args)
 {
@@ -15,7 +43,7 @@ static int pcn_kmsg_test_long_msg(struct pcn_kmsg_test_args __user *args)
 	struct pcn_kmsg_long_message lmsg;
 	char *str = "This is a very long test message.  Don't be surprised if it gets corrupted; it probably will.  If it does, you're in for a lot more work, and may not get home to see your wife this weekend.  You should knock on wood before running this test.";
 
-	lmsg.hdr.type = PCN_KMSG_TYPE_TEST;
+	lmsg.hdr.type = PCN_KMSG_TYPE_TEST_LONG;
 	lmsg.hdr.prio = PCN_KMSG_PRIO_NORMAL;
 
 	strcpy((char *) &lmsg.payload, str);
@@ -88,9 +116,11 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 
 	switch (op) {
 		case PCN_KMSG_TEST_SEND_SINGLE:
+			rc = pcn_kmsg_test_send_single(args);
 			break;
 
 		case PCN_KMSG_TEST_SEND_BATCH:
+			rc = pcn_kmsg_test_send_batch(args);
 			break;
 
 		case PCN_KMSG_TEST_SEND_LONG:
@@ -110,10 +140,59 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 			break;
 		
 		default:
-			printk("%s: invalid option %d\n", __func__, op);
+			TEST_ERR("invalid option %d\n", op);
 			return -1;
 	}
 
 	return rc;
 }
+
+
+/* CALLBACKS / STRUCTURES */
+
+static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
+{
+	printk("Reached %s!\n", __func__);
+
+	pcn_kmsg_free_msg(message);
+
+	return 0;
+}
+
+static int pcn_kmsg_test_long_callback(struct pcn_kmsg_message *message)
+{
+	struct pcn_kmsg_long_message *lmsg =
+		(struct pcn_kmsg_long_message *) message;
+
+	printk("Received test long message, payload: %s\n",
+	       (char *) &lmsg->payload);
+
+	pcn_kmsg_free_msg(message);
+
+	return 0;
+}
+
+
+static int __init pcn_kmsg_test_init(void)
+{
+	int rc;
+
+	TEST_PRINTK("Registering test callbacks!\n");
+
+	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_TEST,
+					&pcn_kmsg_test_callback);
+	if (rc) {
+		TEST_ERR("Failed to register initial kmsg test callback!\n");
+	}
+
+	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_TEST_LONG,
+					&pcn_kmsg_test_long_callback);
+	if (rc) {
+		TEST_ERR("Failed to register initial kmsg_test_long callback!\n");
+	}
+
+	return rc;
+}
+
+late_initcall(pcn_kmsg_test_init);
 

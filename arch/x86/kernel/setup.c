@@ -409,7 +409,7 @@ static void __init reserve_initrd(void)
 
 	ramdisk_end = PAGE_ALIGN(ramdisk_image + ramdisk_size);
 
-	printk("ramdisk_image 0x%lx, size 0x%lx, shift 0x%lx, end 0x%lx, end_of_lowmem 0x%lx\n",
+	printk("ramdisk_image 0x%llx, size 0x%llx, shift 0x%llx, end 0x%llx, end_of_lowmem 0x%llx\n",
                         ramdisk_image, ramdisk_size, ramdisk_shift, ramdisk_end, end_of_lowmem);
 
 	if (!boot_params.hdr.type_of_loader ||
@@ -963,7 +963,7 @@ void __init setup_arch(char **cmdline_p)
 
 	init_gbpages();
 
-	printk("max_low_pfn 0x%lx, page_shift 0x%lx\n", max_low_pfn, PAGE_SHIFT);
+	printk("max_low_pfn 0x%lx, page_shift 0x%x\n", max_low_pfn, PAGE_SHIFT);
 
 	/* max_pfn_mapped is updated here */
 	max_low_pfn_mapped = init_memory_mapping(0, max_low_pfn<<PAGE_SHIFT);
