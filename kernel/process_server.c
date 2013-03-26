@@ -753,6 +753,7 @@ happy_end:
     kfree(work);
 }
 
+unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
 /**
  *
  */
@@ -766,7 +767,7 @@ void process_exec_item(struct work_struct* work) {
         "TERM=linux",
         "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
     };
-
+perf_aa = native_read_tsc();
     sub_info = call_usermodehelper_setup( c->exe_path /*argv[0]*/, 
             argv, envp, 
             GFP_KERNEL );
@@ -799,7 +800,7 @@ void process_exec_item(struct work_struct* work) {
      * Spin up the new process.
      */
     call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
-
+perf_bb = native_read_tsc();
     kfree(work);
 }
 
@@ -993,10 +994,9 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     data_header_t* curr;
     data_header_t* next;
     vma_data_t* vma;
-
-    PSPRINTK("handle_clone_request\n");
-
-
+    
+    perf_cc = native_read_tsc();
+    
     /*
      * Remember this request
      */
@@ -1068,6 +1068,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 
     add_data_entry(clone_data);
 
+perf_dd = native_read_tsc();
     clone_work = kmalloc(sizeof(clone_exec_work_t),GFP_ATOMIC);
     if(clone_work) {
         INIT_WORK( (struct work_struct*)clone_work, process_exec_item);
@@ -1076,7 +1077,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     }
 
     kfree(inc_msg);
-
+perf_ee = native_read_tsc();
     return 0;
 }
 
@@ -1095,6 +1096,11 @@ static bool __user_addr (unsigned long x )
  *
  * Public API
  */
+
+
+//statistics
+static unsigned long long perf_a, perf_b, perf_c, perf_d, perf_e;
+
 
 /**
  * If this is a delegated process, look up any records that may
@@ -1117,6 +1123,8 @@ int process_server_import_address_space(unsigned long* ip,
     int vmas_installed = 0;
     int ptes_installed = 0;
 
+    perf_a = native_read_tsc();
+    
     PSPRINTK("import address space\n");
     
     // Verify that we're a delegated task.
@@ -1129,7 +1137,7 @@ int process_server_import_address_space(unsigned long* ip,
     if(!clone_data) {
         return -1;
     }
-
+perf_b = native_read_tsc();
     // Gut existing mappings
     
     down_write(&current->mm->mmap_sem);
@@ -1145,7 +1153,7 @@ int process_server_import_address_space(unsigned long* ip,
     flush_cache_mm(current->mm);
 
     up_write(&current->mm->mmap_sem);
-    
+perf_c = native_read_tsc();    
     // Import address space
     vma_curr = clone_data->vma_list;
 
@@ -1222,6 +1230,8 @@ int process_server_import_address_space(unsigned long* ip,
     }
 
     printk("vmas_installed{%d}, ptes_installed{%d}\n",vmas_installed,ptes_installed);
+
+    perf_d = native_read_tsc();
 
     // install memory information
     current->mm->start_stack = clone_data->stack_start;
@@ -1306,7 +1316,12 @@ int process_server_import_address_space(unsigned long* ip,
     
     //dump_clone_data(clone_data);
     //dump_task(current,regs, clone_data->stack_ptr);
-
+    perf_e = native_read_tsc();
+    printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+       __func__,
+       perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
+       perf_a, perf_b, perf_c, perf_d, perf_e);
+    
     return 0;
 }
 
