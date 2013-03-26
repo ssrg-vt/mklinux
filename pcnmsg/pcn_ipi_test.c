@@ -68,15 +68,14 @@ static unsigned long calculate_tsc_overhead(void)
 
 unsigned long test_ipi_pingpong(int cpu)
 {
-	unsigned long tsc_init, tsc_final;
+	unsigned long tsc_init;
 
 	done = 0;
 	rdtscll(tsc_init);
 	apic->send_IPI_mask(cpumask_of(cpu), POPCORN_IPI_LATENCY_VECTOR);
 	while (!done) {}
-	rdtscll(tsc_final);
 
-	return tsc_final - tsc_init;
+	return tsc - tsc_init;
 }
 
 unsigned long test_ipi_send_time(int cpu)

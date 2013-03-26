@@ -20,10 +20,27 @@
 
 #define TEST_ERR(fmt, args...) printk("%s: ERROR: " fmt, __func__, ##args)
 
+volatile unsigned long kmsg_tsc;
+volatile int kmsg_done;
+
+extern int my_cpu;
 
 static int pcn_kmsg_test_send_single(struct pcn_kmsg_test_args __user *args)
 {
 	int rc = 0;
+	struct pcn_kmsg_test_message msg;
+	unsigned long tsc_init;
+
+	msg.hdr.type = PCN_KMSG_TYPE_TEST;
+	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+
+	kmsg_done = 0;
+
+	rdtscll(tsc_init);
+	pcn_kmsg_send(args->cpu, (struct pcn_kmsg_message *) &msg);
+	while (!kmsg_done) {}
+	
+	printk("Elapsed time (ticks): %lu\n", kmsg_tsc - tsc_init);
 
 	return rc;
 }
@@ -148,15 +165,38 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 }
 
 
-/* CALLBACKS / STRUCTURES */
+/* CALLBACKS */
 
 static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
 {
+	int rc = 0;
+
 	printk("Reached %s!\n", __func__);
 
+	if (my_cpu) {
+
+		struct pcn_kmsg_test_message reply_msg;
+
+		reply_msg.hdr.type = PCN_KMSG_TYPE_TEST;
+		reply_msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+
+		printk("Sending message back to CPU 0...\n");
+		rc = pcn_kmsg_send(0, (struct pcn_kmsg_message *) &reply_msg);
+
+		if (rc) {
+			printk("Message send failed!\n");
+			goto out;
+		}
+	} else {
+		printk("Received ping-ping; reading end timestamp...\n");
+		rdtscll(kmsg_tsc);
+		kmsg_done = 1;
+	}
+
+out:
 	pcn_kmsg_free_msg(message);
 
-	return 0;
+	return rc;
 }
 
 static int pcn_kmsg_test_long_callback(struct pcn_kmsg_message *message)
