@@ -202,14 +202,19 @@ typedef struct _vma_transfer {
 /**
  * Inform remote cpu of a pte to vma mapping.
  */
-typedef struct _pte_transfer {
+struct _pte_transfer {
+    int vma_id;                  //  4
+    int clone_request_id;        //  4
+    unsigned long vaddr;         //  8
+    unsigned long paddr;         //  8
+    unsigned long pfn;           //  8+
+                                 //  ---
+                                 //  32 -> 28 bytes of padding needed
+    char pad[28];
     struct pcn_kmsg_hdr header;
-    int vma_id;
-    int clone_request_id;
-    unsigned long vaddr;
-    unsigned long paddr;
-    unsigned long pfn;
-} pte_transfer_t;
+} __attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _pte_transfer pte_transfer_t;
 
 /**
  *
@@ -247,6 +252,7 @@ static void dump_thread(struct thread_struct* thread);
 static void dump_regs(struct pt_regs* regs);
 static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr); 
 
+
 /**
  * Module variables
  */
@@ -262,8 +268,6 @@ DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
 // Exec list
 static struct workqueue_struct *clone_wq;
 static struct workqueue_struct *exit_wq;
-
-
 
 /**
  * General helper functions and debugging tools
@@ -833,7 +837,6 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
     pte_data->pfn = msg->pfn;
     pte_data->clone_request_id = msg->clone_request_id;
 
-    //add_data_entry(pte_data);
     // Look through data store for matching vma_data_t entries.
     spin_lock(&_data_head_lock);
 
@@ -853,6 +856,7 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
                 } else {
                     vma->pte_list = pte_data;
                 }
+                PSPRINTK("PTE added to vma\n");
                 spin_unlock(&vma->lock);
                 break;
             }
@@ -875,6 +879,7 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
     unsigned int source_cpu = msg->header.from_cpu;
     vma_data_t* vma_data = kmalloc(sizeof(vma_data_t),GFP_ATOMIC);
 
+    PSPRINTK("handle_vma_transfer %d\n",msg->vma_id);
     
     if(!vma_data) {
         PSPRINTK("Failed to allocate vma_data_t\n");
@@ -988,6 +993,9 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     data_header_t* curr;
     data_header_t* next;
     vma_data_t* vma;
+
+    PSPRINTK("handle_clone_request\n");
+
 
     /*
      * Remember this request
@@ -1106,6 +1114,8 @@ int process_server_import_address_space(unsigned long* ip,
     struct vm_area_struct* vma;
     int munmap_ret = 0;
     int mmap_flags = 0;
+    int vmas_installed = 0;
+    int ptes_installed = 0;
 
     PSPRINTK("import address space\n");
     
@@ -1139,6 +1149,7 @@ int process_server_import_address_space(unsigned long* ip,
     // Import address space
     vma_curr = clone_data->vma_list;
 
+
     while(vma_curr) {
         PSPRINTK("do_mmap()\n");
         if(vma_curr->path[0] != '\0') {
@@ -1155,6 +1166,7 @@ int process_server_import_address_space(unsigned long* ip,
                         PROT_READ|PROT_WRITE|PROT_EXEC, 
                         mmap_flags, 
                         0);
+                vmas_installed++;
                 vma_curr->mmapping_in_progress = 0;
                 up_write(&current->mm->mmap_sem);
                 filp_close(f,NULL);
@@ -1172,6 +1184,7 @@ int process_server_import_address_space(unsigned long* ip,
                 PROT_READ|PROT_WRITE|PROT_EXEC, 
                 mmap_flags, 
                 0);
+            vmas_installed++;
             //PSPRINTK("mmap error for %lx = %lx\n",vma_curr->start,err);
             up_write(&current->mm->mmap_sem);
             if(err != vma_curr->start) {
@@ -1186,6 +1199,9 @@ int process_server_import_address_space(unsigned long* ip,
             PSPRINTK("vma mmapped, pulling in pte's\n");
             if(vma) {
                 pte_curr = vma_curr->pte_list;
+                if(pte_curr == NULL) {
+                    PSPRINTK("vma->pte_curr == null\n");
+                }
                 while(pte_curr) {
                     // MAP it
                     err = remap_pfn_range(vma,
@@ -1193,6 +1209,7 @@ int process_server_import_address_space(unsigned long* ip,
                             pte_curr->paddr >> PAGE_SHIFT,
                             PAGE_SIZE,
                             vma->vm_page_prot);
+                    ptes_installed++;
                     pte_curr = (pte_data_t*)pte_curr->header.next;
                     if(err) {
                         PSPRINTK("Fault - remap_pfn_range failed to map %lx to %lx with error %lx\n",
@@ -1203,6 +1220,8 @@ int process_server_import_address_space(unsigned long* ip,
         }
         vma_curr = (vma_data_t*)vma_curr->header.next;
     }
+
+    printk("vmas_installed{%d}, ptes_installed{%d}\n",vmas_installed,ptes_installed);
 
     // install memory information
     current->mm->start_stack = clone_data->stack_start;
@@ -1241,10 +1260,6 @@ int process_server_import_address_space(unsigned long* ip,
     rdmsrl(MSR_GS_BASE, gs);
     rdmsrl(MSR_FS_BASE, fs);
     
-    PSPRINTK("%s: curr:(fs:0x%lx fsid:0x%x) clone:(fs:0x%lx fsid:0x%x) saved:(fs:0x%lx fsid:0x%x) valid: %d\n",
-	   __func__, current->thread.fs, current->thread.fsindex,
-	   clone_data->thread_fs, clone_data->thread_fsindex, fs, fsindex,
-	   __user_addr(clone_data->thread_fs) );
     if (clone_data->thread_fs && __user_addr(clone_data->thread_fs)) { // we update only if the 
                                                                        // address of the base fs is different 
                                                                        // from 0 and not represent a kernel address 
@@ -1260,11 +1275,6 @@ int process_server_import_address_space(unsigned long* ip,
 	        loadsegment(fs, 0);
         }
 
-        if (fs != current->thread.fs) {
-	        PSPRINTK("%s: fs %lx thread %lx (idx %d thread %d)\n",
-	            __func__, fs, current->thread.fs, fsindex, current->thread.fsindex);      
-        }
-
         if (current->thread.fs) {
 	        wrmsrl(MSR_FS_BASE, current->thread.fs);  
         }
@@ -1273,11 +1283,6 @@ int process_server_import_address_space(unsigned long* ip,
         loadsegment(fs, 0);
     }
        
-    PSPRINTK("%s: curr:(gs:0x%lx gsid:0x%x) clone:(gs:0x%lx gsid:0x%x) saved:(gs:0x%lx gsid:0x%x) valid: %d\n",
-	    __func__, current->thread.gs, current->thread.gsindex,
-	    clone_data->thread_gs, clone_data->thread_gsindex, gs, gsindex,
-	    __user_addr(clone_data->thread_gs) );
-
     if (clone_data->thread_gs && __user_addr(clone_data->thread_gs)) {
         current->thread.gs = clone_data->thread_gs;    
         current->thread.gsindex = clone_data->thread_gsindex;
@@ -1289,12 +1294,8 @@ int process_server_import_address_space(unsigned long* ip,
 	        load_gs_index(0);
         }
 
-        if (gs != current->thread.gs) {
-	        PSPRINTK("%s: gs %lx thread %lx (idx %d thread %d)\n",
-	            __func__, gs, current->thread.gs, gsindex, current->thread.gsindex);    
-        }
         if (current->thread.gs) {
-	        wrmsrl(MSR_FS_BASE, current->thread.gs);
+	        wrmsrl(MSR_GS_BASE, current->thread.gs);
         }
     }
     else {
@@ -1303,8 +1304,8 @@ int process_server_import_address_space(unsigned long* ip,
     
     }
     
-    dump_clone_data(clone_data);
-    dump_task(current,regs, clone_data->stack_ptr);
+    //dump_clone_data(clone_data);
+    //dump_task(current,regs, clone_data->stack_ptr);
 
     return 0;
 }
@@ -1453,28 +1454,27 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
     int vma_id = decon_data->vma_id;
     int dst_cpu = decon_data->dst_cpu;
     int clone_request_id = decon_data->clone_request_id;
-    pte_transfer_t* pte_xfer = NULL;
+    pte_transfer_t pte_xfer;
 
     if(NULL == pte || !pte_present(*pte)) {
         return 0;
     }
 
-    pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_ATOMIC);
+    //pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_ATOMIC);
 
-    pte_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER;
-    pte_xfer->header.prio = PCN_KMSG_PRIO_NORMAL;
-    pte_xfer->paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));
+    pte_xfer.header.type = PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER;
+    pte_xfer.header.prio = PCN_KMSG_PRIO_NORMAL;
+    pte_xfer.paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));
     // NOTE: Found the above pte to paddr conversion here -
     // http://wbsun.blogspot.com/2010/12/convert-userspace-virtual-address-to.html
-    pte_xfer->vaddr = start;
-    pte_xfer->vma_id = vma_id;
-    pte_xfer->clone_request_id = clone_request_id;
-    pte_xfer->pfn = pte_pfn(*pte);
-    pcn_kmsg_send_long(dst_cpu, 
-            (struct pcn_kmsg_long_message*)pte_xfer, 
-            sizeof(pte_transfer_t) - sizeof(pte_xfer->header));
+    pte_xfer.vaddr = start;
+    pte_xfer.vma_id = vma_id;
+    pte_xfer.clone_request_id = clone_request_id;
+    pte_xfer.pfn = pte_pfn(*pte);
+    PSPRINTK("Sending PTE\n"); 
+    pcn_kmsg_send(dst_cpu, (struct pcn_kmsg_message *)&pte_xfer);
 
-    kfree(pte_xfer);
+    //kfree(pte_xfer);
 
     return 0;
 }
@@ -1678,7 +1678,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     kfree(request);
     kfree(vma_xfer);
 
-    dump_task(task,regs,request->stack_ptr);
+    //dump_task(task,regs,request->stack_ptr);
 
     return PROCESS_SERVER_CLONE_SUCCESS;
 
