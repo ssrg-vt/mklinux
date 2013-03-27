@@ -137,6 +137,10 @@
 #define	FIRST_VM86_IRQ			   3
 #define LAST_VM86_IRQ			  15
 
+#ifdef CONFIG_POPCORN_SHMTUN
+#define POPCORN_NET_VECTOR 0xce
+#endif
+
 #ifdef CONFIG_POPCORN_KMSG
 #define POPCORN_IPI_LATENCY_VECTOR 0xcc
 #define POPCORN_KMSG_VECTOR 0xcd

@@ -32,6 +32,7 @@
 
 static void noop_init_apic_ldr(void) { }
 static void noop_send_IPI_mask(const struct cpumask *cpumask, int vector) { }
+static void noop_send_IPI_single(int cpu, int vector) { }
 static void noop_send_IPI_mask_allbutself(const struct cpumask *cpumask, int vector) { }
 static void noop_send_IPI_allbutself(int vector) { }
 static void noop_send_IPI_all(int vector) { }
@@ -166,6 +167,7 @@ struct apic apic_noop = {
 	.send_IPI_allbutself		= noop_send_IPI_allbutself,
 	.send_IPI_all			= noop_send_IPI_all,
 	.send_IPI_self			= noop_send_IPI_self,
+	.send_IPI_single		= noop_send_IPI_single,
 
 	.wakeup_secondary_cpu		= noop_wakeup_secondary_cpu,
 

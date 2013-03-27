@@ -2010,7 +2010,8 @@ void __cpuinit generic_processor_info(int apicid, int version)
 		return;
 	}
 
-	cpu = num_processors++;
+	cpu = num_processors;
+	num_processors++;
 //	if (apicid == boot_cpu_physical_apicid) {
 		/*
 		 * x86_bios_cpu_apicid is required to have processors listed

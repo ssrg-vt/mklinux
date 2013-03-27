@@ -75,6 +75,8 @@ struct file_handle;
 #include <linux/quota.h>
 #include <linux/key.h>
 #include <trace/syscall.h>
+#include <linux/pcn_kmsg.h>
+#include <linux/pcn_kmsg_test.h>
 
 #define __SC_DECL1(t1, a1)	t1 a1
 #define __SC_DECL2(t2, a2, ...) t2 a2, __SC_DECL1(__VA_ARGS__)
@@ -862,7 +864,8 @@ asmlinkage long sys_multikernel_boot(int cpu,
 
 asmlinkage long sys_get_boot_params_addr(void);
 
-asmlinkage long sys_popcorn_test_kmsg(int cpu);
+asmlinkage long sys_popcorn_test_kmsg(enum pcn_kmsg_test_op op,
+				      struct pcn_kmsg_test_args __user *args);
 
 asmlinkage long sys_popcorn_test_ipi_latency(int cpu);
 

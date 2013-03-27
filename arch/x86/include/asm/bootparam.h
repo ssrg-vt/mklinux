@@ -119,8 +119,9 @@ struct boot_params {
 	struct e820entry e820_map[E820MAX];		/* 0x2d0 */
 	__u8  _pad8[48];				/* 0xcd0 */
 	struct edd_info eddbuf[EDDMAXNR];		/* 0xd00 */
-	__u8  _pad9[268];				/* 0xeec */
-	__u64  pcn_kmsg_master_window;
+	__u8  _pad9[260];				/* 0xeec */
+	__u64 shmtun_phys_addr;
+	__u64 pcn_kmsg_master_window;
 } __attribute__((packed));
 
 enum {

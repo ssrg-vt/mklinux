@@ -117,6 +117,12 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 		seq_printf(p, "%10u ", per_cpu(mce_poll_count, j));
 	seq_printf(p, "  Machine check polls\n");
 #endif
+#ifdef CONFIG_POPCORN_SHMTUN
+	seq_printf(p, "%*s: ", prec, "PCN");
+        for_each_online_cpu(j)
+                seq_printf(p, "%10u ", irq_stats(j)->irq_popcorn_net_count);
+        seq_printf(p, "  Popcorn network interrupts\n");
+#endif
 #ifdef CONFIG_POPCORN_KMSG
 	seq_printf(p, "%*s: ", prec, "PKM");
 	for_each_online_cpu(j)
@@ -155,6 +161,9 @@ u64 arch_irq_stat_cpu(unsigned int cpu)
 #endif
 #ifdef CONFIG_X86_MCE_THRESHOLD
 	sum += irq_stats(cpu)->irq_threshold_count;
+#endif
+#ifdef CONFIG_POPCORN_SHMTUN
+	sum += irq_stats(cpu)->irq_popcorn_net_count;
 #endif
 #ifdef CONFIG_POPCORN_KMSG
 	sum += irq_stats(cpu)->irq_popcorn_kmsg_count;

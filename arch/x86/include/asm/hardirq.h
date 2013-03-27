@@ -26,6 +26,11 @@ typedef struct {
 #ifdef CONFIG_X86_MCE_THRESHOLD
 	unsigned int irq_threshold_count;
 #endif
+
+#ifdef CONFIG_POPCORN_SHMTUN
+	unsigned int irq_popcorn_net_count;
+#endif
+
 #ifdef CONFIG_POPCORN_KMSG
 	unsigned int irq_popcorn_kmsg_count;
 #endif

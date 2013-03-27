@@ -18,8 +18,9 @@
 #define POPCORN_MAX_MCAST_CHANNELS 32
 
 struct pcn_kmsg_mcast_wininfo {
-	unsigned char lock;
+	volatile unsigned char lock;
 	unsigned char owner_cpu;
+	volatile unsigned char is_closing;
 	unsigned long mask;
 	unsigned int num_members;
 	unsigned long phys_addr;
@@ -53,6 +54,7 @@ typedef struct {
    PCN_KMSG_END. */
 enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_TEST,
+	PCN_KMSG_TYPE_TEST_LONG,
 	PCN_KMSG_TYPE_CHECKIN,
 	PCN_KMSG_TYPE_MCAST,
     PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST,
@@ -60,6 +62,8 @@ enum pcn_kmsg_type {
     PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS,
     PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER,
     PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER,
+	PCN_KMSG_TYPE_MCAST_CLOSE,
+	PCN_KMSG_TYPE_SHMTUN,
 	PCN_KMSG_TYPE_MAX
 };
 
@@ -90,36 +94,45 @@ struct pcn_kmsg_hdr {
    own message structs with the payload replaced with their own fields, and then
    cast them to a struct pcn_kmsg_message.  See the checkin message below for
    an example of how to do this. */
+
+/* Struct for the actual messages.  Note that hdr and payload are flipped
+   when this actually goes out, so the receiver can poll on the ready bit
+   in the header. */
 struct pcn_kmsg_message {
+	struct pcn_kmsg_hdr hdr;
+	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
+}__attribute__((packed)) __attribute__((aligned(64)));
+
+/* Struct for sending long messages (>60 bytes payload) */
+struct pcn_kmsg_long_message {
+	struct pcn_kmsg_hdr hdr;
+	unsigned char payload[512];
+}__attribute__((packed));
+
+/* List entry to copy message into and pass around in receiving kernel */
+struct pcn_kmsg_container {
+	struct list_head list;
+	struct pcn_kmsg_message msg;
+}__attribute__((packed));
+
+
+struct pcn_kmsg_reverse_message {
 	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
 	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed)) __attribute__((aligned(64)));
 
-/* List entry to copy message into and pass around in receiving kernel */
-struct pcn_kmsg_container {
-	struct pcn_kmsg_message msg;
-	struct list_head list;
-}__attribute__((packed));
+
+/* TYPES OF MESSAGES */
 
 /* Message struct for guest kernels to check in with each other. */
 struct pcn_kmsg_checkin_message {
+	struct pcn_kmsg_hdr hdr;
 	unsigned long window_phys_addr;
 	unsigned char cpu_to_add;
 	char pad[51];
-	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed)) __attribute__((aligned(64)));
 
-/* Message struct for testing */
-struct pcn_kmsg_test_message {
-	unsigned long test_val;
-	char pad[52];
-	struct pcn_kmsg_hdr hdr;
-}__attribute__((packed)) __attribute__((aligned(64)));
 
-struct pcn_kmsg_long_message {
-	struct pcn_kmsg_hdr hdr;
-	unsigned char payload[512];
-};
 
 /* WINDOW / BUFFERING */
 
@@ -128,7 +141,7 @@ struct pcn_kmsg_long_message {
 struct pcn_kmsg_window {
 	volatile unsigned long head;
 	volatile unsigned long tail;
-	struct pcn_kmsg_message buffer[PCN_KMSG_RBUF_SIZE];
+	struct pcn_kmsg_reverse_message buffer[PCN_KMSG_RBUF_SIZE];
 }__attribute__((packed));
 
 /* Typedef for function pointer to callback functions */
@@ -157,6 +170,9 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       struct pcn_kmsg_long_message *lmsg, 
 		       unsigned int payload_size);
 
+/* Free a received message (called at the end of the callback function) */
+inline void pcn_kmsg_free_msg(void *msg);
+
 /* MULTICAST GROUPS */
 
 /* Enum for mcast message type. */
@@ -170,22 +186,20 @@ enum pcn_kmsg_mcast_type {
 
 /* Message struct for guest kernels to check in with each other. */
 struct pcn_kmsg_mcast_message {
+	struct pcn_kmsg_hdr hdr;
 	enum pcn_kmsg_mcast_type type :32; 
 	pcn_kmsg_mcast_id id;	
 	unsigned long mask;
 	unsigned int num_members;
 	unsigned long window_phys_addr;
 	char pad[28];
-	struct pcn_kmsg_hdr hdr;
 }__attribute__((packed)) __attribute__((aligned(64)));
-
-
 
 struct pcn_kmsg_mcast_window {
 	volatile unsigned long head;
 	volatile unsigned long tail;
 	int read_counter[PCN_KMSG_RBUF_SIZE];
-	struct pcn_kmsg_message buffer[PCN_KMSG_RBUF_SIZE];
+	struct pcn_kmsg_reverse_message buffer[PCN_KMSG_RBUF_SIZE];
 }__attribute__((packed));
 
 struct pcn_kmsg_mcast_local {

@@ -12,8 +12,10 @@
 #ifdef CONFIG_SMP
 BUILD_INTERRUPT(reschedule_interrupt,RESCHEDULE_VECTOR)
 
-/*****VTY Changes single line code change****************/
-BUILD_INTERRUPT(vty_interrupt,MK_VTY)
+#ifdef CONFIG_POPCORN_SHMTUN
+/* POPCORN -- 32 bit handler (unused really...) */
+BUILD_INTERRUPT(popcorn_net_interrupt,POPCORN_NET_VECTOR)
+#endif
 
 BUILD_INTERRUPT(call_function_interrupt,CALL_FUNCTION_VECTOR)
 BUILD_INTERRUPT(call_function_single_interrupt,CALL_FUNCTION_SINGLE_VECTOR)

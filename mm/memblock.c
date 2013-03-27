@@ -140,7 +140,7 @@ static phys_addr_t __init_memblock memblock_find_base(phys_addr_t size,
 		found = memblock_find_region(bottom, top, size, align);
 		if (found != MEMBLOCK_ERROR) {
 			if (found < 0x1000000) {
-				printk("memblock_find_base: BELOW 16 MB, reserved block of size 0x%lx at phys addr 0x%lx\n",
+				printk("memblock_find_base: BELOW 16 MB, reserved block of size 0x%llx at phys addr 0x%llx\n",
 					size, found);
 			}
 			return found;

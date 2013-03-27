@@ -1478,7 +1478,7 @@ static void __init __io_apic_setup_irqs(unsigned int ioapic_idx)
 	int idx, node;
 	struct io_apic_irq_attr attr;
 	unsigned int pin, irq;
-	char buffer[128];
+	//char buffer[128];
 	node = cpu_to_node(0); // note: node is always node zero! Have sense in single kernel
 
 	for (pin = 0; pin < ioapics[ioapic_idx].nr_registers; pin++) {

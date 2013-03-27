@@ -29,16 +29,37 @@ void default_send_IPI_mask_sequence_phys(const struct cpumask *mask, int vector)
 	 * to an arbitrary mask, so I do a unicast to each CPU instead.
 	 * - mbligh
 	 */
+
+	//printk("Called default_send_IPI_mask_sequence_phys, vector %d\n", vector);
+
 	local_irq_save(flags);
 	for_each_cpu(query_cpu, mask) {
-		__default_send_IPI_dest_field(per_cpu(x86_cpu_to_apicid,
+		/*
+		printk("Looping through mask; sending IPI to CPU %lu, apicid %d\n",
+			query_cpu, per_cpu(x86_bios_cpu_apicid, query_cpu));
+		*/
+		__default_send_IPI_dest_field(per_cpu(x86_bios_cpu_apicid,
 				query_cpu), vector, APIC_DEST_PHYSICAL);
 	}
 	local_irq_restore(flags);
 }
 
+void default_send_IPI_single_phys(int cpu, int vector)
+{
+	unsigned long flags;
+
+	//printk("Called default_send_IPI_single_phys, cpu = %d, vector %d\n", cpu, vector);
+
+	local_irq_save(flags);
+
+	__default_send_IPI_dest_field(per_cpu(x86_bios_cpu_apicid,
+				cpu), vector, APIC_DEST_PHYSICAL);
+
+	local_irq_restore(flags);
+}
+
 void default_send_IPI_mask_allbutself_phys(const struct cpumask *mask,
-						 int vector)
+		int vector)
 {
 	unsigned int this_cpu = smp_processor_id();
 	unsigned int query_cpu;
@@ -51,7 +72,7 @@ void default_send_IPI_mask_allbutself_phys(const struct cpumask *mask,
 		if (query_cpu == this_cpu)
 			continue;
 		__default_send_IPI_dest_field(per_cpu(x86_cpu_to_apicid,
-				 query_cpu), vector, APIC_DEST_PHYSICAL);
+					query_cpu), vector, APIC_DEST_PHYSICAL);
 	}
 	local_irq_restore(flags);
 }
@@ -108,6 +129,8 @@ void default_send_IPI_mask_logical(const struct cpumask *cpumask, int vector)
 
 	if (WARN_ONCE(!mask, "empty IPI mask"))
 		return;
+
+	//printk("default_send_IPI_mask_logical: mask 0x%lx, dest_logical %d\n", mask, apic->dest_logical);
 
 	local_irq_save(flags);
 	WARN_ON(mask & ~cpumask_bits(cpu_online_mask)[0]);

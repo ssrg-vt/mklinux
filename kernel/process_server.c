@@ -203,6 +203,7 @@ typedef struct _vma_transfer {
  * Inform remote cpu of a pte to vma mapping.
  */
 struct _pte_transfer {
+    struct pcn_kmsg_hdr header;
     int vma_id;                  //  4
     int clone_request_id;        //  4
     unsigned long vaddr;         //  8
@@ -211,7 +212,6 @@ struct _pte_transfer {
                                  //  ---
                                  //  32 -> 28 bytes of padding needed
     char pad[28];
-    struct pcn_kmsg_hdr header;
 } __attribute__((packed)) __attribute__((aligned(64)));
 
 typedef struct _pte_transfer pte_transfer_t;
@@ -867,7 +867,7 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
 
     spin_unlock(&_data_head_lock);
 
-    kfree(inc_msg);
+    pcn_kmsg_free_msg(inc_msg);
     
     return 0;
 }
@@ -906,7 +906,7 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
 
     add_data_entry(vma_data); 
    
-    kfree(inc_msg);
+    pcn_kmsg_free_msg(inc_msg);
 
     return 0;
 }
@@ -941,7 +941,7 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
         }
     }
 
-    kfree(inc_msg);
+    pcn_kmsg_free_msg(inc_msg);
 
     return 0;
 }
@@ -978,7 +978,7 @@ static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
         }
     }
 
-    kfree(inc_msg);
+    pcn_kmsg_free_msg(inc_msg);
 
     return 0;
 }
@@ -1068,7 +1068,8 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 
     add_data_entry(clone_data);
 
-perf_dd = native_read_tsc();
+    perf_dd = native_read_tsc();
+    
     clone_work = kmalloc(sizeof(clone_exec_work_t),GFP_ATOMIC);
     if(clone_work) {
         INIT_WORK( (struct work_struct*)clone_work, process_exec_item);
@@ -1076,8 +1077,10 @@ perf_dd = native_read_tsc();
         queue_work(clone_wq, (struct work_struct*)clone_work);
     }
 
-    kfree(inc_msg);
-perf_ee = native_read_tsc();
+    pcn_kmsg_free_msg(inc_msg);
+    
+    perf_ee = native_read_tsc();
+    
     return 0;
 }
 

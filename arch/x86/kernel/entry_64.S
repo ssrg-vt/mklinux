@@ -997,12 +997,19 @@ apicinterrupt CALL_FUNCTION_VECTOR \
 	call_function_interrupt smp_call_function_interrupt
 apicinterrupt RESCHEDULE_VECTOR \
 	reschedule_interrupt smp_reschedule_interrupt
+
+#ifdef CONFIG_POPCORN_SHMTUN
+apicinterrupt POPCORN_NET_VECTOR \
+	popcorn_net_interrupt smp_popcorn_net_interrupt
+#endif
+
 #ifdef CONFIG_POPCORN_KMSG
 apicinterrupt POPCORN_KMSG_VECTOR \
 	popcorn_kmsg_interrupt smp_popcorn_kmsg_interrupt
 apicinterrupt POPCORN_IPI_LATENCY_VECTOR \
 	popcorn_ipi_latency_interrupt smp_popcorn_ipi_latency_interrupt
 #endif
+
 #endif
 
 apicinterrupt ERROR_APIC_VECTOR \
