@@ -12,7 +12,9 @@
 /* INFRASTRUCTURE */
 enum pcn_kmsg_test_op {
 	PCN_KMSG_TEST_SEND_SINGLE,
+	PCN_KMSG_TEST_SEND_PINGPONG,
 	PCN_KMSG_TEST_SEND_BATCH,
+	PCN_KMSG_TEST_SEND_BATCH_RESULT,
 	PCN_KMSG_TEST_SEND_LONG,
 	PCN_KMSG_TEST_OP_MCAST_OPEN,
 	PCN_KMSG_TEST_OP_MCAST_SEND,
@@ -22,6 +24,7 @@ enum pcn_kmsg_test_op {
 struct pcn_kmsg_test_args {
 	int cpu;
 	unsigned long mask;
+	unsigned long batch_size;
 	pcn_kmsg_mcast_id mcast_id;
 };
 
@@ -29,8 +32,11 @@ struct pcn_kmsg_test_args {
 /* Message struct for testing */
 struct pcn_kmsg_test_message {
 	struct pcn_kmsg_hdr hdr;
-	unsigned long test_val;
-	char pad[52];
+	enum pcn_kmsg_test_op op;
+	unsigned long batch_seqnum;
+	unsigned long batch_size;
+	unsigned long elapsed_time;
+	char pad[32];
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 #endif /* __LINUX_PCN_KMSG_TEST_H */

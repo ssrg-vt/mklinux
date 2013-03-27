@@ -29,26 +29,69 @@ static int pcn_kmsg_test_send_single(struct pcn_kmsg_test_args __user *args)
 {
 	int rc = 0;
 	struct pcn_kmsg_test_message msg;
+
+	msg.hdr.type = PCN_KMSG_TYPE_TEST;
+	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+	msg.op = PCN_KMSG_TEST_SEND_SINGLE;
+
+	pcn_kmsg_send(args->cpu, (struct pcn_kmsg_message *) &msg);
+
+	return rc;
+}
+
+static int pcn_kmsg_test_send_pingpong(struct pcn_kmsg_test_args __user *args)
+{
+	int rc = 0;
+	struct pcn_kmsg_test_message msg;
 	unsigned long tsc_init;
 
 	msg.hdr.type = PCN_KMSG_TYPE_TEST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+	msg.op = PCN_KMSG_TEST_SEND_PINGPONG;
 
 	kmsg_done = 0;
 
 	rdtscll(tsc_init);
 	pcn_kmsg_send(args->cpu, (struct pcn_kmsg_message *) &msg);
 	while (!kmsg_done) {}
-	
+
 	printk("Elapsed time (ticks): %lu\n", kmsg_tsc - tsc_init);
 
 	return rc;
 }
 
+static unsigned long batch_send_start_tsc;
 
 static int pcn_kmsg_test_send_batch(struct pcn_kmsg_test_args __user *args)
 {
 	int rc = 0;
+	unsigned long i;
+	struct pcn_kmsg_test_message msg;
+
+	printk("Testing batch send, batch_size %lu\n", args->batch_size);
+
+	msg.hdr.type = PCN_KMSG_TYPE_TEST;
+	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+	msg.op = PCN_KMSG_TEST_SEND_BATCH;
+	msg.batch_size = args->batch_size;
+
+	rdtscll(batch_send_start_tsc);
+
+	kmsg_done = 0;
+
+	/* send messages in series */
+	for (i = 0; i < args->batch_size; i++) {
+		msg.batch_seqnum = i;
+
+		printk("Sending batch message, cpu %d, seqnum %lu\n", args->cpu, i);
+
+		rc = pcn_kmsg_send(args->cpu, (struct pcn_kmsg_message *) &msg);
+
+		if (rc) {
+			printk("Error sending message!\n");
+			return -1;
+		}
+	}
 
 	return rc;
 }
@@ -136,6 +179,10 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 			rc = pcn_kmsg_test_send_single(args);
 			break;
 
+		case PCN_KMSG_TEST_SEND_PINGPONG:
+			rc = pcn_kmsg_test_send_pingpong(args);
+			break;
+
 		case PCN_KMSG_TEST_SEND_BATCH:
 			rc = pcn_kmsg_test_send_batch(args);
 			break;
@@ -167,11 +214,16 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 
 /* CALLBACKS */
 
-static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
+static int handle_single_msg(struct pcn_kmsg_test_message *msg)
+{
+	printk("Received single test message from CPU %d!\n",
+	       msg->hdr.from_cpu);
+	return 0;
+}
+
+static int handle_pingpong_msg(struct pcn_kmsg_test_message *msg)
 {
 	int rc = 0;
-
-	printk("Reached %s!\n", __func__);
 
 	if (my_cpu) {
 
@@ -179,13 +231,14 @@ static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
 
 		reply_msg.hdr.type = PCN_KMSG_TYPE_TEST;
 		reply_msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+		reply_msg.op = PCN_KMSG_TEST_SEND_PINGPONG;
 
 		printk("Sending message back to CPU 0...\n");
 		rc = pcn_kmsg_send(0, (struct pcn_kmsg_message *) &reply_msg);
 
 		if (rc) {
 			printk("Message send failed!\n");
-			goto out;
+			return -1;
 		}
 	} else {
 		printk("Received ping-ping; reading end timestamp...\n");
@@ -193,7 +246,86 @@ static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
 		kmsg_done = 1;
 	}
 
-out:
+	return 0;
+}
+
+unsigned long batch_start_tsc;
+
+static int handle_batch_msg(struct pcn_kmsg_test_message *msg)
+{
+	int rc = 0;
+
+	printk("%s: seqnum %lu size %lu\n", __func__, msg->batch_seqnum, msg->batch_size);
+
+	if (msg->batch_seqnum == 0) {
+		printk("Start of batch; taking initial timestamp!\n");
+		rdtscll(batch_start_tsc);
+
+	} else if (msg->batch_seqnum == (msg->batch_size - 1)) {
+		/* send back reply */
+		struct pcn_kmsg_test_message reply_msg;
+		unsigned long batch_end_tsc;
+
+		printk("End of batch; sending back reply!\n");
+		rdtscll(batch_end_tsc);
+
+		reply_msg.hdr.type = PCN_KMSG_TYPE_TEST;
+		reply_msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+		reply_msg.op = PCN_KMSG_TEST_SEND_BATCH_RESULT;
+		reply_msg.elapsed_time = batch_end_tsc - batch_start_tsc;
+
+		rc = pcn_kmsg_send(0, (struct pcn_kmsg_message *) &reply_msg);
+
+		if (rc) {
+			printk("Message send failed!\n");
+			return -1;
+		}
+	}
+	return rc;
+}
+
+static int handle_batch_result_msg(struct pcn_kmsg_test_message *msg)
+{
+	int rc = 0;
+	unsigned long batch_send_end_tsc;
+
+	rdtscll(batch_send_end_tsc);
+
+	printk("Batch result: sender elapsed RTT (ticks): %lu\n", batch_send_end_tsc - batch_send_start_tsc);
+	printk("Batch result: receiver elapsed time (ticks): %lu\n", msg->elapsed_time);
+
+	return rc;
+}
+
+static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
+{
+	int rc = 0;
+
+	struct pcn_kmsg_test_message *msg = (struct pcn_kmsg_test_message *) message;
+
+	printk("Reached %s, op %d!\n", __func__, msg->op);
+
+	switch (msg->op) {
+		case PCN_KMSG_TEST_SEND_SINGLE:
+			rc = handle_single_msg(msg);
+			break;
+
+		case PCN_KMSG_TEST_SEND_PINGPONG:
+			rc = handle_pingpong_msg(msg);
+			break;
+
+		case PCN_KMSG_TEST_SEND_BATCH:
+			rc = handle_batch_msg(msg);
+			break;
+
+		case PCN_KMSG_TEST_SEND_BATCH_RESULT:
+			rc = handle_batch_result_msg(msg);
+			break;
+
+		default:
+			printk("Operation %d not supported!\n", msg->op);
+	}
+	
 	pcn_kmsg_free_msg(message);
 
 	return rc;
