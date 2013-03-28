@@ -21,6 +21,8 @@
 #define TEST_ERR(fmt, args...) printk("%s: ERROR: " fmt, __func__, ##args)
 
 volatile unsigned long kmsg_tsc;
+unsigned long ts1, ts2, ts3;
+
 volatile int kmsg_done;
 
 extern int my_cpu;
@@ -56,6 +58,8 @@ static int pcn_kmsg_test_send_pingpong(struct pcn_kmsg_test_args __user *args)
 	while (!kmsg_done) {}
 
 	printk("Elapsed time (ticks): %lu\n", kmsg_tsc - tsc_init);
+
+	args->ts1 = kmsg_tsc - tsc_init;
 
 	return rc;
 }
@@ -94,6 +98,13 @@ static int pcn_kmsg_test_send_batch(struct pcn_kmsg_test_args __user *args)
 			return -1;
 		}
 	}
+
+	/* wait for reply to last message */
+
+	while (!kmsg_done) {}
+
+	args->ts1 = ts1;
+	args->ts2 = ts2;
 
 	return rc;
 }
@@ -299,6 +310,11 @@ static int handle_batch_result_msg(struct pcn_kmsg_test_message *msg)
 	       batch_send_end_tsc - batch_send_start_tsc);
 	printk("Batch result: receiver elapsed time (ticks): %lu\n", 
 	       msg->elapsed_time);
+
+	ts1 = batch_send_end_tsc - batch_send_start_tsc;
+	ts2 = msg->elapsed_time;
+
+	kmsg_done = 1;
 
 	return rc;
 }

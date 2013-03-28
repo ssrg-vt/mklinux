@@ -75,7 +75,7 @@ do {								\
 } while (0)
 #endif
 
-#define SHMTUN_VERBOSE 1
+#define SHMTUN_VERBOSE 0
 
 #if SHMTUN_VERBOSE
 #define SHMTUN_PRINTK(...) printk(__VA_ARGS__)

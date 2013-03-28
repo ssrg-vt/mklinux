@@ -98,12 +98,14 @@ static inline unsigned long win_inuse(struct pcn_kmsg_window *win)
 }
 
 static inline int win_put(struct pcn_kmsg_window *win, 
-			  struct pcn_kmsg_message *msg) 
+			  struct pcn_kmsg_message *msg,
+			  int no_block) 
 {
 	unsigned long ticket;
 
-	/* if the queue is already really long, return EAGAIN */
-	if (win_inuse(win) >= RB_SIZE) {
+	/* if we can't block and the queue is already really long, 
+	   return EAGAIN */
+	if (no_block && (win_inuse(win) >= RB_SIZE)) {
 		KMSG_PRINTK("window full, caller should try again...\n");
 		return -EAGAIN;
 	}
@@ -628,7 +630,8 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 
 /* SENDING / MARSHALING */
 
-static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
+static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
+			   int no_block)
 {
 	int rc;
 	struct pcn_kmsg_window *dest_window;
@@ -654,10 +657,13 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	msg->hdr.from_cpu = my_cpu;
 
 	/* place message in rbuf */
-	rc = win_put(dest_window, msg);		
+	rc = win_put(dest_window, msg, no_block);		
 
 	if (rc) {
-		KMSG_ERR("Failed to place message in destination window -- maybe it's full?\n");
+		if (no_block && (rc == EAGAIN)) {
+			return rc;
+		}
+		KMSG_ERR("Failed to place message in dest win!\n");
 		return -1;
 	}
 
@@ -674,7 +680,18 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	msg->hdr.lg_end = 0;
 	msg->hdr.lg_seqnum = 0;
 
-	return __pcn_kmsg_send(dest_cpu, msg);
+	return __pcn_kmsg_send(dest_cpu, msg, 0);
+}
+
+int pcn_kmsg_send_noblock(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
+{
+
+	msg->hdr.is_lg_msg = 0;
+	msg->hdr.lg_start = 0;
+	msg->hdr.lg_end = 0;
+	msg->hdr.lg_seqnum = 0;
+
+	return __pcn_kmsg_send(dest_cpu, msg, 1);
 }
 
 int pcn_kmsg_send_long(unsigned int dest_cpu, 
@@ -709,7 +726,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       i * PCN_KMSG_PAYLOAD_SIZE, 
 		       PCN_KMSG_PAYLOAD_SIZE);
 
-		__pcn_kmsg_send(dest_cpu, &this_chunk);
+		__pcn_kmsg_send(dest_cpu, &this_chunk, 0);
 	}
 
 	return 0;

@@ -26,6 +26,9 @@ struct pcn_kmsg_test_args {
 	unsigned long mask;
 	unsigned long batch_size;
 	pcn_kmsg_mcast_id mcast_id;
+	unsigned long ts1;
+	unsigned long ts2;
+	unsigned long ts3;
 };
 
 /* MESSAGE TYPES */
