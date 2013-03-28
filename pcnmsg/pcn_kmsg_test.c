@@ -83,9 +83,11 @@ static int pcn_kmsg_test_send_batch(struct pcn_kmsg_test_args __user *args)
 	for (i = 0; i < args->batch_size; i++) {
 		msg.batch_seqnum = i;
 
-		printk("Sending batch message, cpu %d, seqnum %lu\n", args->cpu, i);
+		printk("Sending batch message, cpu %d, seqnum %lu\n", 
+		       args->cpu, i);
 
-		rc = pcn_kmsg_send(args->cpu, (struct pcn_kmsg_message *) &msg);
+		rc = pcn_kmsg_send(args->cpu, 
+				   (struct pcn_kmsg_message *) &msg);
 
 		if (rc) {
 			printk("Error sending message!\n");
@@ -110,7 +112,8 @@ static int pcn_kmsg_test_long_msg(struct pcn_kmsg_test_args __user *args)
 
 	printk("Message to send: %s\n", (char *) &lmsg.payload);
 
-	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", args->cpu);
+	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", 
+	       args->cpu);
 
 	rc = pcn_kmsg_send_long(args->cpu, &lmsg, strlen(str) + 5);
 
@@ -255,7 +258,8 @@ static int handle_batch_msg(struct pcn_kmsg_test_message *msg)
 {
 	int rc = 0;
 
-	printk("%s: seqnum %lu size %lu\n", __func__, msg->batch_seqnum, msg->batch_size);
+	printk("%s: seqnum %lu size %lu\n", __func__, msg->batch_seqnum, 
+	       msg->batch_size);
 
 	if (msg->batch_seqnum == 0) {
 		printk("Start of batch; taking initial timestamp!\n");
@@ -291,8 +295,10 @@ static int handle_batch_result_msg(struct pcn_kmsg_test_message *msg)
 
 	rdtscll(batch_send_end_tsc);
 
-	printk("Batch result: sender elapsed RTT (ticks): %lu\n", batch_send_end_tsc - batch_send_start_tsc);
-	printk("Batch result: receiver elapsed time (ticks): %lu\n", msg->elapsed_time);
+	printk("Batch result: sender elapsed RTT (ticks): %lu\n", 
+	       batch_send_end_tsc - batch_send_start_tsc);
+	printk("Batch result: receiver elapsed time (ticks): %lu\n", 
+	       msg->elapsed_time);
 
 	return rc;
 }
@@ -301,7 +307,8 @@ static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
 {
 	int rc = 0;
 
-	struct pcn_kmsg_test_message *msg = (struct pcn_kmsg_test_message *) message;
+	struct pcn_kmsg_test_message *msg = 
+		(struct pcn_kmsg_test_message *) message;
 
 	printk("Reached %s, op %d!\n", __func__, msg->op);
 
