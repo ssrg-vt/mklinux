@@ -168,6 +168,18 @@ static inline void win_advance_tail(struct pcn_kmsg_window *win)
 	win->tail++;
 }
 
+static inline void win_enable_int(struct pcn_kmsg_window *win) {
+	        win->int_enabled = 1;
+}
+
+static inline void win_disable_int(struct pcn_kmsg_window *win) {
+	        win->int_enabled = 0;
+}
+
+static inline unsigned char win_int_enabled(struct pcn_kmsg_window *win) {
+	        return win->int_enabled;
+}
+
 #define MCASTWIN(_id_) (mcastlocal[(_id_)].mcastvirt)
 #define LOCAL_TAIL(_id_) (mcastlocal[(_id_)].local_tail)
 
@@ -408,6 +420,7 @@ static inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 {
 	window->head = 0;
 	window->tail = 0;
+	window->int_enabled = 1;
 	memset(&window->buffer, 0, 
 	       PCN_KMSG_RBUF_SIZE * sizeof(struct pcn_kmsg_message));
 	return 0;
@@ -668,7 +681,12 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 	}
 
 	/* send IPI */
-	apic->send_IPI_mask(cpumask_of(dest_cpu), POPCORN_KMSG_VECTOR);
+	if (win_int_enabled(dest_window)) {
+		KMSG_PRINTK("Interrupts enabled; sending IPI...\n");
+		apic->send_IPI_single(dest_cpu, POPCORN_KMSG_VECTOR);
+	} else {
+		KMSG_PRINTK("Interrupts not enabled; not sending IPI...\n");
+	}
 
 	return 0;
 }
@@ -783,6 +801,9 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 	/* We do as little work as possible in here (decoupling notification 
 	   from messaging) */
 
+	/* disable further interrupts for now */
+	win_disable_int(rkvirt[my_cpu]);
+
 	/* schedule bottom half */
 	__raise_softirq_irqoff(PCN_KMSG_SOFTIRQ);
 	//tasklet_schedule(&pcn_kmsg_tasklet);
@@ -822,6 +843,7 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 	int rc = 0;
 	int recv_buf_size;
 	struct pcn_kmsg_long_message *lmsg;
+	int work_done = 0;
 
 	KMSG_PRINTK("Got a large message fragment, type %u, from_cpu %u, start %u, end %u, seqnum %u!\n",
 		    msg->hdr.type, msg->hdr.from_cpu,
@@ -857,6 +879,7 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 
 			/* add to appropriate list */
 			rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
+			work_done = 1;
 
 			if (rc) {
 				KMSG_ERR("Failed to add large message to list!\n");
@@ -882,6 +905,8 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 			/* add to appropriate list */
 			rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
 
+			work_done = 1;
+
 			if (rc) {
 				KMSG_ERR("Failed to add large message to list!\n");
 			}
@@ -892,12 +917,12 @@ out:
 
 	win_advance_tail(rkvirt[my_cpu]);
 
-	return rc;
+	return work_done;
 }
 
 static int process_small_message(struct pcn_kmsg_reverse_message *msg)
 {
-	int rc = 0;
+	int rc = 0, work_done = 1;
 	struct pcn_kmsg_container *incoming;
 
 	/* malloc some memory (don't sleep!) */
@@ -905,7 +930,7 @@ static int process_small_message(struct pcn_kmsg_reverse_message *msg)
 	if (unlikely(!incoming)) {
 		KMSG_ERR("Unable to kmalloc buffer for incoming message!\n");
 		win_advance_tail(rkvirt[my_cpu]);
-		return -1;
+		return 0;
 	}
 
 	/* memcpy message from rbuf */
@@ -923,7 +948,7 @@ static int process_small_message(struct pcn_kmsg_reverse_message *msg)
 	/* add container to appropriate list */
 	rc = msg_add_list(incoming);
 
-	return rc;
+	return work_done;
 }
 
 static void process_mcast_queue(pcn_kmsg_mcast_id id)
@@ -946,29 +971,58 @@ static void process_mcast_queue(pcn_kmsg_mcast_id id)
 
 }
 
-/* bottom half */
-static void pcn_kmsg_action(struct softirq_action *h)
+#define PCN_KMSG_BUDGET 128
+
+static int pcn_kmsg_poll_handler(void)
 {
-	int rc;
 	struct pcn_kmsg_reverse_message *msg;
-	int i;
+	int work_done = 0;
 
 	KMSG_PRINTK("called\n");
 
 	/* Get messages out of the buffer first */
-
-	while (!win_get(rkvirt[my_cpu], &msg)) {
+	while ((work_done < PCN_KMSG_BUDGET) && (!win_get(rkvirt[my_cpu], &msg))) {
 		KMSG_PRINTK("got a message!\n");
 
 		/* Special processing for large messages */
 		if (msg->hdr.is_lg_msg) {
 			KMSG_PRINTK("message is a large message!\n");
-			rc = process_large_message(msg);
+			work_done += process_large_message(msg);
 		} else {
 			KMSG_PRINTK("message is a small message!\n");
-			rc = process_small_message(msg);
+			work_done += process_small_message(msg);
 		}
 
+	}
+
+	if (work_done < PCN_KMSG_BUDGET) {
+		KMSG_PRINTK("All done, enabling interrupts...\n");
+		win_enable_int(rkvirt[my_cpu]);
+	}
+
+	return work_done;
+}
+
+/* bottom half */
+static void pcn_kmsg_action(struct softirq_action *h)
+{
+	int rc;
+	int i;
+	int work_done = 0;
+
+	KMSG_PRINTK("called\n");
+
+	/* Get messages out of the buffer first */
+	while (1) {
+		work_done = 0;
+		work_done = pcn_kmsg_poll_handler();
+
+		KMSG_PRINTK("Handler did %d units of work!\n", work_done);
+
+		if (likely(work_done < PCN_KMSG_BUDGET)) {
+			break;
+		    
+		}
 	}
 
 	KMSG_PRINTK("ring buffer empty; checking mcast queues...\n");
@@ -1249,13 +1303,11 @@ static int __pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id,
 	}
 
 	/* send IPI to all in mask but me */
-
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
 		if (rkinfo->mcast_wininfo[id].mask & (1ULL << i)) {
 			if (i != my_cpu) {
 				MCAST_PRINTK("sending IPI to CPU %d\n", i);
-				apic->send_IPI_mask(cpumask_of(i), 
-						    POPCORN_KMSG_VECTOR);
+				apic->send_IPI_single(i, POPCORN_KMSG_VECTOR);
 			}
 		}
 	}

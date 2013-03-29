@@ -136,6 +136,7 @@ struct pcn_kmsg_checkin_message {
 struct pcn_kmsg_window {
 	volatile unsigned long head;
 	volatile unsigned long tail;
+	volatile unsigned char int_enabled;
 	struct pcn_kmsg_reverse_message buffer[PCN_KMSG_RBUF_SIZE];
 }__attribute__((packed));
 
