@@ -788,9 +788,13 @@ static int process_message_list(struct list_head *head)
 //void pcn_kmsg_do_tasklet(unsigned long);
 //DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
 
+unsigned long isr_ts;
+
 /* top half */
 void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 {
+	rdtscll(isr_ts);
+
 	ack_APIC_irq();
 
 	KMSG_PRINTK("Reached Popcorn KMSG interrupt handler!\n");
@@ -1003,12 +1007,16 @@ static int pcn_kmsg_poll_handler(void)
 	return work_done;
 }
 
+unsigned long bh_ts;
+
 /* bottom half */
 static void pcn_kmsg_action(struct softirq_action *h)
 {
 	int rc;
 	int i;
 	int work_done = 0;
+
+	rdtscll(bh_ts);
 
 	KMSG_PRINTK("called\n");
 

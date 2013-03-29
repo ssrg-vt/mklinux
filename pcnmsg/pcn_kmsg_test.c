@@ -27,16 +27,25 @@ volatile int kmsg_done;
 
 extern int my_cpu;
 
+extern unsigned long isr_ts, bh_ts;
+
 static int pcn_kmsg_test_send_single(struct pcn_kmsg_test_args __user *args)
 {
 	int rc = 0;
 	struct pcn_kmsg_test_message msg;
+	unsigned long ts_start, ts_end;
 
 	msg.hdr.type = PCN_KMSG_TYPE_TEST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 	msg.op = PCN_KMSG_TEST_SEND_SINGLE;
 
+	rdtscll(ts_start);
+
 	pcn_kmsg_send(args->cpu, (struct pcn_kmsg_message *) &msg);
+
+	rdtscll(ts_end);
+
+	args->send_ts = ts_end - ts_start;
 
 	return rc;
 }
@@ -59,7 +68,11 @@ static int pcn_kmsg_test_send_pingpong(struct pcn_kmsg_test_args __user *args)
 
 	printk("Elapsed time (ticks): %lu\n", kmsg_tsc - tsc_init);
 
-	args->ts1 = kmsg_tsc - tsc_init;
+	args->ts0 = tsc_init;
+	args->ts1 = ts1;
+	args->ts2 = ts2;
+	args->ts3 = ts3;
+	args->rtt = kmsg_tsc - tsc_init;
 
 	return rc;
 }
@@ -113,6 +126,7 @@ static int pcn_kmsg_test_send_batch(struct pcn_kmsg_test_args __user *args)
 static int pcn_kmsg_test_long_msg(struct pcn_kmsg_test_args __user *args)
 {
 	int rc;
+	unsigned long start_ts, end_ts;
 	struct pcn_kmsg_long_message lmsg;
 	char *str = "This is a very long test message.  Don't be surprised if it gets corrupted; it probably will.  If it does, you're in for a lot more work, and may not get home to see your wife this weekend.  You should knock on wood before running this test.";
 
@@ -126,7 +140,13 @@ static int pcn_kmsg_test_long_msg(struct pcn_kmsg_test_args __user *args)
 	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", 
 	       args->cpu);
 
+	rdtscll(start_ts);
+
 	rc = pcn_kmsg_send_long(args->cpu, &lmsg, strlen(str) + 5);
+
+	rdtscll(end_ts);
+
+	args->send_ts = end_ts - start_ts;
 
 	printk("POPCORN: pcn_kmsg_send_long returned %d\n", rc);
 
@@ -238,6 +258,9 @@ static int handle_single_msg(struct pcn_kmsg_test_message *msg)
 static int handle_pingpong_msg(struct pcn_kmsg_test_message *msg)
 {
 	int rc = 0;
+	unsigned long handler_ts;
+
+	rdtscll(handler_ts);
 
 	if (my_cpu) {
 
@@ -246,6 +269,9 @@ static int handle_pingpong_msg(struct pcn_kmsg_test_message *msg)
 		reply_msg.hdr.type = PCN_KMSG_TYPE_TEST;
 		reply_msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 		reply_msg.op = PCN_KMSG_TEST_SEND_PINGPONG;
+		reply_msg.ts1 = isr_ts;
+		reply_msg.ts2 = bh_ts;
+		reply_msg.ts3 = handler_ts;
 
 		printk("Sending message back to CPU 0...\n");
 		rc = pcn_kmsg_send(0, (struct pcn_kmsg_message *) &reply_msg);
@@ -258,6 +284,9 @@ static int handle_pingpong_msg(struct pcn_kmsg_test_message *msg)
 		printk("Received ping-ping; reading end timestamp...\n");
 		rdtscll(kmsg_tsc);
 		kmsg_done = 1;
+		ts1 = msg->ts1;
+		ts2 = msg->ts2;
+		ts3 = msg->ts3;
 	}
 
 	return 0;
@@ -287,7 +316,7 @@ static int handle_batch_msg(struct pcn_kmsg_test_message *msg)
 		reply_msg.hdr.type = PCN_KMSG_TYPE_TEST;
 		reply_msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 		reply_msg.op = PCN_KMSG_TEST_SEND_BATCH_RESULT;
-		reply_msg.elapsed_time = batch_end_tsc - batch_start_tsc;
+		reply_msg.ts1 = batch_end_tsc - batch_start_tsc;
 
 		rc = pcn_kmsg_send(0, (struct pcn_kmsg_message *) &reply_msg);
 
@@ -309,10 +338,10 @@ static int handle_batch_result_msg(struct pcn_kmsg_test_message *msg)
 	printk("Batch result: sender elapsed RTT (ticks): %lu\n", 
 	       batch_send_end_tsc - batch_send_start_tsc);
 	printk("Batch result: receiver elapsed time (ticks): %lu\n", 
-	       msg->elapsed_time);
+	       msg->ts1);
 
 	ts1 = batch_send_end_tsc - batch_send_start_tsc;
-	ts2 = msg->elapsed_time;
+	ts2 = msg->ts1;
 
 	kmsg_done = 1;
 
