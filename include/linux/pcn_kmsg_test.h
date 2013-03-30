@@ -31,6 +31,8 @@ struct pcn_kmsg_test_args {
 	unsigned long ts1;
 	unsigned long ts2;
 	unsigned long ts3;
+	unsigned long ts4;
+	unsigned long ts5;
 	unsigned long rtt;
 };
 
@@ -41,8 +43,8 @@ struct pcn_kmsg_test_message {
 	enum pcn_kmsg_test_op op;
 	unsigned long batch_seqnum;
 	unsigned long batch_size;
-	unsigned long ts1, ts2, ts3;
-	char pad[16];
+	unsigned long ts1, ts2, ts3, ts4, ts5;
+	//char pad[16];
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 #endif /* __LINUX_PCN_KMSG_TEST_H */

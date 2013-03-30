@@ -10,9 +10,9 @@
 #include <linux/pcn_kmsg.h>
 #include <linux/pcn_kmsg_test.h>
 
-#define KMSG_TEST_VERBOSE 1
+#define KMSG_TEST_VERBOSE 0
 
-#ifdef KMSG_TEST_VERBOSE
+#if KMSG_TEST_VERBOSE
 #define TEST_PRINTK(fmt, args...) printk("%s: " fmt, __func__, ##args)
 #else
 #define TEST_PRINTK(...) ;
@@ -21,13 +21,13 @@
 #define TEST_ERR(fmt, args...) printk("%s: ERROR: " fmt, __func__, ##args)
 
 volatile unsigned long kmsg_tsc;
-unsigned long ts1, ts2, ts3;
+unsigned long ts1, ts2, ts3, ts4, ts5;
 
 volatile int kmsg_done;
 
 extern int my_cpu;
 
-extern unsigned long isr_ts, bh_ts;
+extern unsigned long isr_ts, isr_ts_2, bh_ts, bh_ts_2;
 
 static int pcn_kmsg_test_send_single(struct pcn_kmsg_test_args __user *args)
 {
@@ -50,6 +50,8 @@ static int pcn_kmsg_test_send_single(struct pcn_kmsg_test_args __user *args)
 	return rc;
 }
 
+extern unsigned long int_ts;
+
 static int pcn_kmsg_test_send_pingpong(struct pcn_kmsg_test_args __user *args)
 {
 	int rc = 0;
@@ -66,13 +68,16 @@ static int pcn_kmsg_test_send_pingpong(struct pcn_kmsg_test_args __user *args)
 	pcn_kmsg_send(args->cpu, (struct pcn_kmsg_message *) &msg);
 	while (!kmsg_done) {}
 
-	printk("Elapsed time (ticks): %lu\n", kmsg_tsc - tsc_init);
+	TEST_PRINTK("Elapsed time (ticks): %lu\n", kmsg_tsc - tsc_init);
 
-	args->ts0 = tsc_init;
+	args->send_ts = tsc_init;
+	args->ts0 = int_ts;
 	args->ts1 = ts1;
 	args->ts2 = ts2;
 	args->ts3 = ts3;
-	args->rtt = kmsg_tsc - tsc_init;
+	args->ts4 = ts4;
+	args->ts5 = ts5;
+	args->rtt = kmsg_tsc;
 
 	return rc;
 }
@@ -85,7 +90,7 @@ static int pcn_kmsg_test_send_batch(struct pcn_kmsg_test_args __user *args)
 	unsigned long i;
 	struct pcn_kmsg_test_message msg;
 
-	printk("Testing batch send, batch_size %lu\n", args->batch_size);
+	TEST_PRINTK("Testing batch send, batch_size %lu\n", args->batch_size);
 
 	msg.hdr.type = PCN_KMSG_TYPE_TEST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
@@ -100,14 +105,14 @@ static int pcn_kmsg_test_send_batch(struct pcn_kmsg_test_args __user *args)
 	for (i = 0; i < args->batch_size; i++) {
 		msg.batch_seqnum = i;
 
-		printk("Sending batch message, cpu %d, seqnum %lu\n", 
-		       args->cpu, i);
+		TEST_PRINTK("Sending batch message, cpu %d, seqnum %lu\n", 
+			    args->cpu, i);
 
 		rc = pcn_kmsg_send(args->cpu, 
 				   (struct pcn_kmsg_message *) &msg);
 
 		if (rc) {
-			printk("Error sending message!\n");
+			TEST_ERR("Error sending message!\n");
 			return -1;
 		}
 	}
@@ -135,10 +140,10 @@ static int pcn_kmsg_test_long_msg(struct pcn_kmsg_test_args __user *args)
 
 	strcpy((char *) &lmsg.payload, str);
 
-	printk("Message to send: %s\n", (char *) &lmsg.payload);
+	TEST_PRINTK("Message to send: %s\n", (char *) &lmsg.payload);
 
-	printk("POPCORN: syscall to test kernel messaging, to CPU %d\n", 
-	       args->cpu);
+	TEST_PRINTK("syscall to test kernel messaging, to CPU %d\n", 
+		    args->cpu);
 
 	rdtscll(start_ts);
 
@@ -148,7 +153,7 @@ static int pcn_kmsg_test_long_msg(struct pcn_kmsg_test_args __user *args)
 
 	args->send_ts = end_ts - start_ts;
 
-	printk("POPCORN: pcn_kmsg_send_long returned %d\n", rc);
+	TEST_PRINTK("POPCORN: pcn_kmsg_send_long returned %d\n", rc);
 
 	return rc;
 }
@@ -159,11 +164,11 @@ static int pcn_kmsg_test_mcast_open(struct pcn_kmsg_test_args __user *args)
 	pcn_kmsg_mcast_id test_id = -1;
 
 	/* open */
-	printk("%s: open\n", __func__);
+	TEST_PRINTK("open\n");
 	rc = pcn_kmsg_mcast_open(&test_id, args->mask);
 
-	printk("POPCORN: pcn_kmsg_mcast_open returned %d, test_id %lu\n",
-		       rc, test_id);
+	TEST_PRINTK("pcn_kmsg_mcast_open returned %d, test_id %lu\n",
+		    rc, test_id);
 
 	return rc;
 }
@@ -174,14 +179,14 @@ static int pcn_kmsg_test_mcast_send(struct pcn_kmsg_test_args __user *args)
 	struct pcn_kmsg_test_message msg;
 
 	/* send */
-	printk("%s: send\n", __func__);
+	TEST_PRINTK("send\n");
 	msg.hdr.type = PCN_KMSG_TYPE_TEST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 
 	rc = pcn_kmsg_mcast_send(args->mcast_id,
 				 (struct pcn_kmsg_message *) &msg);
-		printk("%s: failed to send mcast message to group %lu!\n",
-		       __func__, args->mcast_id);
+	TEST_ERR("failed to send mcast message to group %lu!\n",
+		 args->mcast_id);
 	return rc;
 }
 
@@ -190,11 +195,11 @@ static int pcn_kmsg_test_mcast_close(struct pcn_kmsg_test_args __user *args)
 	int rc;
 
 	/* close */
-	printk("%s: close\n", __func__);
+	TEST_PRINTK("close\n");
 
 	rc = pcn_kmsg_mcast_close(args->mcast_id);
 
-	printk("%s: mcast close returned %d\n", __func__, rc);
+	TEST_PRINTK("mcast close returned %d\n", rc);
 
 	return rc;
 }
@@ -205,8 +210,8 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 {
 	int rc = 0;
 
-	printk("Reached test kmsg syscall, op %d, cpu %d\n",
-	       op, args->cpu);
+	TEST_PRINTK("Reached test kmsg syscall, op %d, cpu %d\n",
+		    op, args->cpu);
 
 	switch (op) {
 		case PCN_KMSG_TEST_SEND_SINGLE:
@@ -236,7 +241,7 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 		case PCN_KMSG_TEST_OP_MCAST_CLOSE:
 			rc = pcn_kmsg_test_mcast_close(args);
 			break;
-		
+
 		default:
 			TEST_ERR("invalid option %d\n", op);
 			return -1;
@@ -250,8 +255,8 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 
 static int handle_single_msg(struct pcn_kmsg_test_message *msg)
 {
-	printk("Received single test message from CPU %d!\n",
-	       msg->hdr.from_cpu);
+	TEST_PRINTK("Received single test message from CPU %d!\n",
+		    msg->hdr.from_cpu);
 	return 0;
 }
 
@@ -270,23 +275,27 @@ static int handle_pingpong_msg(struct pcn_kmsg_test_message *msg)
 		reply_msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 		reply_msg.op = PCN_KMSG_TEST_SEND_PINGPONG;
 		reply_msg.ts1 = isr_ts;
-		reply_msg.ts2 = bh_ts;
-		reply_msg.ts3 = handler_ts;
+		reply_msg.ts2 = isr_ts_2;
+		reply_msg.ts3 = bh_ts;
+		reply_msg.ts4 = bh_ts_2;
+		reply_msg.ts5 = handler_ts;
 
-		printk("Sending message back to CPU 0...\n");
+		TEST_PRINTK("Sending message back to CPU 0...\n");
 		rc = pcn_kmsg_send(0, (struct pcn_kmsg_message *) &reply_msg);
 
 		if (rc) {
-			printk("Message send failed!\n");
+			TEST_ERR("Message send failed!\n");
 			return -1;
 		}
 	} else {
-		printk("Received ping-ping; reading end timestamp...\n");
+		TEST_PRINTK("Received ping-pong; reading end timestamp...\n");
 		rdtscll(kmsg_tsc);
 		kmsg_done = 1;
 		ts1 = msg->ts1;
 		ts2 = msg->ts2;
 		ts3 = msg->ts3;
+		ts4 = msg->ts4;
+		ts5 = msg->ts5;
 	}
 
 	return 0;
@@ -298,11 +307,11 @@ static int handle_batch_msg(struct pcn_kmsg_test_message *msg)
 {
 	int rc = 0;
 
-	printk("%s: seqnum %lu size %lu\n", __func__, msg->batch_seqnum, 
-	       msg->batch_size);
+	TEST_PRINTK("seqnum %lu size %lu\n", msg->batch_seqnum, 
+		    msg->batch_size);
 
 	if (msg->batch_seqnum == 0) {
-		printk("Start of batch; taking initial timestamp!\n");
+		TEST_PRINTK("Start of batch; taking initial timestamp!\n");
 		rdtscll(batch_start_tsc);
 
 	} else if (msg->batch_seqnum == (msg->batch_size - 1)) {
@@ -310,7 +319,7 @@ static int handle_batch_msg(struct pcn_kmsg_test_message *msg)
 		struct pcn_kmsg_test_message reply_msg;
 		unsigned long batch_end_tsc;
 
-		printk("End of batch; sending back reply!\n");
+		TEST_PRINTK("End of batch; sending back reply!\n");
 		rdtscll(batch_end_tsc);
 
 		reply_msg.hdr.type = PCN_KMSG_TYPE_TEST;
@@ -321,7 +330,7 @@ static int handle_batch_msg(struct pcn_kmsg_test_message *msg)
 		rc = pcn_kmsg_send(0, (struct pcn_kmsg_message *) &reply_msg);
 
 		if (rc) {
-			printk("Message send failed!\n");
+			TEST_ERR("Message send failed!\n");
 			return -1;
 		}
 	}
@@ -335,10 +344,10 @@ static int handle_batch_result_msg(struct pcn_kmsg_test_message *msg)
 
 	rdtscll(batch_send_end_tsc);
 
-	printk("Batch result: sender elapsed RTT (ticks): %lu\n", 
-	       batch_send_end_tsc - batch_send_start_tsc);
-	printk("Batch result: receiver elapsed time (ticks): %lu\n", 
-	       msg->ts1);
+	TEST_PRINTK("Batch result: sender elapsed RTT (ticks): %lu\n", 
+		    batch_send_end_tsc - batch_send_start_tsc);
+	TEST_PRINTK("Batch result: receiver elapsed time (ticks): %lu\n", 
+		    msg->ts1);
 
 	ts1 = batch_send_end_tsc - batch_send_start_tsc;
 	ts2 = msg->ts1;
@@ -355,7 +364,7 @@ static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
 	struct pcn_kmsg_test_message *msg = 
 		(struct pcn_kmsg_test_message *) message;
 
-	printk("Reached %s, op %d!\n", __func__, msg->op);
+	TEST_PRINTK("Reached %s, op %d!\n", __func__, msg->op);
 
 	switch (msg->op) {
 		case PCN_KMSG_TEST_SEND_SINGLE:
@@ -375,9 +384,9 @@ static int pcn_kmsg_test_callback(struct pcn_kmsg_message *message)
 			break;
 
 		default:
-			printk("Operation %d not supported!\n", msg->op);
+			TEST_ERR("Operation %d not supported!\n", msg->op);
 	}
-	
+
 	pcn_kmsg_free_msg(message);
 
 	return rc;
@@ -388,8 +397,8 @@ static int pcn_kmsg_test_long_callback(struct pcn_kmsg_message *message)
 	struct pcn_kmsg_long_message *lmsg =
 		(struct pcn_kmsg_long_message *) message;
 
-	printk("Received test long message, payload: %s\n",
-	       (char *) &lmsg->payload);
+	TEST_PRINTK("Received test long message, payload: %s\n",
+		    (char *) &lmsg->payload);
 
 	pcn_kmsg_free_msg(message);
 

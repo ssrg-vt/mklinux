@@ -22,9 +22,9 @@
 #include <asm/errno.h>
 #include <asm/atomic.h>
 
-#define KMSG_VERBOSE 1
+#define KMSG_VERBOSE 0
 
-#ifdef KMSG_VERBOSE
+#if KMSG_VERBOSE
 #define KMSG_PRINTK(fmt, args...) printk("%s: " fmt, __func__, ##args)
 #else
 #define KMSG_PRINTK(...) ;
@@ -33,7 +33,7 @@
 
 #define MCAST_VERBOSE 1
 
-#ifdef MCAST_VERBOSE
+#if MCAST_VERBOSE
 #define MCAST_PRINTK(fmt, args...) printk("%s: " fmt, __func__, ##args)
 #else
 #define MCAST_PRINTK(...) ;
@@ -643,6 +643,8 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 
 /* SENDING / MARSHALING */
 
+unsigned long int_ts;
+
 static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 			   int no_block)
 {
@@ -683,6 +685,7 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 	/* send IPI */
 	if (win_int_enabled(dest_window)) {
 		KMSG_PRINTK("Interrupts enabled; sending IPI...\n");
+		rdtscll(int_ts);
 		apic->send_IPI_single(dest_cpu, POPCORN_KMSG_VECTOR);
 	} else {
 		KMSG_PRINTK("Interrupts not enabled; not sending IPI...\n");
@@ -789,6 +792,7 @@ static int process_message_list(struct list_head *head)
 //DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
 
 unsigned long isr_ts;
+unsigned long isr_ts_2;
 
 /* top half */
 void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
@@ -807,6 +811,8 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 
 	/* disable further interrupts for now */
 	win_disable_int(rkvirt[my_cpu]);
+
+	rdtscll(isr_ts_2);
 
 	/* schedule bottom half */
 	__raise_softirq_irqoff(PCN_KMSG_SOFTIRQ);
@@ -1007,7 +1013,7 @@ static int pcn_kmsg_poll_handler(void)
 	return work_done;
 }
 
-unsigned long bh_ts;
+unsigned long bh_ts, bh_ts_2;
 
 /* bottom half */
 static void pcn_kmsg_action(struct softirq_action *h)
@@ -1035,6 +1041,7 @@ static void pcn_kmsg_action(struct softirq_action *h)
 
 	KMSG_PRINTK("ring buffer empty; checking mcast queues...\n");
 
+	/*
 	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
 		if (MCASTWIN(i)) {
 			KMSG_PRINTK("mcast win %d mapped, processing it\n", i);
@@ -1043,6 +1050,9 @@ static void pcn_kmsg_action(struct softirq_action *h)
 	}
 
 	KMSG_PRINTK("Done checking mcast queues; processing messages\n");
+	*/
+
+	rdtscll(bh_ts_2);
 
 	/* Process high-priority queue first */
 	rc = process_message_list(&msglist_hiprio);
