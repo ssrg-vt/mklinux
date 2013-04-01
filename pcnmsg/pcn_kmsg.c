@@ -791,13 +791,14 @@ static int process_message_list(struct list_head *head)
 //void pcn_kmsg_do_tasklet(unsigned long);
 //DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
 
-unsigned long isr_ts;
-unsigned long isr_ts_2;
+unsigned long isr_ts = 0, isr_ts_2 = 0;
 
 /* top half */
 void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 {
-	rdtscll(isr_ts);
+	if (!isr_ts) {
+		rdtscll(isr_ts);
+	}
 
 	ack_APIC_irq();
 
@@ -812,7 +813,9 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 	/* disable further interrupts for now */
 	win_disable_int(rkvirt[my_cpu]);
 
-	rdtscll(isr_ts_2);
+	if (!isr_ts_2) {
+		rdtscll(isr_ts_2);
+	}
 
 	/* schedule bottom half */
 	__raise_softirq_irqoff(PCN_KMSG_SOFTIRQ);
@@ -1013,16 +1016,18 @@ static int pcn_kmsg_poll_handler(void)
 	return work_done;
 }
 
-unsigned long bh_ts, bh_ts_2;
+unsigned long bh_ts = 0, bh_ts_2 = 0;
 
 /* bottom half */
 static void pcn_kmsg_action(struct softirq_action *h)
 {
 	int rc;
-	int i;
+	//int i;
 	int work_done = 0;
 
-	rdtscll(bh_ts);
+	if (!bh_ts) {
+		rdtscll(bh_ts);
+	}
 
 	KMSG_PRINTK("called\n");
 
@@ -1052,7 +1057,9 @@ static void pcn_kmsg_action(struct softirq_action *h)
 	KMSG_PRINTK("Done checking mcast queues; processing messages\n");
 	*/
 
-	rdtscll(bh_ts_2);
+	if (!bh_ts_2) {
+		rdtscll(bh_ts_2);
+	}
 
 	/* Process high-priority queue first */
 	rc = process_message_list(&msglist_hiprio);

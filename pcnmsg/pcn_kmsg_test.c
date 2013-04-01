@@ -82,13 +82,12 @@ static int pcn_kmsg_test_send_pingpong(struct pcn_kmsg_test_args __user *args)
 	return rc;
 }
 
-static unsigned long batch_send_start_tsc;
-
 static int pcn_kmsg_test_send_batch(struct pcn_kmsg_test_args __user *args)
 {
 	int rc = 0;
 	unsigned long i;
 	struct pcn_kmsg_test_message msg;
+	unsigned long batch_send_start_tsc, batch_send_end_tsc;
 
 	TEST_PRINTK("Testing batch send, batch_size %lu\n", args->batch_size);
 
@@ -117,12 +116,18 @@ static int pcn_kmsg_test_send_batch(struct pcn_kmsg_test_args __user *args)
 		}
 	}
 
+	rdtscll(batch_send_end_tsc);
+
 	/* wait for reply to last message */
 
 	while (!kmsg_done) {}
 
+	args->send_ts = batch_send_start_tsc;
+	args->ts0 = batch_send_end_tsc;
 	args->ts1 = ts1;
 	args->ts2 = ts2;
+	args->ts3 = ts3;
+	args->rtt = kmsg_tsc;
 
 	return rc;
 }
@@ -287,15 +292,17 @@ static int handle_pingpong_msg(struct pcn_kmsg_test_message *msg)
 			TEST_ERR("Message send failed!\n");
 			return -1;
 		}
+
+		isr_ts = isr_ts_2 = bh_ts = bh_ts_2 = 0;
 	} else {
 		TEST_PRINTK("Received ping-pong; reading end timestamp...\n");
 		rdtscll(kmsg_tsc);
-		kmsg_done = 1;
 		ts1 = msg->ts1;
 		ts2 = msg->ts2;
 		ts3 = msg->ts3;
 		ts4 = msg->ts4;
 		ts5 = msg->ts5;
+		kmsg_done = 1;
 	}
 
 	return 0;
@@ -314,7 +321,9 @@ static int handle_batch_msg(struct pcn_kmsg_test_message *msg)
 		TEST_PRINTK("Start of batch; taking initial timestamp!\n");
 		rdtscll(batch_start_tsc);
 
-	} else if (msg->batch_seqnum == (msg->batch_size - 1)) {
+	}
+	
+	if (msg->batch_seqnum == (msg->batch_size - 1)) {
 		/* send back reply */
 		struct pcn_kmsg_test_message reply_msg;
 		unsigned long batch_end_tsc;
@@ -325,7 +334,11 @@ static int handle_batch_msg(struct pcn_kmsg_test_message *msg)
 		reply_msg.hdr.type = PCN_KMSG_TYPE_TEST;
 		reply_msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 		reply_msg.op = PCN_KMSG_TEST_SEND_BATCH_RESULT;
-		reply_msg.ts1 = batch_end_tsc - batch_start_tsc;
+		reply_msg.ts1 = bh_ts;
+		reply_msg.ts2 = bh_ts_2;
+		reply_msg.ts3 = batch_end_tsc;
+
+		isr_ts = isr_ts_2 = bh_ts = bh_ts_2 = 0;
 
 		rc = pcn_kmsg_send(0, (struct pcn_kmsg_message *) &reply_msg);
 
@@ -340,17 +353,12 @@ static int handle_batch_msg(struct pcn_kmsg_test_message *msg)
 static int handle_batch_result_msg(struct pcn_kmsg_test_message *msg)
 {
 	int rc = 0;
-	unsigned long batch_send_end_tsc;
 
-	rdtscll(batch_send_end_tsc);
+	rdtscll(kmsg_tsc);
 
-	TEST_PRINTK("Batch result: sender elapsed RTT (ticks): %lu\n", 
-		    batch_send_end_tsc - batch_send_start_tsc);
-	TEST_PRINTK("Batch result: receiver elapsed time (ticks): %lu\n", 
-		    msg->ts1);
-
-	ts1 = batch_send_end_tsc - batch_send_start_tsc;
-	ts2 = msg->ts1;
+	ts1 = msg->ts1;
+	ts2 = msg->ts2;
+	ts3 = msg->ts3;
 
 	kmsg_done = 1;
 
