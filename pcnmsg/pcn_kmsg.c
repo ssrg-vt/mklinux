@@ -791,7 +791,7 @@ static int process_message_list(struct list_head *head)
 //void pcn_kmsg_do_tasklet(unsigned long);
 //DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
 
-unsigned long isr_ts = 0, isr_ts_2 = 0;
+unsigned volatile long isr_ts = 0, isr_ts_2 = 0;
 
 /* top half */
 void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
@@ -1016,7 +1016,7 @@ static int pcn_kmsg_poll_handler(void)
 	return work_done;
 }
 
-unsigned long bh_ts = 0, bh_ts_2 = 0;
+unsigned volatile long bh_ts = 0, bh_ts_2 = 0;
 
 /* bottom half */
 static void pcn_kmsg_action(struct softirq_action *h)

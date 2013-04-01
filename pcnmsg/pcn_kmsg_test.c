@@ -27,7 +27,7 @@ volatile int kmsg_done;
 
 extern int my_cpu;
 
-extern unsigned long isr_ts, isr_ts_2, bh_ts, bh_ts_2;
+extern volatile unsigned long isr_ts, isr_ts_2, bh_ts, bh_ts_2;
 
 static int pcn_kmsg_test_send_single(struct pcn_kmsg_test_args __user *args)
 {
