@@ -27,7 +27,7 @@ volatile int kmsg_done;
 
 extern int my_cpu;
 
-extern unsigned long isr_ts, isr_ts_2, bh_ts, bh_ts_2;
+extern volatile unsigned long isr_ts, isr_ts_2, bh_ts, bh_ts_2;
 
 static int pcn_kmsg_test_send_single(struct pcn_kmsg_test_args __user *args)
 {
@@ -175,6 +175,8 @@ static int pcn_kmsg_test_mcast_open(struct pcn_kmsg_test_args __user *args)
 	TEST_PRINTK("pcn_kmsg_mcast_open returned %d, test_id %lu\n",
 		    rc, test_id);
 
+	args->mcast_id = test_id;
+
 	return rc;
 }
 
@@ -182,16 +184,28 @@ static int pcn_kmsg_test_mcast_send(struct pcn_kmsg_test_args __user *args)
 {
 	int rc;
 	struct pcn_kmsg_test_message msg;
+	unsigned long ts_start, ts_end;
 
 	/* send */
 	TEST_PRINTK("send\n");
 	msg.hdr.type = PCN_KMSG_TYPE_TEST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
 
+	rdtscll(ts_start);
+
 	rc = pcn_kmsg_mcast_send(args->mcast_id,
 				 (struct pcn_kmsg_message *) &msg);
-	TEST_ERR("failed to send mcast message to group %lu!\n",
-		 args->mcast_id);
+
+	rdtscll(ts_end);
+
+	if (rc) {
+		TEST_ERR("failed to send mcast message to group %lu!\n",
+			 args->mcast_id);
+	}
+
+	args->send_ts = ts_start;
+	args->ts0 = ts_end;
+
 	return rc;
 }
 

@@ -1022,7 +1022,7 @@ unsigned long bh_ts = 0, bh_ts_2 = 0;
 static void pcn_kmsg_action(struct softirq_action *h)
 {
 	int rc;
-	//int i;
+	int i;
 	int work_done = 0;
 
 	if (!bh_ts) {
@@ -1046,7 +1046,6 @@ static void pcn_kmsg_action(struct softirq_action *h)
 
 	KMSG_PRINTK("ring buffer empty; checking mcast queues...\n");
 
-	/*
 	for (i = 0; i < POPCORN_MAX_MCAST_CHANNELS; i++) {
 		if (MCASTWIN(i)) {
 			KMSG_PRINTK("mcast win %d mapped, processing it\n", i);
@@ -1055,7 +1054,6 @@ static void pcn_kmsg_action(struct softirq_action *h)
 	}
 
 	KMSG_PRINTK("Done checking mcast queues; processing messages\n");
-	*/
 
 	if (!bh_ts_2) {
 		rdtscll(bh_ts_2);
