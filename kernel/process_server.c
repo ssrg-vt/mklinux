@@ -288,8 +288,10 @@ void dump_task(struct task_struct* task, struct pt_regs* regs, unsigned long sta
             task->prio,task->static_prio,task->normal_prio);
     PSPRINTK("Represents_remote{%d}\n",task->represents_remote);
     PSPRINTK("Executing_for_remote{%d}\n",task->executing_for_remote);
-    PSPRINTK("Remote_pid{%d}\n",task->remote_pid);
-    PSPRINTK("Remote_cpu{%d}\n",task->remote_cpu);
+    PSPRINTK("prev_pid{%d}\n",task->prev_pid);
+    PSPRINTK("next_pid{%d}\n",task->next_pid);
+    PSPRINTK("prev_cpu{%d}\n",task->prev_cpu);
+    PSPRINTK("next_cpu{%d}\n",task->next_cpu);
     PSPRINTK("Clone_request_id{%d}\n",task->clone_request_id);
     dump_regs(regs);
     dump_thread(&task->thread);
@@ -925,8 +927,8 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
 	   __func__, smp_processor_id(), msg->my_pid,  inc_msg->hdr.from_cpu, source_cpu);
     
     for_each_process(task) {
-        if(task->remote_pid == msg->my_pid &&
-           task->remote_cpu == source_cpu) {
+        if(task->next_pid == msg->my_pid &&
+           task->next_cpu == source_cpu) {
 
             PSPRINTK("kmkprocsrv: killing local task pid{%d}\n",task->pid);
             
@@ -965,14 +967,14 @@ static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
      */
     for_each_process(task) {
         if(task->pid == msg->your_pid && task->represents_remote) {
-            task->remote_cpu = source_cpu;
-            task->remote_pid = msg->my_pid;
+            task->next_cpu = source_cpu;
+            task->next_pid = msg->my_pid;
             task->executing_for_remote = 0;
  
             PSPRINTK("kmkprocsrv: Added paring at request remote_pid{%d}, local_pid{%d}, remote_cpu{%d}",
-                    task->remote_pid,
+                    task->next_pid,
                     task->pid,
-                    task->remote_cpu);
+                    task->next_cpu);
 
             break; // No need to continue;
         }
@@ -1136,7 +1138,7 @@ int process_server_import_address_space(unsigned long* ip,
         return -1;
     }
 
-    clone_data = find_clone_data(current->remote_cpu,current->clone_request_id);
+    clone_data = find_clone_data(current->prev_cpu,current->clone_request_id);
     if(!clone_data) {
         return -1;
     }
@@ -1156,7 +1158,17 @@ perf_b = native_read_tsc();
     flush_cache_mm(current->mm);
 
     up_write(&current->mm->mmap_sem);
-perf_c = native_read_tsc();    
+    
+    perf_c = native_read_tsc();    
+    
+    // import exe_file
+    f = filp_open(clone_data->exe_path,O_RDONLY | O_LARGEFILE, 0);
+    if(f) {
+        get_file(f);
+        current->mm->exe_file = f;
+        filp_close(f,NULL);
+    }
+    
     // Import address space
     vma_curr = clone_data->vma_list;
 
@@ -1338,7 +1350,7 @@ int process_server_task_exit_notification(pid_t pid) {
     exiting_process_t msg;
     int tx_ret = -1;
     struct task_struct* task;
-    clone_data_t* clone_data = find_clone_data(current->remote_cpu, current->clone_request_id);
+    clone_data_t* clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
     PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d}\n",pid);
     msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
@@ -1346,13 +1358,13 @@ int process_server_task_exit_notification(pid_t pid) {
     msg.my_pid = pid;
 
     if(current->pid == pid) {
-        tx_ret = pcn_kmsg_send_long(current->remote_cpu, 
+        tx_ret = pcn_kmsg_send_long(current->prev_cpu, 
                     (struct pcn_kmsg_long_message*)&msg, 
                     sizeof(msg) - sizeof(msg.header));
     } else {
         for_each_process(task) {
             if(task->pid == pid) {
-                tx_ret = pcn_kmsg_send_long(task->remote_cpu, 
+                tx_ret = pcn_kmsg_send_long(task->prev_cpu, 
                             (struct pcn_kmsg_long_message*)&msg, 
                             sizeof(msg) - sizeof(msg.header));
             }
@@ -1403,7 +1415,7 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
  * mmap is being called, check to see if we need to notify remote cpus to keep others
  * in the current thread group up to date.
  */
-int process_server_notify_mmap(struct file *file, unsigned long addr,                                                                                                  
+/*int process_server_notify_mmap(struct file *file, unsigned long addr,                                                                                                  
                                unsigned long len, unsigned long prot,
                                unsigned long flags, unsigned long pgoff) {
     clone_data_t* clone_data = NULL;
@@ -1437,11 +1449,11 @@ int process_server_notify_mmap(struct file *file, unsigned long addr,
     return 1;
 
 }
-
+*/
 /**
  *
  */
-int process_server_notify_munmap(struct mm_struct *mm, unsigned long start, size_t len) {
+/*int process_server_notify_munmap(struct mm_struct *mm, unsigned long start, size_t len) {
     clone_data_t* clone_data = NULL;
     if(!current->executing_for_remote && !current->represents_remote) {
         return 0; // Don't care
@@ -1462,7 +1474,7 @@ int process_server_notify_munmap(struct mm_struct *mm, unsigned long start, size
     PSPRINTK("process_server_notify_munmap\n");
     return 1;
 }
-
+*/
 /**
  * Page walk has encountered a pte while deconstructing
  * the client side processes address space.  Transfer it.
@@ -1516,7 +1528,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     int tx_ret = -1;
     int dst_cpu = cpu;
     char path[256] = {0};
-    char* rpath = d_path(&task->active_mm->exe_file->f_path,
+    char* rpath = d_path(&task->mm->exe_file->f_path,
            path,256);
     char lpath[256];
     char *plpath;

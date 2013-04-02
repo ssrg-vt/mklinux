@@ -1577,8 +1577,10 @@ struct task_struct {
      */
     int represents_remote;      /* Is this a placeholder process? */
     int executing_for_remote;   /* Is this executing on behalf of another cpu? */
-    int remote_pid;             /* What is the pid on the remote cpu? */
-    int remote_cpu;             /* What is the remote cpu? */
+    int next_pid;             /* What is the pid on the remote cpu? */
+    int prev_pid;
+    int prev_cpu;             /* What is the remote cpu? */
+    int next_cpu;
     int clone_request_id;       /* Number of the clone request id, to match up with
                                  * address space and other information for this task.
                                  */

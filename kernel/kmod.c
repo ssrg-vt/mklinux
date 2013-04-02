@@ -192,8 +192,8 @@ static int ____call_usermodehelper(void *data)
 
         // Copy identity information to current task.
         current->clone_request_id = sub_info->clone_request_id;
-        current->remote_pid = sub_info->remote_pid;
-        current->remote_cpu = sub_info->remote_cpu;
+        current->prev_pid = sub_info->remote_pid;
+        current->prev_cpu = sub_info->remote_cpu;
         current->executing_for_remote = 1;
         current->represents_remote = 0;
         memcpy(&current->remote_regs, &sub_info->remote_regs, sizeof(struct pt_regs) );
