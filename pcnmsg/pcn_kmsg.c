@@ -226,12 +226,14 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 
 	/* set counter to (# in group - self) */
 
+	/*
 	int x;
 
 	if ((x = atomic_read(&MCASTWIN(id)->read_counter[ticket & RB_MASK]))) {
 		KMSG_ERR("read counter is not zero (it's %d)\n", x);
 		return -1;
 	}
+	*/
 
 	atomic_set(&MCASTWIN(id)->read_counter[ticket & RB_MASK],
 		rkinfo->mcast_wininfo[id].num_members - 1);
@@ -295,16 +297,27 @@ static inline int atomic_add_return_sync(int i, atomic_t *v)
 	return i + xadd_sync(&v->counter, i);
 }
 
+static inline int atomic_dec_and_test_sync(atomic_t *v)
+{
+	unsigned char c;
+
+	asm volatile("lock; decl %0; sete %1"
+		     : "+m" (v->counter), "=qm" (c)
+		     : : "memory");
+	return c != 0;
+}
+
 static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
 {
 	unsigned long slot = LOCAL_TAIL(id) & RB_MASK;
-	int val_ret, i;
-	char printstr[256];
-	char intstr[16];
+	//int val_ret, i;
+	//char printstr[256];
+	//char intstr[16];
 
 	MCAST_PRINTK("local tail currently on slot %lu, read counter %d\n", 
 		     LOCAL_TAIL(id), atomic_read(&MCASTWIN(id)->read_counter[slot]));
 
+	/*
 	memset(printstr, 0, 256);
 	memset(intstr, 0, 16);
 
@@ -318,8 +331,9 @@ static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
 	val_ret = atomic_add_return_sync(-1, &MCASTWIN(id)->read_counter[slot]);
 
 	MCAST_PRINTK("read counter after: %d\n", val_ret);
+	*/
 
-	if (!val_ret) {
+	if (atomic_dec_and_test(&MCASTWIN(id)->read_counter[slot])) {
 		MCAST_PRINTK("we're the last reader to go; ++ global tail\n");
 		MCASTWIN(id)->buffer[slot].hdr.ready = 0;
 		atomic64_inc((atomic64_t *) &MCASTWIN(id)->tail);
@@ -1007,7 +1021,8 @@ static void process_mcast_queue(pcn_kmsg_mcast_id id)
 {
 	struct pcn_kmsg_reverse_message *msg;
 	while (!mcastwin_get(id, &msg)) {
-		MCAST_PRINTK("Got an mcast message!\n");
+		MCAST_PRINTK("Got an mcast message, type %d!\n",
+			     msg->hdr.type);
 
 		/* Special processing for large messages */
                 if (msg->hdr.is_lg_msg) {
