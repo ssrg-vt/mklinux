@@ -190,6 +190,7 @@ static int pcn_kmsg_test_mcast_send(struct pcn_kmsg_test_args __user *args)
 	TEST_PRINTK("send\n");
 	msg.hdr.type = PCN_KMSG_TYPE_TEST;
 	msg.hdr.prio = PCN_KMSG_PRIO_HIGH;
+	msg.op = PCN_KMSG_TEST_SEND_SINGLE;
 
 	rdtscll(ts_start);
 
