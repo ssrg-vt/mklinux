@@ -192,6 +192,8 @@ struct vm_region {
 						* this region */
 };
 
+struct vm_fault;
+
 /*
  * This struct defines a memory VMM memory area. There is one of these
  * per VM-area/task.  A VM area is any part of the process virtual memory
@@ -240,6 +242,9 @@ struct vm_area_struct {
 
 	/* Function pointers to deal with this struct. */
 	const struct vm_operations_struct *vm_ops;
+    void (*orig_open)(struct vm_area_struct * area);  // Multikernel
+    void (*orig_close)(struct vm_area_struct * area); // Multikernel
+    void (*orig_fault)(struct vm_area_struct * area, struct vm_fault* vmf); // Multikernel
 
 	/* Information about our backing store: */
 	unsigned long vm_pgoff;		/* Offset (within vm_file) in PAGE_SIZE

@@ -1586,6 +1586,7 @@ struct task_struct {
                                  */
     struct pt_regs remote_regs; /* regs copied from placeholder process. */
     unsigned long clone_flags;
+    void* clone_data;           /* Being lazy here with type, will by clone_data_t */
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

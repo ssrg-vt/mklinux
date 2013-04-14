@@ -65,6 +65,8 @@
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
 
+#include <linux/process_server.h>
+
 #include "internal.h"
 
 #ifndef CONFIG_NEED_MULTIPLE_NODES
@@ -3456,6 +3458,17 @@ int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
+
+
+    /*
+     * Multikernel
+     */
+    int ps_handled = 0;
+
+    ps_handled = process_server_try_handle_mm_fault_vma(mm,vma,address,flags);
+    if(ps_handled) {
+       return 0; 
+    }
 
 	__set_current_state(TASK_RUNNING);
 

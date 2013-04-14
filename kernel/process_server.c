@@ -251,8 +251,6 @@ static void dump_task(struct task_struct* task,struct pt_regs* regs,unsigned lon
 static void dump_thread(struct thread_struct* thread);
 static void dump_regs(struct pt_regs* regs);
 static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr); 
-
-
 /**
  * Module variables
  */
@@ -272,7 +270,21 @@ static struct workqueue_struct *exit_wq;
 /**
  * General helper functions and debugging tools
  */
+clone_data_t* get_current_clone_data() {
+    clone_data_t* ret = NULL;
 
+    if(!current->clone_data) {
+        // Do costly lookup
+        ret = find_clone_data(current->prev_cpu,
+                                 current->clone_request_id);
+        // Store it for easy access next time.
+        current->clone_data = ret;
+    } else {
+        ret = (clone_data_t*)current->clone_data;
+    }
+
+    return ret;
+}
 /**
  *
  */
@@ -716,6 +728,7 @@ static void dump_data_list() {
 }
 
 
+
 /*
  * Work exec
  */
@@ -805,6 +818,8 @@ perf_aa = native_read_tsc();
 perf_bb = native_read_tsc();
     kfree(work);
 }
+
+
 
 /**
  * Request implementations
@@ -1146,7 +1161,7 @@ perf_b = native_read_tsc();
     // Gut existing mappings
     
     down_write(&current->mm->mmap_sem);
-    
+
     vma = current->mm->mmap;
     while(vma) {
         munmap_ret = do_munmap(current->mm, vma->vm_start, vma->vm_end - vma->vm_start);
@@ -1336,7 +1351,10 @@ perf_b = native_read_tsc();
        __func__,
        perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
        perf_a, perf_b, perf_c, perf_d, perf_e);
-    
+   
+    // Save off clone data
+    current->clone_data = clone_data;
+
     return 0;
 }
 
@@ -1411,70 +1429,79 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 
 }
 
-/**
- * mmap is being called, check to see if we need to notify remote cpus to keep others
- * in the current thread group up to date.
+/*
+ * Thread group setup/teardown
  */
-/*int process_server_notify_mmap(struct file *file, unsigned long addr,                                                                                                  
-                               unsigned long len, unsigned long prot,
-                               unsigned long flags, unsigned long pgoff) {
+int join_thread_group_mcast() {
+
+}
+
+int quit_thread_group_mcast() {
+
+}
+
+/*
+ * VMA Hook
+ */
+
+/**
+ * 0 = not handled
+ * 1 = handled
+ */
+int process_server_try_handle_mm_fault_no_vma(struct mm_struct *mm, unsigned long address,
+                                              unsigned int flags) {
     clone_data_t* clone_data = NULL;
     vma_data_t* vma_data = NULL;
     if((!current->executing_for_remote) && (!current->represents_remote)) {
-        return 0; // Don't care
+        goto not_handled; // Don't care
     }
 
-    clone_data = find_clone_data(current->remote_cpu,
-                                 current->clone_request_id);
-    if(!clone_data) return 0;
+    clone_data = get_current_clone_data();
+
+    if(!clone_data) goto not_handled;
 
     // Check to see if we are possibly sharing VM with anybody.
     // If not, exit.
     if(!(clone_data->clone_flags & CLONE_VM)) {
-        return 0;
+        goto not_handled;
     }
 
-    // Check to see if we're mmapping something that is in the vma collection.
-    // If that is the case, and it's mmapping_in_progress flag is set, then 
-    // this mmap call is mmapping a remotely initiated memory mapping.  
-    // In that case, we don't want to act.
-    vma_data = find_vma_data(clone_data,addr);
-    if(vma_data && vma_data->mmapping_in_progress) {
-        return 0; // Don't care
-    }
+    printk("%s: to be handled\n",__func__);
+    return 0;
 
-    // Notify the remote thread group members
-
-    PSPRINTK("process_server_notify_mmap\n");
-    return 1;
-
+not_handled:
+    return 0;
 }
-*/
+
 /**
- *
+ * 0 = not handled
+ * 1 = handled
  */
-/*int process_server_notify_munmap(struct mm_struct *mm, unsigned long start, size_t len) {
+int process_server_try_handle_mm_fault_vma(struct mm_struct *mm, struct vm_area_struct *vma,
+                                       unsigned long address, unsigned int flags) {
     clone_data_t* clone_data = NULL;
-    if(!current->executing_for_remote && !current->represents_remote) {
-        return 0; // Don't care
+    vma_data_t* vma_data = NULL;
+    if((!current->executing_for_remote) && (!current->represents_remote)) {
+        goto not_handled; // Don't care
     }
 
-    clone_data = find_clone_data(current->remote_cpu,
-                                 current->clone_request_id);
-    if(!clone_data) return 0;
+    clone_data = get_current_clone_data();
+
+    if(!clone_data) goto not_handled;
 
     // Check to see if we are possibly sharing VM with anybody.
     // If not, exit.
-    if((clone_data->clone_flags & CLONE_VM) == 0) {
-        return 0;
+    if(!(clone_data->clone_flags & CLONE_VM)) {
+        goto not_handled;
     }
 
-    // Notify the remote thread group members
+    printk("%s: to be handled\n",__func__);
+    return 0;
 
-    PSPRINTK("process_server_notify_munmap\n");
-    return 1;
+not_handled:
+    return 0;
 }
-*/
+
 /**
  * Page walk has encountered a pte while deconstructing
  * the client side processes address space.  Transfer it.
@@ -1490,8 +1517,6 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
         return 0;
     }
 
-    //pte_xfer = kmalloc(sizeof(pte_transfer_t),GFP_ATOMIC);
-
     pte_xfer.header.type = PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER;
     pte_xfer.header.prio = PCN_KMSG_PRIO_NORMAL;
     pte_xfer.paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));
@@ -1503,8 +1528,6 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
     pte_xfer.pfn = pte_pfn(*pte);
     PSPRINTK("Sending PTE\n"); 
     pcn_kmsg_send(dst_cpu, (struct pcn_kmsg_message *)&pte_xfer);
-
-    //kfree(pte_xfer);
 
     return 0;
 }
@@ -1567,7 +1590,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     spin_unlock(&_clone_request_id_lock);
 
     down_read(&task->mm->mmap_sem);
-
+    
+    
+    
     // VM Entries
     curr = task->mm->mmap;
 

@@ -29,5 +29,8 @@ int process_server_notify_mmap(struct file *file, unsigned long addr,
                                unsigned long len, unsigned long prot,
                                unsigned long flags, unsigned long pgoff);
 int process_server_notify_munmap(struct mm_struct *mm, unsigned long start, size_t len);
-
+int process_server_try_handle_mm_fault_vma(struct mm_struct *mm, struct vm_area_struct *vma,
+                               unsigned long address, unsigned int flags);
+int process_server_try_handle_mm_fault_no_vma(struct mm_struct *mm, 
+                               unsigned long address, unsigned int flags);
 #endif // _PROCESS_SERVER_H

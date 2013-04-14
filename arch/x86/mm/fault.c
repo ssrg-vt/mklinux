@@ -13,6 +13,7 @@
 #include <linux/perf_event.h>		/* perf_sw_event		*/
 #include <linux/hugetlb.h>		/* hstate_index_to_shift	*/
 #include <linux/prefetch.h>		/* prefetchw			*/
+#include <linux/process_server.h> /* Multikernel */
 
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
@@ -1124,6 +1125,11 @@ retry:
 
 	vma = find_vma(mm, address);
 	if (unlikely(!vma)) {
+        // Multikernel - see if another member of the thread group has mapped
+        // this vma
+        if(process_server_try_handle_mm_fault_no_vma(mm,address,flags)) {
+            return;
+        }
 		bad_area(regs, error_code, address);
 		return;
 	}
