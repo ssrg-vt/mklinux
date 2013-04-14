@@ -31,7 +31,7 @@
 #endif
 
 
-#define MCAST_VERBOSE 1
+#define MCAST_VERBOSE 0
 
 #if MCAST_VERBOSE
 #define MCAST_PRINTK(fmt, args...) printk("%s: " fmt, __func__, ##args)
@@ -333,7 +333,7 @@ static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
 	MCAST_PRINTK("read counter after: %d\n", val_ret);
 	*/
 
-	if (atomic_dec_and_test(&MCASTWIN(id)->read_counter[slot])) {
+	if (atomic_dec_and_test_sync(&MCASTWIN(id)->read_counter[slot])) {
 		MCAST_PRINTK("we're the last reader to go; ++ global tail\n");
 		MCASTWIN(id)->buffer[slot].hdr.ready = 0;
 		atomic64_inc((atomic64_t *) &MCASTWIN(id)->tail);
@@ -1360,6 +1360,8 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 	return 0;
 }
 
+unsigned long mcast_ipi_ts;
+
 static int __pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, 
 				 struct pcn_kmsg_message *msg)
 {
@@ -1380,6 +1382,8 @@ static int __pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id,
 		KMSG_ERR("failed to place message in mcast window -- maybe it's full?\n");
 		return -1;
 	}
+
+	rdtscll(mcast_ipi_ts);
 
 	/* send IPI to all in mask but me */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {

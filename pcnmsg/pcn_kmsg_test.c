@@ -180,6 +180,8 @@ static int pcn_kmsg_test_mcast_open(struct pcn_kmsg_test_args __user *args)
 	return rc;
 }
 
+extern unsigned long mcast_ipi_ts;
+
 static int pcn_kmsg_test_mcast_send(struct pcn_kmsg_test_args __user *args)
 {
 	int rc;
@@ -205,7 +207,8 @@ static int pcn_kmsg_test_mcast_send(struct pcn_kmsg_test_args __user *args)
 	}
 
 	args->send_ts = ts_start;
-	args->ts0 = ts_end;
+	args->ts0 = mcast_ipi_ts;
+	args->ts1 = ts_end;
 
 	return rc;
 }
