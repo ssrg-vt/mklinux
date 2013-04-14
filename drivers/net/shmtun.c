@@ -250,10 +250,13 @@ void smp_popcorn_net_interrupt(struct pt_regs *regs)
 	return;
 }
 
+#define SHMTUN_MAX_PKTS_PER_TURN 10
+
 static struct sk_buff * shmtun_rx_next_pkt(void)
 {
 	struct sk_buff *skb;
 	static int cur_cpu = 0; 
+	static int num_from_cur_cpu = 0;
 
 	int start_cpu;
 
@@ -264,9 +267,26 @@ static struct sk_buff * shmtun_rx_next_pkt(void)
 		do {
 			if ((skb = shmtun_get_pkt_from_rbuf(SHMTUN_TO_HOST, 
 							    cur_cpu % SHMTUN_MAX_CPUS))) {
+				/* got a packet */
+				num_from_cur_cpu++;
+
+				SHMTUN_PRINTK("Got a packet; num_from_cur_cpu %d\n",
+					      num_from_cur_cpu);
+
+				if (num_from_cur_cpu == SHMTUN_MAX_PKTS_PER_TURN) {
+					SHMTUN_PRINTK("Threshold reached from CPU %d; moving on to next CPU...\n",
+						      cur_cpu);
+					num_from_cur_cpu = 0;
+					cur_cpu = (cur_cpu + 1) % SHMTUN_MAX_CPUS;
+				}
+
 				break;
+			} else {
+				/* didn't get a packet; go to next buffer */
+				num_from_cur_cpu = 0;
+				cur_cpu = (cur_cpu + 1) % SHMTUN_MAX_CPUS;
 			}
-			cur_cpu = (cur_cpu + 1) % SHMTUN_MAX_CPUS;
+
 		} while (cur_cpu != start_cpu);
 	} else {
 		/* only need to check my own buffer */

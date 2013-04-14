@@ -8,6 +8,7 @@
 
 #include <linux/list.h>
 #include <linux/multikernel.h>
+#include <linux/types.h>
 
 /* LOCKING / SYNCHRONIZATION */
 #define pcn_cpu_relax() __asm__ ("pause":::"memory")
@@ -141,7 +142,8 @@ struct pcn_kmsg_checkin_message {
 struct pcn_kmsg_window {
 	volatile unsigned long head;
 	volatile unsigned long tail;
-	struct pcn_kmsg_reverse_message buffer[PCN_KMSG_RBUF_SIZE];
+	volatile unsigned char int_enabled;
+	volatile struct pcn_kmsg_reverse_message buffer[PCN_KMSG_RBUF_SIZE];
 }__attribute__((packed));
 
 /* Typedef for function pointer to callback functions */
@@ -198,8 +200,8 @@ struct pcn_kmsg_mcast_message {
 struct pcn_kmsg_mcast_window {
 	volatile unsigned long head;
 	volatile unsigned long tail;
-	int read_counter[PCN_KMSG_RBUF_SIZE];
-	struct pcn_kmsg_reverse_message buffer[PCN_KMSG_RBUF_SIZE];
+	atomic_t read_counter[PCN_KMSG_RBUF_SIZE];
+	volatile struct pcn_kmsg_reverse_message buffer[PCN_KMSG_RBUF_SIZE];
 }__attribute__((packed));
 
 struct pcn_kmsg_mcast_local {

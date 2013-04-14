@@ -103,12 +103,14 @@ static inline unsigned long win_inuse(struct pcn_kmsg_window *win)
 }
 
 static inline int win_put(struct pcn_kmsg_window *win, 
-			  struct pcn_kmsg_message *msg) 
+			  struct pcn_kmsg_message *msg,
+			  int no_block) 
 {
 	unsigned long ticket;
 
-	/* if the queue is already really long, return EAGAIN */
-	if (win_inuse(win) >= RB_SIZE) {
+	/* if we can't block and the queue is already really long, 
+	   return EAGAIN */
+	if (no_block && (win_inuse(win) >= RB_SIZE)) {
 		KMSG_PRINTK("window full, caller should try again...\n");
 		return -EAGAIN;
 	}
@@ -172,6 +174,18 @@ static inline void win_advance_tail(struct pcn_kmsg_window *win)
 	win->tail++;
 }
 
+static inline void win_enable_int(struct pcn_kmsg_window *win) {
+	        win->int_enabled = 1;
+}
+
+static inline void win_disable_int(struct pcn_kmsg_window *win) {
+	        win->int_enabled = 0;
+}
+
+static inline unsigned char win_int_enabled(struct pcn_kmsg_window *win) {
+	        return win->int_enabled;
+}
+
 #define MCASTWIN(_id_) (mcastlocal[(_id_)].mcastvirt)
 #define LOCAL_TAIL(_id_) (mcastlocal[(_id_)].local_tail)
 
@@ -185,6 +199,8 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 			       struct pcn_kmsg_message *msg)
 {
 	unsigned long ticket;
+	unsigned long time_limit = jiffies + 2;
+
 
 	MCAST_PRINTK("called for id %lu, msg 0x%p\n", id, msg);
 
@@ -200,7 +216,12 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 		     ticket, MCASTWIN(id)->head, MCASTWIN(id)->tail);
 
 	/* spin until there's a spot free for me */
-	while (mcastwin_inuse(id) >= RB_SIZE) {}
+	while (mcastwin_inuse(id) >= RB_SIZE) {
+		if (unlikely(time_after(jiffies, time_limit))) {
+			MCAST_PRINTK("spinning too long to wait for window to be free; this is bad!\n");
+			return -1;
+		}
+	}
 
 	/* insert item */
 	memcpy(&MCASTWIN(id)->buffer[ticket & RB_MASK].payload, 
@@ -210,8 +231,18 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 	       &msg->hdr, sizeof(struct pcn_kmsg_hdr));
 
 	/* set counter to (# in group - self) */
-	MCASTWIN(id)->read_counter[ticket & RB_MASK] = 
-		rkinfo->mcast_wininfo[id].num_members - 1;
+
+	/*
+	int x;
+
+	if ((x = atomic_read(&MCASTWIN(id)->read_counter[ticket & RB_MASK]))) {
+		KMSG_ERR("read counter is not zero (it's %d)\n", x);
+		return -1;
+	}
+	*/
+
+	atomic_set(&MCASTWIN(id)->read_counter[ticket & RB_MASK],
+		rkinfo->mcast_wininfo[id].num_members - 1);
 
 	MCAST_PRINTK("set counter to %d\n", 
 		     rkinfo->mcast_wininfo[id].num_members - 1);
@@ -227,7 +258,7 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 static inline int mcastwin_get(pcn_kmsg_mcast_id id,
 			       struct pcn_kmsg_reverse_message **msg)
 {
-	struct pcn_kmsg_reverse_message *rcvd;
+	volatile struct pcn_kmsg_reverse_message *rcvd;
 
 	MCAST_PRINTK("called for id %lu, head %lu, tail %lu, local_tail %lu\n", 
 		     id, MCASTWIN(id)->head, MCASTWIN(id)->tail, 
@@ -267,16 +298,50 @@ retry:
 	return 0;
 }
 
+static inline int atomic_add_return_sync(int i, atomic_t *v)
+{
+	return i + xadd_sync(&v->counter, i);
+}
+
+static inline int atomic_dec_and_test_sync(atomic_t *v)
+{
+	unsigned char c;
+
+	asm volatile("lock; decl %0; sete %1"
+		     : "+m" (v->counter), "=qm" (c)
+		     : : "memory");
+	return c != 0;
+}
+
 static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
 {
 	unsigned long slot = LOCAL_TAIL(id) & RB_MASK;
+	//int val_ret, i;
+	//char printstr[256];
+	//char intstr[16];
 
-	MCAST_PRINTK("local tail currently on slot %lu\n", 
-		     LOCAL_TAIL(id));
+	MCAST_PRINTK("local tail currently on slot %lu, read counter %d\n", 
+		     LOCAL_TAIL(id), atomic_read(&MCASTWIN(id)->read_counter[slot]));
 
-	if (atomic_dec_and_test((atomic_t *) &MCASTWIN(id)->read_counter[slot])) {
+	/*
+	memset(printstr, 0, 256);
+	memset(intstr, 0, 16);
+
+	for (i = 0; i < 64; i++) {
+		sprintf(intstr, "%d ", atomic_read(&MCASTWIN(id)->read_counter[i]));
+		strcat(printstr, intstr);
+	}
+
+	MCAST_PRINTK("read_counter: %s\n", printstr);
+
+	val_ret = atomic_add_return_sync(-1, &MCASTWIN(id)->read_counter[slot]);
+
+	MCAST_PRINTK("read counter after: %d\n", val_ret);
+	*/
+
+	if (atomic_dec_and_test_sync(&MCASTWIN(id)->read_counter[slot])) {
 		MCAST_PRINTK("we're the last reader to go; ++ global tail\n");
-		MCASTWIN(id)->buffer[LOCAL_TAIL(id) & RB_MASK].hdr.ready = 0;
+		MCASTWIN(id)->buffer[slot].hdr.ready = 0;
 		atomic64_inc((atomic64_t *) &MCASTWIN(id)->tail);
 	}
 
@@ -414,6 +479,7 @@ static inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 {
 	window->head = 0;
 	window->tail = 0;
+	window->int_enabled = 1;
 	memset(&window->buffer, 0, 
 	       PCN_KMSG_RBUF_SIZE * sizeof(struct pcn_kmsg_message));
 	return 0;
@@ -421,10 +487,17 @@ static inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 
 static inline int pcn_kmsg_mcast_window_init(struct pcn_kmsg_mcast_window *win)
 {
+	int i;
+
 	win->head = 0;
 	win->tail = 0;
-	memset(&win->read_counter, 0, 
-	       PCN_KMSG_RBUF_SIZE * sizeof(int));
+
+	for (i = 0; i < PCN_KMSG_RBUF_SIZE; i++) {
+		atomic_set(&win->read_counter[i], 0);
+	}
+
+	//memset(&win->read_counter, 0, 
+	//       PCN_KMSG_RBUF_SIZE * sizeof(int));
 	memset(&win->buffer, 0,
 	       PCN_KMSG_RBUF_SIZE * sizeof(struct pcn_kmsg_message));
 	return 0;
@@ -640,7 +713,10 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 
 /* SENDING / MARSHALING */
 
-static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
+unsigned long int_ts;
+
+static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
+			   int no_block)
 {
 	int rc;
 	struct pcn_kmsg_window *dest_window;
@@ -666,15 +742,24 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	msg->hdr.from_cpu = my_cpu;
 
 	/* place message in rbuf */
-	rc = win_put(dest_window, msg);		
+	rc = win_put(dest_window, msg, no_block);		
 
 	if (rc) {
-		KMSG_ERR("Failed to place message in destination window -- maybe it's full?\n");
+		if (no_block && (rc == EAGAIN)) {
+			return rc;
+		}
+		KMSG_ERR("Failed to place message in dest win!\n");
 		return -1;
 	}
 
 	/* send IPI */
-	apic->send_IPI_mask(cpumask_of(dest_cpu), POPCORN_KMSG_VECTOR);
+	if (win_int_enabled(dest_window)) {
+		KMSG_PRINTK("Interrupts enabled; sending IPI...\n");
+		rdtscll(int_ts);
+		apic->send_IPI_single(dest_cpu, POPCORN_KMSG_VECTOR);
+	} else {
+		KMSG_PRINTK("Interrupts not enabled; not sending IPI...\n");
+	}
 
 	return 0;
 }
@@ -686,7 +771,18 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	msg->hdr.lg_end = 0;
 	msg->hdr.lg_seqnum = 0;
 
-	return __pcn_kmsg_send(dest_cpu, msg);
+	return __pcn_kmsg_send(dest_cpu, msg, 0);
+}
+
+int pcn_kmsg_send_noblock(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
+{
+
+	msg->hdr.is_lg_msg = 0;
+	msg->hdr.lg_start = 0;
+	msg->hdr.lg_end = 0;
+	msg->hdr.lg_seqnum = 0;
+
+	return __pcn_kmsg_send(dest_cpu, msg, 1);
 }
 
 int pcn_kmsg_send_long(unsigned int dest_cpu, 
@@ -721,7 +817,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       i * PCN_KMSG_PAYLOAD_SIZE, 
 		       PCN_KMSG_PAYLOAD_SIZE);
 
-		__pcn_kmsg_send(dest_cpu, &this_chunk);
+		__pcn_kmsg_send(dest_cpu, &this_chunk, 0);
 	}
 
 	return 0;
@@ -765,9 +861,15 @@ static int process_message_list(struct list_head *head)
 //void pcn_kmsg_do_tasklet(unsigned long);
 //DECLARE_TASKLET(pcn_kmsg_tasklet, pcn_kmsg_do_tasklet, 0);
 
+unsigned volatile long isr_ts = 0, isr_ts_2 = 0;
+
 /* top half */
 void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 {
+	//if (!isr_ts) {
+		rdtscll(isr_ts);
+	//}
+
 	ack_APIC_irq();
 
 	KMSG_PRINTK("Reached Popcorn KMSG interrupt handler!\n");
@@ -777,6 +879,13 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 
 	/* We do as little work as possible in here (decoupling notification 
 	   from messaging) */
+
+	/* disable further interrupts for now */
+	win_disable_int(rkvirt[my_cpu]);
+
+	//if (!isr_ts_2) {
+		rdtscll(isr_ts_2);
+	//}
 
 	/* schedule bottom half */
 	__raise_softirq_irqoff(PCN_KMSG_SOFTIRQ);
@@ -817,6 +926,7 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 	int rc = 0;
 	int recv_buf_size;
 	struct pcn_kmsg_long_message *lmsg;
+	int work_done = 0;
 
 	KMSG_PRINTK("Got a large message fragment, type %u, from_cpu %u, start %u, end %u, seqnum %u!\n",
 		    msg->hdr.type, msg->hdr.from_cpu,
@@ -852,6 +962,7 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 
 			/* add to appropriate list */
 			rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
+			work_done = 1;
 
 			if (rc) {
 				KMSG_ERR("Failed to add large message to list!\n");
@@ -877,6 +988,8 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 			/* add to appropriate list */
 			rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
 
+			work_done = 1;
+
 			if (rc) {
 				KMSG_ERR("Failed to add large message to list!\n");
 			}
@@ -885,22 +998,19 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 
 out:
 
-	win_advance_tail(rkvirt[my_cpu]);
-
-	return rc;
+	return work_done;
 }
 
 static int process_small_message(struct pcn_kmsg_reverse_message *msg)
 {
-	int rc = 0;
+	int rc = 0, work_done = 1;
 	struct pcn_kmsg_container *incoming;
 
 	/* malloc some memory (don't sleep!) */
 	incoming = kmalloc(sizeof(struct pcn_kmsg_container), GFP_ATOMIC);
 	if (unlikely(!incoming)) {
 		KMSG_ERR("Unable to kmalloc buffer for incoming message!\n");
-		win_advance_tail(rkvirt[my_cpu]);
-		return -1;
+		return 0;
 	}
 
 	/* memcpy message from rbuf */
@@ -910,60 +1020,96 @@ static int process_small_message(struct pcn_kmsg_reverse_message *msg)
 	memcpy(&incoming->msg.payload, &msg->payload,
 	       PCN_KMSG_PAYLOAD_SIZE);
 
-	win_advance_tail(rkvirt[my_cpu]);
-
 	KMSG_PRINTK("Received message, type %d, prio %d\n",
 		    incoming->msg.hdr.type, incoming->msg.hdr.prio);
 
 	/* add container to appropriate list */
 	rc = msg_add_list(incoming);
 
-	return rc;
+	return work_done;
 }
 
 static void process_mcast_queue(pcn_kmsg_mcast_id id)
 {
 	struct pcn_kmsg_reverse_message *msg;
 	while (!mcastwin_get(id, &msg)) {
-		MCAST_PRINTK("Got an mcast message!\n");
+		MCAST_PRINTK("Got an mcast message, type %d!\n",
+			     msg->hdr.type);
 
-		/* If the mcast message is a window close, handle it right away;
-		   otherwise, put the message in the appropriate queue */
-		if (msg->hdr.type == PCN_KMSG_TYPE_MCAST_CLOSE) {
-
-			MCAST_PRINTK("Got mcast close message!\n");
-		} else {
-
-		}
+		/* Special processing for large messages */
+                if (msg->hdr.is_lg_msg) {
+                        MCAST_PRINTK("message is a large message!\n");
+                        process_large_message(msg);
+                } else {
+                        MCAST_PRINTK("message is a small message!\n");
+                        process_small_message(msg);
+                }
 
 		mcastwin_advance_tail(id);
 	}
 
 }
 
-/* bottom half */
-static void pcn_kmsg_action(struct softirq_action *h)
+#define PCN_KMSG_BUDGET 128
+
+static int pcn_kmsg_poll_handler(void)
 {
-	int rc;
 	struct pcn_kmsg_reverse_message *msg;
-	int i;
+	int work_done = 0;
 
 	KMSG_PRINTK("called\n");
 
 	/* Get messages out of the buffer first */
-
-	while (!win_get(rkvirt[my_cpu], &msg)) {
+	while ((work_done < PCN_KMSG_BUDGET) && (!win_get(rkvirt[my_cpu], &msg))) {
 		KMSG_PRINTK("got a message!\n");
 
 		/* Special processing for large messages */
 		if (msg->hdr.is_lg_msg) {
 			KMSG_PRINTK("message is a large message!\n");
-			rc = process_large_message(msg);
+			work_done += process_large_message(msg);
 		} else {
 			KMSG_PRINTK("message is a small message!\n");
-			rc = process_small_message(msg);
+			work_done += process_small_message(msg);
 		}
 
+		win_advance_tail(rkvirt[my_cpu]);
+
+	}
+
+	if (work_done < PCN_KMSG_BUDGET) {
+		KMSG_PRINTK("All done, enabling interrupts...\n");
+		win_enable_int(rkvirt[my_cpu]);
+	}
+
+	return work_done;
+}
+
+unsigned volatile long bh_ts = 0, bh_ts_2 = 0;
+
+/* bottom half */
+static void pcn_kmsg_action(struct softirq_action *h)
+{
+	int rc;
+	int i;
+	int work_done = 0;
+
+	//if (!bh_ts) {
+		rdtscll(bh_ts);
+	//}
+
+	KMSG_PRINTK("called\n");
+
+	/* Get messages out of the buffer first */
+	while (1) {
+		work_done = 0;
+		work_done = pcn_kmsg_poll_handler();
+
+		KMSG_PRINTK("Handler did %d units of work!\n", work_done);
+
+		if (likely(work_done < PCN_KMSG_BUDGET)) {
+			break;
+		    
+		}
 	}
 
 	KMSG_PRINTK("ring buffer empty; checking mcast queues...\n");
@@ -976,6 +1122,10 @@ static void pcn_kmsg_action(struct softirq_action *h)
 	}
 
 	KMSG_PRINTK("Done checking mcast queues; processing messages\n");
+
+	//if (!bh_ts_2) {
+		rdtscll(bh_ts_2);
+	//}
 
 	/* Process high-priority queue first */
 	rc = process_message_list(&msglist_hiprio);
@@ -1222,6 +1372,8 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id)
 	return 0;
 }
 
+unsigned long mcast_ipi_ts;
+
 static int __pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, 
 				 struct pcn_kmsg_message *msg)
 {
@@ -1243,14 +1395,14 @@ static int __pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id,
 		return -1;
 	}
 
-	/* send IPI to all in mask but me */
+	rdtscll(mcast_ipi_ts);
 
+	/* send IPI to all in mask but me */
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
 		if (rkinfo->mcast_wininfo[id].mask & (1ULL << i)) {
 			if (i != my_cpu) {
 				MCAST_PRINTK("sending IPI to CPU %d\n", i);
-				apic->send_IPI_mask(cpumask_of(i), 
-						    POPCORN_KMSG_VECTOR);
+				apic->send_IPI_single(i, POPCORN_KMSG_VECTOR);
 			}
 		}
 	}
@@ -1386,7 +1538,7 @@ static int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message)
 	print_mcast_map();
 
 out:
-	kfree(message);
+	pcn_kmsg_free_msg(message);
 	return rc;
 }
 
