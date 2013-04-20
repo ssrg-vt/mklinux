@@ -1259,8 +1259,6 @@ perf_b = native_read_tsc();
         vma_curr = (vma_data_t*)vma_curr->header.next;
     }
 
-    printk("vmas_installed{%d}, ptes_installed{%d}\n",vmas_installed,ptes_installed);
-
     perf_d = native_read_tsc();
 
     // install memory information
@@ -1347,10 +1345,10 @@ perf_b = native_read_tsc();
     //dump_clone_data(clone_data);
     //dump_task(current,regs, clone_data->stack_ptr);
     perf_e = native_read_tsc();
-    printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+    /*printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
        __func__,
        perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
-       perf_a, perf_b, perf_c, perf_d, perf_e);
+       perf_a, perf_b, perf_c, perf_d, perf_e);*/
    
     // Save off clone data
     current->clone_data = clone_data;
@@ -1466,7 +1464,6 @@ int process_server_try_handle_mm_fault_no_vma(struct mm_struct *mm, unsigned lon
         goto not_handled;
     }
 
-    printk("%s: to be handled\n",__func__);
     return 0;
 
 not_handled:
@@ -1495,7 +1492,6 @@ int process_server_try_handle_mm_fault_vma(struct mm_struct *mm, struct vm_area_
         goto not_handled;
     }
 
-    printk("%s: to be handled\n",__func__);
     return 0;
 
 not_handled:
