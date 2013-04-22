@@ -195,7 +195,7 @@ static int ____call_usermodehelper(void *data)
         current->prev_pid = sub_info->remote_pid;
         current->prev_cpu = sub_info->remote_cpu;
         current->executing_for_remote = 1;
-        current->represents_remote = 0;
+        //current->represents_remote = 0;
         memcpy(&current->remote_regs, &sub_info->remote_regs, sizeof(struct pt_regs) );
 
         // Notify of PID/PID pairing.

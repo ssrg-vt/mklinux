@@ -1542,9 +1542,13 @@ long do_fork(unsigned long clone_flags,
 		 */
 		p->flags &= ~PF_STARTING;
         
-        p->represents_remote = 0;
-        p->executing_for_remote = 0;
+       
+        /**
+         * Multikernel init
+         */
         p->clone_flags = clone_flags;
+        process_server_dup_task(current, p); 
+
 		wake_up_new_task(p);
 
         /* forking complete and child started to run, tell ptracer */
@@ -1558,6 +1562,7 @@ long do_fork(unsigned long clone_flags,
             ptrace_event(PTRACE_EVENT_VFORK_DONE, nr);
         }
 
+        
 
 	} else {
 		nr = PTR_ERR(p);

@@ -125,6 +125,8 @@ typedef struct _clone_data {
     unsigned short thread_ds;
     unsigned short thread_fsindex;
     unsigned short thread_gsindex;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
     vma_data_t* vma_list;
     vma_data_t* pending_vma_list;
 } clone_data_t;
@@ -160,6 +162,8 @@ typedef struct _clone_request {
     unsigned short thread_ds;
     unsigned short thread_fsindex;
     unsigned short thread_gsindex;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
 } clone_request_t;
 
 /**
@@ -563,7 +567,6 @@ static void dump_mm(struct mm_struct* mm) {
         .mm = mm,
         .private = NULL
         };
-    char buf[256];
 
     if(NULL == mm) {
         PSPRINTK("MM IS NULL!\n");
@@ -1048,6 +1051,8 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     clone_data->thread_fsindex = request->thread_fsindex;
     clone_data->thread_gsindex = request->thread_gsindex;
     clone_data->vma_list = NULL;
+    clone_data->tgroup_home_cpu = request->tgroup_home_cpu;
+    clone_data->tgroup_home_id = request->tgroup_home_id;
     clone_data->lock = __SPIN_LOCK_UNLOCKED(&clone_data->lock);
 
     /*
@@ -1274,11 +1279,15 @@ perf_b = native_read_tsc();
     // TODO: Move to arch
     current->thread.es = clone_data->thread_es;
     current->thread.ds = clone_data->thread_ds;
-    current->thread.usersp = clone_data->thread_usersp;//clone_data->stack_ptr;
-    
+    current->thread.usersp = clone_data->thread_usersp;
+   
+    current->prev_cpu = clone_data->placeholder_cpu;
+    current->prev_pid = clone_data->placeholder_pid;
+    current->tgroup_home_cpu = clone_data->tgroup_home_cpu;
+    current->tgroup_home_id = clone_data->tgroup_home_id;
 
     // Set output variables.
-    *sp = clone_data->thread_usersp;//clone_data->thread_sp;//clone_data->stack_ptr;
+    *sp = clone_data->thread_usersp;
     *ip = clone_data->regs.ip;
     
     // adjust registers as necessary
@@ -1427,16 +1436,7 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 
 }
 
-/*
- * Thread group setup/teardown
- */
-int join_thread_group_mcast() {
 
-}
-
-int quit_thread_group_mcast() {
-
-}
 
 /*
  * VMA Hook
@@ -1452,6 +1452,10 @@ int process_server_try_handle_mm_fault_no_vma(struct mm_struct *mm, unsigned lon
     vma_data_t* vma_data = NULL;
     if((!current->executing_for_remote) && (!current->represents_remote)) {
         goto not_handled; // Don't care
+    }
+
+    if(current->prev_cpu == -1) {
+        goto not_handled; // Nobody to ask!
     }
 
     clone_data = get_current_clone_data();
@@ -1529,6 +1533,48 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
 }
 
 /**
+ * Propagate origin thread group to children, and initialize other 
+ * task members.  If the parent was member of a remote thread group,
+ * store the thread group info.
+ */
+int process_server_dup_task(struct task_struct* orig, struct task_struct* task) {
+    task->executing_for_remote = 0;
+    task->represents_remote = 0;
+    task->prev_cpu = -1;
+    task->next_cpu = -1;
+    task->prev_pid = -1;
+    task->next_pid = -1;
+
+    // If this is pid 1, the parent cannot have been migrated
+    // so it is safe to take on all local thread info.
+    if(orig->pid == 1) {
+        task->tgroup_home_cpu = _cpu;
+        task->tgroup_home_id = orig->tgid;
+        return 1;
+    }
+    // If the new task is not in the same thread group as the parent,
+    // then we do not need to propagate the old thread info.
+    if(orig->tgid != task->tgid) {
+        task->tgroup_home_cpu = _cpu;
+        task->tgroup_home_id = task->tgid;
+        return 1;
+    }
+
+    // This is important.  We want to make sure to keep an accurate record
+    // of which cpu and thread group the new thread is a part of.
+    if(orig->executing_for_remote == 1 || orig->tgroup_home_cpu != _cpu) {
+        task->tgroup_home_cpu = orig->tgroup_home_cpu;
+        task->tgroup_home_id = orig->tgroup_home_cpu;
+    } else {
+        task->tgroup_home_cpu = _cpu;
+        task->tgroup_home_id = orig->tgid;
+    }
+
+    return 1;
+
+}
+
+/**
  * Migrate the specified task <task> to cpu <cpu>
  * Currently, this function will put the specified task to 
  * sleep, and push its info over to the remote cpu.  The
@@ -1578,7 +1624,8 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     // Book keeping for placeholder process.
     task->represents_remote = 1;
-    task->executing_for_remote = 0;
+    //task->executing_for_remote = 0; // Turning this off for now, so we have a record of the fact
+                                      // that we were previously executing for remote (chain migration)
 
     // Pick an id for this remote process request
     spin_lock(&_clone_request_id_lock);
@@ -1662,6 +1709,8 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->stack_ptr = stack_start;
     request->placeholder_pid = task->pid;
     request->placeholder_tgid = task->tgid;
+    request->tgroup_home_cpu = task->tgroup_home_cpu;
+    request->tgroup_home_id = task->tgroup_home_id;
 // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h

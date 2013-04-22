@@ -33,4 +33,5 @@ int process_server_try_handle_mm_fault_vma(struct mm_struct *mm, struct vm_area_
                                unsigned long address, unsigned int flags);
 int process_server_try_handle_mm_fault_no_vma(struct mm_struct *mm, 
                                unsigned long address, unsigned int flags);
+int process_server_dup_task(struct task_struct* orig, struct task_struct* task);
 #endif // _PROCESS_SERVER_H

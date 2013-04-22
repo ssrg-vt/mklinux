@@ -1586,7 +1586,12 @@ struct task_struct {
                                  */
     struct pt_regs remote_regs; /* regs copied from placeholder process. */
     unsigned long clone_flags;
-    void* clone_data;           /* Being lazy here with type, will by clone_data_t */
+    void* clone_data;           /* Being lazy here with type, will be clone_data_t */
+
+    int tgroup_home_cpu;     /* cpu where the thread group was first migrated */
+    int tgroup_home_id;         /* home thread group id */
+
+
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
