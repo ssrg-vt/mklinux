@@ -3463,12 +3463,12 @@ int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
     /*
      * Multikernel
      */
-    int ps_handled = 0;
+    /*int ps_handled = 0;
 
-    ps_handled = process_server_try_handle_mm_fault_vma(mm,vma,address,flags);
+    ps_handled = process_server_try_handle_mm_fault(mm,vma,address,flags);
     if(ps_handled) {
        return 0; 
-    }
+    }*/
 
 	__set_current_state(TASK_RUNNING);
 

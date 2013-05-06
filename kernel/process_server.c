@@ -46,6 +46,7 @@
 #define PROCESS_SERVER_VMA_DATA_TYPE 1
 #define PROCESS_SERVER_PTE_DATA_TYPE 2
 #define PROCESS_SERVER_CLONE_DATA_TYPE 3
+#define PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE 4
 
 /**
  * Library
@@ -130,6 +131,27 @@ typedef struct _clone_data {
     vma_data_t* vma_list;
     vma_data_t* pending_vma_list;
 } clone_data_t;
+
+/**
+ * 
+ */
+typedef struct _mapping_request_data {
+    data_header_t header;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    unsigned long address;
+    unsigned long vaddr_mapping;
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+    unsigned long paddr_mapping;
+    pgprot_t prot;
+    unsigned long vm_flags;
+    int present;
+    int responses;
+    int expected_responses;
+    char path[512];
+} mapping_request_data_t;
+
 
 /**
  * This message is sent to a remote cpu in order to 
@@ -223,6 +245,45 @@ typedef struct _pte_transfer pte_transfer_t;
 /**
  *
  */
+struct _mapping_request {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+    unsigned long address;      // 8
+                                // ---
+                                // 16 -> 48 bytes of padding needed
+    char pad[48];
+
+} __attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _mapping_request mapping_request_t;
+
+/**
+ *
+ */
+struct _mapping_response {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+    unsigned long address;      // 8
+    unsigned long present;      // 8
+    unsigned long vaddr_mapping;// 8
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+    unsigned long paddr_mapping;// 8
+    pgprot_t prot;              // 8
+    unsigned long vm_flags;     // 8
+                                // ---
+                                // 48 -> 16 bytes of padding needed
+    //char pad[16];
+    char path[512];
+};// __attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _mapping_response mapping_response_t;
+
+/**
+ *
+ */
 typedef struct _deconstruction_data {
     int clone_request_id;
     int vma_id;
@@ -274,7 +335,10 @@ static struct workqueue_struct *exit_wq;
 /**
  * General helper functions and debugging tools
  */
-clone_data_t* get_current_clone_data() {
+
+
+
+static clone_data_t* get_current_clone_data() {
     clone_data_t* ret = NULL;
 
     if(!current->clone_data) {
@@ -289,6 +353,35 @@ clone_data_t* get_current_clone_data() {
 
     return ret;
 }
+
+static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
+ 
+    unsigned long* resolved_addr = (unsigned long*)walk->private;
+
+    if(NULL == pte || !pte_present(*pte)) {
+        return 0;
+    }
+
+    *resolved_addr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));
+    return 0;
+}
+
+static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
+    unsigned long resolved = 0;
+    struct mm_walk walk = {
+        .pte_entry = vm_search_page_walk_pte_entry_callback,
+        .private = &(resolved),
+        .mm = mm
+    };
+
+    walk_page_range(vaddr & PAGE_MASK, ( vaddr & PAGE_MASK ) + PAGE_SIZE, &walk);
+    if(resolved != 0) {
+        return 1;
+    }
+    return 0;
+
+}
+
 /**
  *
  */
@@ -451,6 +544,34 @@ static void dump_clone_data(clone_data_t* r) {
         dump_vma_data(v);
         v = (vma_data_t*)v->header.next;
     }
+}
+
+/**
+ *
+ */
+static mapping_request_data_t* find_mapping_request_data(int cpu, int id, unsigned long address) {
+    data_header_t* curr = NULL;
+    mapping_request_data_t* request = NULL;
+    mapping_request_data_t* ret = NULL;
+    spin_lock(&_data_head_lock);
+    
+    curr = _data_head;
+    while(curr) {
+        if(curr->data_type == PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE) {
+            request = (mapping_request_data_t*)curr;
+            if(request->tgroup_home_cpu == cpu && 
+                    request->tgroup_home_id == id &&
+                    request->address == address) {
+                ret = request;
+                break;
+            }
+        }
+        curr = curr->next;
+    }
+
+    spin_unlock(&_data_head_lock);
+
+    return ret;
 }
 
 /**
@@ -823,10 +944,124 @@ perf_bb = native_read_tsc();
 }
 
 
-
 /**
  * Request implementations
  */
+
+static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
+    mapping_response_t* msg = (mapping_response_t*)inc_msg;
+    mapping_request_data_t* data = find_mapping_request_data(
+                                        msg->tgroup_home_cpu,
+                                        msg->tgroup_home_id,
+                                        msg->address);
+
+
+
+    printk("received mapping response\n");
+
+    if(data == NULL) {
+        printk("data not found\n");
+        return -1;
+    }
+
+    if(msg->present) {
+        printk("received positive search result from cpu %d\n",
+                msg->header.from_cpu);
+
+        data->responses++;
+        data->vaddr_mapping = msg->vaddr_mapping;
+        data->vaddr_start = msg->vaddr_start;
+        data->vaddr_size = msg->vaddr_size;
+        data->paddr_mapping = msg->paddr_mapping;
+        data->prot = msg->prot;
+        data->vm_flags = msg->vm_flags;
+        data->present = 1;
+        strcpy(data->path,msg->path);
+
+    } else {
+        printk("received negative search result from cpu %d\n",
+                msg->header.from_cpu);
+       
+        data->responses++;
+    }
+
+    pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
+}
+
+static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
+    mapping_request_t* msg = (mapping_request_t*)inc_msg;
+    mapping_response_t response;
+    struct task_struct* task = NULL;
+    struct vm_area_struct* vma = NULL;
+    unsigned long address = msg->address;
+    unsigned long resolved = 0;
+    struct mm_walk walk = {
+        .pte_entry = vm_search_page_walk_pte_entry_callback,
+        .private = &(resolved)
+    };
+    char* plpath;
+    char lpath[512];
+    printk("received mapping request\n");
+    for_each_process(task) {
+        if((task->tgroup_home_cpu == msg->tgroup_home_cpu) &&
+           (task->tgroup_home_id  == msg->tgroup_home_id )) {
+            printk("mapping request found common thread group here\n");
+           
+            // Break if the vma is file backed, we do not want to transfer file backed
+            // vma information, since there is currently no shared file system.
+            // Continue if the vma does not exist, but keep searching.
+            vma = find_vma(task->mm, address&PAGE_MASK);
+            if(!vma) continue;
+            //else if (vma->vm_file != NULL) break;
+
+            walk.mm = task->mm;
+            walk_page_range(address & PAGE_MASK, (address & PAGE_MASK) + PAGE_SIZE, &walk);
+            if(resolved != 0) {
+                printk("mapping found! %lx for vaddr %lx\n",resolved,
+                        address & PAGE_MASK);
+
+                response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
+                response.header.prio = PCN_KMSG_PRIO_NORMAL;
+                response.tgroup_home_cpu = msg->tgroup_home_cpu;
+                response.tgroup_home_id = msg->tgroup_home_id;
+                response.address = address;
+                response.present = 1;
+                response.vaddr_mapping = address & PAGE_MASK;
+                response.vaddr_start = vma->vm_start;
+                response.vaddr_size = vma->vm_end - vma->vm_start;
+                response.paddr_mapping = resolved;
+                response.prot = vma->vm_page_prot;
+                response.vm_flags = vma->vm_flags;
+                if(vma->vm_file == NULL) {
+                    response.path[0] = '\0';
+                } else {    
+                    plpath = d_path(&vma->vm_file->f_path,lpath,512);
+                    strcpy(response.path,plpath);
+                }
+                printk("mapping prot = %lx, vm_flags = %lx\n",response.prot,response.vm_flags);
+                pcn_kmsg_send_long(msg->header.from_cpu,(struct pcn_kmsg_message*)(&response),sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
+
+                break;
+            }
+        }
+    }
+
+    // Not found, respond accordingly
+    if(resolved == 0) {
+        response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
+        response.header.prio = PCN_KMSG_PRIO_NORMAL;
+        response.tgroup_home_cpu = msg->tgroup_home_cpu;
+        response.tgroup_home_id = msg->tgroup_home_id;
+        response.address = address;
+        response.present = 0;
+        pcn_kmsg_send(msg->header.from_cpu,(struct pcn_kmsg_message*)(&response));
+    }
+    pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
+}
 
 /**
  *
@@ -1247,6 +1482,7 @@ perf_b = native_read_tsc();
                 }
                 while(pte_curr) {
                     // MAP it
+                
                     err = remap_pfn_range(vma,
                             pte_curr->vaddr,
                             pte_curr->paddr >> PAGE_SHIFT,
@@ -1436,68 +1672,158 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 
 }
 
-
-
-/*
- * VMA Hook
- */
-
 /**
+ * Fault hook
  * 0 = not handled
  * 1 = handled
  */
-int process_server_try_handle_mm_fault_no_vma(struct mm_struct *mm, unsigned long address,
-                                              unsigned int flags) {
-    clone_data_t* clone_data = NULL;
-    vma_data_t* vma_data = NULL;
-    if((!current->executing_for_remote) && (!current->represents_remote)) {
-        goto not_handled; // Don't care
-    }
-
-    if(current->prev_cpu == -1) {
-        goto not_handled; // Nobody to ask!
-    }
-
-    clone_data = get_current_clone_data();
-
-    if(!clone_data) goto not_handled;
-
-    // Check to see if we are possibly sharing VM with anybody.
-    // If not, exit.
-    if(!(clone_data->clone_flags & CLONE_VM)) {
-        goto not_handled;
-    }
-
-    return 0;
-
-not_handled:
-    return 0;
-}
-
-/**
- * 0 = not handled
- * 1 = handled
- */
-int process_server_try_handle_mm_fault_vma(struct mm_struct *mm, struct vm_area_struct *vma,
+int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
                                        unsigned long address, unsigned int flags) {
-    clone_data_t* clone_data = NULL;
     vma_data_t* vma_data = NULL;
-    if((!current->executing_for_remote) && (!current->represents_remote)) {
-        goto not_handled; // Don't care
-    }
+    mapping_request_data_t *data;
+    unsigned long err;
+    int skip_mmap = 0;
+    int ret = 0;
+    mapping_request_t request;
+    int i;
+    int s;
+    struct file* f;
 
-    clone_data = get_current_clone_data();
-
-    if(!clone_data) goto not_handled;
-
-    // Check to see if we are possibly sharing VM with anybody.
-    // If not, exit.
-    if(!(clone_data->clone_flags & CLONE_VM)) {
+    // Nothing to do for a thread group that's not distributed.
+    if(!current->tgroup_distributed) {
         goto not_handled;
     }
 
-    return 0;
+    if(is_vaddr_mapped(mm,address)) {
+        printk("exiting mk fault handler because vaddr %lx is already mapped\n",
+                address);
+        goto not_handled;
+    }
 
+    data = kmalloc(sizeof(mapping_request_data_t),GFP_KERNEL); 
+    
+    printk("Fault caught on address %lx\n",address);
+
+    // Set up data entry to share with response handler.
+    // This data entry will be modified by the response handler,
+    // and we will check it periodically to see if our request
+    // has been responded to by all active cpus.
+    data->header.data_type = PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE;
+    data->header.prev = NULL;
+    data->header.next = NULL;
+    data->address = address;
+    data->present = 0;
+    data->responses = 0;
+    data->expected_responses = 0;
+    data->tgroup_home_cpu = current->tgroup_home_cpu;
+    data->tgroup_home_id = current->tgroup_home_id;
+
+    // Make data entry visible to handler.
+    add_data_entry(data);
+
+    // Send out requests, tracking the number of successful
+    // send operations.  That number is the number of requests
+    // we will expect back.
+    request.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
+    request.header.prio = PCN_KMSG_PRIO_NORMAL;
+    request.address = address;
+    request.tgroup_home_cpu = current->tgroup_home_cpu;
+    request.tgroup_home_id  = current->tgroup_home_id;
+    for(i = 0; i < NR_CPUS; i++) {
+
+        // Skip the current cpu
+        if(i == _cpu) continue; 
+    
+        // Send the request to this cpu.
+        s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
+        if(!s) {
+            // A successful send operation, increase the number
+            // of expected responses.
+            data->expected_responses++;
+        }
+    }
+
+    // Wait for all cpus to respond.
+    while(data->expected_responses != data->responses) {
+        schedule();
+    }
+
+    // All cpus have now responded.
+
+    // Handle successful response.
+    if(data->present) {
+        printk("Mapping communicated: vaddr{%lx},paddr{%lx},prot{%lx},vm_flags{%lx}\n",
+                data->vaddr_mapping, 
+                data->paddr_mapping, 
+                data->prot, 
+                data->vm_flags );
+
+        // If there was not previously a vma, create one.
+        if(!vma) {
+            if(data->path[0] == '\0') {       
+                printk("mapping anonymous\n");
+                err = do_mmap(NULL,
+                        data->vaddr_start,
+                        data->vaddr_size,
+                        PROT_READ|PROT_WRITE|PROT_EXEC,
+                        MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_SHARED,
+                        0);
+            } else {
+                f = filp_open(data->path, O_RDONLY | O_LARGEFILE, 0);
+                if(f) {
+                    printk("mapping file %s, %lx, %d\n",data->path,
+                            data->vaddr_start, 
+                            data->vaddr_size);
+                    err = do_mmap(f,
+                            data->vaddr_start,
+                            data->vaddr_size,
+                            PROT_READ|PROT_WRITE|PROT_EXEC,
+                            MAP_FIXED|MAP_UNINITIALIZED|MAP_SHARED,
+                            0);
+                    filp_close(f,NULL);
+                }
+            }
+            if(err != data->vaddr_start) {
+                printk("Failed to do_mmap %lx\n",err);
+                goto not_handled_remove_data;
+            }
+            
+            vma = find_vma(current->mm, data->vaddr_mapping);
+        }
+
+        // We should have a vma now, so map physical memory into it.
+        if(vma) {
+           err = remap_pfn_range(vma,
+                   data->vaddr_mapping,
+                   data->paddr_mapping >> PAGE_SHIFT,
+                   PAGE_SIZE,
+                   data->prot);
+           if(err) {
+                printk("Failed to remap_pfn_range\n");
+           } else {
+                printk("remap_pfn_range succeeded\n");
+                ret = 1;
+           }
+        }
+
+    }
+
+    printk("removing data entry\n");
+
+    // Clean up data.
+    remove_data_entry(data);
+
+    kfree(data);
+
+    printk("exiting fault handler\n");
+
+    return ret;
+    
+not_handled_remove_data:
+    if(data) {
+        remove_data_entry(data);
+        kfree(data);
+    }
 not_handled:
     return 0;
 }
@@ -1547,9 +1873,10 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 
     // If this is pid 1, the parent cannot have been migrated
     // so it is safe to take on all local thread info.
-    if(orig->pid == 1) {
+    if(unlikely(orig->pid == 1)) {
         task->tgroup_home_cpu = _cpu;
         task->tgroup_home_id = orig->tgid;
+        task->tgroup_distributed = 0;
         return 1;
     }
     // If the new task is not in the same thread group as the parent,
@@ -1557,6 +1884,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     if(orig->tgid != task->tgid) {
         task->tgroup_home_cpu = _cpu;
         task->tgroup_home_id = task->tgid;
+        task->tgroup_distributed = 0;
         return 1;
     }
 
@@ -1565,9 +1893,11 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     if(orig->executing_for_remote == 1 || orig->tgroup_home_cpu != _cpu) {
         task->tgroup_home_cpu = orig->tgroup_home_cpu;
         task->tgroup_home_id = orig->tgroup_home_cpu;
+        task->tgroup_distributed = 1;
     } else {
         task->tgroup_home_cpu = _cpu;
         task->tgroup_home_id = orig->tgid;
+        task->tgroup_distributed = 0;
     }
 
     return 1;
@@ -1591,6 +1921,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     unsigned long stack_start = task->mm->start_stack;
     clone_request_t* request = kmalloc(sizeof(clone_request_t),GFP_KERNEL);
     int tx_ret = -1;
+    struct task_struct* tgroup_iterator = NULL;
     int dst_cpu = cpu;
     char path[256] = {0};
     char* rpath = d_path(&task->mm->exe_file->f_path,
@@ -1610,7 +1941,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     PSPRINTK("process_server_do_migration\n");
     dump_regs(regs);
 
-    // Execute locally if the scheduler decides to do so.
+    // Nothing to do if we're migrating to the current cpu
     if(dst_cpu == _cpu) {
         return PROCESS_SERVER_CLONE_FAIL;
     }
@@ -1624,8 +1955,17 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     // Book keeping for placeholder process.
     task->represents_remote = 1;
-    //task->executing_for_remote = 0; // Turning this off for now, so we have a record of the fact
-                                      // that we were previously executing for remote (chain migration)
+
+    // Book keeping for distributed threads.
+    task->tgroup_distributed = 1;
+    for_each_process(tgroup_iterator) {
+        if(tgroup_iterator != task) {
+            if(tgroup_iterator->tgid == task->tgid) {
+                task->tgroup_distributed = 1;
+                // TODO do I need to propagate the cpu and id too here?
+            }
+        }
+    }
 
     // Pick an id for this remote process request
     spin_lock(&_clone_request_id_lock);
@@ -1642,10 +1982,19 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     vma_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER;
     vma_xfer->header.prio = PCN_KMSG_PRIO_NORMAL;
     while(curr) {
+        unsigned long start_stack = task->mm->start_stack;
+        unsigned long start_brk = task->mm->start_brk;
 
-        /*
-         * re-initialize path.
-         */
+        // Transfer the stack and heap only
+        /*if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start)||
+             (start_brk   <= curr->vm_end && start_brk   >= curr->vm_start))) {
+            curr = curr->vm_next;
+            continue;
+        }*/
+
+        //
+        // re-initialize path.
+        //
         if(curr->vm_file == NULL) {
             vma_xfer->path[0] = '\0';
         } else {
@@ -1654,9 +2003,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
             strcpy(vma_xfer->path,plpath);
         }
 
-        /*
-         * Transfer the vma
-         */
+        //
+        // Transfer the vma
+        //
         spin_lock(&_vma_id_lock);
         vma_xfer->vma_id = _vma_id++;
         spin_unlock(&_vma_id_lock);
@@ -1806,9 +2155,6 @@ static int __init process_server_init(void) {
     /*
      * Register to receive relevant incomming messages.
      */
-
-    PSPRINTK("BEN: Registering process server callbacks!\n");
-
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER, 
             handle_pte_transfer);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER, 
@@ -1819,6 +2165,10 @@ static int __init process_server_init(void) {
             handle_process_pairing_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST, 
             handle_clone_request);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST,
+            handle_mapping_request);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE,
+            handle_mapping_response);
 
     return 0;
 }

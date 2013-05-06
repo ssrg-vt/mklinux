@@ -1127,12 +1127,15 @@ retry:
 	if (unlikely(!vma)) {
         // Multikernel - see if another member of the thread group has mapped
         // this vma
-        if(process_server_try_handle_mm_fault_no_vma(mm,address,flags)) {
+        if(process_server_try_handle_mm_fault(mm,NULL,address,flags)) {
             return;
         }
 		bad_area(regs, error_code, address);
 		return;
-	}
+	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags)) {
+        return;
+    }
+
 	if (likely(vma->vm_start <= address))
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
