@@ -1766,7 +1766,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                         data->vaddr_start,
                         data->vaddr_size,
                         PROT_READ|PROT_WRITE|PROT_EXEC,
-                        MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_SHARED,
+                        MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
                         0);
             } else {
                 f = filp_open(data->path, O_RDONLY | O_LARGEFILE, 0);
@@ -1778,7 +1778,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                             data->vaddr_start,
                             data->vaddr_size,
                             PROT_READ|PROT_WRITE|PROT_EXEC,
-                            MAP_FIXED|MAP_UNINITIALIZED|MAP_SHARED,
+                            MAP_FIXED|MAP_UNINITIALIZED|MAP_PRIVATE,
                             0);
                     filp_close(f,NULL);
                 }
