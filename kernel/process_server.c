@@ -968,7 +968,6 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         printk("received positive search result from cpu %d\n",
                 msg->header.from_cpu);
 
-        data->responses++;
         data->vaddr_mapping = msg->vaddr_mapping;
         data->vaddr_start = msg->vaddr_start;
         data->vaddr_size = msg->vaddr_size;
@@ -977,6 +976,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         data->vm_flags = msg->vm_flags;
         data->present = 1;
         strcpy(data->path,msg->path);
+        data->responses++;
 
     } else {
         printk("received negative search result from cpu %d\n",
@@ -1003,21 +1003,24 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     };
     char* plpath;
     char lpath[512];
-    printk("received mapping request\n");
+
+    printk("received mapping request address{%lx}, cpu{%d}, id{%d}\n",
+            msg->address,
+            msg->tgroup_home_cpu,
+            msg->tgroup_home_id);
+
     for_each_process(task) {
         if((task->tgroup_home_cpu == msg->tgroup_home_cpu) &&
            (task->tgroup_home_id  == msg->tgroup_home_id )) {
             printk("mapping request found common thread group here\n");
            
-            // Break if the vma is file backed, we do not want to transfer file backed
-            // vma information, since there is currently no shared file system.
-            // Continue if the vma does not exist, but keep searching.
             vma = find_vma(task->mm, address&PAGE_MASK);
             if(!vma) continue;
-            //else if (vma->vm_file != NULL) break;
 
             walk.mm = task->mm;
-            walk_page_range(address & PAGE_MASK, (address & PAGE_MASK) + PAGE_SIZE, &walk);
+            walk_page_range(address & PAGE_MASK, 
+                    (address & PAGE_MASK) + PAGE_SIZE, &walk);
+
             if(resolved != 0) {
                 printk("mapping found! %lx for vaddr %lx\n",resolved,
                         address & PAGE_MASK);
@@ -1040,9 +1043,8 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
                     plpath = d_path(&vma->vm_file->f_path,lpath,512);
                     strcpy(response.path,plpath);
                 }
-                printk("mapping prot = %lx, vm_flags = %lx\n",response.prot,response.vm_flags);
-                pcn_kmsg_send_long(msg->header.from_cpu,(struct pcn_kmsg_message*)(&response),sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
-
+                printk("mapping prot = %lx, vm_flags = %lx\n",
+                        response.prot,response.vm_flags);
                 break;
             }
         }
@@ -1050,14 +1052,39 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
 
     // Not found, respond accordingly
     if(resolved == 0) {
+        printk("Mapping not found\n");
         response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
         response.header.prio = PCN_KMSG_PRIO_NORMAL;
         response.tgroup_home_cpu = msg->tgroup_home_cpu;
         response.tgroup_home_id = msg->tgroup_home_id;
         response.address = address;
+        response.paddr_mapping = 0;
         response.present = 0;
-        pcn_kmsg_send(msg->header.from_cpu,(struct pcn_kmsg_message*)(&response));
+        // Handle case where vma was present but no pte.
+        if(vma) {
+            printk("But vma present\n");
+            response.present = 1;
+            response.vaddr_mapping = address & PAGE_MASK;
+            response.vaddr_start = vma->vm_start;
+            response.vaddr_size = vma->vm_end - vma->vm_start;
+            response.prot = vma->vm_page_prot;
+            response.vm_flags = vma->vm_flags;
+             if(vma->vm_file == NULL) {
+                 response.path[0] = '\0';
+             } else {    
+                 plpath = d_path(&vma->vm_file->f_path,lpath,512);
+                 strcpy(response.path,plpath);
+             }
+        }
+       
     }
+
+    // Send response
+    pcn_kmsg_send_long(msg->header.from_cpu,
+             (struct pcn_kmsg_message*)(&response),
+             sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
+
+    // Clean up incoming message
     pcn_kmsg_free_msg(inc_msg);
 
     return 0;
@@ -1521,6 +1548,7 @@ perf_b = native_read_tsc();
     current->prev_pid = clone_data->placeholder_pid;
     current->tgroup_home_cpu = clone_data->tgroup_home_cpu;
     current->tgroup_home_id = clone_data->tgroup_home_id;
+    current->tgroup_distributed = 1;
 
     // Set output variables.
     *sp = clone_data->thread_usersp;
@@ -1702,7 +1730,12 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
 
     data = kmalloc(sizeof(mapping_request_data_t),GFP_KERNEL); 
     
-    printk("Fault caught on address %lx\n",address);
+    printk("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}\n",
+            address,
+            current->tgroup_home_cpu,
+            current->tgroup_home_id,
+            current->pid,
+            current->tgid);
 
     // Set up data entry to share with response handler.
     // This data entry will be modified by the response handler,
@@ -1778,21 +1811,21 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                             data->vaddr_start,
                             data->vaddr_size,
                             PROT_READ|PROT_WRITE|PROT_EXEC,
-                            MAP_FIXED|MAP_UNINITIALIZED|MAP_PRIVATE,
+                            MAP_FIXED|/*MAP_UNINITIALIZED|*/MAP_PRIVATE,
                             0);
                     filp_close(f,NULL);
                 }
             }
             if(err != data->vaddr_start) {
                 printk("Failed to do_mmap %lx\n",err);
-                goto not_handled_remove_data;
+                goto exit_remove_data;
             }
             
             vma = find_vma(current->mm, data->vaddr_mapping);
         }
 
         // We should have a vma now, so map physical memory into it.
-        if(vma) {
+        if(vma && data->paddr_mapping) {
            err = remap_pfn_range(vma,
                    data->vaddr_mapping,
                    data->paddr_mapping >> PAGE_SHIFT,
@@ -1808,10 +1841,13 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
 
     }
 
+exit_remove_data:
     printk("removing data entry\n");
 
     // Clean up data.
+    spin_lock(&_data_head_lock);
     remove_data_entry(data);
+    spin_unlock(&_data_head_lock);
 
     kfree(data);
 
@@ -1819,11 +1855,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
 
     return ret;
     
-not_handled_remove_data:
-    if(data) {
-        remove_data_entry(data);
-        kfree(data);
-    }
 not_handled:
     return 0;
 }
@@ -1871,9 +1902,9 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     task->prev_pid = -1;
     task->next_pid = -1;
 
-    // If this is pid 1, the parent cannot have been migrated
+    // If this is pid 1 or 2, the parent cannot have been migrated
     // so it is safe to take on all local thread info.
-    if(unlikely(orig->pid == 1)) {
+    if(unlikely(orig->pid == 1 || orig->pid == 2)) {
         task->tgroup_home_cpu = _cpu;
         task->tgroup_home_id = orig->tgid;
         task->tgroup_distributed = 0;
@@ -1961,8 +1992,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     for_each_process(tgroup_iterator) {
         if(tgroup_iterator != task) {
             if(tgroup_iterator->tgid == task->tgid) {
-                task->tgroup_distributed = 1;
-                // TODO do I need to propagate the cpu and id too here?
+                tgroup_iterator->tgroup_distributed = 1;
+                tgroup_iterator->tgroup_home_id = task->tgroup_home_id;
+                tgroup_iterator->tgroup_home_cpu = task->tgroup_home_cpu;
             }
         }
     }
@@ -1986,11 +2018,11 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         unsigned long start_brk = task->mm->start_brk;
 
         // Transfer the stack and heap only
-        /*if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start)||
+        if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start)||
              (start_brk   <= curr->vm_end && start_brk   >= curr->vm_start))) {
             curr = curr->vm_next;
             continue;
-        }*/
+        }
 
         //
         // re-initialize path.
