@@ -1412,7 +1412,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     perf_a = native_read_tsc();
     
-    PSPRINTK("import address space\n");
+    printk("import address space\n");
     
     // Verify that we're a delegated task.
     if (!current->executing_for_remote) {
@@ -1424,13 +1424,16 @@ int process_server_import_address_space(unsigned long* ip,
     if(!clone_data) {
         return -1;
     }
-perf_b = native_read_tsc();
+
+    perf_b = native_read_tsc();
+    
     // Gut existing mappings
     
     down_write(&current->mm->mmap_sem);
 
     vma = current->mm->mmap;
     while(vma) {
+        printk("Unmapping vma at %lx\n",vma->vm_start);
         munmap_ret = do_munmap(current->mm, vma->vm_start, vma->vm_end - vma->vm_start);
         vma = current->mm->mmap;
     }
@@ -1456,7 +1459,7 @@ perf_b = native_read_tsc();
 
 
     while(vma_curr) {
-        PSPRINTK("do_mmap()\n");
+        printk("do_mmap()\n");
         if(vma_curr->path[0] != '\0') {
             mmap_flags = /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_PRIVATE;
             f = filp_open(vma_curr->path,
@@ -1723,9 +1726,22 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
     }
 
     if(is_vaddr_mapped(mm,address)) {
-        printk("exiting mk fault handler because vaddr %lx is already mapped\n",
-                address);
+        printk("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
+                address,current->tgroup_home_cpu,current->tgroup_home_id);
         goto not_handled;
+    }
+
+    if(vma) {
+        printk("vma {%lx} present before search at %lx\n",(unsigned long)vma, vma->vm_start);
+    }
+    vma = find_vma(current->mm, address);
+    if(vma) {
+        printk("vma {%lx} present after search at %lx\n",(unsigned long)vma, vma->vm_start);
+    }
+
+    if(vma->vm_start >= address || vma->vm_end <= address) {
+        printk("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
+        vma = NULL;
     }
 
     data = kmalloc(sizeof(mapping_request_data_t),GFP_KERNEL); 
@@ -1785,14 +1801,16 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
 
     // Handle successful response.
     if(data->present) {
-        printk("Mapping communicated: vaddr{%lx},paddr{%lx},prot{%lx},vm_flags{%lx}\n",
+        printk("Mapping communicated: vaddr{%lx},paddr{%lx},prot{%lx},vm_flags{%lx},path{%s}\n",
                 data->vaddr_mapping, 
                 data->paddr_mapping, 
                 data->prot, 
-                data->vm_flags );
+                data->vm_flags,
+                data->path);
 
         // If there was not previously a vma, create one.
         if(!vma) {
+            printk("vma not present\n");
             if(data->path[0] == '\0') {       
                 printk("mapping anonymous\n");
                 err = do_mmap(NULL,
@@ -1802,6 +1820,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                         MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
                         0);
             } else {
+                printk("opening file to map\n");
                 f = filp_open(data->path, O_RDONLY | O_LARGEFILE, 0);
                 if(f) {
                     printk("mapping file %s, %lx, %d\n",data->path,
@@ -1822,6 +1841,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
             }
             
             vma = find_vma(current->mm, data->vaddr_mapping);
+            
         }
 
         // We should have a vma now, so map physical memory into it.
@@ -1837,8 +1857,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                 printk("remap_pfn_range succeeded\n");
                 ret = 1;
            }
-        }
-
+        } 
     }
 
 exit_remove_data:
@@ -1942,8 +1961,6 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
  * remote cpu will then create a new process and import that
  * info into its new context.  
  *
- * TODO: Use a multicast channel for communicating data relevant
- *       to shadow processes.
  */
 int process_server_do_migration(struct task_struct* task, int cpu) {
     struct pt_regs *regs = task_pt_regs(task);
@@ -1955,8 +1972,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     struct task_struct* tgroup_iterator = NULL;
     int dst_cpu = cpu;
     char path[256] = {0};
-    char* rpath = d_path(&task->mm->exe_file->f_path,
-           path,256);
+    char* rpath = d_path(&task->mm->exe_file->f_path,path,256);
     char lpath[256];
     char *plpath;
     struct vm_area_struct* curr = NULL;
@@ -1979,7 +1995,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     // This will be a placeholder process for the remote
     // process that is subsequently going to be started.
-    //  Block its execution.
+    // Block its execution.
     sigaddset(&task->pending.signal,SIGSTOP); 
     set_tsk_thread_flag(task,TIF_SIGPENDING); 
     __set_task_state(task,TASK_UNINTERRUPTIBLE);
@@ -2006,13 +2022,12 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     down_read(&task->mm->mmap_sem);
     
-    
-    
     // VM Entries
     curr = task->mm->mmap;
 
     vma_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER;
     vma_xfer->header.prio = PCN_KMSG_PRIO_NORMAL;
+
     while(curr) {
         unsigned long start_stack = task->mm->start_stack;
         unsigned long start_brk = task->mm->start_brk;
