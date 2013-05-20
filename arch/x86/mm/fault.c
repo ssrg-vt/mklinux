@@ -1090,6 +1090,21 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		return;
 	}
 
+    vma = find_vma(mm, address);
+	if (unlikely(!vma)) {
+        // Multikernel - see if another member of the thread group has mapped
+        // this vma
+        if(process_server_try_handle_mm_fault(mm,NULL,address,flags,&vma)) {
+            return;
+        }
+		if(!vma) {
+            bad_area(regs, error_code, address);
+		    return;
+        }
+	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags,&vma)) {
+        return;
+    }
+
 	/*
 	 * When running in the kernel we expect faults to occur only to
 	 * addresses in user space.  All other faults represent errors in
@@ -1123,18 +1138,20 @@ retry:
 		might_sleep();
 	}
 
-	vma = find_vma(mm, address);
+	/*vma = find_vma(mm, address);
 	if (unlikely(!vma)) {
         // Multikernel - see if another member of the thread group has mapped
         // this vma
-        if(process_server_try_handle_mm_fault(mm,NULL,address,flags)) {
+        if(process_server_try_handle_mm_fault(mm,NULL,address,flags,&vma)) {
             return;
         }
-		bad_area(regs, error_code, address);
-		return;
-	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags)) {
+		if(!vma) {
+            bad_area(regs, error_code, address);
+		    return;
+        }
+	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags,&vma)) {
         return;
-    }
+    }*/
 
 	if (likely(vma->vm_start <= address))
 		goto good_area;

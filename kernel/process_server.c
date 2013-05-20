@@ -32,7 +32,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -681,7 +681,7 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
  * Print mm
  */
 static void dump_mm(struct mm_struct* mm) {
-
+    char buf[256];
     struct vm_area_struct * curr;
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
@@ -1629,6 +1629,8 @@ int process_server_import_address_space(unsigned long* ip,
     // Save off clone data
     current->clone_data = clone_data;
 
+    dump_task(current,NULL,0);
+
     return 0;
 }
 
@@ -1709,7 +1711,7 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
  * 1 = handled
  */
 int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
-                                       unsigned long address, unsigned int flags) {
+                                       unsigned long address, unsigned int flags, struct vm_area_struct **vma_out) {
     vma_data_t* vma_data = NULL;
     mapping_request_data_t *data;
     unsigned long err;
@@ -1719,33 +1721,13 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
     int i;
     int s;
     struct file* f;
+    int started_outside_vma = 0;
 
     // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
         goto not_handled;
     }
 
-    if(is_vaddr_mapped(mm,address)) {
-        printk("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
-                address,current->tgroup_home_cpu,current->tgroup_home_id);
-        goto not_handled;
-    }
-
-    if(vma) {
-        printk("vma {%lx} present before search at %lx\n",(unsigned long)vma, vma->vm_start);
-    }
-    vma = find_vma(current->mm, address);
-    if(vma) {
-        printk("vma {%lx} present after search at %lx\n",(unsigned long)vma, vma->vm_start);
-    }
-
-    if(vma->vm_start >= address || vma->vm_end <= address) {
-        printk("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
-        vma = NULL;
-    }
-
-    data = kmalloc(sizeof(mapping_request_data_t),GFP_KERNEL); 
-    
     printk("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}\n",
             address,
             current->tgroup_home_cpu,
@@ -1753,6 +1735,30 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
             current->pid,
             current->tgid);
 
+    if(is_vaddr_mapped(mm,address)) {
+        printk("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
+                address,current->tgroup_home_cpu,current->tgroup_home_id);
+        goto not_handled;
+    }
+
+    vma = find_vma(current->mm, address);
+
+    if(vma) {
+        printk("working with provided vma: start{%lx}, end{%lx}\n",vma->vm_start,vma->vm_end);
+    }
+
+    if(vma && (vma->vm_start >= address || vma->vm_end <= address)) {
+        started_outside_vma = 1;
+        printk("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
+        vma = NULL;
+    } else if (vma) {
+        printk("vma found and valid\n");
+    } else {
+        printk("no vma present\n");
+    }
+
+    data = kmalloc(sizeof(mapping_request_data_t),GFP_KERNEL); 
+    
     // Set up data entry to share with response handler.
     // This data entry will be modified by the response handler,
     // and we will check it periodically to see if our request
@@ -1809,7 +1815,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                 data->path);
 
         // If there was not previously a vma, create one.
-        if(!vma) {
+        if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
             printk("vma not present\n");
             if(data->path[0] == '\0') {       
                 printk("mapping anonymous\n");
@@ -1841,7 +1847,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
             }
             
             vma = find_vma(current->mm, data->vaddr_mapping);
-            
         }
 
         // We should have a vma now, so map physical memory into it.
@@ -1858,6 +1863,10 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                 ret = 1;
            }
         } 
+
+        if(vma) {
+            *vma_out = vma;
+        }
     }
 
 exit_remove_data:
