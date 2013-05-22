@@ -150,6 +150,7 @@ typedef struct _mapping_request_data {
     int responses;
     int expected_responses;
     char path[512];
+    unsigned long pgoff;
 } mapping_request_data_t;
 
 
@@ -263,21 +264,19 @@ typedef struct _mapping_request mapping_request_t;
  */
 struct _mapping_response {
     struct pcn_kmsg_hdr header;
-    int tgroup_home_cpu;        // 4
-    int tgroup_home_id;         // 4
-    unsigned long address;      // 8
-    unsigned long present;      // 8
-    unsigned long vaddr_mapping;// 8
+    int tgroup_home_cpu;        
+    int tgroup_home_id;         
+    unsigned long address;      
+    unsigned long present;      
+    unsigned long vaddr_mapping;
     unsigned long vaddr_start;
     unsigned long vaddr_size;
-    unsigned long paddr_mapping;// 8
-    pgprot_t prot;              // 8
-    unsigned long vm_flags;     // 8
-                                // ---
-                                // 48 -> 16 bytes of padding needed
-    //char pad[16];
+    unsigned long paddr_mapping;
+    pgprot_t prot;              
+    unsigned long vm_flags;     
     char path[512];
-};// __attribute__((packed)) __attribute__((aligned(64)));
+    unsigned long pgoff;
+};
 
 typedef struct _mapping_response mapping_response_t;
 
@@ -976,6 +975,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         data->vm_flags = msg->vm_flags;
         data->present = 1;
         strcpy(data->path,msg->path);
+        data->pgoff = msg->pgoff;
         data->responses++;
 
     } else {
@@ -1015,7 +1015,15 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
             printk("mapping request found common thread group here\n");
            
             vma = find_vma(task->mm, address&PAGE_MASK);
-            if(!vma) continue;
+            
+            // Validate find_vma result
+            if(!vma || 
+                vma->vm_start > address & PAGE_MASK || 
+                vma->vm_end <= address) {
+                printk("find_vma turned up an invalid response, invalidating and continuing\n");
+                vma = NULL;
+                continue;
+            }
 
             walk.mm = task->mm;
             walk_page_range(address & PAGE_MASK, 
@@ -1042,6 +1050,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
                 } else {    
                     plpath = d_path(&vma->vm_file->f_path,lpath,512);
                     strcpy(response.path,plpath);
+                    response.pgoff = vma->vm_pgoff;
                 }
                 printk("mapping prot = %lx, vm_flags = %lx\n",
                         response.prot,response.vm_flags);
@@ -1060,6 +1069,10 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
         response.address = address;
         response.paddr_mapping = 0;
         response.present = 0;
+        response.vaddr_start = 0;
+        response.vaddr_size = 0;
+        response.path[0] = '\0';
+
         // Handle case where vma was present but no pte.
         if(vma) {
             printk("But vma present\n");
@@ -1074,6 +1087,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
              } else {    
                  plpath = d_path(&vma->vm_file->f_path,lpath,512);
                  strcpy(response.path,plpath);
+                 response.pgoff = vma->vm_pgoff;
              }
         }
        
@@ -1459,7 +1473,7 @@ int process_server_import_address_space(unsigned long* ip,
 
 
     while(vma_curr) {
-        printk("do_mmap()\n");
+        printk("do_mmap() at %lx\n",vma_curr->start);
         if(vma_curr->path[0] != '\0') {
             mmap_flags = /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_PRIVATE;
             f = filp_open(vma_curr->path,
@@ -1473,7 +1487,7 @@ int process_server_import_address_space(unsigned long* ip,
                         vma_curr->end - vma_curr->start,
                         PROT_READ|PROT_WRITE|PROT_EXEC, 
                         mmap_flags, 
-                        0);
+                        vma_curr->pgoff << PAGE_SHIFT);
                 vmas_installed++;
                 vma_curr->mmapping_in_progress = 0;
                 up_write(&current->mm->mmap_sem);
@@ -1722,6 +1736,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
     int s;
     struct file* f;
     int started_outside_vma = 0;
+    char path[512];
+    char* ppath;
 
     // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
@@ -1740,13 +1756,19 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                 address,current->tgroup_home_cpu,current->tgroup_home_id);
         goto not_handled;
     }
-
-    vma = find_vma(current->mm, address);
-
+    
     if(vma) {
-        printk("working with provided vma: start{%lx}, end{%lx}\n",vma->vm_start,vma->vm_end);
+        if(vma->vm_file) {
+            ppath = d_path(&vma->vm_file->f_path,
+                        path,512);
+        } else {
+            path[0] = '\0';
+        }
+
+        printk("working with provided vma: start{%lx}, end{%lx}, path{%s}\n",vma->vm_start,vma->vm_end,path);
     }
 
+    // TODO: WHY!!!! Why is there ever a case where the vma does not contain the faulting address?
     if(vma && (vma->vm_start >= address || vma->vm_end <= address)) {
         started_outside_vma = 1;
         printk("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
@@ -1807,12 +1829,15 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
 
     // Handle successful response.
     if(data->present) {
-        printk("Mapping communicated: vaddr{%lx},paddr{%lx},prot{%lx},vm_flags{%lx},path{%s}\n",
+        printk("Mapping communicated: vaddr_start{%lx}, vaddr_mapping{%lx},vaddr_size{%lx},paddr{%lx},prot{%lx},vm_flags{%lx},path{%s},pgoff{%lx}\n",
+                data->vaddr_start,
                 data->vaddr_mapping, 
+                data->vaddr_size,
                 data->paddr_mapping, 
                 data->prot, 
                 data->vm_flags,
-                data->path);
+                data->path,
+                data->pgoff);
 
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
@@ -1837,16 +1862,25 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                             data->vaddr_size,
                             PROT_READ|PROT_WRITE|PROT_EXEC,
                             MAP_FIXED|/*MAP_UNINITIALIZED|*/MAP_PRIVATE,
-                            0);
+                            data->pgoff << PAGE_SHIFT);
                     filp_close(f,NULL);
                 }
             }
             if(err != data->vaddr_start) {
-                printk("Failed to do_mmap %lx\n",err);
+                printk("ERROR: Failed to do_mmap %lx\n",err);
                 goto exit_remove_data;
             }
             
             vma = find_vma(current->mm, data->vaddr_mapping);
+
+            // Validate find_vma result
+            if(vma->vm_start > data->vaddr_mapping || 
+               vma->vm_end <= data->vaddr_mapping) {
+                printk("invalid find_vma result, invalidating\n");
+                vma = NULL;
+            } else {
+                printk("mapping successful\n");
+            }
         }
 
         // We should have a vma now, so map physical memory into it.
@@ -1857,7 +1891,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                    PAGE_SIZE,
                    data->prot);
            if(err) {
-                printk("Failed to remap_pfn_range\n");
+                printk("ERROR: Failed to remap_pfn_range\n");
            } else {
                 printk("remap_pfn_range succeeded\n");
                 ret = 1;
