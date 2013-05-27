@@ -337,7 +337,7 @@ static struct workqueue_struct *exit_wq;
 
 
 
-static clone_data_t* get_current_clone_data() {
+static clone_data_t* get_current_clone_data(void) {
     clone_data_t* ret = NULL;
 
     if(!current->clone_data) {
@@ -800,7 +800,7 @@ static void remove_data_entry(void* entry) {
 /**
  * Print information about the list.
  */
-static void dump_data_list() {
+static void dump_data_list(void) {
     data_header_t* curr = NULL;
     pte_data_t* pte_data = NULL;
     vma_data_t* vma_data = NULL;
@@ -885,7 +885,7 @@ void process_exit_item(struct work_struct* work) {
             kill_pid(spid,SIGKILL,1);
     }
     else
-	    PSPRINTK("%s: process to kill %ld NOT FOUND\n", __func__, pid);
+	    PSPRINTK("%s: process to kill %ld NOT FOUND\n", __func__, (unsigned long)pid);
 
 happy_end:
     kfree(work);
@@ -1017,9 +1017,9 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
             vma = find_vma(task->mm, address&PAGE_MASK);
             
             // Validate find_vma result
-            if(!vma || 
-                vma->vm_start > address & PAGE_MASK || 
-                vma->vm_end <= address) {
+            if( (!vma) || 
+                (vma->vm_start > (address & PAGE_MASK)) || 
+                (vma->vm_end <= address) ) {
                 printk("find_vma turned up an invalid response, invalidating and continuing\n");
                 vma = NULL;
                 continue;
@@ -1424,6 +1424,7 @@ int process_server_import_address_space(unsigned long* ip,
     int vmas_installed = 0;
     int ptes_installed = 0;
 
+
     perf_a = native_read_tsc();
     
     printk("import address space\n");
@@ -1503,7 +1504,7 @@ int process_server_import_address_space(unsigned long* ip,
             err = do_mmap(NULL, 
                 vma_curr->start, 
                 vma_curr->end - vma_curr->start,
-                PROT_READ|PROT_WRITE|PROT_EXEC, 
+                PROT_READ|PROT_WRITE/*|PROT_EXEC*/, 
                 mmap_flags, 
                 0);
             vmas_installed++;
@@ -1724,17 +1725,21 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
  * 0 = not handled
  * 1 = handled
  */
-int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
-                                       unsigned long address, unsigned int flags, struct vm_area_struct **vma_out) {
-    vma_data_t* vma_data = NULL;
+int process_server_try_handle_mm_fault(struct mm_struct *mm, 
+                                       struct vm_area_struct *vma,
+                                       unsigned long address, 
+                                       unsigned int flags, 
+                                       struct vm_area_struct **vma_out,
+                                       unsigned long error_code) {
+
     mapping_request_data_t *data;
-    unsigned long err;
-    int skip_mmap = 0;
+    unsigned long err = 0;
     int ret = 0;
     mapping_request_t request;
     int i;
     int s;
     struct file* f;
+    unsigned long prot = 0;
     int started_outside_vma = 0;
     char path[512];
     char* ppath;
@@ -1744,12 +1749,13 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
         goto not_handled;
     }
 
-    printk("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}\n",
+    printk("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
             address,
             current->tgroup_home_cpu,
             current->tgroup_home_id,
             current->pid,
-            current->tgid);
+            current->tgid,
+            error_code);
 
     if(is_vaddr_mapped(mm,address)) {
         printk("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
@@ -1839,6 +1845,11 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                 data->path,
                 data->pgoff);
 
+        // Figure out how to protect this region.
+        prot |= (data->vm_flags & VM_READ)?  PROT_READ  : 0;
+        prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
+        prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
+
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
             printk("vma not present\n");
@@ -1847,8 +1858,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                 err = do_mmap(NULL,
                         data->vaddr_start,
                         data->vaddr_size,
-                        PROT_READ|PROT_WRITE|PROT_EXEC,
-                        MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
+                        prot,
+                        /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
                         0);
             } else {
                 printk("opening file to map\n");
@@ -1860,7 +1871,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                     err = do_mmap(f,
                             data->vaddr_start,
                             data->vaddr_size,
-                            PROT_READ|PROT_WRITE|PROT_EXEC,
+                            prot,
                             MAP_FIXED|/*MAP_UNINITIALIZED|*/MAP_PRIVATE,
                             data->pgoff << PAGE_SHIFT);
                     filp_close(f,NULL);
@@ -1884,12 +1895,14 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
         }
 
         // We should have a vma now, so map physical memory into it.
-        if(vma && data->paddr_mapping) {
+        if(vma && data->paddr_mapping) { 
+            printk("About to map new physical pages - vm_flags{%lx}, prot{%lx}\n",vma->vm_flags,data->prot);
            err = remap_pfn_range(vma,
                    data->vaddr_mapping,
                    data->paddr_mapping >> PAGE_SHIFT,
                    PAGE_SIZE,
                    data->prot);
+                   //vm_get_page_prot(vma->vm_flags));
            if(err) {
                 printk("ERROR: Failed to remap_pfn_range\n");
            } else {
@@ -2154,9 +2167,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h
     {
-      	unsigned long fs, gs, shadowgs;
+      	unsigned long fs, gs;
 	unsigned int fsindex, gsindex;
-	unsigned int ds, cs, es;
+	unsigned int ds, es;
 	
 	    if (current != task)
 	      PSPRINTK("DAVEK current is different from task!\n");

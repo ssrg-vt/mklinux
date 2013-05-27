@@ -31,6 +31,7 @@ int process_server_notify_mmap(struct file *file, unsigned long addr,
 int process_server_notify_munmap(struct mm_struct *mm, unsigned long start, size_t len);
 int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
                                unsigned long address, unsigned int flags,
-                               struct vm_area_struct **vma_out);
+                               struct vm_area_struct **vma_out,
+                               unsigned long error_code);
 int process_server_dup_task(struct task_struct* orig, struct task_struct* task);
 #endif // _PROCESS_SERVER_H

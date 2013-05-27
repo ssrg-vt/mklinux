@@ -729,7 +729,7 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 	dest_window = rkvirt[dest_cpu];
 
 	if (unlikely(!rkvirt[dest_cpu])) {
-		KMSG_ERR("Dest win for CPU %d not mapped!\n", dest_cpu);
+		//KMSG_ERR("Dest win for CPU %d not mapped!\n", dest_cpu);
 		return -1;
 	}
 

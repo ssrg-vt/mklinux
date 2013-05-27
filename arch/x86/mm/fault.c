@@ -1094,14 +1094,14 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	if (unlikely(!vma)) {
         // Multikernel - see if another member of the thread group has mapped
         // this vma
-        if(process_server_try_handle_mm_fault(mm,NULL,address,flags,&vma)) {
+        if(process_server_try_handle_mm_fault(mm,NULL,address,flags,&vma,error_code)) {
             return;
         }
 		if(!vma) {
             bad_area(regs, error_code, address);
 		    return;
         }
-	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags,&vma)) {
+	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags,&vma,error_code)) {
         return;
     }
 
