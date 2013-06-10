@@ -21,6 +21,7 @@
 #include <linux/io.h> // ioremap
 #include <linux/mman.h> // MAP_ANONYMOUS
 #include <linux/pcn_kmsg.h> // Messaging
+#include <linux/string.h>
 
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
@@ -372,6 +373,10 @@ static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
         .private = &(resolved),
         .mm = mm
     };
+    /*struct vm_area_struct* vma = find_vma(mm,vaddr&PAGE_MASK);
+    if(!vma || vma->vm_start > vaddr || vma->vm_end <= vaddr) {
+        return 0;
+    }*/
 
     walk_page_range(vaddr & PAGE_MASK, ( vaddr & PAGE_MASK ) + PAGE_SIZE, &walk);
     if(resolved != 0) {
@@ -1520,7 +1525,7 @@ int process_server_import_address_space(unsigned long* ip,
             // mmap_region succeeded
             vma = find_vma(current->mm, vma_curr->start);
             PSPRINTK("vma mmapped, pulling in pte's\n");
-            if(vma) {
+            if(vma && (vma->vm_start <= vma_curr->start) && (vma->vm_end > vma_curr->start)) {
                 pte_curr = vma_curr->pte_list;
                 if(pte_curr == NULL) {
                     PSPRINTK("vma->pte_curr == null\n");
@@ -1774,7 +1779,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         printk("working with provided vma: start{%lx}, end{%lx}, path{%s}\n",vma->vm_start,vma->vm_end,path);
     }
 
-    // TODO: WHY!!!! Why is there ever a case where the vma does not contain the faulting address?
+    // The vma that's passed in might not always be correct.  find_vma fails by returning the wrong
+    // vma when the vma is not present.  How ugly...
     if(vma && (vma->vm_start >= address || vma->vm_end <= address)) {
         started_outside_vma = 1;
         printk("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
@@ -1863,11 +1869,23 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         0);
             } else {
                 printk("opening file to map\n");
-                f = filp_open(data->path, O_RDONLY | O_LARGEFILE, 0);
+
+                // Temporary, check to see if the path is /dev/null (deleted), it should just
+                // be /dev/null in that case.  TODO: Add logic to detect and remove the 
+                // " (deleted)" from any path here.  This is important, because anonymous mappings
+                // are sometimes, depending on how glibc is compiled, mapped instead to the /dev/zero
+                // file, and without this check, the filp_open call will fail because the "(deleted)"
+                // string at the end of the path results in the file not being found.
+                if( !strncmp( "/dev/zero (deleted)", data->path, strlen("/dev/zero (deleted)")+1 )) {
+                    data->path[9] = '\0';
+                }
+
+                f = filp_open(data->path, O_RDONLY /*| O_LARGEFILE*/, 0);
                 if(f) {
-                    printk("mapping file %s, %lx, %d\n",data->path,
+                    printk("mapping file %s, %lx, %d, %lx\n",data->path,
                             data->vaddr_start, 
-                            data->vaddr_size);
+                            data->vaddr_size,
+                            (unsigned long)f);
                     err = do_mmap(f,
                             data->vaddr_start,
                             data->vaddr_size,
@@ -1896,19 +1914,24 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
         // We should have a vma now, so map physical memory into it.
         if(vma && data->paddr_mapping) { 
+
             printk("About to map new physical pages - vm_flags{%lx}, prot{%lx}\n",vma->vm_flags,data->prot);
-           err = remap_pfn_range(vma,
+
+            err = remap_pfn_range(vma,
                    data->vaddr_mapping,
                    data->paddr_mapping >> PAGE_SHIFT,
                    PAGE_SIZE,
-                   data->prot);
-                   //vm_get_page_prot(vma->vm_flags));
-           if(err) {
+                   //data->prot);
+                   //vm_get_page_prot(data->vm_flags));
+                   vma->vm_page_prot);
+
+            // Check remap_pfn_range success
+            if(err) {
                 printk("ERROR: Failed to remap_pfn_range\n");
-           } else {
+            } else {
                 printk("remap_pfn_range succeeded\n");
                 ret = 1;
-           }
+            }
         } 
 
         if(vma) {
