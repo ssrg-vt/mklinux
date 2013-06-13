@@ -48,6 +48,7 @@
 #define PROCESS_SERVER_PTE_DATA_TYPE 2
 #define PROCESS_SERVER_CLONE_DATA_TYPE 3
 #define PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE 4
+#define PROCESS_SERVER_MUNMAP_REQUEST_DATA_TYPE 5
 
 /**
  * Library
@@ -154,6 +155,18 @@ typedef struct _mapping_request_data {
     unsigned long pgoff;
 } mapping_request_data_t;
 
+/**
+ *
+ */
+typedef struct _munmap_request_data {
+    data_header_t header;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+    int responses;
+    int expected_responses;
+} munmap_request_data_t;
 
 /**
  * This message is sent to a remote cpu in order to 
@@ -278,8 +291,36 @@ struct _mapping_response {
     char path[512];
     unsigned long pgoff;
 };
-
 typedef struct _mapping_response mapping_response_t;
+
+/**
+ *
+ */
+struct _munmap_request {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;         // 4
+    int tgroup_home_id;          // 4
+    unsigned long vaddr_start;   // 8
+    unsigned long vaddr_size;    // 8
+                                 // ---
+                                 // 24 -> 40 bytes of padding needed
+    char pad[40];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _munmap_request munmap_request_t;
+
+/**
+ *
+ */
+struct _munmap_response {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+    char pad[40];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _munmap_response munmap_response_t;
+
 
 /**
  *
@@ -548,6 +589,32 @@ static void dump_clone_data(clone_data_t* r) {
         dump_vma_data(v);
         v = (vma_data_t*)v->header.next;
     }
+}
+
+static munmap_request_data_t* find_munmap_request_data(int cpu, int id, unsigned long address) {
+    data_header_t* curr = NULL;
+    munmap_request_data_t* request = NULL;
+    munmap_request_data_t* ret = NULL;
+    spin_lock(&_data_head_lock);
+    
+    curr = _data_head;
+    while(curr) {
+        if(curr->data_type == PROCESS_SERVER_MUNMAP_REQUEST_DATA_TYPE) {
+            request = (munmap_request_data_t*)curr;
+            if(request->tgroup_home_cpu == cpu && 
+                    request->tgroup_home_id == id &&
+                    request->vaddr_start == address) {
+                ret = request;
+                break;
+            }
+        }
+        curr = curr->next;
+    }
+
+    spin_unlock(&_data_head_lock);
+
+    return ret;
+
 }
 
 /**
@@ -952,6 +1019,75 @@ perf_bb = native_read_tsc();
  * Request implementations
  */
 
+/**
+ *
+ */
+static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
+    munmap_response_t* msg = (munmap_response_t*)inc_msg;
+    munmap_request_data_t* data = find_munmap_request_data(
+                                        msg->tgroup_home_cpu,
+                                        msg->tgroup_home_id,
+                                        msg->vaddr_start);
+
+    if(data == NULL) {
+        PSPRINTK("unable to find munmap data\n");
+        pcn_kmsg_free_msg(inc_msg);
+        return -1;
+    }
+
+    // Register this response.
+    data->responses++;
+
+    pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
+}
+
+/**
+ *
+ */
+static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
+    munmap_request_t* msg = (munmap_request_t*)inc_msg;
+    munmap_response_t response;
+    struct task_struct* task;
+
+    // munmap the specified region in the specified thread group
+    for_each_process(task) {
+
+        // Look for the thread group
+        if(task->tgroup_home_cpu == msg->tgroup_home_cpu &&
+           task->tgroup_home_id  == msg->tgroup_home_id) {
+
+            // Thread group has been found, perform munmap operation on this
+            // task.
+            down_write(&task->mm->mmap_sem);
+            do_munmap(task->mm, msg->vaddr_start, msg->vaddr_size);
+            up_write(&task->mm->mmap_sem);
+
+        }
+    }
+
+    // Construct response
+    response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
+    response.header.prio = PCN_KMSG_PRIO_NORMAL;
+    response.tgroup_home_cpu = msg->tgroup_home_cpu;
+    response.tgroup_home_id = msg->tgroup_home_id;
+    response.vaddr_start = msg->vaddr_start;
+    response.vaddr_size = msg->vaddr_size;
+    
+    // Send response
+    pcn_kmsg_send_long(msg->header.from_cpu,
+             (struct pcn_kmsg_message*)(&response),
+             sizeof(munmap_response_t) - sizeof(struct pcn_kmsg_hdr));
+
+    pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
+}
+
+/**
+ *
+ */
 static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     mapping_response_t* msg = (mapping_response_t*)inc_msg;
     mapping_request_data_t* data = find_mapping_request_data(
@@ -965,6 +1101,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 
     if(data == NULL) {
         printk("data not found\n");
+        pcn_kmsg_free_msg(inc_msg);
         return -1;
     }
 
@@ -995,6 +1132,9 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     return 0;
 }
 
+/**
+ *
+ */
 static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     mapping_request_t* msg = (mapping_request_t*)inc_msg;
     mapping_response_t response;
@@ -1726,6 +1866,76 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 }
 
 /**
+ *
+ */
+int process_server_do_munmap(struct mm_struct* mm, 
+            struct vm_area_struct *vma,
+            unsigned long start, 
+            unsigned long len) {
+
+    munmap_request_data_t* data;
+    munmap_request_t request;
+    int i;
+    int s;
+
+     // Nothing to do for a thread group that's not distributed.
+    if(!current->tgroup_distributed) {
+        goto exit;
+    }  
+
+    data = kmalloc(sizeof(munmap_request_data_t),GFP_KERNEL);
+    if(!data) goto exit;
+
+    data->header.data_type = PROCESS_SERVER_MUNMAP_REQUEST_DATA_TYPE;
+    data->header.prev = NULL;
+    data->header.next = NULL;
+    data->vaddr_start = start;
+    data->vaddr_size = len;
+    data->responses = 0;
+    data->expected_responses = 0;
+    data->tgroup_home_cpu = current->tgroup_home_cpu;
+    data->tgroup_home_id = current->tgroup_home_id;
+
+    add_data_entry(data);
+
+    request.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_REQUEST;
+    request.header.prio = PCN_KMSG_PRIO_NORMAL;
+    request.vaddr_start = start;
+    request.vaddr_size  = len;
+    request.tgroup_home_cpu = current->tgroup_home_cpu;
+    request.tgroup_home_id  = current->tgroup_home_id;
+    for(i = 0; i < NR_CPUS; i++) {
+
+        // Skip the current cpu
+        if (i == _cpu) continue;
+
+        // Send the request to this cpu.
+        s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
+        if(!s) {
+            // A successful send operation, increase the number
+            // of expected responses.
+            data->expected_responses++;
+        }
+    }
+
+    // Wait for all cpus to respond.
+    while(data->expected_responses != data->responses) {
+        schedule();
+    }
+
+    // OK, all responses are in, we can proceed.
+
+    spin_lock(&_data_head_lock);
+    remove_data_entry(data);
+    spin_unlock(&_data_head_lock);
+
+    kfree(data);
+
+exit:
+    return 0;
+}
+
+/**
  * Fault hook
  * 0 = not handled
  * 1 = handled
@@ -1865,7 +2075,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         data->vaddr_start,
                         data->vaddr_size,
                         prot,
-                        /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
+                        MAP_FIXED|
+                        MAP_ANONYMOUS|
+                        (data->vm_flags & VM_SHARED?MAP_SHARED:MAP_PRIVATE),
                         0);
             } else {
                 printk("opening file to map\n");
@@ -1880,7 +2092,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     data->path[9] = '\0';
                 }
 
-                f = filp_open(data->path, O_RDONLY /*| O_LARGEFILE*/, 0);
+                f = filp_open(data->path, data->vm_flags & VM_SHARED? O_RDWR:O_RDONLY, 0);
                 if(f) {
                     printk("mapping file %s, %lx, %d, %lx\n",data->path,
                             data->vaddr_start, 
@@ -1890,7 +2102,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->vaddr_start,
                             data->vaddr_size,
                             prot,
-                            MAP_FIXED|/*MAP_UNINITIALIZED|*/MAP_PRIVATE,
+                            MAP_FIXED|
+                            (data->vm_flags & VM_SHARED?MAP_SHARED:MAP_PRIVATE),
                             data->pgoff << PAGE_SHIFT);
                     filp_close(f,NULL);
                 }
@@ -1922,8 +2135,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                    data->paddr_mapping >> PAGE_SHIFT,
                    PAGE_SIZE,
                    //data->prot);
-                   //vm_get_page_prot(data->vm_flags));
-                   vma->vm_page_prot);
+                   vm_get_page_prot(data->vm_flags));
+                   //vma->vm_page_prot);
 
             // Check remap_pfn_range success
             if(err) {
@@ -2295,6 +2508,10 @@ static int __init process_server_init(void) {
             handle_mapping_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE,
             handle_mapping_response);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MUNMAP_REQUEST,
+            handle_munmap_request);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE,
+            handle_munmap_response);
 
     return 0;
 }

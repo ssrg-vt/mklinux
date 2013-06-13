@@ -2092,7 +2092,13 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 		}
 	}
 
-	/*
+    /*
+     * Memory is now almost munmapped locally, so before exiting this syscall, synchronize
+     * the removal of this memory from all other thread members.
+     */
+    process_server_do_munmap(mm, vma, start, len);
+
+    /*
 	 * Remove the vma's, and unmap the actual pages
 	 */
 	detach_vmas_to_be_unmapped(mm, vma, prev, end);
@@ -2100,8 +2106,6 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 
 	/* Fix up all other VM information */
 	remove_vma_list(mm, vma);
-
-    //process_server_notify_munmap(mm, start, len);
 
 	return 0;
 }
