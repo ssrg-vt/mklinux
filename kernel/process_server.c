@@ -1060,9 +1060,9 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
 
             // Thread group has been found, perform munmap operation on this
             // task.
-            down_write(&task->mm->mmap_sem);
+            //down_write(&task->mm->mmap_sem);
             do_munmap(task->mm, msg->vaddr_start, msg->vaddr_size);
-            up_write(&task->mm->mmap_sem);
+            //up_write(&task->mm->mmap_sem);
 
         }
     }
