@@ -1591,6 +1591,8 @@ struct task_struct {
     int tgroup_home_cpu;     /* cpu where the thread group was first migrated */
     int tgroup_home_id;         /* home thread group id */
     int tgroup_distributed;
+    int enable_distributed_munmap; /* Start a thread without distributed munmap enabled, 
+                                      then enable when address space is fully formed. */
 
 
 };

@@ -935,11 +935,11 @@ void process_exit_item(struct work_struct* work) {
     exit_work_t* w = (exit_work_t*) work;
     pid_t pid = w->pid;
     struct pid* spid;
-    struct task_struct* task;
+    struct task_struct *task, *g;
     
     PSPRINTK("%s: process to kill %ld SEARCHING\n", __func__, (long)pid);
     
-    for_each_process(task) {
+    do_each_thread(g,task) {
         if(task->pid == pid) {
             PSPRINTK("%s: for_each_process Found task to kill, killing\n", __func__);
             spid = task_pid(task);
@@ -947,7 +947,7 @@ void process_exit_item(struct work_struct* work) {
             kill_pid(spid,SIGKILL,1);
             goto happy_end;
         }
-    }
+    } while_each_thread(g,task);
   
     task = (pid) ? find_task_by_vpid(pid) : current;
     if (task) {
@@ -1049,10 +1049,10 @@ static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
 static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     munmap_request_t* msg = (munmap_request_t*)inc_msg;
     munmap_response_t response;
-    struct task_struct* task;
+    struct task_struct *task, *g;
 
     // munmap the specified region in the specified thread group
-    for_each_process(task) {
+    do_each_thread(g,task) {
 
         // Look for the thread group
         if(task->tgroup_home_cpu == msg->tgroup_home_cpu &&
@@ -1065,7 +1065,7 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
             //up_write(&task->mm->mmap_sem);
 
         }
-    }
+    } while_each_thread(g,task);
 
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
@@ -1139,6 +1139,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     mapping_request_t* msg = (mapping_request_t*)inc_msg;
     mapping_response_t response;
     struct task_struct* task = NULL;
+    struct task_struct* g;
     struct vm_area_struct* vma = NULL;
     unsigned long address = msg->address;
     unsigned long resolved = 0;
@@ -1154,7 +1155,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
             msg->tgroup_home_cpu,
             msg->tgroup_home_id);
 
-    for_each_process(task) {
+    do_each_thread(g,task) {
         if((task->tgroup_home_cpu == msg->tgroup_home_cpu) &&
            (task->tgroup_home_id  == msg->tgroup_home_id )) {
             printk("mapping request found common thread group here\n");
@@ -1202,7 +1203,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
                 break;
             }
         }
-    }
+    } while_each_thread(g,task);
 
     // Not found, respond accordingly
     if(resolved == 0) {
@@ -1359,13 +1360,13 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
 static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg) {
     exiting_process_t* msg = (exiting_process_t*)inc_msg;
     unsigned int source_cpu = msg->header.from_cpu;
-    struct task_struct* task;
+    struct task_struct *task, *g;;
     exit_work_t* exit_work;
 
     PSPRINTK("%s: cpu: %d msg: (pid: %d from_cpu: %d [%d])\n", 
 	   __func__, smp_processor_id(), msg->my_pid,  inc_msg->hdr.from_cpu, source_cpu);
     
-    for_each_process(task) {
+    do_each_thread(g,task) {
         if(task->next_pid == msg->my_pid &&
            task->next_cpu == source_cpu) {
 
@@ -1380,7 +1381,7 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
 
             break; // No need to continue;
         }
-    }
+    } while_each_thread(g,task);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -1394,18 +1395,28 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
 static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
     create_process_pairing_t* msg = (create_process_pairing_t*)inc_msg;
     unsigned int source_cpu = msg->header.from_cpu;
-    struct task_struct* task;
+    struct task_struct *task, *g;
+
+    PSPRINTK("%s entered\n",__func__);
+
     if(msg == NULL) {
+        PSPRINTK("%s msg == null - ERROR\n",__func__);
         return 0;
     }
 
+    PSPRINTK("%s: remote_pid{%d}, local_pid{%d}, remote_cpu{%d}\n",
+            __func__,
+            msg->my_pid,
+            msg->your_pid,
+            source_cpu);
     /*
      * Go through all the processes looking for the one with the right pid.
      * Once that task is found, do the bookkeeping necessary to remember
      * the remote cpu and pid information.
      */
-    for_each_process(task) {
-        if(task->pid == msg->your_pid && task->represents_remote) {
+    do_each_thread(g,task) {
+
+        if(task->pid == msg->your_pid && task->represents_remote ) {
             task->next_cpu = source_cpu;
             task->next_pid = msg->my_pid;
             task->executing_for_remote = 0;
@@ -1417,7 +1428,7 @@ static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
 
             break; // No need to continue;
         }
-    }
+    } while_each_thread(g,task);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -1591,12 +1602,16 @@ int process_server_import_address_space(unsigned long* ip,
     
     down_write(&current->mm->mmap_sem);
 
+    current->enable_distributed_munmap = 0;
+
     vma = current->mm->mmap;
     while(vma) {
         printk("Unmapping vma at %lx\n",vma->vm_start);
         munmap_ret = do_munmap(current->mm, vma->vm_start, vma->vm_end - vma->vm_start);
         vma = current->mm->mmap;
     }
+     
+    current->enable_distributed_munmap = 1;
 
     // Clean out cache and tlb
     flush_tlb_mm(current->mm);
@@ -1803,7 +1818,7 @@ int process_server_task_exit_notification(pid_t pid) {
 
     exiting_process_t msg;
     int tx_ret = -1;
-    struct task_struct* task;
+    struct task_struct *task, *g;
     clone_data_t* clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
     PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d}\n",pid);
@@ -1816,13 +1831,13 @@ int process_server_task_exit_notification(pid_t pid) {
                     (struct pcn_kmsg_long_message*)&msg, 
                     sizeof(msg) - sizeof(msg.header));
     } else {
-        for_each_process(task) {
+        do_each_thread(g,task) {
             if(task->pid == pid) {
                 tx_ret = pcn_kmsg_send_long(task->prev_cpu, 
                             (struct pcn_kmsg_long_message*)&msg, 
                             sizeof(msg) - sizeof(msg.header));
             }
-        }
+        } while_each_thread(g,task);
     }
 
     //dump_task(current,NULL,0);
@@ -1879,7 +1894,7 @@ int process_server_do_munmap(struct mm_struct* mm,
     int s;
 
      // Nothing to do for a thread group that's not distributed.
-    if(!current->tgroup_distributed) {
+    if(!current->tgroup_distributed || !current->enable_distributed_munmap) {
         goto exit;
     }  
 
@@ -2262,6 +2277,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     clone_request_t* request = kmalloc(sizeof(clone_request_t),GFP_KERNEL);
     int tx_ret = -1;
     struct task_struct* tgroup_iterator = NULL;
+    struct task_struct* g;
     int dst_cpu = cpu;
     char path[256] = {0};
     char* rpath = d_path(&task->mm->exe_file->f_path,path,256);
@@ -2297,7 +2313,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     // Book keeping for distributed threads.
     task->tgroup_distributed = 1;
-    for_each_process(tgroup_iterator) {
+    do_each_thread(g,tgroup_iterator) {
         if(tgroup_iterator != task) {
             if(tgroup_iterator->tgid == task->tgid) {
                 tgroup_iterator->tgroup_distributed = 1;
@@ -2305,7 +2321,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
                 tgroup_iterator->tgroup_home_cpu = task->tgroup_home_cpu;
             }
         }
-    }
+    } while_each_thread(g,tgroup_iterator);
 
     // Pick an id for this remote process request
     spin_lock(&_clone_request_id_lock);
