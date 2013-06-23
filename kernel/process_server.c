@@ -938,13 +938,14 @@ void process_exit_item(struct work_struct* work) {
     struct task_struct *task, *g;
     
     PSPRINTK("%s: process to kill %ld SEARCHING\n", __func__, (long)pid);
-    
+    // TODO THIS IS NOT HOW YOU KILL A THREAD, only a process. 
     do_each_thread(g,task) {
         if(task->pid == pid) {
             PSPRINTK("%s: for_each_process Found task to kill, killing\n", __func__);
             spid = task_pid(task);
             __set_task_state(task,TASK_INTERRUPTIBLE);
-            kill_pid(spid,SIGKILL,1);
+            sigaddset(&task->pending.signal,SIGKILL);
+            set_tsk_thread_flag(task,TIF_SIGPENDING);
             goto happy_end;
         }
     } while_each_thread(g,task);
@@ -954,7 +955,8 @@ void process_exit_item(struct work_struct* work) {
             PSPRINTK("%s: find_process_by_pid Found task to kill, killing\n", __func__);
             spid = task_pid(task);
             __set_task_state(task,TASK_INTERRUPTIBLE);
-            kill_pid(spid,SIGKILL,1);
+            sigaddset(&task->pending.signal,SIGKILL);
+            set_tsk_thread_flag(task,TIF_SIGPENDING);
     }
     else
 	    PSPRINTK("%s: process to kill %ld NOT FOUND\n", __func__, (unsigned long)pid);
