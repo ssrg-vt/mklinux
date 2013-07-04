@@ -1236,8 +1236,14 @@ static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_
             mm_data = (mm_data_t*)curr;
             if(mm_data->tgroup_home_cpu == msg->tgroup_home_cpu &&
                mm_data->tgroup_home_id  == msg->tgroup_home_id) {
-                // We need to remove this entry
+                // We need to remove this data entry
                 remove_data_entry(curr);
+
+                // Remove mm
+                atomic_dec(&mm_data->mm->mm_users);
+                mmput(mm_data->mm);
+
+                // Free up the data entry
                 kfree(curr);
                 PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
                         __func__,
