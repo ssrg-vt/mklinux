@@ -898,7 +898,7 @@ NORET_TYPE void do_exit(long code)
     /*
      * Multikernel
      */
-    if(tsk->executing_for_remote) {
+    if(tsk->executing_for_remote || tsk->tgroup_distributed) {
         process_server_task_exit_notification(tsk->pid);
     }
 

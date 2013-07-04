@@ -23,6 +23,7 @@
 #include <linux/pcn_kmsg.h> // Messaging
 #include <linux/string.h>
 
+#include <asm/atomic.h>
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
 #include <asm/uaccess.h> // USER_DS
@@ -33,7 +34,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -49,6 +50,8 @@
 #define PROCESS_SERVER_CLONE_DATA_TYPE 3
 #define PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE 4
 #define PROCESS_SERVER_MUNMAP_REQUEST_DATA_TYPE 5
+#define PROCESS_SERVER_MM_DATA_TYPE 6
+#define PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE 7
 
 /**
  * Library
@@ -169,6 +172,28 @@ typedef struct _munmap_request_data {
 } munmap_request_data_t;
 
 /**
+ *
+ */
+typedef struct _remote_thread_count_request_data {
+    data_header_t header;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int responses;
+    int expected_responses;
+    int count;
+} remote_thread_count_request_data_t;
+
+/**
+ *
+ */
+typedef struct _mm_data {
+    data_header_t header;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    struct mm_struct* mm;
+} mm_data_t;
+
+/**
  * This message is sent to a remote cpu in order to 
  * ask it to spin up a process on behalf of the
  * requesting cpu.  Some of these fields may go
@@ -266,8 +291,8 @@ struct _mapping_request {
     int tgroup_home_id;         // 4
     unsigned long address;      // 8
                                 // ---
-                                // 16 -> 48 bytes of padding needed
-    char pad[48];
+                                // 16 -> 44 bytes of padding needed
+    char pad[44];
 
 } __attribute__((packed)) __attribute__((aligned(64)));
 
@@ -303,8 +328,8 @@ struct _munmap_request {
     unsigned long vaddr_start;   // 8
     unsigned long vaddr_size;    // 8
                                  // ---
-                                 // 24 -> 40 bytes of padding needed
-    char pad[40];
+                                 // 24 -> 36 bytes of padding needed
+    char pad[36];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _munmap_request munmap_request_t;
 
@@ -313,13 +338,46 @@ typedef struct _munmap_request munmap_request_t;
  */
 struct _munmap_response {
     struct pcn_kmsg_hdr header;
-    int tgroup_home_cpu;
-    int tgroup_home_id;
-    unsigned long vaddr_start;
-    unsigned long vaddr_size;
-    char pad[40];
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+    unsigned long vaddr_start;  // 8
+    unsigned long vaddr_size;   // 8+
+                                // ---
+                                // 24 -> 36 bytes of padding needed
+    char pad[36];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _munmap_response munmap_response_t;
+
+/**
+ *
+ */
+struct _remote_thread_count_request {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+                                // ---
+                                // 8 -> 52 bytes of padding needed
+    char pad[52];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _remote_thread_count_request remote_thread_count_request_t;
+
+/**
+ *
+ */
+struct _remote_thread_count_response {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+    int count;                  // 4
+                                // ---
+                                // 12 -> 48 bytes of padding needed
+    char pad[48];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _remote_thread_count_response remote_thread_count_response_t;
+
+
+
+
 
 
 /**
@@ -357,6 +415,7 @@ static void dump_task(struct task_struct* task,struct pt_regs* regs,unsigned lon
 static void dump_thread(struct thread_struct* thread);
 static void dump_regs(struct pt_regs* regs);
 static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr); 
+
 /**
  * Module variables
  */
@@ -591,6 +650,37 @@ static void dump_clone_data(clone_data_t* r) {
     }
 }
 
+/**
+ *
+ */
+static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu, int id) {
+    data_header_t* curr = NULL;
+    remote_thread_count_request_data_t* request = NULL;
+    remote_thread_count_request_data_t* ret = NULL;
+
+    spin_lock(&_data_head_lock);
+
+    curr = _data_head;
+    while(curr) {
+        if(curr->data_type == PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE) {
+            request = (remote_thread_count_request_data_t*)curr;
+            if(request->tgroup_home_cpu == cpu &&
+               request->tgroup_home_id == id) {
+                ret = request;
+                break;
+            }
+        }
+        curr = curr->next;
+    }
+
+    spin_unlock(&_data_head_lock);
+
+    return ret;
+}
+
+/**
+ *
+ */
 static munmap_request_data_t* find_munmap_request_data(int cpu, int id, unsigned long address) {
     data_header_t* curr = NULL;
     munmap_request_data_t* request = NULL;
@@ -817,6 +907,10 @@ static void add_data_entry(void* entry) {
         return;
     }
 
+    // Always clear out the link information
+    hdr->next = NULL;
+    hdr->prev = NULL;
+
     spin_lock(&_data_head_lock);
     
     if (!_data_head) {
@@ -922,6 +1016,97 @@ static void dump_data_list(void) {
     spin_unlock(&_data_head_lock);
 }
 
+/**
+ *
+ */
+static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
+
+    remote_thread_count_request_data_t* data;
+    remote_thread_count_request_t request;
+    int i;
+    int s;
+    int ret;
+
+    data = kmalloc(sizeof(remote_thread_count_request_data_t),GFP_KERNEL);
+    if(!data) goto exit;
+
+    data->header.data_type = PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE;
+    data->responses = 0;
+    data->expected_responses = 0;
+    data->tgroup_home_cpu = tgroup_home_cpu;
+    data->tgroup_home_id = tgroup_home_id;
+    data->count = 0;
+
+    add_data_entry(data);
+
+    request.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_REQUEST;
+    request.header.prio = PCN_KMSG_PRIO_NORMAL;
+    request.tgroup_home_cpu = current->tgroup_home_cpu;
+    request.tgroup_home_id  = current->tgroup_home_id;
+    for(i = 0; i < NR_CPUS; i++) {
+
+        // Skip the current cpu
+        if (i == _cpu) continue;
+
+        // Send the request to this cpu.
+        s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
+        if(!s) {
+            // A successful send operation, increase the number
+            // of expected responses.
+            data->expected_responses++;
+        }
+    }
+
+    //PSPRINTK("%s: waiting on %d responses\n",__func__,data->expected_responses);
+
+    // Wait for all cpus to respond.
+    while(data->expected_responses != data->responses) {
+        schedule();
+    }
+
+    // OK, all responses are in, we can proceed.
+    ret = data->count;
+
+    //PSPRINTK("%s: found a total of %d remote threads in group\n",__func__,
+    //        data->count);
+
+    spin_lock(&_data_head_lock);
+    remove_data_entry(data);
+    spin_unlock(&_data_head_lock);
+
+    kfree(data);
+
+exit:
+    return ret;
+}
+
+/**
+ *
+ */
+static int count_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
+    
+    int count = count_remote_thread_members(
+                        tgroup_home_cpu,
+                        tgroup_home_id);
+
+    struct task_struct *task, *g;
+    
+    do_each_thread(g,task) {
+        if(task->tgroup_home_id == tgroup_home_id &&
+           task->tgroup_home_cpu == tgroup_home_cpu &&
+           !task->represents_remote &&
+           task->exit_state != EXIT_ZOMBIE &&
+           task->exit_state != EXIT_DEAD &&
+           !(task->flags & PF_EXITING)) {
+            //PSPRINTK("%s: found local thread\n",__func__);
+            count++;
+        }
+    } while_each_thread(g,task);
+
+    //PSPRINTK("%s: total threads in group - %d\n",__func__,count);
+
+    return count;
+}
 
 
 /*
@@ -934,15 +1119,12 @@ static void dump_data_list(void) {
 void process_exit_item(struct work_struct* work) {
     exit_work_t* w = (exit_work_t*) work;
     pid_t pid = w->pid;
-    struct pid* spid;
     struct task_struct *task, *g;
     
     PSPRINTK("%s: process to kill %ld SEARCHING\n", __func__, (long)pid);
-    // TODO THIS IS NOT HOW YOU KILL A THREAD, only a process. 
     do_each_thread(g,task) {
         if(task->pid == pid) {
             PSPRINTK("%s: for_each_process Found task to kill, killing\n", __func__);
-            spid = task_pid(task);
             __set_task_state(task,TASK_INTERRUPTIBLE);
             sigaddset(&task->pending.signal,SIGKILL);
             set_tsk_thread_flag(task,TIF_SIGPENDING);
@@ -950,16 +1132,15 @@ void process_exit_item(struct work_struct* work) {
         }
     } while_each_thread(g,task);
   
-    task = (pid) ? find_task_by_vpid(pid) : current;
+    /*task = (pid) ? find_task_by_vpid(pid) : current;
     if (task) {
             PSPRINTK("%s: find_process_by_pid Found task to kill, killing\n", __func__);
-            spid = task_pid(task);
             __set_task_state(task,TASK_INTERRUPTIBLE);
             sigaddset(&task->pending.signal,SIGKILL);
             set_tsk_thread_flag(task,TIF_SIGPENDING);
     }
     else
-	    PSPRINTK("%s: process to kill %ld NOT FOUND\n", __func__, (unsigned long)pid);
+	    PSPRINTK("%s: process to kill %ld NOT FOUND\n", __func__, (unsigned long)pid);*/
 
 happy_end:
     kfree(work);
@@ -1020,6 +1201,88 @@ perf_bb = native_read_tsc();
 /**
  * Request implementations
  */
+
+/**
+ *
+ */
+static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg) {
+    remote_thread_count_response_t* msg = (remote_thread_count_response_t*) inc_msg;
+    remote_thread_count_request_data_t* data = find_remote_thread_count_data(
+                                                            msg->tgroup_home_cpu,
+                                                            msg->tgroup_home_id);
+
+    PSPRINTK("%s: entered - cpu{%d}, id{%d}, count{%d}\n",
+            __func__,
+            msg->tgroup_home_cpu,
+            msg->tgroup_home_id,
+            msg->count);
+
+    if(data == NULL) {
+        PSPRINTK("unable to find remote thread count data\n");
+        pcn_kmsg_free_msg(inc_msg);
+        return -1;
+    }
+
+    // Register this response.
+    data->responses++;
+    data->count += msg->count;
+    //PSPRINTK("%s: total count - %d\n",__func__,data->count);
+
+    pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
+}
+
+/**
+ *
+ */
+static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) {
+    remote_thread_count_request_t* msg = (remote_thread_count_request_t*)inc_msg;
+    remote_thread_count_response_t response;
+    struct task_struct *task, *g;
+
+    PSPRINTK("%s: entered - cpu{%d}, id{%d}\n",
+            __func__,
+            msg->tgroup_home_cpu,
+            msg->tgroup_home_id);
+
+    response.count = 0;
+
+    // Count thread group members
+    do_each_thread(g,task) {
+        if(task->tgroup_home_cpu == msg->tgroup_home_cpu &&
+           task->tgroup_home_id  == msg->tgroup_home_id &&
+           !task->represents_remote &&
+           task->exit_state != EXIT_ZOMBIE &&
+           task->exit_state != EXIT_DEAD &&
+           !(task->flags & PF_EXITING)) {
+            response.count++;
+            PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
+                    task->pid,
+                    task->tgid,
+                    task->state,
+                    task->exit_state,
+                    task->flags);
+        }
+    } while_each_thread(g,task);
+
+    // Finish constructing response
+    response.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE;
+    response.header.prio = PCN_KMSG_PRIO_NORMAL;
+    response.tgroup_home_cpu = msg->tgroup_home_cpu;
+    response.tgroup_home_id = msg->tgroup_home_id;
+
+    PSPRINTK("%s: responding to thread count request with %d\n",__func__,
+            response.count);
+
+    // Send response
+    pcn_kmsg_send(msg->header.from_cpu,
+             (struct pcn_kmsg_message*)(&response));
+
+    pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
+}
 
 /**
  *
@@ -1140,9 +1403,12 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     mapping_request_t* msg = (mapping_request_t*)inc_msg;
     mapping_response_t response;
+    data_header_t* data_curr;
+    mm_data_t* mm_data;
     struct task_struct* task = NULL;
     struct task_struct* g;
     struct vm_area_struct* vma = NULL;
+    struct mm_struct* mm = NULL;
     unsigned long address = msg->address;
     unsigned long resolved = 0;
     struct mm_walk walk = {
@@ -1157,55 +1423,95 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
             msg->tgroup_home_cpu,
             msg->tgroup_home_id);
 
+    // First, search through existing threads.
     do_each_thread(g,task) {
         if((task->tgroup_home_cpu == msg->tgroup_home_cpu) &&
            (task->tgroup_home_id  == msg->tgroup_home_id )) {
             printk("mapping request found common thread group here\n");
-           
-            vma = find_vma(task->mm, address&PAGE_MASK);
-            
-            // Validate find_vma result
-            if( (!vma) || 
-                (vma->vm_start > (address & PAGE_MASK)) || 
-                (vma->vm_end <= address) ) {
-                printk("find_vma turned up an invalid response, invalidating and continuing\n");
-                vma = NULL;
-                continue;
-            }
-
-            walk.mm = task->mm;
-            walk_page_range(address & PAGE_MASK, 
-                    (address & PAGE_MASK) + PAGE_SIZE, &walk);
-
-            if(resolved != 0) {
-                printk("mapping found! %lx for vaddr %lx\n",resolved,
-                        address & PAGE_MASK);
-
-                response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
-                response.header.prio = PCN_KMSG_PRIO_NORMAL;
-                response.tgroup_home_cpu = msg->tgroup_home_cpu;
-                response.tgroup_home_id = msg->tgroup_home_id;
-                response.address = address;
-                response.present = 1;
-                response.vaddr_mapping = address & PAGE_MASK;
-                response.vaddr_start = vma->vm_start;
-                response.vaddr_size = vma->vm_end - vma->vm_start;
-                response.paddr_mapping = resolved;
-                response.prot = vma->vm_page_prot;
-                response.vm_flags = vma->vm_flags;
-                if(vma->vm_file == NULL) {
-                    response.path[0] = '\0';
-                } else {    
-                    plpath = d_path(&vma->vm_file->f_path,lpath,512);
-                    strcpy(response.path,plpath);
-                    response.pgoff = vma->vm_pgoff;
-                }
-                printk("mapping prot = %lx, vm_flags = %lx\n",
-                        response.prot,response.vm_flags);
-                break;
-            }
+            mm = task->mm;
+            break;
         }
     } while_each_thread(g,task);
+
+    // Failing the thread search, look through saved mm's.
+    if(!mm) {
+        spin_lock(&_data_head_lock);
+        data_curr = _data_head;
+        while(data_curr) {
+
+            if(data_curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
+                mm_data = (mm_data_t*)data_curr;
+            
+                if((mm_data->tgroup_home_cpu == msg->tgroup_home_cpu) &&
+                   (mm_data->tgroup_home_id  == msg->tgroup_home_id)) {
+                    PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
+                    mm = mm_data->mm;
+                    //dump_mm(mm);
+                    break;
+                }
+            }
+
+            data_curr = data_curr->next;
+
+        } // while
+
+        spin_unlock(&_data_head_lock);
+    }
+
+
+    // OK, if mm was found, look up the mapping.
+    if(mm) {
+        vma = find_vma(mm, address & PAGE_MASK);
+        // Validate find_vma result
+        if( (!vma) || 
+            (vma->vm_start > (address & PAGE_MASK)) || 
+            (vma->vm_end <= address) ) {
+            PSPRINTK("find_vma turned up an invalid response, invalidating and continuing\n");
+            if(!vma) {
+                PSPRINTK("vma == NULL\n");
+            } else {
+                PSPRINTK("vma->vm_start=%lx, vma->vm_end=%lx\n",vma->vm_start,vma->vm_end);
+            }
+            vma = NULL;
+        }
+
+        walk.mm = mm;
+        walk_page_range(address & PAGE_MASK, 
+                (address & PAGE_MASK) + PAGE_SIZE, &walk);
+
+        if(resolved != 0) {
+            PSPRINTK("mapping found! %lx for vaddr %lx\n",resolved,
+                    address & PAGE_MASK);
+
+            // Turn off caching for this vma
+            vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+            // Then clear the cache to drop any already-cached entries
+            flush_cache_range(vma,vma->vm_start,vma->vm_end);
+            flush_tlb_range(vma,vma->vm_start,vma->vm_end);
+
+            response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
+            response.header.prio = PCN_KMSG_PRIO_NORMAL;
+            response.tgroup_home_cpu = msg->tgroup_home_cpu;
+            response.tgroup_home_id = msg->tgroup_home_id;
+            response.address = address;
+            response.present = 1;
+            response.vaddr_mapping = address & PAGE_MASK;
+            response.vaddr_start = vma->vm_start;
+            response.vaddr_size = vma->vm_end - vma->vm_start;
+            response.paddr_mapping = resolved;
+            response.prot = vma->vm_page_prot;
+            response.vm_flags = vma->vm_flags;
+            if(vma->vm_file == NULL) {
+                response.path[0] = '\0';
+            } else {    
+                plpath = d_path(&vma->vm_file->f_path,lpath,512);
+                strcpy(response.path,plpath);
+                response.pgoff = vma->vm_pgoff;
+            }
+            printk("mapping prot = %lx, vm_flags = %lx\n",
+                    response.prot,response.vm_flags);
+        }
+    }
 
     // Not found, respond accordingly
     if(resolved == 0) {
@@ -1332,8 +1638,6 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
     }
 
     vma_data->header.data_type = PROCESS_SERVER_VMA_DATA_TYPE;
-    vma_data->header.next = NULL;
-    vma_data->header.prev = NULL;
 
     // Copy data into new data item.
     vma_data->cpu = source_cpu;
@@ -1456,8 +1760,6 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
      */
     clone_data = kmalloc(sizeof(clone_data_t),GFP_ATOMIC);
     clone_data->header.data_type = PROCESS_SERVER_CLONE_DATA_TYPE;
-    clone_data->header.next = NULL;
-    clone_data->header.prev = NULL;
 
     clone_data->clone_request_id = request->clone_request_id;
     clone_data->requesting_cpu = source_cpu;
@@ -1694,7 +1996,7 @@ int process_server_import_address_space(unsigned long* ip,
                             pte_curr->vaddr,
                             pte_curr->paddr >> PAGE_SHIFT,
                             PAGE_SIZE,
-                            vma->vm_page_prot);
+                            pgprot_noncached(vma->vm_page_prot));
                     ptes_installed++;
                     pte_curr = (pte_data_t*)pte_curr->header.next;
                     if(err) {
@@ -1811,6 +2113,7 @@ int process_server_import_address_space(unsigned long* ip,
     return 0;
 }
 
+
 /**
  * Notify of the fact that either a delegate or placeholder has died locally.  
  * In this case, the remote cpu housing its counterpart must be notified, so
@@ -1820,7 +2123,11 @@ int process_server_task_exit_notification(pid_t pid) {
 
     exiting_process_t msg;
     int tx_ret = -1;
+    int is_last_thread_in_local_group = 1;
     struct task_struct *task, *g;
+    mm_data_t* mm_data = NULL;
+    int count;
+
     clone_data_t* clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
     PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d}\n",pid);
@@ -1828,13 +2135,13 @@ int process_server_task_exit_notification(pid_t pid) {
     msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = pid;
 
-    if(current->pid == pid) {
+    if(current->pid == pid && current->executing_for_remote) {
         tx_ret = pcn_kmsg_send_long(current->prev_cpu, 
                     (struct pcn_kmsg_long_message*)&msg, 
                     sizeof(msg) - sizeof(msg.header));
     } else {
         do_each_thread(g,task) {
-            if(task->pid == pid) {
+            if(task->pid == pid && task->executing_for_remote) {
                 tx_ret = pcn_kmsg_send_long(task->prev_cpu, 
                             (struct pcn_kmsg_long_message*)&msg, 
                             sizeof(msg) - sizeof(msg.header));
@@ -1842,7 +2149,43 @@ int process_server_task_exit_notification(pid_t pid) {
         } while_each_thread(g,task);
     }
 
-    //dump_task(current,NULL,0);
+    // Save off the mm, and use it to resolve mappings for this thread
+    do_each_thread(g,task) {
+        if(task->tgid == current->tgid && 
+                task->pid != current->pid &&
+                !task->represents_remote &&
+                task->exit_state != EXIT_ZOMBIE &&
+                task->exit_state != EXIT_DEAD &&
+                !(task->flags & PF_EXITING)) {
+            is_last_thread_in_local_group = 0;
+            break;
+        }
+    } while_each_thread(g,task);
+    if(is_last_thread_in_local_group) {
+        count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id);
+        // Check to see if this is the last member of the distributed
+        // thread group.
+        if(count == 1) {
+            printk("%s: This is the last thread member!",__func__);
+        } else {
+            // Increase the number of users to keep mm from being destroyed
+            PSPRINTK("%s: This is not the last thread member, saving mm\n",
+                    __func__);
+            atomic_inc(&current->mm->mm_users);
+
+            // Remember the mm
+            mm_data = kmalloc(sizeof(mm_data_t),GFP_ATOMIC);
+            mm_data->header.data_type = PROCESS_SERVER_MM_DATA_TYPE;
+            mm_data->mm = current->mm;
+            mm_data->tgroup_home_cpu = current->tgroup_home_cpu;
+            mm_data->tgroup_home_id  = current->tgroup_home_id;
+
+            // Add the data entry
+            add_data_entry(mm_data);
+        }
+    } else {
+        PSPRINTK("%s: This is not the last local thread member\n",__func__);
+    }
 
     if(clone_data) {
         spin_lock(&_data_head_lock);
@@ -1904,8 +2247,6 @@ int process_server_do_munmap(struct mm_struct* mm,
     if(!data) goto exit;
 
     data->header.data_type = PROCESS_SERVER_MUNMAP_REQUEST_DATA_TYPE;
-    data->header.prev = NULL;
-    data->header.next = NULL;
     data->vaddr_start = start;
     data->vaddr_size = len;
     data->responses = 0;
@@ -2025,8 +2366,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     // and we will check it periodically to see if our request
     // has been responded to by all active cpus.
     data->header.data_type = PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE;
-    data->header.prev = NULL;
-    data->header.next = NULL;
     data->address = address;
     data->present = 0;
     data->responses = 0;
@@ -2094,7 +2433,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         prot,
                         MAP_FIXED|
                         MAP_ANONYMOUS|
-                        (data->vm_flags & VM_SHARED?MAP_SHARED:MAP_PRIVATE),
+                        ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                         0);
             } else {
                 printk("opening file to map\n");
@@ -2109,7 +2448,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     data->path[9] = '\0';
                 }
 
-                f = filp_open(data->path, data->vm_flags & VM_SHARED? O_RDWR:O_RDONLY, 0);
+                f = filp_open(data->path, (data->vm_flags & VM_SHARED)? O_RDWR:O_RDONLY, 0);
                 if(f) {
                     printk("mapping file %s, %lx, %d, %lx\n",data->path,
                             data->vaddr_start, 
@@ -2119,8 +2458,10 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->vaddr_start,
                             data->vaddr_size,
                             prot,
-                            MAP_FIXED|
-                            (data->vm_flags & VM_SHARED?MAP_SHARED:MAP_PRIVATE),
+                            MAP_FIXED |
+                            ((data->vm_flags & VM_DENYWRITE)?MAP_DENYWRITE:0) |
+                            ((data->vm_flags & VM_EXECUTABLE)?MAP_EXECUTABLE:0) |
+                            ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                             data->pgoff << PAGE_SHIFT);
                     filp_close(f,NULL);
                 }
@@ -2145,14 +2486,18 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // We should have a vma now, so map physical memory into it.
         if(vma && data->paddr_mapping) { 
 
-            printk("About to map new physical pages - vm_flags{%lx}, prot{%lx}\n",vma->vm_flags,data->prot);
+            printk("About to map new physical pages - vaddr{%lx}, paddr{%lx}, vm_flags{%lx}, prot{%lx}\n",
+                    data->vaddr_mapping,
+                    data->paddr_mapping, 
+                    vma->vm_flags, 
+                    data->prot);
 
             err = remap_pfn_range(vma,
                    data->vaddr_mapping,
                    data->paddr_mapping >> PAGE_SHIFT,
                    PAGE_SIZE,
                    //data->prot);
-                   vm_get_page_prot(data->vm_flags));
+                   pgprot_noncached(vm_get_page_prot(data->vm_flags)));
                    //vma->vm_page_prot);
 
             // Check remap_pfn_range success
@@ -2221,6 +2566,11 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
  * Propagate origin thread group to children, and initialize other 
  * task members.  If the parent was member of a remote thread group,
  * store the thread group info.
+ *
+ * Note: In addition to in this function, distribution information is
+ * maintained when a thread or process is migrated.  That ensures
+ * that all members of a thread group are kept up-to-date when
+ * one member migrates.
  */
 int process_server_dup_task(struct task_struct* orig, struct task_struct* task) {
     task->executing_for_remote = 0;
@@ -2530,6 +2880,10 @@ static int __init process_server_init(void) {
             handle_munmap_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE,
             handle_munmap_response);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_REQUEST,
+            handle_remote_thread_count_request);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE,
+            handle_remote_thread_count_response);
 
     return 0;
 }
