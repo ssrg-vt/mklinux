@@ -298,6 +298,20 @@ struct _mapping_request {
 
 typedef struct _mapping_request mapping_request_t;
 
+/*
+ * type = PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION
+ */
+struct _thread_group_exited_notification {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+                                // ---
+                                // 8 -> 52 bytes of padding needed
+    char pad[52];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _thread_group_exited_notification thread_group_exited_notification_t;
+
+
 /**
  *
  */
@@ -1201,6 +1215,45 @@ perf_bb = native_read_tsc();
 /**
  * Request implementations
  */
+
+/**
+ *
+ */
+static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_msg) {
+    thread_group_exited_notification_t* msg = (thread_group_exited_notification_t*) inc_msg;
+    data_header_t *curr, *next;
+    mm_data_t* mm_data;
+
+    PSPRINTK("%s: received group exit notification\n",__func__);
+
+    spin_lock(&_data_head_lock);
+    
+    // Remove all saved mm's for this thread group.
+    curr = _data_head;
+    while(curr) {
+        next = curr->next;
+        if(curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
+            mm_data = (mm_data_t*)curr;
+            if(mm_data->tgroup_home_cpu == msg->tgroup_home_cpu &&
+               mm_data->tgroup_home_id  == msg->tgroup_home_id) {
+                // We need to remove this entry
+                remove_data_entry(curr);
+                kfree(curr);
+                PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
+                        __func__,
+                        msg->tgroup_home_cpu,
+                        msg->tgroup_home_id);
+            }
+        }
+        curr = next;
+    }
+
+    spin_unlock(&_data_head_lock);
+
+    pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
+}
 
 /**
  *
@@ -2127,6 +2180,8 @@ int process_server_task_exit_notification(pid_t pid) {
     struct task_struct *task, *g;
     mm_data_t* mm_data = NULL;
     int count;
+    int i;
+    thread_group_exited_notification_t exit_notification;
 
     clone_data_t* clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
@@ -2167,6 +2222,15 @@ int process_server_task_exit_notification(pid_t pid) {
         // thread group.
         if(count == 1) {
             printk("%s: This is the last thread member!",__func__);
+            // Notify all cpus
+            exit_notification.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION;
+            exit_notification.header.prio = PCN_KMSG_PRIO_NORMAL;
+            exit_notification.tgroup_home_cpu = current->tgroup_home_cpu;
+            exit_notification.tgroup_home_id = current->tgroup_home_id;
+            for(i = 0; i < NR_CPUS; i++) {
+                if(i == _cpu) continue;
+                pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&exit_notification));
+            }
         } else {
             // Increase the number of users to keep mm from being destroyed
             PSPRINTK("%s: This is not the last thread member, saving mm\n",
@@ -2884,6 +2948,8 @@ static int __init process_server_init(void) {
             handle_remote_thread_count_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE,
             handle_remote_thread_count_response);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION,
+            handle_thread_group_exited_notification);
 
     return 0;
 }
