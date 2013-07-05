@@ -245,16 +245,21 @@ typedef struct _create_process_pairing {
  * process death.  This occurs whether the process
  * is a placeholder or a delegate locally.
  */
-struct _exiting_process {
+typedef struct _exiting_process {
     struct pcn_kmsg_hdr header;
-    int my_pid;                 // 4
-    int is_last_tgroup_member;  // 4
-                                // ---
-                                // 8 -> 52 bytes of padding needed
-    char pad[52];
-}__attribute__((packed)) __attribute__((aligned(64))); 
-
-typedef struct _exiting_process exiting_process_t;
+    int my_pid;                 
+    int is_last_tgroup_member;  
+    struct pt_regs regs;
+    unsigned long thread_fs;
+    unsigned long thread_gs;
+    unsigned long thread_sp0;
+    unsigned long thread_sp;
+    unsigned long thread_usersp;
+    unsigned short thread_es;
+    unsigned short thread_ds;
+    unsigned short thread_fsindex;
+    unsigned short thread_gsindex;
+}  exiting_process_t;
 
 /**
  * Inform remote cpu of a vma to process mapping.
@@ -418,6 +423,16 @@ typedef struct {
     struct work_struct work;
     pid_t pid;
     int is_last_tgroup_member;
+    struct pt_regs regs;
+    unsigned long thread_fs;
+    unsigned long thread_gs;
+    unsigned long thread_sp0;
+    unsigned long thread_sp;
+    unsigned long thread_usersp;
+    unsigned short thread_es;
+    unsigned short thread_ds;
+    unsigned short thread_fsindex;
+    unsigned short thread_gsindex;
 } exit_work_t;
 
 /**
@@ -1149,26 +1164,28 @@ void process_exit_item(struct work_struct* work) {
     pid_t pid = w->pid;
     struct task_struct *task, *g;
     
-    printk("%s: process to kill %ld SEARCHING\n", __func__, (long)pid);
+    PSPRINTK("%s: process to kill %ld SEARCHING\n", __func__, (long)pid);
     do_each_thread(g,task) {
         if(task->pid == pid) {
             PSPRINTK("%s: for_each_process Found task to kill, killing\n", __func__);
-            printk("%s: killing task - is_last_tgroup_member{%d}\n",
+            PSPRINTK("%s: killing task - is_last_tgroup_member{%d}\n",
                     __func__,
                     w->is_last_tgroup_member);
-            
-            __set_task_state(task,TASK_INTERRUPTIBLE);
+         
+            // set regs
+            memcpy(task_pt_regs(task),&w->regs,sizeof(struct pt_regs));
 
-            // Hand the case where this is just a thread exiting.
-            if(!w->is_last_tgroup_member) {
-                task_clear_jobctl_pending(task, JOBCTL_PENDING_MASK);
-                sigaddset(&task->pending.signal,SIGKILL);
-                set_tsk_thread_flag(task,TIF_SIGPENDING);
-                //signal_wake_up(task,1);
+            // set thread info
+            task->thread.fs = w->thread_fs;
+            task->thread.gs = w->thread_gs;
+            task->thread.usersp = w->thread_usersp;
+            task->thread.es = w->thread_es;
+            task->thread.ds = w->thread_ds;
+            task->thread.fsindex = w->thread_fsindex;
+            task->thread.gsindex = w->thread_gsindex;
 
-            } else {
-                kill_pid(task_pid(task),SIGKILL,1); 
-            }
+            wake_up_process(task);
+
             goto happy_end;
         }
     } while_each_thread(g,task);
@@ -1437,16 +1454,16 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 
 
 
-    printk("received mapping response\n");
+    PSPRINTK("received mapping response\n");
 
     if(data == NULL) {
-        printk("data not found\n");
+        PSPRINTK("data not found\n");
         pcn_kmsg_free_msg(inc_msg);
         return -1;
     }
 
     if(msg->present) {
-        printk("received positive search result from cpu %d\n",
+        PSPRINTK("received positive search result from cpu %d\n",
                 msg->header.from_cpu);
 
         data->vaddr_mapping = msg->vaddr_mapping;
@@ -1461,7 +1478,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         data->responses++;
 
     } else {
-        printk("received negative search result from cpu %d\n",
+        PSPRINTK("received negative search result from cpu %d\n",
                 msg->header.from_cpu);
        
         data->responses++;
@@ -1493,7 +1510,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     char* plpath;
     char lpath[512];
 
-    printk("received mapping request address{%lx}, cpu{%d}, id{%d}\n",
+    PSPRINTK("received mapping request address{%lx}, cpu{%d}, id{%d}\n",
             msg->address,
             msg->tgroup_home_cpu,
             msg->tgroup_home_id);
@@ -1502,7 +1519,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     do_each_thread(g,task) {
         if((task->tgroup_home_cpu == msg->tgroup_home_cpu) &&
            (task->tgroup_home_id  == msg->tgroup_home_id )) {
-            printk("mapping request found common thread group here\n");
+            PSPRINTK("mapping request found common thread group here\n");
             mm = task->mm;
             break;
         }
@@ -1583,14 +1600,14 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
                 strcpy(response.path,plpath);
                 response.pgoff = vma->vm_pgoff;
             }
-            printk("mapping prot = %lx, vm_flags = %lx\n",
+            PSPRINTK("mapping prot = %lx, vm_flags = %lx\n",
                     response.prot,response.vm_flags);
         }
     }
 
     // Not found, respond accordingly
     if(resolved == 0) {
-        printk("Mapping not found\n");
+        PSPRINTK("Mapping not found\n");
         response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
         response.header.prio = PCN_KMSG_PRIO_NORMAL;
         response.tgroup_home_cpu = msg->tgroup_home_cpu;
@@ -1604,7 +1621,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
 
         // Handle case where vma was present but no pte.
         if(vma) {
-            printk("But vma present\n");
+            PSPRINTK("But vma present\n");
             response.present = 1;
             response.vaddr_mapping = address & PAGE_MASK;
             response.vaddr_start = vma->vm_start;
@@ -1758,6 +1775,16 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
                 INIT_WORK( (struct work_struct*)exit_work, process_exit_item);
                 exit_work->pid = task->pid;
                 exit_work->is_last_tgroup_member = msg->is_last_tgroup_member;
+                memcpy(&exit_work->regs,&msg->regs,sizeof(struct pt_regs));
+                exit_work->thread_fs = msg->thread_fs;
+                exit_work->thread_gs = msg->thread_gs;
+                exit_work->thread_sp0 = msg->thread_sp0;
+                exit_work->thread_sp = msg->thread_sp;
+                exit_work->thread_usersp = msg->thread_usersp;
+                exit_work->thread_es = msg->thread_es;
+                exit_work->thread_ds = msg->thread_ds;
+                exit_work->thread_fsindex = msg->thread_fsindex;
+                exit_work->thread_gsindex = msg->thread_gsindex;
                 queue_work(exit_wq, (struct work_struct*)exit_work);
             }
 
@@ -1963,7 +1990,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     perf_a = native_read_tsc();
     
-    printk("import address space\n");
+    PSPRINTK("import address space\n");
     
     // Verify that we're a delegated task.
     if (!current->executing_for_remote) {
@@ -1986,7 +2013,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     vma = current->mm->mmap;
     while(vma) {
-        printk("Unmapping vma at %lx\n",vma->vm_start);
+        PSPRINTK("Unmapping vma at %lx\n",vma->vm_start);
         munmap_ret = do_munmap(current->mm, vma->vm_start, vma->vm_end - vma->vm_start);
         vma = current->mm->mmap;
     }
@@ -2014,7 +2041,7 @@ int process_server_import_address_space(unsigned long* ip,
 
 
     while(vma_curr) {
-        printk("do_mmap() at %lx\n",vma_curr->start);
+        PSPRINTK("do_mmap() at %lx\n",vma_curr->start);
         if(vma_curr->path[0] != '\0') {
             mmap_flags = /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_PRIVATE;
             f = filp_open(vma_curr->path,
@@ -2215,16 +2242,29 @@ int process_server_task_exit_notification(pid_t pid) {
     msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
     msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = pid;
+    memcpy(&msg.regs,task_pt_regs(current),sizeof(struct pt_regs));
+    msg.thread_fs = current->thread.fs;
+    msg.thread_gs = current->thread.gs;
+    msg.thread_sp0 = current->thread.sp0;
+    msg.thread_sp = current->thread.sp;
+    msg.thread_usersp = current->thread.usersp;
+    msg.thread_es = current->thread.es;
+    msg.thread_ds = current->thread.ds;
+    msg.thread_fsindex = current->thread.fsindex;
+    msg.thread_gsindex = current->thread.gsindex;
+    
     msg.is_last_tgroup_member = (count == 1? 1 : 0);
 
     if(current->pid == pid && current->executing_for_remote) {
-        tx_ret = pcn_kmsg_send(current->prev_cpu, 
-                    (struct pcn_kmsg_message*)&msg);
+        tx_ret = pcn_kmsg_send_long(current->prev_cpu, 
+                    (struct pcn_kmsg_long_message*)&msg,
+                    sizeof(exiting_process_t) - sizeof(struct pcn_kmsg_hdr));
     } else {
         do_each_thread(g,task) {
             if(task->pid == pid && task->executing_for_remote) {
-                tx_ret = pcn_kmsg_send(task->prev_cpu, 
-                            (struct pcn_kmsg_message*)&msg);
+                tx_ret = pcn_kmsg_send_long(task->prev_cpu, 
+                            (struct pcn_kmsg_long_message*)&msg,
+                            sizeof(exiting_process_t) - sizeof(struct pcn_kmsg_hdr));
             }
         } while_each_thread(g,task);
     }
@@ -2245,7 +2285,7 @@ int process_server_task_exit_notification(pid_t pid) {
         // Check to see if this is the last member of the distributed
         // thread group.
         if(count == 1) {
-            printk("%s: This is the last thread member!",__func__);
+            PSPRINTK("%s: This is the last thread member!",__func__);
             // Notify all cpus
             exit_notification.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION;
             exit_notification.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -2410,7 +2450,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         goto not_handled;
     }
 
-    printk("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
+    PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
             address,
             current->tgroup_home_cpu,
             current->tgroup_home_id,
@@ -2419,7 +2459,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             error_code);
 
     if(is_vaddr_mapped(mm,address)) {
-        printk("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
+        PSPRINTK("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
                 address,current->tgroup_home_cpu,current->tgroup_home_id);
         goto not_handled;
     }
@@ -2432,19 +2472,19 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             path[0] = '\0';
         }
 
-        printk("working with provided vma: start{%lx}, end{%lx}, path{%s}\n",vma->vm_start,vma->vm_end,path);
+        PSPRINTK("working with provided vma: start{%lx}, end{%lx}, path{%s}\n",vma->vm_start,vma->vm_end,path);
     }
 
     // The vma that's passed in might not always be correct.  find_vma fails by returning the wrong
     // vma when the vma is not present.  How ugly...
     if(vma && (vma->vm_start >= address || vma->vm_end <= address)) {
         started_outside_vma = 1;
-        printk("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
+        PSPRINTK("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
         vma = NULL;
     } else if (vma) {
-        printk("vma found and valid\n");
+        PSPRINTK("vma found and valid\n");
     } else {
-        printk("no vma present\n");
+        PSPRINTK("no vma present\n");
     }
 
     data = kmalloc(sizeof(mapping_request_data_t),GFP_KERNEL); 
@@ -2495,7 +2535,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
     // Handle successful response.
     if(data->present) {
-        printk("Mapping communicated: vaddr_start{%lx}, vaddr_mapping{%lx},vaddr_size{%lx},paddr{%lx},prot{%lx},vm_flags{%lx},path{%s},pgoff{%lx}\n",
+        PSPRINTK("Mapping communicated: vaddr_start{%lx}, vaddr_mapping{%lx},vaddr_size{%lx},paddr{%lx},prot{%lx},vm_flags{%lx},path{%s},pgoff{%lx}\n",
                 data->vaddr_start,
                 data->vaddr_mapping, 
                 data->vaddr_size,
@@ -2512,9 +2552,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
-            printk("vma not present\n");
+            PSPRINTK("vma not present\n");
             if(data->path[0] == '\0') {       
-                printk("mapping anonymous\n");
+                PSPRINTK("mapping anonymous\n");
                 err = do_mmap(NULL,
                         data->vaddr_start,
                         data->vaddr_size,
@@ -2524,7 +2564,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                         0);
             } else {
-                printk("opening file to map\n");
+                PSPRINTK("opening file to map\n");
 
                 // Temporary, check to see if the path is /dev/null (deleted), it should just
                 // be /dev/null in that case.  TODO: Add logic to detect and remove the 
@@ -2538,7 +2578,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
                 f = filp_open(data->path, (data->vm_flags & VM_SHARED)? O_RDWR:O_RDONLY, 0);
                 if(f) {
-                    printk("mapping file %s, %lx, %lx, %lx\n",data->path,
+                    PSPRINTK("mapping file %s, %lx, %lx, %lx\n",data->path,
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
@@ -2555,7 +2595,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 }
             }
             if(err != data->vaddr_start) {
-                printk("ERROR: Failed to do_mmap %lx\n",err);
+                PSPRINTK("ERROR: Failed to do_mmap %lx\n",err);
                 goto exit_remove_data;
             }
             
@@ -2564,17 +2604,17 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             // Validate find_vma result
             if(vma->vm_start > data->vaddr_mapping || 
                vma->vm_end <= data->vaddr_mapping) {
-                printk("invalid find_vma result, invalidating\n");
+                PSPRINTK("invalid find_vma result, invalidating\n");
                 vma = NULL;
             } else {
-                printk("mapping successful\n");
+                PSPRINTK("mapping successful\n");
             }
         }
 
         // We should have a vma now, so map physical memory into it.
         if(vma && data->paddr_mapping) { 
 
-            printk("About to map new physical pages - vaddr{%lx}, paddr{%lx}, vm_flags{%lx}, prot{%lx}\n",
+            PSPRINTK("About to map new physical pages - vaddr{%lx}, paddr{%lx}, vm_flags{%lx}, prot{%lx}\n",
                     data->vaddr_mapping,
                     data->paddr_mapping, 
                     vma->vm_flags, 
@@ -2590,9 +2630,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
             // Check remap_pfn_range success
             if(err) {
-                printk("ERROR: Failed to remap_pfn_range\n");
+                PSPRINTK("ERROR: Failed to remap_pfn_range\n");
             } else {
-                printk("remap_pfn_range succeeded\n");
+                PSPRINTK("remap_pfn_range succeeded\n");
                 ret = 1;
             }
         } 
@@ -2603,7 +2643,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     }
 
 exit_remove_data:
-    printk("removing data entry\n");
+    PSPRINTK("removing data entry\n");
 
     // Clean up data.
     spin_lock(&_data_head_lock);
@@ -2612,7 +2652,7 @@ exit_remove_data:
 
     kfree(data);
 
-    printk("exiting fault handler\n");
+    PSPRINTK("exiting fault handler\n");
 
     return ret;
     
