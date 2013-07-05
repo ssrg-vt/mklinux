@@ -245,10 +245,16 @@ typedef struct _create_process_pairing {
  * process death.  This occurs whether the process
  * is a placeholder or a delegate locally.
  */
-typedef struct _exiting_process {
+struct _exiting_process {
     struct pcn_kmsg_hdr header;
-    int my_pid; // PID of process on cpu transmitting this exit notification.
-} exiting_process_t;
+    int my_pid;                 // 4
+    int is_last_tgroup_member;  // 4
+                                // ---
+                                // 8 -> 52 bytes of padding needed
+    char pad[52];
+}__attribute__((packed)) __attribute__((aligned(64))); 
+
+typedef struct _exiting_process exiting_process_t;
 
 /**
  * Inform remote cpu of a vma to process mapping.
@@ -411,6 +417,7 @@ typedef struct {
 typedef struct {
     struct work_struct work;
     pid_t pid;
+    int is_last_tgroup_member;
 } exit_work_t;
 
 /**
@@ -856,7 +863,6 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
  * Print mm
  */
 static void dump_mm(struct mm_struct* mm) {
-    char buf[256];
     struct vm_area_struct * curr;
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
@@ -1039,7 +1045,7 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id) 
     remote_thread_count_request_t request;
     int i;
     int s;
-    int ret;
+    int ret = -1;
 
     data = kmalloc(sizeof(remote_thread_count_request_data_t),GFP_KERNEL);
     if(!data) goto exit;
@@ -1097,14 +1103,10 @@ exit:
 /**
  *
  */
-static int count_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
-    
-    int count = count_remote_thread_members(
-                        tgroup_home_cpu,
-                        tgroup_home_id);
-
+static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
     struct task_struct *task, *g;
-    
+    int count = 0;
+
     do_each_thread(g,task) {
         if(task->tgroup_home_id == tgroup_home_id &&
            task->tgroup_home_cpu == tgroup_home_cpu &&
@@ -1117,7 +1119,19 @@ static int count_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
         }
     } while_each_thread(g,task);
 
-    //PSPRINTK("%s: total threads in group - %d\n",__func__,count);
+    return count;
+
+}
+
+/**
+ *
+ */
+static int count_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
+    
+    int count = 0;
+
+    count += count_local_thread_members(tgroup_home_cpu, tgroup_home_id);
+    count += count_remote_thread_members(tgroup_home_cpu, tgroup_home_id);
 
     return count;
 }
@@ -1135,27 +1149,30 @@ void process_exit_item(struct work_struct* work) {
     pid_t pid = w->pid;
     struct task_struct *task, *g;
     
-    PSPRINTK("%s: process to kill %ld SEARCHING\n", __func__, (long)pid);
+    printk("%s: process to kill %ld SEARCHING\n", __func__, (long)pid);
     do_each_thread(g,task) {
         if(task->pid == pid) {
             PSPRINTK("%s: for_each_process Found task to kill, killing\n", __func__);
+            printk("%s: killing task - is_last_tgroup_member{%d}\n",
+                    __func__,
+                    w->is_last_tgroup_member);
+            
             __set_task_state(task,TASK_INTERRUPTIBLE);
-            sigaddset(&task->pending.signal,SIGKILL);
-            set_tsk_thread_flag(task,TIF_SIGPENDING);
+
+            // Hand the case where this is just a thread exiting.
+            if(!w->is_last_tgroup_member) {
+                task_clear_jobctl_pending(task, JOBCTL_PENDING_MASK);
+                sigaddset(&task->pending.signal,SIGKILL);
+                set_tsk_thread_flag(task,TIF_SIGPENDING);
+                //signal_wake_up(task,1);
+
+            } else {
+                kill_pid(task_pid(task),SIGKILL,1); 
+            }
             goto happy_end;
         }
     } while_each_thread(g,task);
   
-    /*task = (pid) ? find_task_by_vpid(pid) : current;
-    if (task) {
-            PSPRINTK("%s: find_process_by_pid Found task to kill, killing\n", __func__);
-            __set_task_state(task,TASK_INTERRUPTIBLE);
-            sigaddset(&task->pending.signal,SIGKILL);
-            set_tsk_thread_flag(task,TIF_SIGPENDING);
-    }
-    else
-	    PSPRINTK("%s: process to kill %ld NOT FOUND\n", __func__, (unsigned long)pid);*/
-
 happy_end:
     kfree(work);
 }
@@ -1400,9 +1417,8 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     response.vaddr_size = msg->vaddr_size;
     
     // Send response
-    pcn_kmsg_send_long(msg->header.from_cpu,
-             (struct pcn_kmsg_message*)(&response),
-             sizeof(munmap_response_t) - sizeof(struct pcn_kmsg_hdr));
+    pcn_kmsg_send(msg->header.from_cpu,
+             (struct pcn_kmsg_message*)(&response));
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -1608,7 +1624,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
 
     // Send response
     pcn_kmsg_send_long(msg->header.from_cpu,
-             (struct pcn_kmsg_message*)(&response),
+             (struct pcn_kmsg_long_message*)(&response),
              sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
 
     // Clean up incoming message
@@ -1725,7 +1741,7 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
 static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg) {
     exiting_process_t* msg = (exiting_process_t*)inc_msg;
     unsigned int source_cpu = msg->header.from_cpu;
-    struct task_struct *task, *g;;
+    struct task_struct *task, *g;
     exit_work_t* exit_work;
 
     PSPRINTK("%s: cpu: %d msg: (pid: %d from_cpu: %d [%d])\n", 
@@ -1741,6 +1757,7 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
             if(exit_work) {
                 INIT_WORK( (struct work_struct*)exit_work, process_exit_item);
                 exit_work->pid = task->pid;
+                exit_work->is_last_tgroup_member = msg->is_last_tgroup_member;
                 queue_work(exit_wq, (struct work_struct*)exit_work);
             }
 
@@ -2188,24 +2205,26 @@ int process_server_task_exit_notification(pid_t pid) {
     int count;
     int i;
     thread_group_exited_notification_t exit_notification;
+    clone_data_t* clone_data;
 
-    clone_data_t* clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
+    count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id);
+    
+    clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
     PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d}\n",pid);
     msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
     msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = pid;
+    msg.is_last_tgroup_member = (count == 1? 1 : 0);
 
     if(current->pid == pid && current->executing_for_remote) {
-        tx_ret = pcn_kmsg_send_long(current->prev_cpu, 
-                    (struct pcn_kmsg_long_message*)&msg, 
-                    sizeof(msg) - sizeof(msg.header));
+        tx_ret = pcn_kmsg_send(current->prev_cpu, 
+                    (struct pcn_kmsg_message*)&msg);
     } else {
         do_each_thread(g,task) {
             if(task->pid == pid && task->executing_for_remote) {
-                tx_ret = pcn_kmsg_send_long(task->prev_cpu, 
-                            (struct pcn_kmsg_long_message*)&msg, 
-                            sizeof(msg) - sizeof(msg.header));
+                tx_ret = pcn_kmsg_send(task->prev_cpu, 
+                            (struct pcn_kmsg_message*)&msg);
             }
         } while_each_thread(g,task);
     }
@@ -2223,7 +2242,6 @@ int process_server_task_exit_notification(pid_t pid) {
         }
     } while_each_thread(g,task);
     if(is_last_thread_in_local_group) {
-        count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id);
         // Check to see if this is the last member of the distributed
         // thread group.
         if(count == 1) {
@@ -2520,7 +2538,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
                 f = filp_open(data->path, (data->vm_flags & VM_SHARED)? O_RDWR:O_RDONLY, 0);
                 if(f) {
-                    printk("mapping file %s, %lx, %d, %lx\n",data->path,
+                    printk("mapping file %s, %lx, %lx, %lx\n",data->path,
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
@@ -2726,8 +2744,8 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     // This will be a placeholder process for the remote
     // process that is subsequently going to be started.
     // Block its execution.
-    sigaddset(&task->pending.signal,SIGSTOP); 
-    set_tsk_thread_flag(task,TIF_SIGPENDING); 
+    //sigaddset(&task->pending.signal,SIGSTOP); 
+    //set_tsk_thread_flag(task,TIF_SIGPENDING); 
     __set_task_state(task,TASK_UNINTERRUPTIBLE);
 
     // Book keeping for placeholder process.
