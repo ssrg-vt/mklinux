@@ -152,6 +152,7 @@ typedef struct _mapping_request_data {
     pgprot_t prot;
     unsigned long vm_flags;
     int present;
+    int from_saved_mm;
     int responses;
     int expected_responses;
     char path[512];
@@ -329,7 +330,8 @@ typedef struct _thread_group_exited_notification thread_group_exited_notificatio
 struct _mapping_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        
-    int tgroup_home_id;         
+    int tgroup_home_id; 
+    int from_saved_mm;
     unsigned long address;      
     unsigned long present;      
     unsigned long vaddr_mapping;
@@ -1408,6 +1410,8 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     munmap_request_t* msg = (munmap_request_t*)inc_msg;
     munmap_response_t response;
     struct task_struct *task, *g;
+    data_header_t *curr;
+    mm_data_t* mm_data;
 
     // munmap the specified region in the specified thread group
     do_each_thread(g,task) {
@@ -1424,6 +1428,31 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
 
         }
     } while_each_thread(g,task);
+
+    // munmap the specified region in any saved mm's as well.
+    // This keeps old mappings saved in the mm of dead thread
+    // group members from being resolved accidentally after
+    // being munmap()ped, as that would cause security/coherency
+    // problems.
+    spin_lock(&_data_head_lock);
+
+    curr = _data_head;
+    while(curr) {
+        if(curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
+            mm_data = (mm_data_t*)curr;
+            if(mm_data->tgroup_home_cpu == msg->tgroup_home_cpu &&
+               mm_data->tgroup_home_id  == msg->tgroup_home_id) {
+                
+                // Entry found, perform munmap on this saved mm.
+                do_munmap(mm_data->mm, msg->vaddr_start, msg->vaddr_size);
+
+            }
+        }
+        curr = curr->next;
+    }
+
+    spin_unlock(&_data_head_lock);
+
 
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
@@ -1465,7 +1494,35 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     if(msg->present) {
         PSPRINTK("received positive search result from cpu %d\n",
                 msg->header.from_cpu);
-
+        
+        // Account for this cpu's response
+        data->responses++;
+       
+        // Enforce precedence rules.  Responses from saved mm's
+        // are always ignored when a response from a live thread
+        // can satisfy the mapping request.  The purpose of this
+        // is to ensure that the mapping is not stale, since
+        // mmap() operations will not effect saved mm's.  Saved
+        // mm's are only useful for cases where a thread mmap()ed
+        // some space then died before any other thread was able
+        // to acquire the new mapping.
+        //
+        // A note on a case where multiple cpu's have mappings, but
+        // of different sizes.  It is possible that two cpu's have
+        // partially overlapping mappings.  This is possible because
+        // new mapping's are merged when their regions are contiguous.  
+        // This is not a problem here because if part of a mapping is 
+        // accessed that is not part of an existig mapping, that new 
+        // part will be merged in the resulting mapping request.
+        if(data->present == 1) {
+            // another cpu already responded.
+            if(!data->from_saved_mm && msg->from_saved_mm) {
+                PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
+                goto out;
+            }
+        }
+       
+        data->from_saved_mm = msg->from_saved_mm;
         data->vaddr_mapping = msg->vaddr_mapping;
         data->vaddr_start = msg->vaddr_start;
         data->vaddr_size = msg->vaddr_size;
@@ -1475,15 +1532,16 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         data->present = 1;
         strcpy(data->path,msg->path);
         data->pgoff = msg->pgoff;
-        data->responses++;
 
     } else {
         PSPRINTK("received negative search result from cpu %d\n",
                 msg->header.from_cpu);
-       
+      
+        // Account for this cpu's response.
         data->responses++;
     }
 
+out:
     pcn_kmsg_free_msg(inc_msg);
 
     return 0;
@@ -1538,7 +1596,6 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
                    (mm_data->tgroup_home_id  == msg->tgroup_home_id)) {
                     PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
                     mm = mm_data->mm;
-                    //dump_mm(mm);
                     break;
                 }
             }
