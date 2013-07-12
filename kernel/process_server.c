@@ -34,7 +34,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -118,6 +118,8 @@ typedef struct _clone_data {
     unsigned long arg_end;
     unsigned long heap_start;
     unsigned long heap_end;
+    unsigned long data_start;
+    unsigned long data_end;
     struct pt_regs regs;
     int placeholder_pid;
     int placeholder_tgid;
@@ -212,6 +214,8 @@ typedef struct _clone_request {
     unsigned long arg_end;
     unsigned long heap_start;
     unsigned long heap_end;
+    unsigned long data_start;
+    unsigned long data_end;
     struct pt_regs regs;
     char exe_path[512];
     int placeholder_pid;
@@ -672,6 +676,8 @@ static void dump_clone_data(clone_data_t* r) {
     PSPRINTK("arg_end{%lx}\n",r->arg_end);
     PSPRINTK("heap_start{%lx}\n",r->heap_start);
     PSPRINTK("heap_end{%lx}\n",r->heap_end);
+    PSPRINTK("data_start{%lx}\n",r->data_start);
+    PSPRINTK("data_end{%lx}\n",r->data_end);
     dump_regs(&r->regs);
     PSPRINTK("placeholder_pid{%x}\n",r->placeholder_pid);
     PSPRINTK("placeholder_tgid{%x}\n",r->placeholder_tgid);
@@ -881,6 +887,7 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
  */
 static void dump_mm(struct mm_struct* mm) {
     struct vm_area_struct * curr;
+    char buf[256];
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
         .mm = mm,
@@ -1932,6 +1939,8 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     clone_data->env_end = request->env_end;
     clone_data->heap_start = request->heap_start;
     clone_data->heap_end = request->heap_end;
+    clone_data->data_start = request->data_start;
+    clone_data->data_end = request->data_end;
     memcpy(&clone_data->regs, &request->regs, sizeof(struct pt_regs) );
     memcpy(&clone_data->exe_path, &request->exe_path, sizeof(request->exe_path));
     clone_data->placeholder_pid = request->placeholder_pid;
@@ -2179,6 +2188,8 @@ int process_server_import_address_space(unsigned long* ip,
     current->mm->env_end = clone_data->env_end;
     current->mm->arg_start = clone_data->arg_start;
     current->mm->arg_end = clone_data->arg_end;
+    current->mm->start_data = clone_data->data_start;
+    current->mm->end_data = clone_data->data_end;
 
     // install thread information
     // TODO: Move to arch
@@ -2607,6 +2618,12 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
         prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
 
+        if((data->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE) {
+            printk("%s: THIS IS A COW MAPPING!\n",__func__);
+        } else {
+            printk("%s: this is NOT a COW mapping\n",__func__);
+        }
+
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
             PSPRINTK("vma not present\n");
@@ -2671,19 +2688,26 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // We should have a vma now, so map physical memory into it.
         if(vma && data->paddr_mapping) { 
 
+            // PCD - Page Cache Disable
+            // PWT - Page Write-Through (as opposed to Page Write-Back)
+
             PSPRINTK("About to map new physical pages - vaddr{%lx}, paddr{%lx}, vm_flags{%lx}, prot{%lx}\n",
                     data->vaddr_mapping,
                     data->paddr_mapping, 
                     vma->vm_flags, 
+                    //__pgprot(pgprot_val(data->prot) /*| _PAGE_PWT | _PAGE_PCD |*/ | _PAGE_RW));
                     data->prot);
 
             err = remap_pfn_range(vma,
                    data->vaddr_mapping,
                    data->paddr_mapping >> PAGE_SHIFT,
                    PAGE_SIZE,
-                   //data->prot);
-                   pgprot_noncached(vm_get_page_prot(data->vm_flags)));
+                   //__pgprot(pgprot_val(data->prot) /*| _PAGE_PWT | _PAGE_PCD |*/ | _PAGE_RW));
+                    data->prot);
+                   //pgprot_noncached(vm_get_page_prot(data->vm_flags)));
                    //vma->vm_page_prot);
+                   //
+            //vma->vm_ops->page_mkwrite(vma, &vmf);
 
             // Check remap_pfn_range success
             if(err) {
@@ -2692,6 +2716,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 PSPRINTK("remap_pfn_range succeeded\n");
                 ret = 1;
             }
+
         } 
 
         if(vma) {
@@ -2946,6 +2971,8 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->env_end = task->mm->env_end;
     request->arg_start = task->mm->arg_start;
     request->arg_end = task->mm->arg_end;
+    request->data_start = task->mm->start_data;
+    request->data_end = task->mm->end_data;
 // struct task_struct ---------------------------------------------------------    
     request->stack_ptr = stack_start;
     request->placeholder_pid = task->pid;
