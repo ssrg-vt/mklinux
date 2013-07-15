@@ -2957,7 +2957,6 @@ struct tgid_iter {
 	unsigned int tgid;
 	struct task_struct *task;
 };*/
-/*mklinux_akshay*/
 static struct tgid_iter next_tgid(struct pid_namespace *ns, struct tgid_iter iter)
 {
 	struct pid *pid;

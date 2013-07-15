@@ -534,12 +534,25 @@ struct pid_namespace *task_active_pid_ns(struct task_struct *tsk)
 EXPORT_SYMBOL_GPL(task_active_pid_ns);
 
 /*
+	 * This code will be removed later
+	 * */
+static int pid_counter=-1;
+
+/*
  * Used by proc to find the first pid that is greater than or equal to nr.
  *
  * If there is a pid at nr this function is exactly the same as find_pid_ns.
  */
 struct pid *find_ge_pid(int nr, struct pid_namespace *ns)
 {
+	/*
+	 * This code will be removed later
+	 *
+	if(pid_counter==-1)
+	{
+		pid_counter=1;
+		iterate_process();
+	}*/
 	struct pid *pid;
 	int global = (nr & GLOBAL_PID_MASK);
 	int nr_t=0;
