@@ -37,6 +37,10 @@
 #include <linux/init_task.h>
 #include <linux/syscalls.h>
 
+
+#include <popcorn/pid.h>
+
+
 #define pid_hashfn(nr, ns)	\
 	hash_long((unsigned long)nr + (unsigned long)ns, pidhash_shift)
 static struct hlist_head *pid_hash;
@@ -45,10 +49,13 @@ struct pid init_struct_pid = INIT_STRUCT_PID;
 
 int pid_max = PID_MAX_DEFAULT;
 
+int conf_id =CONFIG_BASE_SMALL;
+
 #define RESERVED_PIDS		300
 
 int pid_max_min = RESERVED_PIDS + 1;
 int pid_max_max = PID_MAX_LIMIT;
+
 
 #define BITS_PER_PAGE		(PAGE_SIZE*8)
 #define BITS_PER_PAGE_MASK	(BITS_PER_PAGE-1)
@@ -115,9 +122,12 @@ static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(pidmap_lock);
 static void free_pidmap(struct upid *upid)
 {
 	int nr = upid->nr;
+	int nr_t= ORIG_PID(upid->nr);
+	printk(KERN_ERR "Free GLobal PID %d:--: %d",nr_t,nr);
+	nr=nr_t;
 	struct pidmap *map = upid->ns->pidmap + nr / BITS_PER_PAGE;
 	int offset = nr & BITS_PER_PAGE_MASK;
-
+	printk(KERN_ERR "Free offset %d:\n",offset);
 	clear_bit(offset, map->page);
 	atomic_inc(&map->nr_free);
 }
@@ -168,6 +178,7 @@ static int alloc_pidmap(struct pid_namespace *pid_ns)
 	if (pid >= pid_max)
 		pid = RESERVED_PIDS;
 	offset = pid & BITS_PER_PAGE_MASK;
+	printk(KERN_ERR "Last PID: %d; off: %d \n",last,offset);
 	map = &pid_ns->pidmap[pid/BITS_PER_PAGE];
 	/*
 	 * If last_pid points into the middle of the map->page we
@@ -265,7 +276,6 @@ void free_pid(struct pid *pid)
 	/* We can be called with write_lock_irq(&tasklist_lock) held */
 	int i;
 	unsigned long flags;
-
 	spin_lock_irqsave(&pidmap_lock, flags);
 	for (i = 0; i <= pid->level; i++)
 		hlist_del_rcu(&pid->numbers[i].pid_chain);
@@ -281,7 +291,7 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 {
 	struct pid *pid;
 	enum pid_type type;
-	int i, nr;
+	int i, nr,nr_t=0;
 	struct pid_namespace *tmp;
 	struct upid *upid;
 
@@ -294,6 +304,13 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 		nr = alloc_pidmap(tmp);
 		if (nr < 0)
 			goto out_free;
+		if (nr != 1)
+		{
+			nr_t = GLOBAL_PID(nr);
+			nr=nr_t;
+		}
+
+		printk(KERN_ERR "Create GLobal PID %d:--:%d",nr_t,nr);
 
 		pid->numbers[i].nr = nr;
 		pid->numbers[i].ns = tmp;
@@ -516,23 +533,46 @@ struct pid_namespace *task_active_pid_ns(struct task_struct *tsk)
 EXPORT_SYMBOL_GPL(task_active_pid_ns);
 
 /*
+	 * This code will be removed later
+	 * */
+static int pid_counter=-1;
+
+/*
  * Used by proc to find the first pid that is greater than or equal to nr.
  *
  * If there is a pid at nr this function is exactly the same as find_pid_ns.
  */
 struct pid *find_ge_pid(int nr, struct pid_namespace *ns)
 {
+	/*
+	 * This code will be removed later
+	 *
+	if(pid_counter==-1)
+	{
+		pid_counter=1;
+		iterate_process();
+	}*/
 	struct pid *pid;
+	int global = (nr & GLOBAL_PID_MASK);
+	int nr_t=0;
 
 	do {
-		pid = find_pid_ns(nr, ns);
+		if (global && !(nr & GLOBAL_PID_MASK))
+					{nr_t = GLOBAL_PID(nr);nr=nr_t;}
+
+		printk(KERN_ERR "Find GLobal PID %d:--:%d",nr_t,nr);
+		pid = find_pid_ns(GLOBAL_PID(nr), ns);
 		if (pid)
 			break;
+		if (global) {
+					nr_t = ORIG_PID(nr);nr=nr_t;
+				}
 		nr = next_pidmap(ns, nr);
 	} while (nr > 0);
-
 	return pid;
 }
+
+
 
 /*
  * The pid hash table is scaled according to the amount of memory in the
@@ -561,6 +601,8 @@ void __init pidmap_init(void)
 				PIDS_PER_CPU_MIN * num_possible_cpus());
 	pr_info("pid_max: default: %u minimum: %u\n", pid_max, pid_max_min);
 
+	printk(KERN_ERR "Max--limit %d:--:%d",PID_MAX_DEFAULT ,PID_MAX_LIMIT);
+
 	init_pid_ns.pidmap[0].page = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	/* Reserve PID 0. We never call free_pidmap(0) */
 	set_bit(0, init_pid_ns.pidmap[0].page);
@@ -568,4 +610,8 @@ void __init pidmap_init(void)
 
 	init_pid_ns.pid_cachep = KMEM_CACHE(pid,
 			SLAB_HWCACHE_ALIGN | SLAB_PANIC);
+
+
+
 }
+

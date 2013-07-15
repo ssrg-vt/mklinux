@@ -260,6 +260,34 @@ union proc_op {
 		struct task_struct *task);
 };
 
+/*mklinux*/
+
+struct proc_remote_pid_info;
+
+union proc_remote_op {
+	int (*proc_get_link)(struct inode *, struct path *);
+	int (*proc_read)(struct proc_remote_pid_info *task, char *page);
+	int (*proc_show)(struct file *file, struct proc_remote_pid_info *task,
+			 char *buf, size_t count);
+};
+
+
+struct proc_remote_pid_info {
+	pid_t pid;
+	int Kernel_Num;
+	uid_t euid;
+	gid_t egid;
+	union proc_remote_op op;
+};
+
+struct tgid_iter {
+	unsigned int tgid;
+	struct task_struct *task;
+};
+
+
+/*mklinux*/
+
 struct ctl_table_header;
 struct ctl_table;
 
@@ -273,7 +301,11 @@ struct proc_inode {
 	void *ns;
 	const struct proc_ns_operations *ns_ops;
 	struct inode vfs_inode;
+
+	struct proc_remote_pid_info remote_proc;
 };
+
+
 
 static inline struct proc_inode *PROC_I(const struct inode *inode)
 {
