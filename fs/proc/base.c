@@ -89,9 +89,13 @@
 #include "internal.h"
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 /*mklinux_akshay*/
 #include "remote_proc_pid.h"
 =======
+=======
+/*mklinux_akshay*/
+>>>>>>> added comments
 #include <popcorn/remote_proc_pid.h>
 >>>>>>> initial commit for pid namespace and procfs
 /* NOTE:
@@ -581,10 +585,14 @@ int proc_setattr(struct dentry *dentry, struct iattr *attr)
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 /*mklinux_akshay*/ //static /*mklinux_akshay*/
 =======
 /*mklinux*/ //static
 >>>>>>> initial commit for pid namespace and procfs
+=======
+/*mklinux_akshay*/ //static /*mklinux_akshay*/
+>>>>>>> added comments
 const struct inode_operations proc_def_inode_operations = {
 	.setattr	= proc_setattr,
 };
@@ -2946,6 +2954,7 @@ struct dentry *proc_pid_lookup(struct inode *dir, struct dentry * dentry, struct
 		get_task_struct(task);
 	rcu_read_unlock();
 <<<<<<< HEAD
+<<<<<<< HEAD
 	if (!task) /*mklinux_akshay*/
 	{
 		result = remote_proc_pid_lookup(dir, dentry, tgid);/*mklinux_akshay*/
@@ -2953,11 +2962,18 @@ struct dentry *proc_pid_lookup(struct inode *dir, struct dentry * dentry, struct
 	/*mklinux_akshay*/}/*mklinux_akshay*/
 =======
 	if (!task) /*mklinux*/
+=======
+	if (!task) /*mklinux_akshay*/
+>>>>>>> added comments
 	{
-		result = remote_proc_pid_lookup(dir, dentry, tgid);/*mklinux*/
+		result = remote_proc_pid_lookup(dir, dentry, tgid);/*mklinux_akshay*/
 		goto out;
+<<<<<<< HEAD
 /*mklinux*/}/*mklinux*/
 >>>>>>> initial commit for pid namespace and procfs
+=======
+	/*mklinux_akshay*/}/*mklinux_akshay*/
+>>>>>>> added comments
 
 	result = proc_pid_instantiate(dir, dentry, task, NULL);
 	put_task_struct(task);
@@ -2974,9 +2990,13 @@ struct tgid_iter {
 	struct task_struct *task;
 };*/
 <<<<<<< HEAD
+<<<<<<< HEAD
 /*mklinux_akshay*/
 =======
 >>>>>>> initial commit for pid namespace and procfs
+=======
+/*mklinux_akshay*/
+>>>>>>> added comments
 static struct tgid_iter next_tgid(struct pid_namespace *ns, struct tgid_iter iter)
 {
 	struct pid *pid;
@@ -3062,20 +3082,28 @@ int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 		}
 	}
 <<<<<<< HEAD
+<<<<<<< HEAD
 	/*mklinux_akshay*/
 =======
 
 >>>>>>> initial commit for pid namespace and procfs
+=======
+	/*mklinux_akshay*/
+>>>>>>> added comments
 	/*
 	 * populate remote pids in /proc
 	 */
 	if(remote_proc_pid_readdir(filp, dirent, filldir, TGID_OFFSET))
 			goto out_no_task;
 <<<<<<< HEAD
+<<<<<<< HEAD
 	/*mklinux_akshay*/
 =======
 
 >>>>>>> initial commit for pid namespace and procfs
+=======
+	/*mklinux_akshay*/
+>>>>>>> added comments
 	filp->f_pos = PID_MAX_LIMIT + TGID_OFFSET;
 out:
 	put_task_struct(reaper);
