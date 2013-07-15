@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 #ifndef __POPCORN_INIT_H
 #define __POPCORN_INIT_H
 /*
@@ -24,6 +25,27 @@ extern struct list_head rlist_head;
 
 
 /*
+=======
+
+
+#include <asm/bootparam.h>
+#include <asm/system.h>
+#include <asm/uaccess.h>
+#include <linux/multikernel.h>
+#include <linux/mm.h>
+#include <asm/setup.h>
+#include<linux/slab.h>
+
+#define max_nodes 1 << 8
+
+unsigned int Kernel_Id;
+extern unsigned long orig_boot_params;
+unsigned long *token_bucket;
+
+
+void popcorn_init(void)
+
+>>>>>>> initial commit for pid namespace and procfs
 {
 
 unsigned long bucket_phys_addr=0;
@@ -90,4 +112,8 @@ printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
 printk("POP_INIT:Virt add : 0x%p --- shm kernel id address: 0x%lx\n",token_bucket,bucket_phys_addr);
 
 }
+<<<<<<< HEAD
 */
+=======
+
+>>>>>>> initial commit for pid namespace and procfs
