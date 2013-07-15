@@ -540,14 +540,6 @@ EXPORT_SYMBOL_GPL(task_active_pid_ns);
  */
 struct pid *find_ge_pid(int nr, struct pid_namespace *ns)
 {
-	/*
-	 * This code will be removed later
-	 *
-	if(pid_counter==-1)
-	{
-		pid_counter=1;
-		iterate_process();
-	}*/
 	struct pid *pid;
 	int global = (nr & GLOBAL_PID_MASK);
 	int nr_t=0;
