@@ -88,6 +88,7 @@
 #endif
 #include "internal.h"
 
+/*mklinux_akshay*/
 #include <popcorn/remote_proc_pid.h>
 /* NOTE:
  *	Implementing inode permission operations in /proc is almost
@@ -575,7 +576,7 @@ int proc_setattr(struct dentry *dentry, struct iattr *attr)
 	return 0;
 }
 
-/*mklinux*/ //static
+/*mklinux_akshay*/ //static /*mklinux_akshay*/
 const struct inode_operations proc_def_inode_operations = {
 	.setattr	= proc_setattr,
 };
@@ -2936,18 +2937,18 @@ struct dentry *proc_pid_lookup(struct inode *dir, struct dentry * dentry, struct
 	if (task)
 		get_task_struct(task);
 	rcu_read_unlock();
-	if (!task) /*mklinux*/
+	if (!task) /*mklinux_akshay*/
 	{
-		result = remote_proc_pid_lookup(dir, dentry, tgid);/*mklinux*/
+		result = remote_proc_pid_lookup(dir, dentry, tgid);/*mklinux_akshay*/
 		goto out;
-/*mklinux*/}/*mklinux*/
+	/*mklinux_akshay*/}/*mklinux_akshay*/
 
 	result = proc_pid_instantiate(dir, dentry, task, NULL);
 	put_task_struct(task);
 out:
 	return result;
 }
-
+/*mklinux_akshay*/
 /*
  * Find the first task with tgid >= tgid
  * moved to proc_fs
@@ -2956,6 +2957,7 @@ struct tgid_iter {
 	unsigned int tgid;
 	struct task_struct *task;
 };*/
+/*mklinux_akshay*/
 static struct tgid_iter next_tgid(struct pid_namespace *ns, struct tgid_iter iter)
 {
 	struct pid *pid;
@@ -3036,13 +3038,13 @@ int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 			goto out;
 		}
 	}
-
+	/*mklinux_akshay*/
 	/*
 	 * populate remote pids in /proc
 	 */
 	if(remote_proc_pid_readdir(filp, dirent, filldir, TGID_OFFSET))
 			goto out_no_task;
-
+	/*mklinux_akshay*/
 	filp->f_pos = PID_MAX_LIMIT + TGID_OFFSET;
 out:
 	put_task_struct(reaper);
