@@ -37,7 +37,7 @@
 #include <linux/init_task.h>
 #include <linux/syscalls.h>
 
-
+/*mklinux_akshay*/
 #include <popcorn/pid.h>
 
 
@@ -122,9 +122,10 @@ static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(pidmap_lock);
 static void free_pidmap(struct upid *upid)
 {
 	int nr = upid->nr;
+	/*mklinux_akshay*/
 	int nr_t= ORIG_PID(upid->nr);
 	printk(KERN_ERR "Free GLobal PID %d:--: %d",nr_t,nr);
-	nr=nr_t;
+	nr=nr_t;/*mklinux_akshay*/
 	struct pidmap *map = upid->ns->pidmap + nr / BITS_PER_PAGE;
 	int offset = nr & BITS_PER_PAGE_MASK;
 	printk(KERN_ERR "Free offset %d:\n",offset);
@@ -291,7 +292,7 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 {
 	struct pid *pid;
 	enum pid_type type;
-	int i, nr,nr_t=0;
+	int i, nr,nr_t=0;/*mklinux_akshay*/
 	struct pid_namespace *tmp;
 	struct upid *upid;
 
@@ -303,14 +304,14 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 	for (i = ns->level; i >= 0; i--) {
 		nr = alloc_pidmap(tmp);
 		if (nr < 0)
-			goto out_free;
+			goto out_free;/*mklinux_akshay*/
 		if (nr != 1)
 		{
 			nr_t = GLOBAL_PID(nr);
 			nr=nr_t;
 		}
 
-		printk(KERN_ERR "Create GLobal PID %d:--:%d",nr_t,nr);
+		printk(KERN_ERR "Create GLobal PID %d:--:%d",nr_t,nr);/*mklinux_akshay*/
 
 		pid->numbers[i].nr = nr;
 		pid->numbers[i].ns = tmp;
@@ -533,40 +534,27 @@ struct pid_namespace *task_active_pid_ns(struct task_struct *tsk)
 EXPORT_SYMBOL_GPL(task_active_pid_ns);
 
 /*
-	 * This code will be removed later
-	 * */
-static int pid_counter=-1;
-
-/*
  * Used by proc to find the first pid that is greater than or equal to nr.
  *
  * If there is a pid at nr this function is exactly the same as find_pid_ns.
  */
 struct pid *find_ge_pid(int nr, struct pid_namespace *ns)
 {
-	/*
-	 * This code will be removed later
-	 *
-	if(pid_counter==-1)
-	{
-		pid_counter=1;
-		iterate_process();
-	}*/
 	struct pid *pid;
 	int global = (nr & GLOBAL_PID_MASK);
 	int nr_t=0;
 
-	do {
+	do {/*mklinux_akshay*/
 		if (global && !(nr & GLOBAL_PID_MASK))
 					{nr_t = GLOBAL_PID(nr);nr=nr_t;}
 
 		printk(KERN_ERR "Find GLobal PID %d:--:%d",nr_t,nr);
-		pid = find_pid_ns(GLOBAL_PID(nr), ns);
+		pid = find_pid_ns(GLOBAL_PID(nr), ns);/*mklinux_akshay*/
 		if (pid)
-			break;
+			break;/*mklinux_akshay*/
 		if (global) {
 					nr_t = ORIG_PID(nr);nr=nr_t;
-				}
+				}/*mklinux_akshay*/
 		nr = next_pidmap(ns, nr);
 	} while (nr > 0);
 	return pid;

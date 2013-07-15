@@ -260,7 +260,7 @@ union proc_op {
 		struct task_struct *task);
 };
 
-/*mklinux*/
+/*mklinux_akshay*/
 
 struct proc_remote_pid_info;
 
@@ -286,7 +286,7 @@ struct tgid_iter {
 };
 
 
-/*mklinux*/
+/*mklinux_akshay*/
 
 struct ctl_table_header;
 struct ctl_table;
