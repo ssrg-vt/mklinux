@@ -69,11 +69,13 @@
 #include <linux/slab.h>
 #include <linux/perf_event.h>
 
+
 #include <asm/io.h>
 #include <asm/bugs.h>
 #include <asm/setup.h>
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
+
 
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/smp.h>
@@ -100,6 +102,7 @@ extern void tc_init(void);
 extern void pcn_kmsg_init(void);
 #endif
 
+extern void popcorn_init(void);
 /*
  * Debug helper: via this flag we know that we are in 'early bootup code'
  * where only the boot processor is running with IRQ disabled.  This means
@@ -647,6 +650,7 @@ asmlinkage void __init start_kernel(void)
 	//pcn_kmsg_init();
 #endif
 
+	popcorn_init();
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
 }

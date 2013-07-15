@@ -88,6 +88,7 @@
 #endif
 #include "internal.h"
 
+#include <popcorn/remote_proc_pid.h>
 /* NOTE:
  *	Implementing inode permission operations in /proc is almost
  *	certainly an error.  Permission checks need to happen during
@@ -574,7 +575,8 @@ int proc_setattr(struct dentry *dentry, struct iattr *attr)
 	return 0;
 }
 
-static const struct inode_operations proc_def_inode_operations = {
+/*mklinux*/ //static
+const struct inode_operations proc_def_inode_operations = {
 	.setattr	= proc_setattr,
 };
 
@@ -2934,8 +2936,11 @@ struct dentry *proc_pid_lookup(struct inode *dir, struct dentry * dentry, struct
 	if (task)
 		get_task_struct(task);
 	rcu_read_unlock();
-	if (!task)
+	if (!task) /*mklinux*/
+	{
+		result = remote_proc_pid_lookup(dir, dentry, tgid);/*mklinux*/
 		goto out;
+/*mklinux*/}/*mklinux*/
 
 	result = proc_pid_instantiate(dir, dentry, task, NULL);
 	put_task_struct(task);
@@ -2945,12 +2950,12 @@ out:
 
 /*
  * Find the first task with tgid >= tgid
- *
- */
+ * moved to proc_fs
+
 struct tgid_iter {
 	unsigned int tgid;
 	struct task_struct *task;
-};
+};*/
 static struct tgid_iter next_tgid(struct pid_namespace *ns, struct tgid_iter iter)
 {
 	struct pid *pid;
@@ -3031,6 +3036,13 @@ int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 			goto out;
 		}
 	}
+
+	/*
+	 * populate remote pids in /proc
+	 */
+	if(remote_proc_pid_readdir(filp, dirent, filldir, TGID_OFFSET))
+			goto out_no_task;
+
 	filp->f_pos = PID_MAX_LIMIT + TGID_OFFSET;
 out:
 	put_task_struct(reaper);

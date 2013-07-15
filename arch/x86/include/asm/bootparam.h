@@ -92,6 +92,12 @@ struct efi_info {
 	__u32 efi_memmap_hi;
 };
 
+struct kernel_id_param
+{
+	__u64 shm_kernel_id_addr;
+	__u32 flag;
+};
+
 /* The so-called "zeropage" */
 struct boot_params {
 	struct screen_info screen_info;			/* 0x000 */
@@ -122,6 +128,7 @@ struct boot_params {
 	__u8  _pad9[260];				/* 0xeec */
 	__u64 shmtun_phys_addr;
 	__u64 pcn_kmsg_master_window;
+	struct kernel_id_param kernel_id_param;
 } __attribute__((packed));
 
 enum {
