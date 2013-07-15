@@ -21,7 +21,9 @@
 
 #define MIN_THREADS_LEFT_FOR_ROOT 4
 
-
+/*mklinux_akshay
+ * Added for popcorn linux to provide unique pid by pid masking
+ */
 #define NR_BITS_PID_MAX_DEFAULT (CONFIG_BASE_SMALL ? 12 : 15)
 
 #define PID_MAX_DEFAULT (1 << NR_BITS_PID_MAX_DEFAULT)
@@ -32,8 +34,12 @@
 	NR_BITS_PID_MAX_DEFAULT))
 
 #define PID_MAX_LIMIT (1 << NR_BITS_PID_MAX_LIMIT)
+/*mklinux_akshay*/
 
-
+/*mklinux_akshay
+ *
+ *Original implementation of linux
+ */
 /*
  * This controls the default maximum pid allocated to a process
 
@@ -52,6 +58,8 @@
  * minimum settable value for pid_max on the running system based
  * on similar defaults.  See kernel/pid.c:pidmap_init() for details.
  */
+
+/*mklinux_akshay*/
 #define PIDS_PER_CPU_DEFAULT	1024
 #define PIDS_PER_CPU_MIN	8
 
