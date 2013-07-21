@@ -23,6 +23,7 @@
 #include <linux/pcn_kmsg.h> // Messaging
 #include <linux/string.h>
 
+#include <asm/pgtable.h>
 #include <asm/atomic.h>
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
@@ -478,8 +479,37 @@ static struct workqueue_struct *exit_wq;
  * General helper functions and debugging tools
  */
 
+/**
+ * A best effort at making a page writable
+ */
+static void mk_page_writable(struct mm_struct* mm,
+                             struct vm_area_struct* vma,
+                             unsigned long vaddr) {
+    spinlock_t* ptl;
+    pte_t *ptep, pte, entry;
+     
+         
+    ptep = get_locked_pte(mm, vaddr, &ptl);
+    if (!ptep)
+        goto out;
 
+    pte = *ptep;
 
+    entry = pte_mkwrite(pte_mkdirty(pte));
+    set_pte_at(mm, vaddr, ptep, entry);
+    update_mmu_cache(vma, vaddr, ptep);
+
+    arch_leave_lazy_mmu_mode();
+
+out_unlock:
+    pte_unmap_unlock(pte, ptl);
+out:
+    return;
+}
+
+/**
+ *
+ */
 static clone_data_t* get_current_clone_data(void) {
     clone_data_t* ret = NULL;
 
@@ -496,6 +526,9 @@ static clone_data_t* get_current_clone_data(void) {
     return ret;
 }
 
+/**
+ *
+ */
 static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
  
     unsigned long* resolved_addr = (unsigned long*)walk->private;
@@ -508,6 +541,9 @@ static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long star
     return 0;
 }
 
+/**
+ *
+ */
 static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
     unsigned long resolved = 0;
     struct mm_walk walk = {
@@ -871,14 +907,39 @@ static vma_data_t* find_vma_data(clone_data_t* clone_data, unsigned long addr_st
  */
 static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
 
+    int nx;
+    int rw;
+    int user;
+    int pwt;
+    int pcd;
+    int accessed;
+    int dirty;
+
     if(NULL == pte || !pte_present(*pte)) {                                                                                                                             
         return 0;
     }
+
+    nx       = pte_flags(*pte) & _PAGE_NX       ? 1 : 0;
+    rw       = pte_flags(*pte) & _PAGE_RW       ? 1 : 0;
+    user     = pte_flags(*pte) & _PAGE_USER     ? 1 : 0;
+    pwt      = pte_flags(*pte) & _PAGE_PWT      ? 1 : 0;
+    pcd      = pte_flags(*pte) & _PAGE_PCD      ? 1 : 0;
+    accessed = pte_flags(*pte) & _PAGE_ACCESSED ? 1 : 0;
+    dirty    = pte_flags(*pte) & _PAGE_DIRTY    ? 1 : 0;
 
     PSPRINTK("pte_entry start{%lx}, end{%lx}, phy{%lx}\n",
             start,
             end,
             (unsigned long)(pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1)));
+
+    PSPRINTK("\tnx{%d}, ",nx);
+    PSPRINTK("rw{%d}, ",rw);
+    PSPRINTK("user{%d}, ",user);
+    PSPRINTK("pwt{%d}, ",pwt);
+    PSPRINTK("pcd{%d}, ",pcd);
+    PSPRINTK("accessed{%d}, ",accessed);
+    PSPRINTK("dirty{%d}\n",dirty);
+
     return 0;
 }
 
@@ -2529,6 +2590,16 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     if(is_vaddr_mapped(mm,address)) {
         PSPRINTK("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
                 address,current->tgroup_home_cpu,current->tgroup_home_id);
+        
+        // should this thing be writable?  if so, set it and exit
+        // This is a security hole, and is VERY bad.
+        // It will also probably cause problems for genuine COW mappings..
+        if(vma->vm_flags & VM_WRITE) {
+            mk_page_writable(mm,vma,address & PAGE_MASK);
+            return 1;
+            
+        }
+
         goto not_handled;
     }
     
@@ -2624,6 +2695,21 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             printk("%s: this is NOT a COW mapping\n",__func__);
         }
 
+        if ( prot & PROT_WRITE ) {
+            printk("%s: mapping writable\n",__func__);
+        }
+        if ( prot & PROT_READ ) {
+            printk("%s: mapping readable\n",__func__);
+        }
+        if ( prot & PROT_EXEC ) {
+            printk("%s: mapping exec\n",__func__);
+        }
+        if ( data->vm_flags & VM_SHARED ) {
+            printk("%s: mapping is shared\n",__func__);
+        } else {
+            printk("%s: mapping is private\n",__func__);
+        }
+
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
             PSPRINTK("vma not present\n");
@@ -2695,19 +2781,21 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     data->vaddr_mapping,
                     data->paddr_mapping, 
                     vma->vm_flags, 
-                    //__pgprot(pgprot_val(data->prot) /*| _PAGE_PWT | _PAGE_PCD |*/ | _PAGE_RW));
-                    data->prot);
+                    vma->vm_page_prot);
 
             err = remap_pfn_range(vma,
                    data->vaddr_mapping,
                    data->paddr_mapping >> PAGE_SHIFT,
                    PAGE_SIZE,
-                   //__pgprot(pgprot_val(data->prot) /*| _PAGE_PWT | _PAGE_PCD |*/ | _PAGE_RW));
-                    data->prot);
-                   //pgprot_noncached(vm_get_page_prot(data->vm_flags)));
-                   //vma->vm_page_prot);
-                   //
-            //vma->vm_ops->page_mkwrite(vma, &vmf);
+                   pgprot_noncached(vm_get_page_prot(vma->vm_flags)));
+
+            // If this VMA specifies VM_WRITE, make the mapping writable.
+            // this function does not the flag check.
+            if(vma->vm_flags & VM_WRITE) {
+                mk_page_writable(mm, vma, data->vaddr_mapping);
+            }
+
+            dump_mm(mm);
 
             // Check remap_pfn_range success
             if(err) {
