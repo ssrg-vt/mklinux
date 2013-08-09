@@ -21,6 +21,7 @@
 #include <linux/io.h> // ioremap
 #include <linux/mman.h> // MAP_ANONYMOUS
 #include <linux/pcn_kmsg.h> // Messaging
+//#include <linux/pcn_perf.h> // performance measurement
 #include <linux/string.h>
 
 #include <asm/pgtable.h>
@@ -387,9 +388,10 @@ struct _remote_thread_count_request {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int include_shadow_threads; // 4
                                 // ---
-                                // 8 -> 52 bytes of padding needed
-    char pad[52];
+                                // 12 -> 48 bytes of padding needed
+    char pad[48];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _remote_thread_count_request remote_thread_count_request_t;
 
@@ -441,6 +443,12 @@ typedef struct {
     unsigned short thread_fsindex;
     unsigned short thread_gsindex;
 } exit_work_t;
+
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+} tgroup_closed_work_t;
 
 /**
  * Prototypes
@@ -1124,13 +1132,15 @@ static void dump_data_list(void) {
 /**
  *
  */
-static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
+static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, int include_shadow_threads) {
 
     remote_thread_count_request_data_t* data;
     remote_thread_count_request_t request;
     int i;
     int s;
     int ret = -1;
+
+    PSPRINTK("%s: entered\n",__func__);
 
     data = kmalloc(sizeof(remote_thread_count_request_data_t),GFP_KERNEL);
     if(!data) goto exit;
@@ -1148,6 +1158,7 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id) 
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
+    request.include_shadow_threads = include_shadow_threads;
     for(i = 0; i < NR_CPUS; i++) {
 
         // Skip the current cpu
@@ -1162,7 +1173,7 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id) 
         }
     }
 
-    //PSPRINTK("%s: waiting on %d responses\n",__func__,data->expected_responses);
+    PSPRINTK("%s: waiting on %d responses\n",__func__,data->expected_responses);
 
     // Wait for all cpus to respond.
     while(data->expected_responses != data->responses) {
@@ -1172,8 +1183,8 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id) 
     // OK, all responses are in, we can proceed.
     ret = data->count;
 
-    //PSPRINTK("%s: found a total of %d remote threads in group\n",__func__,
-    //        data->count);
+    PSPRINTK("%s: found a total of %d remote threads in group\n",__func__,
+            data->count);
 
     spin_lock(&_data_head_lock);
     remove_data_entry(data);
@@ -1191,7 +1202,7 @@ exit:
 static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
     struct task_struct *task, *g;
     int count = 0;
-
+    PSPRINTK("%s: entered\n",__func__);
     do_each_thread(g,task) {
         if(task->tgroup_home_id == tgroup_home_id &&
            task->tgroup_home_cpu == tgroup_home_cpu &&
@@ -1203,6 +1214,7 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
             count++;
         }
     } while_each_thread(g,task);
+    PSPRINTK("%s: exited\n",__func__);
 
     return count;
 
@@ -1211,13 +1223,13 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
 /**
  *
  */
-static int count_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
-    
+static int count_thread_members(int tgroup_home_cpu, int tgroup_home_id, int include_shadow_threads) {
+     
     int count = 0;
-
+    PSPRINTK("%s: entered\n",__func__);
     count += count_local_thread_members(tgroup_home_cpu, tgroup_home_id);
-    count += count_remote_thread_members(tgroup_home_cpu, tgroup_home_id);
-
+    count += count_remote_thread_members(tgroup_home_cpu, tgroup_home_id, include_shadow_threads);
+    PSPRINTK("%s: exited\n",__func__);
     return count;
 }
 
@@ -1225,6 +1237,49 @@ static int count_thread_members(int tgroup_home_cpu, int tgroup_home_id) {
 /*
  * Work exec
  */
+
+void process_tgroup_closed_item(struct work_struct* work) {
+
+    tgroup_closed_work_t* w = (tgroup_closed_work_t*) work;
+    data_header_t *curr, *next;
+    mm_data_t* mm_data;
+
+    PSPRINTK("%s: entered\n",__func__);
+    PSPRINTK("%s: received group exit notification\n",__func__);
+
+    spin_lock(&_data_head_lock);
+    
+    // Remove all saved mm's for this thread group.
+    curr = _data_head;
+    while(curr) {
+        next = curr->next;
+        if(curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
+            mm_data = (mm_data_t*)curr;
+            if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
+               mm_data->tgroup_home_id  == w->tgroup_home_id) {
+                // We need to remove this data entry
+                remove_data_entry(curr);
+
+                // Remove mm
+                atomic_dec(&mm_data->mm->mm_users);
+                mmput(mm_data->mm);
+
+                // Free up the data entry
+                kfree(curr);
+                PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
+                        __func__,
+                        w->tgroup_home_cpu,
+                        w->tgroup_home_id);
+            }
+        }
+        curr = next;
+    }
+
+    spin_unlock(&_data_head_lock);
+
+    kfree(work);
+}
+
 
 /**
  *
@@ -1253,6 +1308,9 @@ void process_exit_item(struct work_struct* work) {
             task->thread.ds = w->thread_ds;
             task->thread.fsindex = w->thread_fsindex;
             task->thread.gsindex = w->thread_gsindex;
+
+            // Now we're executing locally, so update our records
+            task->represents_remote = 0;
 
             wake_up_process(task);
 
@@ -1325,7 +1383,23 @@ perf_bb = native_read_tsc();
  */
 static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_msg) {
     thread_group_exited_notification_t* msg = (thread_group_exited_notification_t*) inc_msg;
-    data_header_t *curr, *next;
+
+    tgroup_closed_work_t* exit_work;
+
+    PSPRINTK("%s: entered\n",__func__);
+
+    // Spin up bottom half to process this event
+    exit_work = kmalloc(sizeof(tgroup_closed_work_t),GFP_ATOMIC);
+    if(exit_work) {
+        INIT_WORK( (struct work_struct*)exit_work, process_tgroup_closed_item);
+        exit_work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        exit_work->tgroup_home_id  = msg->tgroup_home_id;
+        queue_work(exit_wq, (struct work_struct*)exit_work);
+    }
+
+
+
+/*    data_header_t *curr, *next;
     mm_data_t* mm_data;
 
     PSPRINTK("%s: received group exit notification\n",__func__);
@@ -1359,7 +1433,7 @@ static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_
     }
 
     spin_unlock(&_data_head_lock);
-
+*/
     pcn_kmsg_free_msg(inc_msg);
 
     return 0;
@@ -1415,17 +1489,20 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
     do_each_thread(g,task) {
         if(task->tgroup_home_cpu == msg->tgroup_home_cpu &&
            task->tgroup_home_id  == msg->tgroup_home_id &&
-           !task->represents_remote &&
            task->exit_state != EXIT_ZOMBIE &&
            task->exit_state != EXIT_DEAD &&
            !(task->flags & PF_EXITING)) {
-            response.count++;
-            PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
-                    task->pid,
-                    task->tgid,
-                    task->state,
-                    task->exit_state,
-                    task->flags);
+
+            if(msg->include_shadow_threads || (!msg->include_shadow_threads && !task->represents_remote)) {
+                response.count++;
+                PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
+                        task->pid,
+                        task->tgid,
+                        task->state,
+                        task->exit_state,
+                        task->flags);
+            }
+
         }
     } while_each_thread(g,task);
 
@@ -1480,6 +1557,8 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     struct task_struct *task, *g;
     data_header_t *curr;
     mm_data_t* mm_data;
+
+    PSPRINTK("%s: entered\n",__func__);
 
     // munmap the specified region in the specified thread group
     do_each_thread(g,task) {
@@ -1550,7 +1629,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
                                         msg->address);
 
 
-
+    PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("received mapping response\n");
 
     if(data == NULL) {
@@ -1635,7 +1714,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     };
     char* plpath;
     char lpath[512];
-
+    PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("received mapping request address{%lx}, cpu{%d}, id{%d}\n",
             msg->address,
             msg->tgroup_home_cpu,
@@ -1784,6 +1863,7 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
     data_header_t* curr = NULL;
     vma_data_t* vma = NULL;
     pte_data_t* pte_data = kmalloc(sizeof(pte_data_t),GFP_ATOMIC);
+    PSPRINTK("%s: entered\n",__func__);
     if(!pte_data) {
         PSPRINTK("Failed to allocate pte_data_t\n");
         return 0;
@@ -1846,7 +1926,7 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
     vma_transfer_t* msg = (vma_transfer_t*)inc_msg;
     unsigned int source_cpu = msg->header.from_cpu;
     vma_data_t* vma_data = kmalloc(sizeof(vma_data_t),GFP_ATOMIC);
-
+    PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("handle_vma_transfer %d\n",msg->vma_id);
     
     if(!vma_data) {
@@ -1894,9 +1974,18 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
            task->next_cpu == source_cpu) {
 
             PSPRINTK("kmkprocsrv: killing local task pid{%d}\n",task->pid);
+
+
+            // Now we're executing locally, so update our records
+            // Should I be doing this here, or in the bottom-half handler?
+            // For now, I'm leaving it in the handler...
+            //task->represents_remote = 0;
             
             exit_work = kmalloc(sizeof(exit_work_t),GFP_ATOMIC);
             if(exit_work) {
+                // TODO This task is sometimes scheduled after the 
+                // thread group closes.  Do something to synchronize
+                // that.
                 INIT_WORK( (struct work_struct*)exit_work, process_exit_item);
                 exit_work->pid = task->pid;
                 exit_work->is_last_tgroup_member = msg->is_last_tgroup_member;
@@ -1980,7 +2069,9 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     data_header_t* curr;
     data_header_t* next;
     vma_data_t* vma;
-    
+   
+    PSPRINTK("%s: entered\n",__func__);
+
     perf_cc = native_read_tsc();
     
     /*
@@ -2363,7 +2454,7 @@ int process_server_task_exit_notification(pid_t pid) {
     thread_group_exited_notification_t exit_notification;
     clone_data_t* clone_data;
 
-    count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id);
+    count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id,1);
     
     clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
@@ -2689,26 +2780,26 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
         prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
 
-        if((data->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE) {
-            printk("%s: THIS IS A COW MAPPING!\n",__func__);
+        /*if((data->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE) {
+            PSPRINTK("%s: THIS IS A COW MAPPING!\n",__func__);
         } else {
-            printk("%s: this is NOT a COW mapping\n",__func__);
+            PSPRINTK("%s: this is NOT a COW mapping\n",__func__);
         }
 
         if ( prot & PROT_WRITE ) {
-            printk("%s: mapping writable\n",__func__);
+            PSPRINTK("%s: mapping writable\n",__func__);
         }
         if ( prot & PROT_READ ) {
-            printk("%s: mapping readable\n",__func__);
+            PSPRINTK("%s: mapping readable\n",__func__);
         }
         if ( prot & PROT_EXEC ) {
-            printk("%s: mapping exec\n",__func__);
+            PSPRINTK("%s: mapping exec\n",__func__);
         }
         if ( data->vm_flags & VM_SHARED ) {
-            printk("%s: mapping is shared\n",__func__);
+            PSPRINTK("%s: mapping is shared\n",__func__);
         } else {
-            printk("%s: mapping is private\n",__func__);
-        }
+            PSPRINTK("%s: mapping is private\n",__func__);
+        }*/
 
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
@@ -2795,7 +2886,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 mk_page_writable(mm, vma, data->vaddr_mapping);
             }
 
-            dump_mm(mm);
+            //dump_mm(mm);
 
             // Check remap_pfn_range success
             if(err) {
@@ -3186,7 +3277,7 @@ static int __init process_server_init(void) {
             handle_remote_thread_count_response);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION,
             handle_thread_group_exited_notification);
-
+    //perf_hello(); 
     return 0;
 }
 
