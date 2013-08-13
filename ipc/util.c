@@ -131,6 +131,10 @@ void ipc_init_ids(struct ipc_ids *ids)
 	}
 
 	idr_init(&ids->ipcs_idr);
+
+	/*mklinux_akshay*/
+	ids->remoteipc_ops_t=NULL;
+	/*mklinux_akshay*/
 }
 
 #ifdef CONFIG_PROC_FS
@@ -178,7 +182,7 @@ void __init ipc_init_proc_interface(const char *path, const char *header,
  *	If key is found ipc points to the owning ipc structure
  */
  
-static struct kern_ipc_perm *ipc_findkey(struct ipc_ids *ids, key_t key)
+struct kern_ipc_perm *ipc_findkey(struct ipc_ids *ids, key_t key)
 {
 	struct kern_ipc_perm *ipc;
 	int next_id;
@@ -201,6 +205,7 @@ static struct kern_ipc_perm *ipc_findkey(struct ipc_ids *ids, key_t key)
 
 	return NULL;
 }
+
 
 /**
  *	ipc_get_maxid 	-	get the last assigned id
@@ -282,6 +287,10 @@ int ipc_addid(struct ipc_ids* ids, struct kern_ipc_perm* new, int size)
 		ids->seq = 0;
 
 	new->id = ipc_buildid(id, new->seq);
+	/*mklinux_akshay*/
+	new->global_id=new->id;
+	new->id=GLOBAL_IPCID(new->id);
+	/*mklinux_akshay*/
 	return id;
 }
 
@@ -330,7 +339,7 @@ retry:
  *
  *	It is called with ipc_ids.rw_mutex and ipcp->lock held.
  */
-static int ipc_check_perms(struct ipc_namespace *ns,
+int ipc_check_perms(struct ipc_namespace *ns,
 			   struct kern_ipc_perm *ipcp,
 			   struct ipc_ops *ops,
 			   struct ipc_params *params)
@@ -342,7 +351,7 @@ static int ipc_check_perms(struct ipc_namespace *ns,
 	else {
 		err = ops->associate(ipcp, params->flg);
 		if (!err)
-			err = ipcp->id;
+			err = ORIG_KEY(ipcp->id);
 	}
 
 	return err;
@@ -411,6 +420,66 @@ retry:
 	return err;
 }
 
+static int _ipcget_public(struct ipc_namespace *ns, struct ipc_ids *ids,
+		struct ipc_ops *ops, struct remoteipc_ops *rops, struct ipc_params *params)
+{
+	struct kern_ipc_perm *ipcp;
+	int flg = params->flg;
+	int err;
+retry:
+	err = idr_pre_get(&ids->ipcs_idr, GFP_KERNEL);
+
+	/*
+	 * Take the lock as a writer since we are potentially going to add
+	 * a new entry + read locks are not "upgradable"
+	 */
+	down_write(&ids->rw_mutex);
+	ipcp = ipc_findkey(ids, params->key);
+	if (ipcp == NULL) {
+		/* key not used */
+		if (!(flg & IPC_CREAT))
+			err = -ENOENT;
+		else if (!err)
+			err = -ENOMEM;
+		else
+		{
+			err=0;
+			if (rops!=NULL)
+			{
+			   err = rops->ipc_getsemid(ids, params);
+			}
+			if(err)
+				 goto finish;
+			else if(err == 0)
+				err = ops->getnew(ns, params);
+		}
+	} else {
+		/* ipc object has been locked by ipc_findkey() */
+
+		if (flg & IPC_CREAT && flg & IPC_EXCL)
+			err = -EEXIST;
+		else {
+			err = 0;
+			if (ops->more_checks)
+				err = ops->more_checks(ipcp, params);
+			if (!err)
+				/*
+				 * ipc_check_perms returns the IPC id on
+				 * success
+				 */
+				err = ipc_check_perms(ns, ipcp, ops, params);
+		}
+		ipc_unlock(ipcp);
+	}
+finish:
+	up_write(&ids->rw_mutex);
+
+	if (err == -EAGAIN)
+		goto retry;
+
+	return err;
+}
+
 
 /**
  *	ipc_rmid	-	remove an IPC identifier
@@ -423,7 +492,7 @@ retry:
  
 void ipc_rmid(struct ipc_ids *ids, struct kern_ipc_perm *ipcp)
 {
-	int lid = ipcid_to_idx(ipcp->id);
+	int lid = ipcid_to_idx(ORIG_KEY(ipcp->id));
 
 	idr_remove(&ids->ipcs_idr, lid);
 
@@ -740,6 +809,15 @@ int ipcget(struct ipc_namespace *ns, struct ipc_ids *ids,
 		return ipcget_new(ns, ids, ops, params);
 	else
 		return ipcget_public(ns, ids, ops, params);
+}
+
+int _ipcget(struct ipc_namespace *ns, struct ipc_ids *ids,
+			struct ipc_ops *ops, struct remoteipc_ops *rops, struct ipc_params *params)
+{
+	if (params->key == IPC_PRIVATE)
+		return ipcget_new(ns, ids, ops, params);
+	else
+		return _ipcget_public(ns, ids, ops,rops, params);
 }
 
 /**

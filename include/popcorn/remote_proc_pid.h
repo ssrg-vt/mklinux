@@ -5,7 +5,7 @@
 
 #include <asm/ptrace.h>
 
-int iterate_process(unsigned long *pids);
+int iterate_process();
 int send_request_to_remote(int KernelId);
 int remote_proc_pid_readdir(struct file *filp, void *dirent, filldir_t filldir,loff_t offset);
 

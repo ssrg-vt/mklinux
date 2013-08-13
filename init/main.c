@@ -59,7 +59,8 @@
 #include <linux/kthread.h>
 #include <linux/sched.h>
 #include <linux/signal.h>
-#include <linux/idr.h>
+#include <linux/idr.h>/*mklinux_akshay*/
+//#include <linux/ipc_idr.h>/*mklinux_akshay*/
 #include <linux/kgdb.h>
 #include <linux/ftrace.h>
 #include <linux/async.h>
@@ -103,6 +104,7 @@ extern void pcn_kmsg_init(void);
 #endif
 
 extern void popcorn_init(void);
+extern int _init_RemoteCPUMask(void);
 /*
  * Debug helper: via this flag we know that we are in 'early bootup code'
  * where only the boot processor is running with IRQ disabled.  This means
@@ -444,6 +446,8 @@ static void __init boot_cpu_init(void)
 	set_cpu_active(cpu, true);
 	set_cpu_present(cpu, true);
 	set_cpu_possible(cpu, true);
+	/*mklinux_akshay*/
+	set_cpu_global_online(cpu, true);
 }
 
 void __init __weak smp_setup_processor_id(void)
@@ -550,6 +554,9 @@ asmlinkage void __init start_kernel(void)
 		local_irq_disable();
 	}
 	idr_init_cache();
+	/*mklinux_akshay*/
+	//ipc_idr_init_cache();
+	/*mklinux_akshay*/
 	perf_event_init();
 	rcu_init();
 	radix_tree_init();
@@ -831,6 +838,7 @@ static int __init kernel_init(void * unused)
 
 	do_basic_setup();
 
+
 	/* Open the /dev/console on the rootfs, this should never fail */
 	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)
 		printk(KERN_WARNING "Warning: unable to open an initial console.\n");
@@ -855,6 +863,9 @@ static int __init kernel_init(void * unused)
 	 * we're essentially up and running. Get rid of the
 	 * initmem segments and start the user-mode stuff..
 	 */
+	/*mklinux_akshay*/
+
+		_init_RemoteCPUMask();
 
 	init_post();
 	return 0;

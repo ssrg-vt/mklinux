@@ -80,6 +80,10 @@ struct ipc_kludge {
 #ifdef __KERNEL__
 #include <linux/spinlock.h>
 
+/*mklinux_akshay*/
+#include <popcorn/ipc.h>
+/*mklinux_akshay*/
+
 #define IPCMNI 32768  /* <= MAX_INT limit for ipc arrays (including sysctl changes) */
 
 /* used by in-kernel data structures */
@@ -87,7 +91,7 @@ struct kern_ipc_perm
 {
 	spinlock_t	lock;
 	int		deleted;
-	int		id;
+	unsigned long		id;/*mklinux_akshay*/
 	key_t		key;
 	uid_t		uid;
 	gid_t		gid;
@@ -96,6 +100,11 @@ struct kern_ipc_perm
 	mode_t		mode; 
 	unsigned long	seq;
 	void		*security;
+	/*mklinux_akshay*/
+	global_key_t	global_key;
+	global_ipc_id_t	global_id;
+	struct remoteipc_ops *remoteipc_ops_t;
+	/*mklinux_akshay*/
 };
 
 #endif /* __KERNEL__ */

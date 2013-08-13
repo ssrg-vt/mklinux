@@ -15,6 +15,12 @@
 #include <asm/pgtable.h>
 #include "internal.h"
 
+/*mklinux_akshay*/
+#include <popcorn/init.h>
+#include <linux/string.h>
+extern int remote_proc_meminfo_info(struct seq_file *m);
+/*mklinux_akshay*/
+
 void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
 {
 }
@@ -170,6 +176,16 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 
 	arch_report_meminfo(m);
 
+	/*mklinux_akshay*/
+	struct task_struct *t;
+	t=current;
+	int o;
+	printk("show: current comm: %s   pid:%d-%d",t->comm,strlen(t->comm),strlen("cat"));
+	if(!(o=strcmp (t->comm,"cat")))
+		remote_proc_meminfo_info(m);
+
+
+	printk("show: O: %d",o);/*mklinux_akshay*/
 	return 0;
 #undef K
 }

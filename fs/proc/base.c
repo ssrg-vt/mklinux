@@ -89,7 +89,7 @@
 #include "internal.h"
 
 /*mklinux_akshay*/
-#include <popcorn/remote_proc_pid.h>
+#include "remote_proc_pid.h"
 /* NOTE:
  *	Implementing inode permission operations in /proc is almost
  *	certainly an error.  Permission checks need to happen during
