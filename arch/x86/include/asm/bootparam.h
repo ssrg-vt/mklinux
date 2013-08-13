@@ -91,12 +91,6 @@ struct efi_info {
 	__u32 efi_systab_hi;
 	__u32 efi_memmap_hi;
 };
-/*mklinux_akshay*/
-struct kernel_id_param
-{
-	__u64 shm_kernel_id_addr;
-	__u32 flag;
-};/*mklinux_akshay*/
 
 /* The so-called "zeropage" */
 struct boot_params {
@@ -128,7 +122,6 @@ struct boot_params {
 	__u8  _pad9[260];				/* 0xeec */
 	__u64 shmtun_phys_addr;
 	__u64 pcn_kmsg_master_window;
-	/*mklinux_akshay*/struct kernel_id_param kernel_id_param;/*mklinux_akshay*/
 } __attribute__((packed));
 
 enum {

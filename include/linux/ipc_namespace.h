@@ -18,12 +18,19 @@
 
 struct user_namespace;
 
+/*mklinux_akshay*/
+struct remoteipc_ops;
+/*mklinux_akshay*/
+
 struct ipc_ids {
 	int in_use;
 	unsigned short seq;
 	unsigned short seq_max;
 	struct rw_semaphore rw_mutex;
+	/*mklinux_akshay*/
 	struct idr ipcs_idr;
+	struct remoteipc_ops *remoteipc_ops_t;
+	/*mklinux_akshay*/
 };
 
 struct ipc_namespace {

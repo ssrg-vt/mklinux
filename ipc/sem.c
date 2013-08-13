@@ -90,59 +90,21 @@
 #include <asm/uaccess.h>
 #include "util.h"
 
-/* One semaphore structure for each semaphore in the system. */
-struct sem {
-	int	semval;		/* current value */
-	int	sempid;		/* pid of last operation */
-	struct list_head sem_pending; /* pending single-sop operations */
-};
-
-/* One queue for each sleeping process in the system. */
-struct sem_queue {
-	struct list_head	simple_list; /* queue of pending operations */
-	struct list_head	list;	 /* queue of pending operations */
-	struct task_struct	*sleeper; /* this process */
-	struct sem_undo		*undo;	 /* undo structure */
-	int			pid;	 /* process id of requesting process */
-	int			status;	 /* completion status of operation */
-	struct sembuf		*sops;	 /* array of pending operations */
-	int			nsops;	 /* number of operations */
-	int			alter;	 /* does *sops alter the array? */
-};
-
-/* Each task has a list of undo requests. They are executed automatically
- * when the process exits.
+/*mklinux_akshay*/
+/*
+ * struct sem, sem_queues, sem_undo_list moved to sem.h
  */
-struct sem_undo {
-	struct list_head	list_proc;	/* per-process list: *
-						 * all undos from one process
-						 * rcu protected */
-	struct rcu_head		rcu;		/* rcu struct for sem_undo */
-	struct sem_undo_list	*ulp;		/* back ptr to sem_undo_list */
-	struct list_head	list_id;	/* per semaphore array list:
-						 * all undos for one array */
-	int			semid;		/* semaphore set identifier */
-	short			*semadj;	/* array of adjustments */
-						/* one per semaphore */
-};
-
-/* sem_undo_list controls shared access to the list of sem_undo structures
- * that may be shared among all a CLONE_SYSVSEM task group.
- */
-struct sem_undo_list {
-	atomic_t		refcnt;
-	spinlock_t		lock;
-	struct list_head	list_proc;
-};
-
-
-#define sem_ids(ns)	((ns)->ids[IPC_SEM_IDS])
+#include "sem_remote.h"
+/*mklinux_akshay*/
+/*mklinux_akshay*/// moved to util.h
+//#define sem_ids(ns)	((ns)->ids[IPC_SEM_IDS])
+/*mklinux_akshay*/
 
 #define sem_unlock(sma)		ipc_unlock(&(sma)->sem_perm)
 #define sem_checkid(sma, semid)	ipc_checkid(&sma->sem_perm, semid)
 
-static int newary(struct ipc_namespace *, struct ipc_params *);
-static void freeary(struct ipc_namespace *, struct kern_ipc_perm *);
+int newary(struct ipc_namespace *, struct ipc_params *);
+void freeary(struct ipc_namespace *, struct kern_ipc_perm *);
 #ifdef CONFIG_PROC_FS
 static int sysvipc_sem_proc_show(struct seq_file *s, void *it);
 #endif
@@ -172,6 +134,10 @@ void sem_init_ns(struct ipc_namespace *ns)
 	ns->sc_semmni = SEMMNI;
 	ns->used_sems = 0;
 	ipc_init_ids(&ns->ids[IPC_SEM_IDS]);
+
+	/*mklinux_akshay*/
+	ns->ids[IPC_SEM_IDS].remoteipc_ops_t=NULL;
+	/*mklinux_akshay*/
 }
 
 #ifdef CONFIG_IPC_NS
@@ -186,7 +152,7 @@ void __init sem_init (void)
 {
 	sem_init_ns(&init_ipc_ns);
 	ipc_init_proc_interface("sysvipc/sem",
-				"       key      semid perms      nsems   uid   gid  cuid  cgid      otime      ctime\n",
+				"       key      semid perms      nsems   uid   gid  cuid  cgid      otime      ctime        global_key			global_id\n",
 				IPC_SEM_IDS, sysvipc_sem_proc_show);
 }
 
@@ -281,7 +247,7 @@ static inline void sem_rmid(struct ipc_namespace *ns, struct sem_array *s)
  * Called with sem_ids.rw_mutex held (as a writer)
  */
 
-static int newary(struct ipc_namespace *ns, struct ipc_params *params)
+int newary(struct ipc_namespace *ns, struct ipc_params *params)
 {
 	int id;
 	int retval;
@@ -306,7 +272,9 @@ static int newary(struct ipc_namespace *ns, struct ipc_params *params)
 
 	sma->sem_perm.mode = (semflg & S_IRWXUGO);
 	sma->sem_perm.key = key;
-
+	/*mklinux_akshay*/
+	sma->sem_perm.global_key = GLOBAL_KEY(sma->sem_perm.key);
+	/*mklinux_akshay*/
 	sma->sem_perm.security = NULL;
 	retval = security_sem_alloc(sma);
 	if (retval) {
@@ -341,7 +309,7 @@ static int newary(struct ipc_namespace *ns, struct ipc_params *params)
 /*
  * Called with sem_ids.rw_mutex and ipcp locked.
  */
-static inline int sem_security(struct kern_ipc_perm *ipcp, int semflg)
+ int sem_security(struct kern_ipc_perm *ipcp, int semflg)
 {
 	struct sem_array *sma;
 
@@ -352,7 +320,7 @@ static inline int sem_security(struct kern_ipc_perm *ipcp, int semflg)
 /*
  * Called with sem_ids.rw_mutex and ipcp locked.
  */
-static inline int sem_more_checks(struct kern_ipc_perm *ipcp,
+int sem_more_checks(struct kern_ipc_perm *ipcp,
 				struct ipc_params *params)
 {
 	struct sem_array *sma;
@@ -369,6 +337,9 @@ SYSCALL_DEFINE3(semget, key_t, key, int, nsems, int, semflg)
 	struct ipc_namespace *ns;
 	struct ipc_ops sem_ops;
 	struct ipc_params sem_params;
+	/*mklinux_akshay*/
+	struct remoteipc_ops remotesem_ops;
+	/*mklinux_akshay*/
 
 	ns = current->nsproxy->ipc_ns;
 
@@ -383,7 +354,11 @@ SYSCALL_DEFINE3(semget, key_t, key, int, nsems, int, semflg)
 	sem_params.flg = semflg;
 	sem_params.u.nsems = nsems;
 
-	return ipcget(ns, &sem_ids(ns), &sem_ops, &sem_params);
+	/*mklinux_akshay*/
+	remotesem_ops.ipc_getsemid=remote_ipc_sem_getid;
+
+
+	return _ipcget(ns, &sem_ids(ns), &sem_ops,&remotesem_ops, &sem_params);/*mklinux_akshay*/
 }
 
 /*
@@ -739,7 +714,7 @@ static int count_semzcnt (struct sem_array * sma, ushort semnum)
  * as a writer and the spinlock for this semaphore set hold. sem_ids.rw_mutex
  * remains locked on exit.
  */
-static void freeary(struct ipc_namespace *ns, struct kern_ipc_perm *ipcp)
+void freeary(struct ipc_namespace *ns, struct kern_ipc_perm *ipcp)
 {
 	struct sem_undo *un, *tu;
 	struct sem_queue *q, *tq;
@@ -798,7 +773,8 @@ static unsigned long copy_semid_to_user(void __user *buf, struct semid64_ds *in,
 	}
 }
 
-static int semctl_nolock(struct ipc_namespace *ns, int semid,
+/*mklinux_akshay*/ //static /*mklinux_akshay*/
+int semctl_nolock(struct ipc_namespace *ns, int semid,
 			 int cmd, int version, union semun arg)
 {
 	int err;
@@ -883,7 +859,8 @@ out_unlock:
 	return err;
 }
 
-static int semctl_main(struct ipc_namespace *ns, int semid, int semnum,
+/*mklinux_akshay*/ //static /*mklinux_akshay*/
+int semctl_main(struct ipc_namespace *ns, int semid, int semnum,
 		int cmd, int version, union semun arg)
 {
 	struct sem_array *sma;
@@ -1075,7 +1052,8 @@ copy_semid_from_user(struct semid64_ds *out, void __user *buf, int version)
  * to be held in write mode.
  * NOTE: no locks must be held, the rw_mutex is taken inside this function.
  */
-static int semctl_down(struct ipc_namespace *ns, int semid,
+/*mklinux_akshay*/ //static /*mklinux_akshay*/
+int semctl_down(struct ipc_namespace *ns, int semid,
 		       int cmd, int version, union semun arg)
 {
 	struct sem_array *sma;
@@ -1129,14 +1107,26 @@ SYSCALL_DEFINE(semctl)(int semid, int semnum, int cmd, union semun arg)
 
 	version = ipc_parse_version(&cmd);
 	ns = current->nsproxy->ipc_ns;
+	/*mklinux_akshay*/
+	struct remoteipc_ops remotesem_ops;
+	/*mklinux_akshay*/
 
 	switch(cmd) {
 	case IPC_INFO:
 	case SEM_INFO:
 	case IPC_STAT:
 	case SEM_STAT:
-		err = semctl_nolock(ns, semid, cmd, version, arg);
+	{
+		if(isLocalKernel(semid))
+		{
+			err = semctl_nolock(ns, semid, cmd, version, arg);
+		}
+		else
+		{
+			err = remote_ipc_sem_semctl(semnum,semid, cmd, version, arg);
+		}
 		return err;
+	}
 	case GETALL:
 	case GETVAL:
 	case GETPID:
@@ -1144,12 +1134,30 @@ SYSCALL_DEFINE(semctl)(int semid, int semnum, int cmd, union semun arg)
 	case GETZCNT:
 	case SETVAL:
 	case SETALL:
-		err = semctl_main(ns,semid,semnum,cmd,version,arg);
+	{
+		if(isLocalKernel(semid))
+		{
+			err = semctl_main(ns,semid,semnum,cmd,version,arg);
+		}
+		else
+		{
+			err = remote_ipc_sem_semctl(semnum,semid, cmd, version, arg);
+		}
 		return err;
+	}
 	case IPC_RMID:
 	case IPC_SET:
-		err = semctl_down(ns, semid, cmd, version, arg);
+	{
+		if(isLocalKernel(semid))
+		{
+			err = semctl_down(ns, semid, cmd, version, arg);
+		}
+		else
+		{
+			err = remote_ipc_sem_semctl(semnum,semid, cmd, version, arg);
+		}
 		return err;
+	}
 	default:
 		return -EINVAL;
 	}
@@ -1680,7 +1688,7 @@ static int sysvipc_sem_proc_show(struct seq_file *s, void *it)
 	struct sem_array *sma = it;
 
 	return seq_printf(s,
-			  "%10d %10d  %4o %10u %5u %5u %5u %5u %10lu %10lu\n",
+			  "%10d %10d  %4o %10u %5u %5u %5u %5u %10lu %10lu %10u %10u\n",
 			  sma->sem_perm.key,
 			  sma->sem_perm.id,
 			  sma->sem_perm.mode,
@@ -1690,6 +1698,8 @@ static int sysvipc_sem_proc_show(struct seq_file *s, void *it)
 			  sma->sem_perm.cuid,
 			  sma->sem_perm.cgid,
 			  sma->sem_otime,
-			  sma->sem_ctime);
+			  sma->sem_ctime,
+			  sma->sem_perm.global_key,
+			  sma->sem_perm.global_id);
 }
 #endif

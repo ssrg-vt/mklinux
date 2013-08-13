@@ -80,21 +80,29 @@ extern const struct cpumask *const cpu_online_mask;
 extern const struct cpumask *const cpu_present_mask;
 extern const struct cpumask *const cpu_active_mask;
 
+/*mklinux_akshay*/
+extern const struct cpumask *const cpu_global_online_mask;
+/*mklinux_akshay*/
+
 #if NR_CPUS > 1
 #define num_online_cpus()	cpumask_weight(cpu_online_mask)
+#define num_global_online_cpus()	cpumask_weight(cpu_global_online_mask)/*mklinux_akshay*/
 #define num_possible_cpus()	cpumask_weight(cpu_possible_mask)
 #define num_present_cpus()	cpumask_weight(cpu_present_mask)
 #define num_active_cpus()	cpumask_weight(cpu_active_mask)
 #define cpu_online(cpu)		cpumask_test_cpu((cpu), cpu_online_mask)
+#define cpu_global_online(cpu)		cpumask_test_cpu((cpu), cpu_global_online_mask)/*mklinux_akshay*/
 #define cpu_possible(cpu)	cpumask_test_cpu((cpu), cpu_possible_mask)
 #define cpu_present(cpu)	cpumask_test_cpu((cpu), cpu_present_mask)
 #define cpu_active(cpu)		cpumask_test_cpu((cpu), cpu_active_mask)
 #else
 #define num_online_cpus()	1U
+#define num_global_online_cpus()	1U /*mklinux_akshay*/
 #define num_possible_cpus()	1U
 #define num_present_cpus()	1U
 #define num_active_cpus()	1U
 #define cpu_online(cpu)		((cpu) == 0)
+#define cpu_global_online(cpu)		((cpu) == 0) /*mklinux_akshay*/
 #define cpu_possible(cpu)	((cpu) == 0)
 #define cpu_present(cpu)	((cpu) == 0)
 #define cpu_active(cpu)		((cpu) == 0)
@@ -695,14 +703,19 @@ extern const DECLARE_BITMAP(cpu_all_bits, NR_CPUS);
 #define for_each_online_cpu(cpu)   for_each_cpu((cpu), cpu_online_mask)
 #define for_each_present_cpu(cpu)  for_each_cpu((cpu), cpu_present_mask)
 
+/*mklinux_akshay*/
+#define for_each_global_online_cpu(cpu)   for_each_cpu((cpu), cpu_global_online_mask)
+/*mklinux_akshay*/
 /* Wrappers for arch boot code to manipulate normally-constant masks */
 void set_cpu_possible(unsigned int cpu, bool possible);
 void set_cpu_present(unsigned int cpu, bool present);
 void set_cpu_online(unsigned int cpu, bool online);
+void set_cpu_global_online(unsigned int cpu, bool online);/*mklinux_akshay*/
 void set_cpu_active(unsigned int cpu, bool active);
 void init_cpu_present(const struct cpumask *src);
 void init_cpu_possible(const struct cpumask *src);
 void init_cpu_online(const struct cpumask *src);
+void init_global_cpu_online(const struct cpumask *src);/*mklinux_akshay*/
 
 /**
  * to_cpumask - convert an NR_CPUS bitmap to a struct cpumask *
@@ -766,6 +779,7 @@ static inline const struct cpumask *get_cpu_mask(unsigned int cpu)
 /* These strip const, as traditionally they weren't const. */
 #define cpu_possible_map	(*(cpumask_t *)cpu_possible_mask)
 #define cpu_online_map		(*(cpumask_t *)cpu_online_mask)
+#define cpu_global_online_map		(*(cpumask_t *)cpu_global_online_mask)
 #define cpu_present_map		(*(cpumask_t *)cpu_present_mask)
 #define cpu_active_map		(*(cpumask_t *)cpu_active_mask)
 

@@ -614,6 +614,12 @@ static DECLARE_BITMAP(cpu_online_bits, CONFIG_NR_CPUS) __read_mostly;
 const struct cpumask *const cpu_online_mask = to_cpumask(cpu_online_bits);
 EXPORT_SYMBOL(cpu_online_mask);
 
+/*mklinux_akshay*/
+static DECLARE_BITMAP(cpu_global_online_bits, CONFIG_NR_CPUS) __read_mostly;
+const struct cpumask *const cpu_global_online_mask = to_cpumask(cpu_global_online_bits);
+EXPORT_SYMBOL(cpu_global_online_mask);
+/*mklinux_akshay*/
+
 static DECLARE_BITMAP(cpu_present_bits, CONFIG_NR_CPUS) __read_mostly;
 const struct cpumask *const cpu_present_mask = to_cpumask(cpu_present_bits);
 EXPORT_SYMBOL(cpu_present_mask);
@@ -621,6 +627,15 @@ EXPORT_SYMBOL(cpu_present_mask);
 static DECLARE_BITMAP(cpu_active_bits, CONFIG_NR_CPUS) __read_mostly;
 const struct cpumask *const cpu_active_mask = to_cpumask(cpu_active_bits);
 EXPORT_SYMBOL(cpu_active_mask);
+
+
+void set_cpu_global_online(unsigned int cpu, bool online)
+{
+	if (online)
+		cpumask_set_cpu(cpu, to_cpumask(cpu_global_online_bits));
+	else
+		cpumask_clear_cpu(cpu, to_cpumask(cpu_global_online_bits));
+}
 
 void set_cpu_possible(unsigned int cpu, bool possible)
 {
