@@ -44,7 +44,6 @@
 #include <linux/delay.h>
 #include <linux/kernel.h>
 #include <popcorn/pid.h>
-#include <linux/kthread.h>
 
 static int _cpu = -1;
 static struct list_head out_head;
@@ -80,6 +79,9 @@ static _function_args_t kthread_param={
 		.req_id = -1
 };
 
+static int _cpu = -1;
+static int wait = -1;
+int err_no = -ESRCH;
 
 static struct task_struct *waiting_thread;
 
@@ -254,7 +256,6 @@ static int handle_remote_kill_response(struct pcn_kmsg_message* inc_msg) {
 static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 
 	_remote_kill_request_t* msg = (_remote_kill_request_t*) inc_msg;
-
 	_remote_kill_response_t response;
 
 	_incomming_remote_signal_pool_t *ptr;
@@ -267,7 +268,6 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	// Finish constructing response
 	response.header.type = PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE;
 	response.header.prio = PCN_KMSG_PRIO_NORMAL;
-
 
 	struct siginfo info;
 
