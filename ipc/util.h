@@ -176,3 +176,31 @@ int ipcget(struct ipc_namespace *ns, struct ipc_ids *ids,
 void free_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids,
 		void (*free)(struct ipc_namespace *, struct kern_ipc_perm *));
 #endif
+
+/*mklinux_akshay*/
+
+//remote functions and structures
+struct remoteipc_ops {
+
+	int (*ipc_getsemid)(struct ipc_ids *, struct ipc_params *params);
+	int (*ipc_semctl)(int semnum, int semid, int cmd, int version, union semun arg);
+};
+int _ipcget(struct ipc_namespace *ns, struct ipc_ids *ids,
+			struct ipc_ops *ops, struct remoteipc_ops *rops, struct ipc_params *params);
+
+//moved from sem.c
+#define sem_ids(ns)	((ns)->ids[IPC_SEM_IDS])
+/*int newary(struct ipc_namespace *, struct ipc_params *);
+void freeary(struct ipc_namespace *, struct kern_ipc_perm *);
+int sem_security(struct kern_ipc_perm *ipcp, int semflg);
+int sem_more_checks(struct kern_ipc_perm *ipcp,
+				struct ipc_params *params);
+
+//global definition for functions in util.c
+struct kern_ipc_perm *ipc_findkey(struct ipc_ids *ids, key_t key);
+int ipc_check_perms(struct ipc_namespace *ns,
+ 			   struct kern_ipc_perm *ipcp,
+ 			   struct ipc_ops *ops,
+ 			   struct ipc_params *params);*/
+
+/*mklinux_akshay*/

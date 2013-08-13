@@ -39,7 +39,7 @@
 
 /*mklinux_akshay*/
 #include <popcorn/pid.h>
-
+//#include <popcorn/init.h>
 
 #define pid_hashfn(nr, ns)	\
 	hash_long((unsigned long)nr + (unsigned long)ns, pidhash_shift)
@@ -124,11 +124,11 @@ static void free_pidmap(struct upid *upid)
 	int nr = upid->nr;
 	/*mklinux_akshay*/
 	int nr_t= ORIG_PID(upid->nr);
-	printk(KERN_ERR "Free GLobal PID %d:--: %d",nr_t,nr);
+	//printk(KERN_ERR "Free GLobal PID %d:--: %d",nr_t,nr);
 	nr=nr_t;/*mklinux_akshay*/
 	struct pidmap *map = upid->ns->pidmap + nr / BITS_PER_PAGE;
 	int offset = nr & BITS_PER_PAGE_MASK;
-	printk(KERN_ERR "Free offset %d:\n",offset);
+	//printk(KERN_ERR "Free offset %d:\n",offset);
 	clear_bit(offset, map->page);
 	atomic_inc(&map->nr_free);
 }
@@ -179,7 +179,7 @@ static int alloc_pidmap(struct pid_namespace *pid_ns)
 	if (pid >= pid_max)
 		pid = RESERVED_PIDS;
 	offset = pid & BITS_PER_PAGE_MASK;
-	printk(KERN_ERR "Last PID: %d; off: %d \n",last,offset);
+	//printk(KERN_ERR "Last PID: %d; off: %d \n",last,offset);
 	map = &pid_ns->pidmap[pid/BITS_PER_PAGE];
 	/*
 	 * If last_pid points into the middle of the map->page we
@@ -311,7 +311,7 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 			nr=nr_t;
 		}
 
-		printk(KERN_ERR "Create GLobal PID %d:--:%d",nr_t,nr);/*mklinux_akshay*/
+		//printk(KERN_ERR "Create GLobal PID %d:--:%d",nr_t,nr);/*mklinux_akshay*/
 
 		pid->numbers[i].nr = nr;
 		pid->numbers[i].ns = tmp;
@@ -548,7 +548,7 @@ struct pid *find_ge_pid(int nr, struct pid_namespace *ns)
 		if (global && !(nr & GLOBAL_PID_MASK))
 					{nr_t = GLOBAL_PID(nr);nr=nr_t;}
 
-		printk(KERN_ERR "Find GLobal PID %d:--:%d",nr_t,nr);
+		//printk(KERN_ERR "Find GLobal PID %d:--:%d",nr_t,nr);
 		pid = find_pid_ns(GLOBAL_PID(nr), ns);/*mklinux_akshay*/
 		if (pid)
 			break;/*mklinux_akshay*/

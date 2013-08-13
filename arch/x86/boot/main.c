@@ -34,11 +34,7 @@ static void copy_boot_params(void)
 	};
 	const struct old_cmdline * const oldcmd =
 		(const struct old_cmdline *)OLD_CL_ADDRESS;
-	/*mklinux_akshay
-	 * Need to remove it after new implementation of PID
-	 * /
-	//BUILD_BUG_ON(sizeof boot_params != 4096);
-	/*mklinux_akshay*/
+	BUILD_BUG_ON(sizeof boot_params != 4096);
 	memcpy(&boot_params.hdr, &hdr, sizeof hdr);
 
 	if (!boot_params.hdr.cmd_line_ptr &&

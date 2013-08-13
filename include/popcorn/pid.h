@@ -7,6 +7,7 @@
 #include <linux/types.h>
 #include "init.h"
 
+
 #define POPCORN_MAX_KERNEL_ID  15
 #define GLOBAL_PID_MASK PID_MAX_LIMIT
 #define PID_NODE_SHIFT POPCORN_MAX_KERNEL_ID
@@ -21,6 +22,7 @@
 #define SHORT_PID(pid) ((pid) & INTERNAL_PID_MASK)
 #define ORIG_PID(pid) (SHORT_PID(pid) & ((1<<POPCORN_MAX_KERNEL_ID)-1))
 #define ORIG_NODE(pid) (SHORT_PID(pid) >> PID_NODE_SHIFT)
+
 
 
 

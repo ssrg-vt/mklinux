@@ -894,6 +894,9 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 	struct pcn_kmsg_message this_chunk;
 	//char test_buf[15];
 
+	/*mklinux_akshay*/
+	int ret=0;
+	/*mklinux_akshay*/
 	if (payload_size % PCN_KMSG_PAYLOAD_SIZE) {
 		num_chunks++;
 	}
@@ -917,10 +920,9 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       i * PCN_KMSG_PAYLOAD_SIZE, 
 		       PCN_KMSG_PAYLOAD_SIZE);
 
-		__pcn_kmsg_send(dest_cpu, &this_chunk, 0);
-// TODO check for errors!!!
-// TODO check for errors!!!
-// TODO check for errors!!!
+		ret=__pcn_kmsg_send(dest_cpu, &this_chunk, 0);
+		if(ret!=0)
+			return ret;
 	}
 	long_send++;
 	return 0;
