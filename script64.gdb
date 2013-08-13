@@ -428,6 +428,24 @@ end
 
 define dmesg
   set $__log_buf = (char*)$arg0
+  set $log_start = (unsigned int)$arg1
+  set $log_end = (unsigned int)$arg2
+  set $x = $log_start
+  printf "%p %d %d %d\n", $__log_buf, $log_start, $log_end, $x 
+  while ($x < $log_end)
+    set $c = (char)(($__log_buf)[$x++])
+    printf "%c" , $c
+  end
+  printf "\n"
+end
+document dmesg 
+dmesg __log_buf log_start log_end
+Print the content of the kernel message buffer
+from elinux.org
+end
+
+define dmesg
+  set $__log_buf = (char*)$arg0
   set $log_start = *(unsigned int*)$arg1
   set $log_end = *(unsigned int*)$arg2
   set $x = $log_start

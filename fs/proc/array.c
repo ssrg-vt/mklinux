@@ -144,7 +144,8 @@ static const char * const task_state_array[] = {
 	"W (waking)",		/* 256 */
 };
 
-static inline const char *get_task_state(struct task_struct *tsk)
+/*mklinux_akshay*/ //static inline
+const char *get_task_state(struct task_struct *tsk)
 {
 	unsigned int state = (tsk->state & TASK_REPORT) | tsk->exit_state;
 	const char * const *p = &task_state_array[0];
@@ -233,7 +234,8 @@ static void render_sigset_t(struct seq_file *m, const char *header,
 	seq_putc(m, '\n');
 }
 
-static void collect_sigign_sigcatch(struct task_struct *p, sigset_t *ign,
+/*mklinux_akshay*/ //static
+void collect_sigign_sigcatch(struct task_struct *p, sigset_t *ign,
 				    sigset_t *catch)
 {
 	struct k_sigaction *k;

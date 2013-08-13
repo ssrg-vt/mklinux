@@ -1,22 +1,29 @@
+#ifndef __POPCORN_INIT_H
+#define __POPCORN_INIT_H
+/*
+ * Boot parameters for allocating Kernel ID
+ *
+ * (C) Akshay Ravichandran <akshay87@vt.edu> 2012
+ */
 
 
-#include <asm/bootparam.h>
-#include <asm/system.h>
-#include <asm/uaccess.h>
-#include <linux/multikernel.h>
-#include <linux/mm.h>
-#include <asm/setup.h>
-#include<linux/slab.h>
+extern unsigned int Kernel_Id;
+extern unsigned long *token_bucket;
+extern unsigned long long bucket_phys_addr;
 
-#define max_nodes 1 << 8
+extern void popcorn_init(void);
 
-unsigned int Kernel_Id;
-extern unsigned long orig_boot_params;
-unsigned long *token_bucket;
+extern int _init_RemoteCPUMask(void);
+
+//extern struct _remote_cpu_info_list rlist;
+
+extern struct list_head rlist_head;
+
+#endif /* __POPCORN_INIT_H */
 
 
-void popcorn_init(void)
 
+/*
 {
 
 unsigned long bucket_phys_addr=0;
@@ -83,4 +90,4 @@ printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
 printk("POP_INIT:Virt add : 0x%p --- shm kernel id address: 0x%lx\n",token_bucket,bucket_phys_addr);
 
 }
-
+*/
