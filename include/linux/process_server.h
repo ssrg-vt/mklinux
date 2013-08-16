@@ -24,7 +24,7 @@ int process_server_do_migration(struct task_struct* task, int cpu);
  */
 int process_server_import_address_space(unsigned long* ip, unsigned long *sp, struct pt_regs* regs);
 int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu);
-int process_server_task_exit_notification(pid_t pid);
+int process_server_do_exit();
 int process_server_notify_mmap(struct file *file, unsigned long addr,
                                 unsigned long len, unsigned long prot,
                                 unsigned long flags, unsigned long pgoff);
