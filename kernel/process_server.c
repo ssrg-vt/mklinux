@@ -21,7 +21,7 @@
 #include <linux/io.h> // ioremap
 #include <linux/mman.h> // MAP_ANONYMOUS
 #include <linux/pcn_kmsg.h> // Messaging
-//#include <linux/pcn_perf.h> // performance measurement
+#include <linux/pcn_perf.h> // performance measurement
 #include <linux/string.h>
 
 #include <asm/pgtable.h>
@@ -36,7 +36,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -54,6 +54,41 @@
 #define PROCESS_SERVER_MUNMAP_REQUEST_DATA_TYPE 5
 #define PROCESS_SERVER_MM_DATA_TYPE 6
 #define PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE 7
+
+/**
+ * Perf
+ */
+#define MEASURE_PERF 1
+#if MEASURE_PERF
+#define PERF_INIT() perf_init()
+#define PERF_MEASURE_START(x) perf_measure_start(x)
+#define PERF_MEASURE_STOP(x)  perf_measure_stop(x)
+#else
+#define PERF_INIT() 
+#define PERF_MEASURE_START(x)
+#define PERF_MEASURE_STOP(x)
+#endif
+
+pcn_perf_context_t perf_process_mapping_request;
+pcn_perf_context_t perf_process_exec_item;
+pcn_perf_context_t perf_process_server_try_handle_mm_fault;
+pcn_perf_context_t perf_process_server_import_address_space;
+pcn_perf_context_t perf_process_server_do_exit;
+pcn_perf_context_t perf_process_server_do_munmap;
+pcn_perf_context_t perf_process_server_do_migration;
+
+/**
+ *
+ */
+static void perf_init() {
+   perf_init_context(&perf_process_mapping_request,"Process Mapping Request"); 
+   perf_init_context(&perf_process_exec_item,"Process Exec Item");
+   perf_init_context(&perf_process_server_try_handle_mm_fault,"MM Fault Hook");
+   perf_init_context(&perf_process_server_import_address_space,"Import Address Space");
+   perf_init_context(&perf_process_server_do_exit,"Do Exit Hook");
+   perf_init_context(&perf_process_server_do_munmap,"Do Munmap Hook");
+   perf_init_context(&perf_process_server_do_migration,"Do Migration");
+}
 
 /**
  * Library
@@ -631,21 +666,12 @@ static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr) {
     PSPRINTK("DUMP STACK\n");
     if(thread->sp) {
         PSPRINTK("sp = %lx\n",thread->sp);
-        for(i = 0; i <= 8; i++) {
-            PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(thread->sp + i*8), thread->sp + i*8); 
-        }
     }
     if(thread->usersp) {
         PSPRINTK("usersp = %lx\n",thread->usersp);
-        for(i = 0; i <= 8; i++) {
-            PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(thread->usersp + i*8), thread->usersp + i*8);
-        }
     }
     if(stack_ptr) {
         PSPRINTK("stack_ptr = %lx\n",stack_ptr);
-        for(i = 0; i <= 8; i++) {
-            PSPRINTK("stack peak %lx at %lx\n",*(unsigned long*)(stack_ptr + i*8), stack_ptr + i*8);
-        }
     }
     PSPRINTK("STACK DUMP COMPLETE\n");
 }
@@ -696,7 +722,6 @@ static void dump_thread(struct thread_struct* thread) {
     PSPRINTK("ds{%x}\n",thread->ds);
     PSPRINTK("fsindex{%x}\n",thread->fsindex);
     PSPRINTK("gsindex{%x}\n",thread->gsindex);
-    if(thread->fs) PSPRINTK("fs{%lx} - %lx\n",thread->fs,*((unsigned long*)thread->fs));
     PSPRINTK("gs{%lx}\n",thread->gs);
     PSPRINTK("THREAD DUMP COMPLETE\n");
 }
@@ -1336,6 +1361,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
 
 /**
  *
+ * <MEASURED perf_process_mapping_request>
  */
 void process_mapping_request(struct work_struct* work) {
     mapping_request_work_t* w = (mapping_request_work_t*) work;
@@ -1354,6 +1380,10 @@ void process_mapping_request(struct work_struct* work) {
     };
     char* plpath;
     char lpath[512];
+
+    // Perf start
+    PERF_MEASURE_START(&perf_process_mapping_request);
+
     PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("received mapping request address{%lx}, cpu{%d}, id{%d}\n",
             w->address,
@@ -1492,8 +1522,10 @@ mm_found:
 
     kfree(work);
 
-    return 0;
+    // Perf stop
+    PERF_MEASURE_STOP(&perf_process_mapping_request);
 
+    return;
 }
 
 
@@ -1502,7 +1534,7 @@ mm_found:
  */
 void process_exit_item(struct work_struct* work) {
     exit_work_t* w = (exit_work_t*) work;
-    pid_t pid = w->pid;
+    //pid_t pid = w->pid;
     struct task_struct *task = w->task;
 
     if(unlikely(!task)) {
@@ -1536,9 +1568,8 @@ void process_exit_item(struct work_struct* work) {
     kfree(work);
 }
 
-unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
 /**
- *
+ * <MEASURED perf_process_exec_item>
  */
 void process_exec_item(struct work_struct* work) {
     clone_exec_work_t* w = (clone_exec_work_t*)work;
@@ -1550,10 +1581,11 @@ void process_exec_item(struct work_struct* work) {
         "TERM=linux",
         "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
     };
-perf_aa = native_read_tsc();
     sub_info = call_usermodehelper_setup( c->exe_path /*argv[0]*/, 
             argv, envp, 
             GFP_KERNEL );
+
+    PERF_MEASURE_START(&perf_process_exec_item);
 
     PSPRINTK("process_exec_item: %s\n",c->exe_path);
 
@@ -1583,8 +1615,9 @@ perf_aa = native_read_tsc();
      * Spin up the new process.
      */
     call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
-perf_bb = native_read_tsc();
     kfree(work);
+
+    PERF_MEASURE_STOP(&perf_process_exec_item);
 }
 
 
@@ -1611,43 +1644,6 @@ static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_
         queue_work(exit_wq, (struct work_struct*)exit_work);
     }
 
-
-
-/*    data_header_t *curr, *next;
-    mm_data_t* mm_data;
-
-    PSPRINTK("%s: received group exit notification\n",__func__);
-
-    spin_lock(&_data_head_lock);
-    
-    // Remove all saved mm's for this thread group.
-    curr = _data_head;
-    while(curr) {
-        next = curr->next;
-        if(curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
-            mm_data = (mm_data_t*)curr;
-            if(mm_data->tgroup_home_cpu == msg->tgroup_home_cpu &&
-               mm_data->tgroup_home_id  == msg->tgroup_home_id) {
-                // We need to remove this data entry
-                remove_data_entry(curr);
-
-                // Remove mm
-                atomic_dec(&mm_data->mm->mm_users);
-                mmput(mm_data->mm);
-
-                // Free up the data entry
-                kfree(curr);
-                PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
-                        __func__,
-                        msg->tgroup_home_cpu,
-                        msg->tgroup_home_id);
-            }
-        }
-        curr = next;
-    }
-
-    spin_unlock(&_data_head_lock);
-*/
     pcn_kmsg_free_msg(inc_msg);
 
     return 0;
@@ -2152,8 +2148,6 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     vma_data_t* vma;
    
     PSPRINTK("%s: entered\n",__func__);
-
-    perf_cc = native_read_tsc();
     
     /*
      * Remember this request
@@ -2228,8 +2222,6 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 
     add_data_entry(clone_data);
 
-    perf_dd = native_read_tsc();
-    
     clone_work = kmalloc(sizeof(clone_exec_work_t),GFP_ATOMIC);
     if(clone_work) {
         INIT_WORK( (struct work_struct*)clone_work, process_exec_item);
@@ -2238,8 +2230,6 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     }
 
     pcn_kmsg_free_msg(inc_msg);
-    
-    perf_ee = native_read_tsc();
     
     return 0;
 }
@@ -2260,17 +2250,14 @@ static bool __user_addr (unsigned long x )
  * Public API
  */
 
-
-//statistics
-static unsigned long long perf_a, perf_b, perf_c, perf_d, perf_e;
-
-
 /**
  * If this is a delegated process, look up any records that may
  * exist of the remote placeholder processes page information,
  * and map those pages.
  *
  * Assumes current->mm->mmap_sem is already held.
+ *
+ * <MEASURED perf_process_server_import_address_space>
  */
 int process_server_import_address_space(unsigned long* ip, 
         unsigned long* sp, 
@@ -2287,8 +2274,6 @@ int process_server_import_address_space(unsigned long* ip,
     int ptes_installed = 0;
 
 
-    perf_a = native_read_tsc();
-    
     PSPRINTK("import address space\n");
     
     // Verify that we're a delegated task.
@@ -2297,12 +2282,13 @@ int process_server_import_address_space(unsigned long* ip,
         return -1;
     }
 
+    PERF_MEASURE_START(&perf_process_server_import_address_space);
+
     clone_data = find_clone_data(current->prev_cpu,current->clone_request_id);
     if(!clone_data) {
+        PERF_MEASURE_STOP(&perf_process_server_import_address_space);
         return -1;
     }
-
-    perf_b = native_read_tsc();
     
     // Gut existing mappings
     
@@ -2324,8 +2310,6 @@ int process_server_import_address_space(unsigned long* ip,
     flush_cache_mm(current->mm);
 
     up_write(&current->mm->mmap_sem);
-    
-    perf_c = native_read_tsc();    
     
     // import exe_file
     f = filp_open(clone_data->exe_path,O_RDONLY | O_LARGEFILE, 0);
@@ -2410,8 +2394,6 @@ int process_server_import_address_space(unsigned long* ip,
         }
         vma_curr = (vma_data_t*)vma_curr->header.next;
     }
-
-    perf_d = native_read_tsc();
 
     // install memory information
     current->mm->start_stack = clone_data->stack_start;
@@ -2500,19 +2482,13 @@ int process_server_import_address_space(unsigned long* ip,
     }
     
     }
-    
-    //dump_clone_data(clone_data);
-    //dump_task(current,regs, clone_data->stack_ptr);
-    perf_e = native_read_tsc();
-    /*printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
-       __func__,
-       perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
-       perf_a, perf_b, perf_c, perf_d, perf_e);*/
-   
+       
     // Save off clone data
     current->clone_data = clone_data;
 
     dump_task(current,NULL,0);
+
+    PERF_MEASURE_STOP(&perf_process_server_import_address_space);
 
     return 0;
 }
@@ -2522,6 +2498,8 @@ int process_server_import_address_space(unsigned long* ip,
  * Notify of the fact that either a delegate or placeholder has died locally.  
  * In this case, the remote cpu housing its counterpart must be notified, so
  * that it can kill that counterpart.
+ *
+ * <MEASURE perf_process_server_do_exit>
  */
 int process_server_do_exit() {
 
@@ -2539,6 +2517,8 @@ int process_server_do_exit() {
     if(!(current->executing_for_remote || current->tgroup_distributed)) {
         return;
     }
+
+    PERF_MEASURE_START(&perf_process_server_do_exit);
 
     // Count the number of threads in this distributed thread group
     // this will be useful for determining what to do with the mm.
@@ -2612,7 +2592,7 @@ finished_membership_search:
         // thread group.
         if(count == 1) {
 
-            PSPRINTK("%s: This is the last thread member!",__func__);
+            PSPRINTK("%s: This is the last thread member!\n",__func__);
 
             // Notify all cpus
             exit_notification.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION;
@@ -2658,6 +2638,8 @@ finished_membership_search:
         destroy_clone_data(clone_data);
     }
 
+    PERF_MEASURE_STOP(&perf_process_server_do_exit);
+
     return tx_ret;
 }
 
@@ -2694,6 +2676,8 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
  * of this distributed thread group carry out the same munmap operation.  Furthermore,
  * we want to make sure they do so _before_ this syscall returns.  So, synchronously
  * command every cpu to carry out the munmap for the specified thread group.
+ *
+ * <MEASURE perf_process_server_do_munmap>
  */
 int process_server_do_munmap(struct mm_struct* mm, 
             struct vm_area_struct *vma,
@@ -2708,7 +2692,9 @@ int process_server_do_munmap(struct mm_struct* mm,
      // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed || !current->enable_distributed_munmap) {
         goto exit;
-    }  
+    } 
+
+    PERF_MEASURE_START(&perf_process_server_do_munmap);
 
     data = kmalloc(sizeof(munmap_request_data_t),GFP_KERNEL);
     if(!data) goto exit;
@@ -2757,6 +2743,9 @@ int process_server_do_munmap(struct mm_struct* mm,
     kfree(data);
 
 exit:
+
+    PERF_MEASURE_STOP(&perf_process_server_do_munmap);
+
     return 0;
 }
 
@@ -2764,6 +2753,8 @@ exit:
  * Fault hook
  * 0 = not handled
  * 1 = handled
+ *
+ * <MEASURED perf_process_server_try_handle_mm_fault>
  */
 int process_server_try_handle_mm_fault(struct mm_struct *mm, 
                                        struct vm_area_struct *vma,
@@ -2786,8 +2777,17 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
     // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
-        goto not_handled;
+        goto not_handled_no_perf;
     }
+
+    // Check to see if this is a user mode fault.  We should never
+    // try to handle a kernel mode fault.
+    if(!(error_code & 4/*PF_USER*/)) {
+        printk("%s: ERROR, kernel-mode fault\n",__func__);
+        goto not_handled_no_perf;
+    }
+
+    PERF_MEASURE_START(&perf_process_server_try_handle_mm_fault);
 
     PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
             address,
@@ -2806,6 +2806,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // It will also probably cause problems for genuine COW mappings..
         if(vma->vm_flags & VM_WRITE) {
             mk_page_writable(mm,vma,address & PAGE_MASK);
+            PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault);
             return 1;
             
         }
@@ -2899,26 +2900,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
         prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
 
-        /*if((data->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE) {
-            PSPRINTK("%s: THIS IS A COW MAPPING!\n",__func__);
-        } else {
-            PSPRINTK("%s: this is NOT a COW mapping\n",__func__);
-        }
-
-        if ( prot & PROT_WRITE ) {
-            PSPRINTK("%s: mapping writable\n",__func__);
-        }
-        if ( prot & PROT_READ ) {
-            PSPRINTK("%s: mapping readable\n",__func__);
-        }
-        if ( prot & PROT_EXEC ) {
-            PSPRINTK("%s: mapping exec\n",__func__);
-        }
-        if ( data->vm_flags & VM_SHARED ) {
-            PSPRINTK("%s: mapping is shared\n",__func__);
-        } else {
-            PSPRINTK("%s: mapping is private\n",__func__);
-        }*/
 
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
@@ -3023,6 +3004,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     }
 
 exit_remove_data:
+
     PSPRINTK("removing data entry\n");
 
     // Clean up data.
@@ -3034,9 +3016,16 @@ exit_remove_data:
 
     PSPRINTK("exiting fault handler\n");
 
+    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault);
+
     return ret;
     
 not_handled:
+
+    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault);
+
+not_handled_no_perf:
+
     return 0;
 }
 
@@ -3128,6 +3117,8 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
  * remote cpu will then create a new process and import that
  * info into its new context.  
  *
+ * <MEASURE perf_process_server_do_migration>
+ *
  */
 int process_server_do_migration(struct task_struct* task, int cpu) {
     struct pt_regs *regs = task_pt_regs(task);
@@ -3161,11 +3152,11 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         return PROCESS_SERVER_CLONE_FAIL;
     }
 
+    PERF_MEASURE_START(&perf_process_server_do_migration);
+
     // This will be a placeholder process for the remote
     // process that is subsequently going to be started.
     // Block its execution.
-    //sigaddset(&task->pending.signal,SIGSTOP); 
-    //set_tsk_thread_flag(task,TIF_SIGPENDING); 
     __set_task_state(task,TASK_UNINTERRUPTIBLE);
 
     // Book keeping for placeholder process.
@@ -3345,6 +3336,8 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     kfree(vma_xfer);
 
     //dump_task(task,regs,request->stack_ptr);
+    
+    PERF_MEASURE_STOP(&perf_process_server_do_migration);
 
     return PROCESS_SERVER_CLONE_SUCCESS;
 
@@ -3397,7 +3390,7 @@ static int __init process_server_init(void) {
             handle_remote_thread_count_response);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION,
             handle_thread_group_exited_notification);
-    //perf_hello(); 
+    PERF_INIT(); 
     return 0;
 }
 
