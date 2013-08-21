@@ -59,7 +59,7 @@ struct _perf_entry_message {
     unsigned long long end;         
     int in_progress;
     int context_id;
-    //char pad[];
+    char note[512];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _perf_entry_message perf_entry_message_t;
 
@@ -107,7 +107,9 @@ static void send_context(pcn_perf_context_t* ctxt, int cpu) {
         entry_message.end   = curr->end;
         entry_message.in_progress = curr->in_progress;
         entry_message.context_id = curr->context_id;
-        pcn_kmsg_send(cpu,(struct pcn_kmsg_message*)(&entry_message)); 
+        strcpy(entry_message.note,curr->note);
+        pcn_kmsg_send_long(cpu,(struct pcn_kmsg_message*)(&entry_message),
+                            sizeof(perf_entry_message_t) - sizeof(struct pcn_kmsg_hdr)); 
 
         curr = curr->next;
     }
@@ -246,13 +248,14 @@ static void dump_data(void) {
     while(curr) {
         entry = curr->entry_list;
         while(entry) {
-            printk("pcn_perf: %s - %llu %d %d %d %d\n",
+            printk("pcn_perf: %s - %llu %d %d %d %d %s\n",
                     curr->name,
                     entry->end - entry->start,
                     curr->home_cpu,
                     current->pid,
                     current->tgroup_home_cpu,
-                    current->tgroup_home_id);
+                    current->tgroup_home_id,
+                    entry->note);
             entry = entry->next;
         }
         curr = curr->next;
@@ -262,7 +265,6 @@ static void dump_data(void) {
 /**
  * Deactivate all measurement contexts
  * Display data
- * Clear data
  */
 static void do_popcorn_perf_end_impl(void) {
     pcn_perf_context_t* curr = _context_head;
@@ -271,7 +273,7 @@ static void do_popcorn_perf_end_impl(void) {
         curr = curr->next;
     }
     dump_data();
-    clear_data();
+    //clear_data();
 }
 /**
  *
@@ -355,12 +357,13 @@ void perf_measure_start(pcn_perf_context_t *cxt) {
 /**
  *
  */
-void perf_measure_stop(pcn_perf_context_t *cxt) {
+void perf_measure_stop(pcn_perf_context_t *cxt, char* note) {
     unsigned long long time = native_read_tsc();
 
     if(cxt->entry_list && cxt->entry_list->in_progress) {
         cxt->entry_list->end = time;
         cxt->entry_list->in_progress = 0;
+        strcpy(cxt->entry_list->note,note);
     }
 }
 
@@ -368,7 +371,6 @@ void perf_measure_stop(pcn_perf_context_t *cxt) {
  *
  */
 static int handle_start_message(struct pcn_kmsg_message* inc_msg) {
-    printk("%s: entered\n",__func__);
     do_popcorn_perf_start_impl();
    pcn_kmsg_free_msg(inc_msg); 
    return 0;
@@ -381,7 +383,6 @@ static int handle_end_message(struct pcn_kmsg_message* inc_msg) {
     pcn_perf_context_t* curr = _context_head;
     perf_end_ack_message_t ack;
     int cpu = inc_msg->hdr.from_cpu;
-    printk("%s: entered\n",__func__);
     while(curr) {
         curr->is_active = 0;
         send_context(curr,cpu);
@@ -446,6 +447,7 @@ static int handle_entry_transfer(struct pcn_kmsg_message* inc_msg) {
         entry->next = NULL;
         entry->start = msg->start;
         entry->end = msg->end;
+        strcpy(entry->note,msg->note);
         if(cxt->entry_list) {
             cxt->entry_list->prev = entry;
             entry->next = cxt->entry_list;
@@ -468,7 +470,7 @@ static int __init pcn_perf_init(void) {
     _context_id = 0;
 
     // register messaging handlers
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PCN_PERF_START_MESSAGE,                
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PCN_PERF_START_MESSAGE,
                         handle_start_message);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PCN_PERF_END_MESSAGE,                
                         handle_end_message);

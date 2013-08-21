@@ -62,12 +62,7 @@
 #if MEASURE_PERF
 #define PERF_INIT() perf_init()
 #define PERF_MEASURE_START(x) perf_measure_start(x)
-#define PERF_MEASURE_STOP(x)  perf_measure_stop(x)
-#else
-#define PERF_INIT() 
-#define PERF_MEASURE_START(x)
-#define PERF_MEASURE_STOP(x)
-#endif
+#define PERF_MEASURE_STOP(x,y)  perf_measure_stop(x,y)
 
 pcn_perf_context_t perf_process_mapping_request;
 pcn_perf_context_t perf_process_exec_item;
@@ -89,6 +84,12 @@ static void perf_init() {
    perf_init_context(&perf_process_server_do_munmap,"Do Munmap Hook");
    perf_init_context(&perf_process_server_do_migration,"Do Migration");
 }
+
+#else
+#define PERF_INIT() 
+#define PERF_MEASURE_START(x)
+#define PERF_MEASURE_STOP(x)
+#endif
 
 /**
  * Library
@@ -1523,7 +1524,7 @@ mm_found:
     kfree(work);
 
     // Perf stop
-    PERF_MEASURE_STOP(&perf_process_mapping_request);
+    PERF_MEASURE_STOP(&perf_process_mapping_request,"hello");
 
     return;
 }
@@ -1617,7 +1618,7 @@ void process_exec_item(struct work_struct* work) {
     call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
     kfree(work);
 
-    PERF_MEASURE_STOP(&perf_process_exec_item);
+    PERF_MEASURE_STOP(&perf_process_exec_item,"goodbye");
 }
 
 
@@ -2286,7 +2287,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     clone_data = find_clone_data(current->prev_cpu,current->clone_request_id);
     if(!clone_data) {
-        PERF_MEASURE_STOP(&perf_process_server_import_address_space);
+        PERF_MEASURE_STOP(&perf_process_server_import_address_space,"Clone data missing, early exit");
         return -1;
     }
     
@@ -2488,7 +2489,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     dump_task(current,NULL,0);
 
-    PERF_MEASURE_STOP(&perf_process_server_import_address_space);
+    PERF_MEASURE_STOP(&perf_process_server_import_address_space,"Exit success");
 
     return 0;
 }
@@ -2638,7 +2639,7 @@ finished_membership_search:
         destroy_clone_data(clone_data);
     }
 
-    PERF_MEASURE_STOP(&perf_process_server_do_exit);
+    PERF_MEASURE_STOP(&perf_process_server_do_exit,"Exit success");
 
     return tx_ret;
 }
@@ -2744,7 +2745,7 @@ int process_server_do_munmap(struct mm_struct* mm,
 
 exit:
 
-    PERF_MEASURE_STOP(&perf_process_server_do_munmap);
+    PERF_MEASURE_STOP(&perf_process_server_do_munmap,"Exit success");
 
     return 0;
 }
@@ -2806,7 +2807,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // It will also probably cause problems for genuine COW mappings..
         if(vma->vm_flags & VM_WRITE) {
             mk_page_writable(mm,vma,address & PAGE_MASK);
-            PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault);
+            PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Adjusted permissions on page");
             return 1;
             
         }
@@ -3016,13 +3017,13 @@ exit_remove_data:
 
     PSPRINTK("exiting fault handler\n");
 
-    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault);
+    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Exit success");
 
     return ret;
     
 not_handled:
 
-    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault);
+    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"test");
 
 not_handled_no_perf:
 
@@ -3337,7 +3338,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     //dump_task(task,regs,request->stack_ptr);
     
-    PERF_MEASURE_STOP(&perf_process_server_do_migration);
+    PERF_MEASURE_STOP(&perf_process_server_do_migration,"test2");
 
     return PROCESS_SERVER_CLONE_SUCCESS;
 
