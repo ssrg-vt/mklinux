@@ -5589,7 +5589,8 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	      schedule(); // this will save us from death
 	    //}
 	    
-            return 0;
+            return task_pt_regs(current)->orig_ax;
+	    return 0;
         }
     }
 

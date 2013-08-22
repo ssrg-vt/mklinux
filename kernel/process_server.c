@@ -58,7 +58,7 @@
 /**
  * Perf
  */
-#define MEASURE_PERF 1
+#define MEASURE_PERF 0
 #if MEASURE_PERF
 #define PERF_INIT() perf_init()
 #define PERF_MEASURE_START(x) perf_measure_start(x)
@@ -1342,7 +1342,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
                         w->tgroup_home_id);
 
                 // Remove mm
-                atomic_dec(&mm_data->mm->mm_users);
+                //atomic_dec(&mm_data->mm->mm_users);
                 mmput(mm_data->mm);
 
                 PSPRINTK("%s: mm removed\n",__func__);
@@ -1528,7 +1528,7 @@ mm_found:
     return;
 }
 
-
+unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
 /**
  *
  */
@@ -1581,6 +1581,7 @@ void process_exec_item(struct work_struct* work) {
         "TERM=linux",
         "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
     };
+perf_aa = native_read_tsc();
     sub_info = call_usermodehelper_setup( c->exe_path /*argv[0]*/, 
             argv, envp, 
             GFP_KERNEL );
@@ -1615,6 +1616,7 @@ void process_exec_item(struct work_struct* work) {
      * Spin up the new process.
      */
     call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
+perf_bb = native_read_tsc();
     kfree(work);
 
     PERF_MEASURE_STOP(&perf_process_exec_item);
@@ -2146,7 +2148,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     data_header_t* curr;
     data_header_t* next;
     vma_data_t* vma;
-   
+perf_cc = native_read_tsc();
     PSPRINTK("%s: entered\n",__func__);
     
     /*
@@ -2222,6 +2224,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 
     add_data_entry(clone_data);
 
+perf_dd = native_read_tsc();
     clone_work = kmalloc(sizeof(clone_exec_work_t),GFP_ATOMIC);
     if(clone_work) {
         INIT_WORK( (struct work_struct*)clone_work, process_exec_item);
@@ -2230,7 +2233,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     }
 
     pcn_kmsg_free_msg(inc_msg);
-    
+perf_ee = native_read_tsc();
     return 0;
 }
 
@@ -2249,6 +2252,9 @@ static bool __user_addr (unsigned long x )
  *
  * Public API
  */
+
+//statistics
+static unsigned long long perf_a, perf_b, perf_c, perf_d, perf_e;
 
 /**
  * If this is a delegated process, look up any records that may
@@ -2272,8 +2278,7 @@ int process_server_import_address_space(unsigned long* ip,
     int mmap_flags = 0;
     int vmas_installed = 0;
     int ptes_installed = 0;
-
-
+perf_a = native_read_tsc();
     PSPRINTK("import address space\n");
     
     // Verify that we're a delegated task.
@@ -2289,7 +2294,7 @@ int process_server_import_address_space(unsigned long* ip,
         PERF_MEASURE_STOP(&perf_process_server_import_address_space);
         return -1;
     }
-    
+perf_b = native_read_tsc();    
     // Gut existing mappings
     
     down_write(&current->mm->mmap_sem);
@@ -2318,7 +2323,7 @@ int process_server_import_address_space(unsigned long* ip,
         current->mm->exe_file = f;
         filp_close(f,NULL);
     }
-    
+perf_c = native_read_tsc();    
     // Import address space
     vma_curr = clone_data->vma_list;
 
@@ -2394,7 +2399,7 @@ int process_server_import_address_space(unsigned long* ip,
         }
         vma_curr = (vma_data_t*)vma_curr->header.next;
     }
-
+perf_d = native_read_tsc();
     // install memory information
     current->mm->start_stack = clone_data->stack_start;
     current->mm->start_brk = clone_data->heap_start;
@@ -2489,7 +2494,11 @@ int process_server_import_address_space(unsigned long* ip,
     dump_task(current,NULL,0);
 
     PERF_MEASURE_STOP(&perf_process_server_import_address_space);
-
+perf_e = native_read_tsc();
+printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+       __func__,
+       perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
+       perf_a, perf_b, perf_c, perf_d, perf_e);
     return 0;
 }
 
@@ -2535,6 +2544,7 @@ int process_server_do_exit() {
     msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = current->pid;
     memcpy(&msg.regs,task_pt_regs(current),sizeof(struct pt_regs));
+    msg.regs.ip = (unsigned long)msg.regs.ip -2;
     msg.thread_fs = current->thread.fs;
     msg.thread_gs = current->thread.gs;
     msg.thread_sp0 = current->thread.sp0;
@@ -2783,7 +2793,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     // Check to see if this is a user mode fault.  We should never
     // try to handle a kernel mode fault.
     if(!(error_code & 4/*PF_USER*/)) {
-        printk("%s: ERROR, kernel-mode fault\n",__func__);
+        PSPRINTK("%s: ERROR, kernel-mode fault\n",__func__);
         goto not_handled_no_perf;
     }
 
