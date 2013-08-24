@@ -26,6 +26,9 @@
 #include <linux/workqueue.h>
 #include <linux/sysctl.h>
 
+/*mklinux_akshay*/
+#include <linux/signal.h>
+
 #define KMOD_PATH_LEN 256
 
 #ifdef CONFIG_MODULES
@@ -75,6 +78,11 @@ struct subprocess_info {
     int   remote_cpu;
     int   clone_request_id;
     struct pt_regs remote_regs;
+
+    /*mklinux_akshay*/
+    pid_t origin_pid;
+    /*mklinux_akshay*/
+
 };
 
 /* Allocate a subprocess_info structure */

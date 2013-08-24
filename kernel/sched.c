@@ -88,6 +88,9 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 
+#define  NSIG 32
+#include<linux/signal.h>
+
 /*
  * Convert user-nice values [ -20 ... 0 ... 19 ]
  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
@@ -5561,7 +5564,6 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 
 	get_online_cpus();
 	rcu_read_lock();
-
 	p = find_process_by_pid(pid);
 	if (!p) {
 		rcu_read_unlock();
@@ -5569,6 +5571,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 		return -ESRCH;
 	}
 	pid = current->pid;
+	printk("POP: current pid 2 \n",pid);
 
 // TODO migration must be removed from here
     /*
