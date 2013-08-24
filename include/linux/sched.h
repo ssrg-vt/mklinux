@@ -1594,6 +1594,8 @@ struct task_struct {
     int enable_distributed_munmap; /* Start a thread without distributed munmap enabled, 
                                       then enable when address space is fully formed. */
 
+    int origin_pid;/*first thread id created in the originating kernel*/
+
 
 };
 

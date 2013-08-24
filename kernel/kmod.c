@@ -199,6 +199,9 @@ static int ____call_usermodehelper(void *data)
         //current->represents_remote = 0;
         memcpy(&current->remote_regs, &sub_info->remote_regs, sizeof(struct pt_regs) );
 
+        /*mklinux_akshay*/
+        current->origin_pid =sub_info->origin_pid;
+
         // Notify of PID/PID pairing.
         process_server_notify_delegated_subprocess_starting(current->pid,sub_info->remote_pid,sub_info->remote_cpu);
     } 

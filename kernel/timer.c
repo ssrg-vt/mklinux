@@ -1354,7 +1354,11 @@ SYSCALL_DEFINE1(alarm, unsigned int, seconds)
  */
 SYSCALL_DEFINE0(getpid)
 {
-	return task_tgid_vnr(current);
+	/*mklinux_akshay*/
+	if(current->executing_for_remote==1)
+		return current->origin_pid;
+	else
+		return task_tgid_vnr(current);
 }
 
 /*
