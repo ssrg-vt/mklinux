@@ -1921,6 +1921,8 @@ perf_aa = native_read_tsc();
     
     dump_regs(&sub_info->remote_regs);
 
+    /*mklinux_akshay*/
+    sub_info->origin_pid = c->origin_pid;
     /*
      * Spin up the new process.
      */

@@ -52,7 +52,7 @@
 static int _cpu = -1;
 static struct list_head out_head;
 static struct list_head inc_head;
-atomic_t counter_id;
+static atomic_t counter_id;
 
 DEFINE_SPINLOCK(out_list_lock);
 DEFINE_SPINLOCK(in_list_lock);
@@ -83,9 +83,6 @@ static _function_args_t kthread_param={
 		.req_id = -1
 };
 
-static int _cpu = -1;
-static int wait = -1;
-int err_no = -ESRCH;
 
 static struct task_struct *waiting_thread;
 
@@ -294,6 +291,7 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	// Finish constructing response
 	response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
 	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+
 
 	struct siginfo info;
 
@@ -3605,6 +3603,10 @@ int do_sigaltstack(const stack_t __user *uss, stack_t __user *uoss,
 	unsigned long sp) {
 stack_t oss;
 int error;
+
+struct task_struct *t = current;
+pid_t p = t->pid;
+printk("current pid: %d\n", p);
 
 oss.ss_sp = (void __user *) current->sas_ss_sp;
 oss.ss_size = current->sas_ss_size;
