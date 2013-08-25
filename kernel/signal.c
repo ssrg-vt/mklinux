@@ -44,21 +44,55 @@
 #include <linux/delay.h>
 #include <linux/kernel.h>
 #include <popcorn/pid.h>
+#include <linux/kthread.h>
 
 
 static DECLARE_WAIT_QUEUE_HEAD( wq);
 
 static int _cpu = -1;
-static int wait = -1;
-int err_no = -ESRCH;
+static struct list_head out_head;
+static struct list_head inc_head;
+static atomic_t counter_id;
+
+DEFINE_SPINLOCK(out_list_lock);
+DEFINE_SPINLOCK(in_list_lock);
+DEFINE_SPINLOCK(kthread_lock);
 
 static int kill_something_info(int sig, struct siginfo *info, pid_t pid);
+static int do_send_specific(pid_t tgid, pid_t pid, int sig,
+		struct siginfo *info);
+
+struct _function_args {
+	int kernel;
+	int signal;
+	struct siginfo *info;
+	pid_t pid;
+	int respon;
+	int ret_cpu;
+	int req_id;
+};
+typedef struct _function_args _function_args_t;
+
+static _function_args_t kthread_param={
+		.kernel = -1,
+		.signal = -1,
+		.info = NULL,
+		.pid =-1,
+		.respon =-1,
+		.ret_cpu =-1,
+		.req_id = -1
+};
+
+
+static struct task_struct *waiting_thread;
 
 struct _remote_kill_request {
 	struct pcn_kmsg_hdr header;
 	int sig;
 	pid_t pid;
-	char pad_string[52];
+	pid_t tgid;
+	int request_id;
+	char pad_string[48];
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 typedef struct _remote_kill_request _remote_kill_request_t;
@@ -66,10 +100,143 @@ typedef struct _remote_kill_request _remote_kill_request_t;
 struct _remote_kill_response {
 	struct pcn_kmsg_hdr header;
 	int errno;
-	char pad_string[56];
+	int request_id;
+	char pad_string[52];
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 typedef struct _remote_kill_response _remote_kill_response_t;
+
+struct _outgoing_remote_signal_pool {
+	int request_id;
+	wait_queue_head_t wq;
+	enum {
+		DONE, IDLE, INPROG
+	} status;
+	struct list_head list_member;
+	int errno;
+};
+
+typedef struct _outgoing_remote_signal_pool _outgoing_remote_signal_pool_t;
+/*
+struct _incomming_signal_data
+{
+
+};
+typedef struct _incomming_signal_data _incomming_signal_data_t;*/
+
+struct _incomming_remote_signal_pool {
+	int req_id;
+	int cpu_id;
+	int pid;
+	int output;
+	int assign_for_kthread;
+	struct list_head list_member;
+};
+
+typedef struct _incomming_remote_signal_pool _incomming_remote_signal_pool_t;
+
+static int get_counter_id() {
+	atomic_inc(&counter_id);
+}
+
+_incomming_remote_signal_pool_t * add_incomming(int pid,int cpu_id, int request_id, struct list_head *head) {
+	_incomming_remote_signal_pool_t *Ptr = (_incomming_remote_signal_pool_t *) kmalloc(
+			sizeof(_incomming_remote_signal_pool_t), GFP_KERNEL);
+
+	Ptr->req_id = request_id;
+	Ptr->cpu_id = cpu_id;
+	Ptr->pid = pid;
+	Ptr->assign_for_kthread=0;
+	INIT_LIST_HEAD(&Ptr->list_member);
+	list_add(&Ptr->list_member, head);
+
+	return Ptr;
+}
+
+int find_and_delete_incomming(int pid, struct list_head *head) {
+	struct list_head *iter;
+	_incomming_remote_signal_pool_t *objPtr;
+
+	list_for_each(iter, head)
+	{
+		objPtr = list_entry(iter, _incomming_remote_signal_pool_t, list_member);
+		if (objPtr->pid == pid) {
+			list_del(&objPtr->list_member);
+			kfree(objPtr);
+			return 1;
+		}
+	}
+}
+
+_incomming_remote_signal_pool_t * find_incomming(int pid, struct list_head *head) {
+	struct list_head *iter;
+	_incomming_remote_signal_pool_t *objPtr;
+
+	list_for_each(iter, head)
+	{
+		objPtr = list_entry(iter, _incomming_remote_signal_pool_t, list_member);
+		if (objPtr->pid == pid) {
+			return objPtr;
+		}
+	}
+	return NULL;
+}
+
+_outgoing_remote_signal_pool_t * add_outgoing(int request_id, struct list_head *head) {
+	_outgoing_remote_signal_pool_t *Ptr = (_outgoing_remote_signal_pool_t *) kmalloc(
+			sizeof(_outgoing_remote_signal_pool_t), GFP_KERNEL);
+
+	memset(Ptr, 0, sizeof(_outgoing_remote_signal_pool_t));
+	Ptr->request_id = request_id;
+	Ptr->status = IDLE;
+	init_waitqueue_head(&Ptr->wq);
+	INIT_LIST_HEAD(&Ptr->list_member);
+	list_add(&Ptr->list_member, head);
+
+	return Ptr;
+}
+
+int find_and_delete_outgoing(int request_id, struct list_head *head) {
+	struct list_head *iter;
+	_outgoing_remote_signal_pool_t *objPtr;
+
+	list_for_each(iter, head)
+	{
+		objPtr = list_entry(iter, _outgoing_remote_signal_pool_t, list_member);
+		if (objPtr->request_id == request_id) {
+			list_del(&objPtr->list_member);
+			kfree(objPtr);
+			return 1;
+		}
+	}
+}
+
+_outgoing_remote_signal_pool_t * find_outgoing(int request_id, struct list_head *head) {
+	struct list_head *iter;
+	_outgoing_remote_signal_pool_t *objPtr;
+
+	list_for_each(iter, head)
+	{
+		objPtr = list_entry(iter, _outgoing_remote_signal_pool_t, list_member);
+		if (objPtr->request_id == request_id) {
+			return objPtr;
+		}
+	}
+	return NULL;
+}
+
+void display_request(struct list_head *head) {
+	struct list_head *iter;
+	_outgoing_remote_signal_pool_t *objPtr;
+
+	list_for_each(iter, head)
+	{
+		objPtr = list_entry(iter, _outgoing_remote_signal_pool_t, list_member);
+		printk("%d \t", objPtr->request_id);
+		printk("%d \t", objPtr->status);
+	}
+	printk("\n");
+}
 
 static int handle_remote_kill_response(struct pcn_kmsg_message* inc_msg) {
 	_remote_kill_response_t* msg = (_remote_kill_response_t*) inc_msg;
@@ -77,12 +244,10 @@ static int handle_remote_kill_response(struct pcn_kmsg_message* inc_msg) {
 	printk("%s: response --- errno stored - errno{%d} \n",
 			"handle_remote_kill_response", msg->errno);
 
-	err_no = msg->errno;
-
-	wait = 1;
-	wake_up_interruptible(&wq);
-	printk("%s: response --- pid stored - wait{%d} \n",
-			"handle_remote_pid_response", wait);
+	_outgoing_remote_signal_pool_t *ptr = find_outgoing(msg->request_id, &out_head);
+	ptr->status = DONE;
+	ptr->errno = msg->errno;
+	wake_up_interruptible(&ptr->wq);
 
 	pcn_kmsg_free_msg(inc_msg);
 
@@ -92,15 +257,20 @@ static int handle_remote_kill_response(struct pcn_kmsg_message* inc_msg) {
 static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 
 	_remote_kill_request_t* msg = (_remote_kill_request_t*) inc_msg;
+
 	_remote_kill_response_t response;
 
-	int ret;
+	_incomming_remote_signal_pool_t *ptr;
+
+	int ret = -ESRCH;
+	int signum = 0;
 
 	printk("%s: request -- entered \n", "handle_remote_kill_request");
 
 	// Finish constructing response
 	response.header.type = PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE;
 	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+
 
 	struct siginfo info;
 
@@ -111,40 +281,248 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	info.si_uid = current_uid();
 	info.si_remote = true;
 
-	ret = kill_something_info(msg->sig, &info, msg->pid);
+	spin_lock(&in_list_lock);
+	ptr = add_incomming( msg->pid,msg->header.from_cpu,msg->request_id, &inc_head);
+	spin_unlock(&in_list_lock);
+
+	//perform action
+
+	if (msg->tgid == -1) // for killing process
+			{
+		ret = kill_something_info(msg->sig, &info, msg->pid);
+	} else //for killing with tgid
+	{
+		ret = do_send_specific(msg->tgid, msg->pid, msg->sig, &info);
+	}
+
+	if(ptr->assign_for_kthread == 0)
+	{
 	response.errno = ret;
+	response.request_id = msg->request_id;
 
 	printk("%s: request --remote:errno: %d \n", "handle_remote_kill_request",
-			response.errno);
+			ret);
+
 	// Send response
 	pcn_kmsg_send(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response));
+
+	spin_lock(&in_list_lock);
+		find_and_delete_incomming(msg->pid,&inc_head);
+	spin_unlock(&in_list_lock);
+	}
+	else
+	{
+		//do nothing...taken care by kthread.
+		/*spin_lock(&kthread_lock);
+		if(ret==0)
+			signum = SIGUSR1;
+		else
+			signum = SIGUSR2;
+		//
+		signalfd_notify(waiting_thread, signum);
+		sigaddset(&waiting_thread->pending.signal, signum);
+		set_tsk_thread_flag(waiting_thread, TIF_SIGPENDING);
+		signal_wake_up(waiting_thread, 0);
+
+		spin_unlock(&kthread_lock);*/
+	}
 
 	pcn_kmsg_free_msg(inc_msg);
 
 	return 0;
 }
 
-static int remote_kill_pid_info(int sig, struct siginfo *info, pid_t pid) {
+static int remote_kill_pid_info(int kernel, int sig, pid_t pid,
+		struct siginfo *info) {
 
 	int res = 0;
-	_remote_kill_request_t* request = kmalloc(sizeof(_remote_kill_request_t),
+
+	_remote_kill_request_t *request = kmalloc(sizeof(_remote_kill_request_t),
 	GFP_KERNEL);
+
+	_outgoing_remote_signal_pool_t *ptr;
 	// Build request
-	request->header.type = PCN_KMSG_TYPE_REMOTE_KILL_REQUEST;
-	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+
 	request->sig = sig;
 	request->pid = pid;
+	request->tgid = -1;
+
+	request->header.type = PCN_KMSG_TYPE_REMOTE_KILL_REQUEST;
+	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+
+	spin_lock(&out_list_lock);
+	int req_id = get_counter_id();
+	ptr = add_outgoing(req_id, &out_head);
+	request->request_id = req_id;
+	spin_unlock(&out_list_lock);
 
 	// Send response
-	if (_cpu == 0)
-		res = pcn_kmsg_send(3, (struct pcn_kmsg_message*) (request));
-	else
-		res = pcn_kmsg_send(0, (struct pcn_kmsg_message*) (request));
+	res = pcn_kmsg_send(kernel, (struct pcn_kmsg_message*) (request));
 
-	wait_event_interruptible(wq, wait != -1);
-	wait = -1;
+	wait_event_interruptible(ptr->wq, (ptr->status == DONE));
 
-	res = err_no;
+	res = ptr->errno;
+
+	spin_lock(&out_list_lock);
+	find_and_delete_outgoing(req_id, &out_head);
+	spin_unlock(&out_list_lock);
+
+	return res;
+
+}
+
+int remote_kill_pid_info_thread(void *data) {
+
+	allow_signal(SIGSTOP);
+	allow_signal(SIGCONT);
+	set_freezable();
+	int res = 0;
+	_function_args_t *killinfo = data;
+	volatile unsigned long recv_signal = SIGSTOP;
+
+	while (!kthread_should_stop()) {
+
+		while (signal_pending(current) || freezing(current)) {
+			siginfo_t info;
+			unsigned long signr;
+
+			recv_signal = dequeue_signal_lock(current, &current->blocked,
+					&info);
+			if (recv_signal == SIGSTOP) {
+				set_current_state(TASK_INTERRUPTIBLE);
+				flush_signals(current);
+				schedule();
+			} else if (recv_signal == SIGCONT) {
+
+				_remote_kill_request_t *request = kmalloc(
+						sizeof(_remote_kill_request_t),
+						GFP_KERNEL);
+
+				_outgoing_remote_signal_pool_t *ptr;
+				// Build request
+
+				request->sig = killinfo->signal;
+				request->pid = killinfo->pid;
+				request->tgid = -1;
+
+				request->header.type = PCN_KMSG_TYPE_REMOTE_KILL_REQUEST;
+				request->header.prio = PCN_KMSG_PRIO_NORMAL;
+
+				spin_lock(&out_list_lock);
+				int req_id = get_counter_id();
+				ptr = add_outgoing(req_id, &out_head);
+				request->request_id = req_id;
+				spin_unlock(&out_list_lock);
+
+				// Send response
+				res = pcn_kmsg_send(killinfo->kernel,
+						(struct pcn_kmsg_message*) (request));
+
+				wait_event_interruptible(ptr->wq, (ptr->status == DONE));
+
+				killinfo->respon=ptr->errno;
+
+				spin_lock(&out_list_lock);
+				find_and_delete_outgoing(req_id, &out_head);
+				spin_unlock(&out_list_lock);
+
+				//send the expecting process to continue
+				//kill_pid(find_vpid(killinfo->ret_pid), SIGCONT,1);
+
+				_remote_kill_response_t response;
+				// Finish constructing response
+				response.header.type = PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE;
+				response.header.prio = PCN_KMSG_PRIO_NORMAL;
+
+				response.errno = killinfo->respon;
+				response.request_id = killinfo->req_id;
+				printk("%s: request --remote:errno: %d \n", "remote_kill_pid_info_thread",
+											response.errno );
+				// Send response
+				pcn_kmsg_send(killinfo->ret_cpu, (struct pcn_kmsg_message*) (&response));
+
+				spin_lock(&in_list_lock);
+					find_and_delete_incomming(killinfo->pid,&inc_head);
+				spin_unlock(&in_list_lock);
+
+				recv_signal = SIGSTOP;
+				sigaddset(&current->pending.signal,SIGSTOP);
+				set_tsk_thread_flag(current,TIF_SIGPENDING);
+				 __set_task_state(current,TASK_INTERRUPTIBLE);
+			}
+			/*else if (recv_signal == SIGUSR1 || recv_signal == SIGUSR2) {
+				_remote_kill_response_t response;
+				// Finish constructing response
+					response.header.type = PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE;
+					response.header.prio = PCN_KMSG_PRIO_NORMAL;
+					if(killinfo->respon !=0 || recv_signal == SIGUSR2)
+					response.errno = -ESRCH;
+
+					if(recv_signal == SIGUSR1 && killinfo->respon ==0)
+					response.errno = 0;
+
+					response.request_id = killinfo->req_id;
+
+					printk("%s: request --remote:errno: %d \n", "remote_kill_pid_info_thread",
+							response.errno );
+
+						// Send response
+					pcn_kmsg_send(killinfo->ret_cpu, (struct pcn_kmsg_message*) (&response));
+
+					spin_lock(&in_list_lock);
+						find_and_delete_incomming(killinfo->pid,&inc_head);
+					spin_unlock(&in_list_lock);
+
+					recv_signal = SIGSTOP;
+					sigaddset(&current->pending.signal,SIGSTOP);
+					set_tsk_thread_flag(current,TIF_SIGPENDING);
+					__set_task_state(current,TASK_INTERRUPTIBLE);
+
+			}*/
+
+		}
+
+
+
+	}
+	return res;
+}
+
+int (*function_handler)(void *)=&remote_kill_pid_info_thread;
+
+static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
+		struct siginfo *info) {
+
+	int res = 0;
+	_remote_kill_request_t *request = kmalloc(sizeof(_remote_kill_request_t),
+	GFP_KERNEL);
+
+	_outgoing_remote_signal_pool_t *ptr;
+	// Build request
+
+	request->sig = sig;
+	request->pid = pid;
+	request->tgid = tgid;
+
+	request->header.type = PCN_KMSG_TYPE_REMOTE_KILL_REQUEST;
+	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+
+	spin_lock(&out_list_lock);
+	int req_id = get_counter_id();
+	ptr = add_outgoing(req_id, &out_head);
+	request->request_id = req_id;
+	spin_unlock(&out_list_lock);
+
+	// Send response
+	res = pcn_kmsg_send(kernel, (struct pcn_kmsg_message*) (request));
+
+	wait_event_interruptible(ptr->wq, ptr->status == DONE);
+
+	res = ptr->errno;
+
+	spin_lock(&out_list_lock);
+	find_and_delete_outgoing(req_id, &out_head);
+	spin_unlock(&out_list_lock);
 
 	return res;
 }
@@ -622,13 +1000,13 @@ void unblock_all_signals(void) {
 }
 
 static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
-	struct sigqueue *q, *first = NULL;
+	struct sigqueue *q,*n, *first = NULL;
 
 	/*
 	 * Collect the siginfo appropriate to this signal.  Check if
 	 * there is another siginfo for the same signal.
 	 */
-	list_for_each_entry(q, &list->list, list)
+	list_for_each_entry_safe(q,n, &list->list, list)
 	{
 		if (q->info.si_signo == sig) {
 			if (first)
@@ -1259,14 +1637,15 @@ show_regs(regs);
 preempt_enable();
 }
 
-static int __init setup_print_fatal_signals(char *str)
-{
-	get_option (&str, &print_fatal_signals);
+static int __init
+setup_print_fatal_signals(char *str) {
+get_option(&str, &print_fatal_signals);
 
-	return 1;
+return 1;
 }
 
-__setup("print-fatal-signals=", setup_print_fatal_signals);
+__setup("print-fatal-signals=", setup_print_fatal_signals)
+;
 
 int __group_send_sig_info(int sig, struct siginfo *info, struct task_struct *p) {
 return send_signal(sig, info, p, 1);
@@ -1293,29 +1672,26 @@ return ret;
 /*mklinux_akshay*/
 //needs to be tested with actual remote calls.
 int __remote_group_send_sig_info(int sig, struct siginfo *info,
-			      struct task_struct *p)
-{
-	return __send_signal(sig, info, p, 1, 0);
+	struct task_struct *p) {
+return __send_signal(sig, info, p, 1, 0);
 }
 
 int remote_group_send_sig_info(int sig, struct siginfo *info,
-			    struct task_struct *p,
-			    pid_t session)
-{
-	unsigned long flags;
-	int ret;
+	struct task_struct *p, pid_t session) {
+unsigned long flags;
+int ret;
 
-	ret = check_remote_kill_permission(sig, info, p);
+ret = check_remote_kill_permission(sig, info, p);
 
-	if (!ret && sig) {
-		ret = -ESRCH;
-		if (lock_task_sighand(p, &flags)) {
-			ret = __remote_group_send_sig_info(sig, info, p);
-			unlock_task_sighand(p, &flags);
-		}
+if (!ret && sig) {
+	ret = -ESRCH;
+	if (lock_task_sighand(p, &flags)) {
+		ret = __remote_group_send_sig_info(sig, info, p);
+		unlock_task_sighand(p, &flags);
 	}
+}
 
-	return ret;
+return ret;
 }/*mklinux_akshay*/
 
 /*
@@ -1415,7 +1791,8 @@ ret = check_kill_permission(sig, info, p);
 rcu_read_unlock();
 
 /*mklinux_akshay*/
-if (info != SEND_SIG_NOINFO && info != SEND_SIG_PRIV  && info != SEND_SIG_FORCED  && ret == 0) {
+if (info != SEND_SIG_NOINFO && info != SEND_SIG_PRIV && info != SEND_SIG_FORCED
+		&& ret == 0) {
 	if (info->si_remote == true) {
 		ret = check_remote_kill_permission(sig, info, p);
 	}
@@ -1466,6 +1843,7 @@ if (p) {
 		 */
 		goto retry;
 }
+
 rcu_read_unlock();
 
 return error;
@@ -1474,21 +1852,35 @@ return error;
 int kill_proc_info(int sig, struct siginfo *info, pid_t pid) {
 int error;
 /*mklinux_akshay*/
-if(pid >> (NR_BITS_PID_MAX_LIMIT+1) != 0 || pid < PID_MAX_LIMIT)
-{
+if (pid >> (NR_BITS_PID_MAX_LIMIT + 1) != 0 || pid < PID_MAX_LIMIT) {
 	return -ESRCH;
 }/*mklinux_akshay*/
 rcu_read_lock();
 error = kill_pid_info(sig, info, find_vpid(pid));
 rcu_read_unlock();
 /*mklinux_akshay*/
-	if (error == -ESRCH) {
-		if (_cpu == 0)
-			if (ORIG_NODE(pid) != 1)
-				return remote_kill_pid_info(sig, info, pid);
-		if (_cpu == 3)
-			if (ORIG_NODE(pid) != 2)
-				return remote_kill_pid_info(sig, info, pid);
+if (error == -ESRCH) {
+	if (ORIG_NODE(pid) != _cpu) {
+		_incomming_remote_signal_pool_t *ptr = find_incomming(pid, &inc_head);
+		if (ptr == NULL)
+			return remote_kill_pid_info( ORIG_NODE(pid),sig,pid,info);
+		else {
+			spin_lock(&kthread_lock);
+			kthread_param.kernel = ORIG_NODE(pid);
+			kthread_param.signal = sig;
+			kthread_param.info = info;
+			kthread_param.pid = pid;
+			kthread_param.ret_cpu = ptr->cpu_id;
+			kthread_param.req_id = ptr->req_id;
+
+			//send signal to waiting kthread to call the remote kernel
+			//kill_pid(find_vpid(waiting_thread->pid), SIGCONT,1);
+			signalfd_notify(waiting_thread, SIGCONT);
+			sigaddset(&waiting_thread->pending.signal, SIGCONT);
+			set_tsk_thread_flag(waiting_thread, TIF_SIGPENDING);
+			signal_wake_up(waiting_thread, 0);
+			spin_unlock(&kthread_lock);
+		}
 	}
 /*mklinux_akshay*/
 return error;
@@ -1551,24 +1943,84 @@ EXPORT_SYMBOL_GPL(kill_pid_info_as_cred);
 static int kill_something_info(int sig, struct siginfo *info, pid_t pid) {
 int ret;
 /*mklinux_akshay*/
-if(pid >> (NR_BITS_PID_MAX_LIMIT+1) != 0 || pid < PID_MAX_LIMIT)
-{
+if (pid >> (NR_BITS_PID_MAX_LIMIT + 1) != 0 || pid < PID_MAX_LIMIT) {
 	return -ESRCH;
 }/*mklinux_akshay*/
+pid_t next_pid = -1;
+pid_t prev_pid = -1;
+pid_t origin_pid = -1;
+
+
 if (pid > 0) {
+	struct task_struct *p = pid_task(find_vpid(pid), PIDTYPE_PID);
+	if (p) {
+		next_pid = p->next_pid;
+		prev_pid = p->prev_pid;
+		origin_pid = p->origin_pid;
+		}
 	rcu_read_lock();
+	if(origin_pid!=-1){
+		 struct task_struct *task = pid_task(find_vpid(pid), PIDTYPE_PID);
+		 if(task){
+		 __set_task_state(task,TASK_INTERRUPTIBLE);
+		//  flush_signals(task);
+		 }}
 	ret = kill_pid_info(sig, info, find_vpid(pid));
 	rcu_read_unlock();
 	/*mklinux_akshay*/
 	if (ret == -ESRCH) {
-		if (_cpu == 0)
-			if (ORIG_NODE(pid) != 1)
-				return remote_kill_pid_info(sig, info, pid);
-		if (_cpu == 3)
-			if (ORIG_NODE(pid) != 2)
-				return remote_kill_pid_info(sig, info, pid);
+
+		if (ORIG_NODE(pid) != _cpu) {
+			_incomming_remote_signal_pool_t *ptr = find_incomming(pid, &inc_head);
+			if (ptr == NULL)
+				return remote_kill_pid_info( ORIG_NODE(pid),sig,pid,info);
+			else {
+				spin_lock(&kthread_lock);
+				kthread_param.kernel = ORIG_NODE(pid);
+				kthread_param.signal = sig;
+				kthread_param.info = info;
+				kthread_param.pid = pid;
+				kthread_param.ret_cpu = ptr->cpu_id;
+				kthread_param.req_id = ptr->req_id;
+
+				//send signal to waiting kthread to call the remote kernel
+				//kill_pid(find_vpid(waiting_thread->pid), SIGCONT,1);
+				signalfd_notify(waiting_thread, SIGCONT);
+				sigaddset(&waiting_thread->pending.signal, SIGCONT);
+				set_tsk_thread_flag(waiting_thread, TIF_SIGPENDING);
+				signal_wake_up(waiting_thread, 0);
+				spin_unlock(&kthread_lock);
+				ret=0;
+			}
+		}
+
 	}
+	else if (origin_pid != -1 && next_pid != -1) {
+				_incomming_remote_signal_pool_t *ptr = find_incomming(pid, &inc_head);
+				if (ptr == NULL)
+					return remote_kill_pid_info( ORIG_NODE(next_pid),sig,next_pid,info);
+				else {
+					spin_lock(&kthread_lock);
+					ptr->assign_for_kthread=1;
+					kthread_param.kernel = ORIG_NODE(next_pid);
+					kthread_param.signal = sig;
+					kthread_param.info = info;
+					kthread_param.pid = next_pid;
+					kthread_param.ret_cpu = ptr->cpu_id;
+					kthread_param.req_id = ptr->req_id;
+
+					//send signal to waiting kthread to call the remote kernel
+					//kill_pid(find_vpid(waiting_thread->pid), SIGCONT,1);
+					signalfd_notify(waiting_thread, SIGCONT);
+					sigaddset(&waiting_thread->pending.signal, SIGCONT);
+					set_tsk_thread_flag(waiting_thread, TIF_SIGPENDING);
+					signal_wake_up(waiting_thread, 0);
+					spin_unlock(&kthread_lock);
+					ret=0;
+					}
 	/*mklinux_akshay*/
+
+	}
 	return ret;
 }
 
@@ -2870,10 +3322,12 @@ p = find_task_by_vpid(pid);
 if (p && (tgid <= 0 || task_tgid_vnr(p) == tgid)) {
 	error = check_kill_permission(sig, info, p);
 
-	if (info != SEND_SIG_NOINFO && info != SEND_SIG_PRIV  && info != SEND_SIG_FORCED  && error == 0) {
+	if (info != SEND_SIG_NOINFO && info != SEND_SIG_PRIV
+			&& info != SEND_SIG_FORCED && error == 0) {
 		if (info->si_remote == true) {
+			error = check_remote_kill_permission(sig, info, p);
 		}
-		}
+	}
 	/*
 	 * The null signal is a permissions and process existence
 	 * probe.  No signal is actually delivered.
@@ -2888,6 +3342,9 @@ if (p && (tgid <= 0 || task_tgid_vnr(p) == tgid)) {
 		if (unlikely(error == -ESRCH))
 			error = 0;
 	}
+}
+if (p == NULL) {
+	return remote_do_send_specific(ORIG_NODE(pid), tgid, pid, sig, info);
 }
 rcu_read_unlock();
 
@@ -3042,6 +3499,10 @@ int do_sigaltstack(const stack_t __user *uss, stack_t __user *uoss,
 stack_t oss;
 int error;
 
+struct task_struct *t = current;
+pid_t p = t->pid;
+printk("current pid: %d\n", p);
+
 oss.ss_sp = (void __user *) current->sas_ss_sp;
 oss.ss_size = current->sas_ss_size;
 oss.ss_flags = sas_ss_flags(sp);
@@ -3107,8 +3568,7 @@ out: return error;
  *  sys_sigpending - examine pending signals
  *  @set: where mask of pending signal is returned
  */
-SYSCALL_DEFINE1(sigpending, old_sigset_t __user *, set)
-{
+SYSCALL_DEFINE1(sigpending, old_sigset_t __user *, set) {
 return do_sigpending(set, sizeof(*set));
 }
 
@@ -3126,8 +3586,7 @@ return do_sigpending(set, sizeof(*set));
  */
 
 SYSCALL_DEFINE3(sigprocmask, int, how, old_sigset_t __user *, nset,
-	old_sigset_t __user *, oset)
-{
+	old_sigset_t __user *, oset) {
 old_sigset_t old_set, new_set;
 sigset_t new_blocked;
 
@@ -3135,22 +3594,22 @@ old_set = current->blocked.sig[0];
 
 if (nset) {
 	if (copy_from_user(&new_set, nset, sizeof(*nset)))
-	return -EFAULT;
+		return -EFAULT;
 	new_set &= ~(sigmask(SIGKILL) | sigmask(SIGSTOP));
 
 	new_blocked = current->blocked;
 
 	switch (how) {
-		case SIG_BLOCK:
+	case SIG_BLOCK:
 		sigaddsetmask(&new_blocked, new_set);
 		break;
-		case SIG_UNBLOCK:
+	case SIG_UNBLOCK:
 		sigdelsetmask(&new_blocked, new_set);
 		break;
-		case SIG_SETMASK:
+	case SIG_SETMASK:
 		new_blocked.sig[0] = new_set;
 		break;
-		default:
+	default:
 		return -EINVAL;
 	}
 
@@ -3159,7 +3618,7 @@ if (nset) {
 
 if (oset) {
 	if (copy_to_user(oset, &old_set, sizeof(*oset)))
-	return -EFAULT;
+		return -EFAULT;
 }
 
 return 0;
@@ -3177,28 +3636,26 @@ return 0;
 SYSCALL_DEFINE4(rt_sigaction, int, sig,
 	const struct sigaction __user *, act,
 	struct sigaction __user *, oact,
-	size_t, sigsetsize)
-{
+	size_t, sigsetsize) {
 struct k_sigaction new_sa, old_sa;
 int ret = -EINVAL;
 
 /* XXX: Don't preclude handling different sized sigset_t's.  */
 if (sigsetsize != sizeof(sigset_t))
-goto out;
+	goto out;
 
 if (act) {
 	if (copy_from_user(&new_sa.sa, act, sizeof(new_sa.sa)))
-	return -EFAULT;
+		return -EFAULT;
 }
 
 ret = do_sigaction(sig, act ? &new_sa : NULL, oact ? &old_sa : NULL);
 
 if (!ret && oact) {
 	if (copy_to_user(oact, &old_sa.sa, sizeof(old_sa.sa)))
-	return -EFAULT;
+		return -EFAULT;
 }
-out:
-return ret;
+out: return ret;
 }
 #endif /* __ARCH_WANT_SYS_RT_SIGACTION */
 
@@ -3207,14 +3664,12 @@ return ret;
 /*
  * For backwards compatibility.  Functionality superseded by sigprocmask.
  */
-SYSCALL_DEFINE0(sgetmask)
-{
+SYSCALL_DEFINE0(sgetmask) {
 /* SMP safe */
 return current->blocked.sig[0];
 }
 
-SYSCALL_DEFINE1(ssetmask, int, newmask)
-{
+SYSCALL_DEFINE1(ssetmask, int, newmask) {
 int old = current->blocked.sig[0];
 sigset_t newset;
 
@@ -3229,8 +3684,7 @@ return old;
 /*
  * For backwards compatibility.  Functionality superseded by sigaction.
  */
-SYSCALL_DEFINE2(signal, int, sig, __sighandler_t, handler)
-{
+SYSCALL_DEFINE2(signal, int, sig, __sighandler_t, handler) {
 struct k_sigaction new_sa, old_sa;
 int ret;
 
@@ -3240,14 +3694,13 @@ sigemptyset(&new_sa.sa.sa_mask);
 
 ret = do_sigaction(sig, &new_sa, &old_sa);
 
-return ret ? ret : (unsigned long)old_sa.sa.sa_handler;
+return ret ? ret : (unsigned long) old_sa.sa.sa_handler;
 }
 #endif /* __ARCH_WANT_SYS_SIGNAL */
 
 #ifdef __ARCH_WANT_SYS_PAUSE
 
-SYSCALL_DEFINE0(pause)
-{
+SYSCALL_DEFINE0(pause) {
 while (!signal_pending(current)) {
 	current->state = TASK_INTERRUPTIBLE;
 	schedule();
@@ -3264,17 +3717,16 @@ return -ERESTARTNOHAND;
  *  @unewset: new signal mask value
  *  @sigsetsize: size of sigset_t type
  */
-SYSCALL_DEFINE2(rt_sigsuspend, sigset_t __user *, unewset, size_t, sigsetsize)
-{
+SYSCALL_DEFINE2(rt_sigsuspend, sigset_t __user *, unewset, size_t, sigsetsize) {
 sigset_t newset;
 
 /* XXX: Don't preclude handling different sized sigset_t's.  */
 if (sigsetsize != sizeof(sigset_t))
-return -EINVAL;
+	return -EINVAL;
 
 if (copy_from_user(&newset, unewset, sizeof(newset)))
-return -EFAULT;
-sigdelsetmask(&newset, sigmask(SIGKILL)|sigmask(SIGSTOP));
+	return -EFAULT;
+sigdelsetmask(&newset, sigmask(SIGKILL) | sigmask(SIGSTOP));
 
 current->saved_sigmask = current->blocked;
 set_current_blocked(&newset);
@@ -3290,24 +3742,37 @@ __attribute__((weak)) const char *arch_vma_name(struct vm_area_struct *vma) {
 return NULL;
 }
 
-void __init signals_init(void)
-{
-	sigqueue_cachep = KMEM_CACHE(sigqueue, SLAB_PANIC);
+void __init
+signals_init(void) {
+sigqueue_cachep = KMEM_CACHE(sigqueue, SLAB_PANIC);
 
 }
-static int __init kill_handler_init(void)
-{
-	/*mklinux_akshay*/
-			 _cpu = smp_processor_id();
+static int __init
+kill_handler_init(void) {
+/*mklinux_akshay*/
+_cpu = smp_processor_id();
 
-			pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_KILL_REQUEST,
-							    		handle_remote_kill_request);
-			pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE,
-										handle_remote_kill_response);
-			/*mklinux_akshay*/
+INIT_LIST_HEAD(&out_head);
+INIT_LIST_HEAD(&inc_head);
+
+atomic_set(&counter_id, (1));
+
+waiting_thread = kthread_create(function_handler,&kthread_param,"Waiting Thread");
+wake_up_process(waiting_thread);
+
+sigaddset(&waiting_thread->pending.signal, SIGSTOP);
+set_tsk_thread_flag(waiting_thread, TIF_SIGPENDING);
+__set_task_state(waiting_thread, TASK_INTERRUPTIBLE);
+
+pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_KILL_REQUEST,
+		handle_remote_kill_request);
+pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE,
+		handle_remote_kill_response);
+/*mklinux_akshay*/
 }
 
-late_initcall(kill_handler_init);
+late_initcall(kill_handler_init)
+;
 
 #ifdef CONFIG_KGDB_KDB
 #include <linux/kdb.h>

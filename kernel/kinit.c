@@ -103,6 +103,7 @@ void popcorn_init(void)
 	apicid = apic->cpu_present_to_apicid(i);
 	printk("POP_INIT: The CPU is not present in the current present_mask (OK to continue), apicid = %d, apicid_1 = %d\n", apicid, apicid_1);
     }*/
+	Kernel_Id=smp_processor_id();;
     printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
 }
 

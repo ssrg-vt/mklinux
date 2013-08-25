@@ -33,6 +33,11 @@
 #include <asm/proto.h> // do_arch_prctl
 #include <asm/msr.h> // wrmsr_safe
 
+
+#define  NSIG 32
+
+#include<linux/signal.h>
+
 /**
  * Use the preprocessor to turn off printk.
  */
@@ -175,6 +180,10 @@ typedef struct _clone_data {
     int tgroup_home_id;
     vma_data_t* vma_list;
     vma_data_t* pending_vma_list;
+    /*mklinux_akshay*/int origin_pid;
+    sigset_t remote_blocked, remote_real_blocked;
+    sigset_t remote_saved_sigmask;
+    struct sigpending remote_pending;
 } clone_data_t;
 
 /**
@@ -269,6 +278,10 @@ typedef struct _clone_request {
     unsigned short thread_gsindex;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    /*mklinux_akshay*/int origin_pid;
+    sigset_t remote_blocked, remote_real_blocked;
+    sigset_t remote_saved_sigmask;
+    struct sigpending remote_pending;
 } clone_request_t;
 
 /**
@@ -1258,11 +1271,35 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, i
            task->exit_state != EXIT_ZOMBIE &&
            task->exit_state != EXIT_DEAD &&
            !(task->flags & PF_EXITING)) {
+            //PSPRINTK("%s: found local thread\n",__func__);
+            count++;
+                    	   printk("POP: remote : Migrated task struct signal details %d\n",task->pid);
 
-            if(include_shadow_threads || (!include_shadow_threads && !task->represents_remote)) {
-                //PSPRINTK("%s: found local thread\n",__func__);
-                count++;
-            }
+                    	   	 int sig, cnt;
+                    	   	 printk("POP: blocked signals\n");
+                    	   	    cnt = 0;
+                    	   	    for (sig = 1; sig < NSIG; sig++) {
+                    	   	        if (sigismember(&task->blocked, sig)) {
+                    	   	        	printk("POP: %d \n", sig);
+                    	   	        }
+                    	   	    }
+                    	   	    printk("POP: real blocked signals\n");
+                    	   	   	    cnt = 0;
+                    	   	   	    for (sig = 1; sig < NSIG; sig++) {
+                    	   	   	        if (sigismember(&task->real_blocked, sig)) {
+                    	   	   	        	printk("POP: %d \n", sig);
+                    	   	   	        }
+                    	   	   	    }
+
+                    	   	   	printk("POP: pending signals\n");
+                    	   	   	 	   	    for (sig = 1; sig < NSIG; sig++) {
+                    	   	   	 	   	        if (sigismember(&task->pending.signal, sig)) {
+                    	   	   	 	   	        	printk("POP: %d \n", sig);
+                    	   	   	 	   	        }
+                    	   	   	 	   	    }
+                    	   		printk("POP: represents_remote:%d, executing_for_remote:%d,next_pid:%d\n",task->represents_remote,task-> executing_for_remote,task->next_pid);
+                    	   		printk("POP: prev_pid:%d, prev_cpu:%d,next_cpu:%d,tgroup_home_cpu:%d\n",task->prev_pid,task->prev_cpu,task->next_cpu,task->tgroup_home_cpu);
+
         }
     } while_each_thread(g,task);
     PSPRINTK("%s: exited\n",__func__);
@@ -1613,6 +1650,8 @@ perf_aa = native_read_tsc();
     
     dump_regs(&sub_info->remote_regs);
 
+    /*mklinux_akshay*/
+    sub_info->origin_pid = c->origin_pid;
     /*
      * Spin up the new process.
      */
@@ -2190,6 +2229,12 @@ perf_cc = native_read_tsc();
     clone_data->tgroup_home_id = request->tgroup_home_id;
     clone_data->lock = __SPIN_LOCK_UNLOCKED(&clone_data->lock);
 
+    /*mklinux_akshay*/
+    clone_data->origin_pid =request->origin_pid;
+    clone_data->remote_blocked = request->remote_blocked ;
+    clone_data->remote_real_blocked = request->remote_real_blocked;
+    clone_data->remote_saved_sigmask = request->remote_saved_sigmask ;
+    clone_data->remote_pending = request->remote_pending;
     /*
      * Pull in vma data
      */
@@ -2423,6 +2468,13 @@ perf_d = native_read_tsc();
     current->tgroup_home_cpu = clone_data->tgroup_home_cpu;
     current->tgroup_home_id = clone_data->tgroup_home_id;
     current->tgroup_distributed = 1;
+
+    //mklinux_akshay
+    current->origin_pid = clone_data->origin_pid;
+    sigorsets(&current->blocked,&current->blocked,&clone_data->remote_blocked) ;
+    sigorsets(&current->real_blocked,&current->real_blocked,&clone_data->remote_real_blocked);
+    sigorsets(&current->saved_sigmask,&current->saved_sigmask,&clone_data->remote_saved_sigmask);
+    current->pending = clone_data->remote_pending;
 
     // Set output variables.
     *sp = clone_data->thread_usersp;
@@ -3089,6 +3141,10 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     task->prev_pid = -1;
     task->next_pid = -1;
 
+    /*mklinux_akshay*/
+    task->origin_pid =-1;
+
+
     // If this is pid 1 or 2, the parent cannot have been migrated
     // so it is safe to take on all local thread info.
     if(unlikely(orig->pid == 1 || orig->pid == 2)) {
@@ -3112,6 +3168,8 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
         task->tgroup_home_cpu = orig->tgroup_home_cpu;
         task->tgroup_home_id = orig->tgroup_home_cpu;
         task->tgroup_distributed = 1;
+
+       // task->origin_pid = orig->origin_pid;
     } else {
         task->tgroup_home_cpu = _cpu;
         task->tgroup_home_id = orig->tgid;
@@ -3169,10 +3227,19 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     // This will be a placeholder process for the remote
     // process that is subsequently going to be started.
     // Block its execution.
-    __set_task_state(task,TASK_UNINTERRUPTIBLE);
+    sigaddset(&task->pending.signal,SIGSTOP); 
+    set_tsk_thread_flag(task,TIF_SIGPENDING); 
+    __set_task_state(task,TASK_INTERRUPTIBLE);//mklinux_akshay modified to interruptible state
 
     // Book keeping for placeholder process.
     task->represents_remote = 1;
+
+    /*mklinux_akshay*/
+    if(task->prev_pid==-1)
+    	task->origin_pid=task->pid;
+    else
+    	task->origin_pid=task->origin_pid;
+
 
     // Book keeping for distributed threads.
     task->tgroup_distributed = 1;
@@ -3280,6 +3347,15 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->placeholder_tgid = task->tgid;
     request->tgroup_home_cpu = task->tgroup_home_cpu;
     request->tgroup_home_id = task->tgroup_home_id;
+
+    if(task->prev_pid==-1)
+    	request->origin_pid = task->pid;
+    else
+    	request->origin_pid = task->origin_pid;
+    request->remote_blocked =task->blocked;
+    request->remote_real_blocked =task->real_blocked;
+    request->remote_saved_sigmask =task->saved_sigmask;
+    request->remote_pending =task->pending;
 // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h
