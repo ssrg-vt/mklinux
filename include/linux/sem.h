@@ -4,7 +4,7 @@
 #include <linux/ipc.h>
 
 /*mklinux_akshay*/
-#include <linux/ipc_uniqueid.h>
+//#include <linux/ipc_uniqueid.h>
 /*mklinux_akshay*/
 
 /* semop flags */
@@ -104,7 +104,7 @@ struct sem_array {
 };
 
 /*mklinux_akshay*/
-
+typedef unsigned long ipc_id_t;
 /* One semaphore structure for each semaphore in the system. */
 struct sem {
 	int	semval;		/* current value */
