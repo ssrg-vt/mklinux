@@ -46,6 +46,12 @@
 #include <popcorn/pid.h>
 #include <linux/kthread.h>
 
+<<<<<<< HEAD
+=======
+
+//static DECLARE_WAIT_QUEUE_HEAD( wq);
+
+>>>>>>> Some merge issues
 static int _cpu = -1;
 static struct list_head out_head;
 static struct list_head inc_head;
@@ -3748,8 +3754,7 @@ signals_init(void) {
 sigqueue_cachep = KMEM_CACHE(sigqueue, SLAB_PANIC);
 
 }
-static int __init
-kill_handler_init(void) {
+static int __init kill_handler_init(void) {
 /*mklinux_akshay*/
 _cpu = smp_processor_id();
 
@@ -3772,8 +3777,7 @@ pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE,
 /*mklinux_akshay*/
 }
 
-late_initcall(kill_handler_init)
-;
+late_initcall(kill_handler_init);
 
 #ifdef CONFIG_KGDB_KDB
 #include <linux/kdb.h>
