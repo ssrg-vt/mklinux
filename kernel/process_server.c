@@ -523,7 +523,11 @@ static void dump_task(struct task_struct* task,struct pt_regs* regs,unsigned lon
 static void dump_thread(struct thread_struct* thread);
 static void dump_regs(struct pt_regs* regs);
 static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr); 
-
+// I removed the 'static' modifier in mm/memory.c for do_wp_page so I could use it 
+// here.
+int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
+               unsigned long address, pte_t *page_table, pmd_t *pmd,
+               spinlock_t *ptl, pte_t orig_pte);
 /**
  * Module variables
  */
@@ -1361,6 +1365,87 @@ void process_tgroup_closed_item(struct work_struct* work) {
 }
 
 /**
+ * 1 = handled
+ * 0 = not handled
+ */
+static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned long address) {
+    pgd_t *pgd = NULL;
+    pud_t *pud = NULL;
+    pmd_t *pmd = NULL;
+    pte_t *ptep = NULL;
+    pte_t pte;
+    spinlock_t* ptl;
+
+    PSPRINTK("%s: entered\n",__func__);
+
+    // if it's not a cow mapping, return.
+    if((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) != VM_MAYWRITE) {
+        goto not_handled;
+    }
+
+    // if it's not writable in vm_flags, return.
+    if(!(vma->vm_flags & VM_WRITE)) {
+        goto not_handled;
+    }
+
+    // Don't bother if this is file backed
+    //if(vma->vm_file == NULL) {
+    //    goto not_handled;
+    //}
+
+    down_write(&mm->mmap_sem);
+
+
+    pgd = pgd_offset(mm, address);
+    if(!pgd_present(*pgd)) {
+        goto not_handled_unlock;
+    }
+
+    pud = pud_offset(pgd,address);
+    if(!pud_present(*pud)) {
+        goto not_handled_unlock;
+    }
+
+    pmd = pmd_offset(pud,address);
+    if(!pmd_present(*pmd)) {
+        goto not_handled_unlock;
+    }
+
+    ptep = pte_offset_map(pmd,address);
+    if(!ptep || !pte_present(*ptep)) {
+        pte_unmap(ptep);
+        goto not_handled_unlock;
+    }
+
+    pte = *ptep;
+
+    if(pte_write(pte)) {
+        goto not_handled_unlock;
+    }
+    
+    // break the cow!
+    ptl = pte_lockptr(mm,pmd);
+    spin_lock(ptl);
+   
+    PSPRINTK("%s: proceeding\n",__func__);
+    do_wp_page(mm,vma,address,ptep,pmd,ptl,pte);
+
+
+    // NOTE:
+    // Do not call pte_unmap_unlock(ptep,ptl), since do_wp_page does that!
+    
+    goto handled;
+
+not_handled_unlock:
+    up_write(&mm->mmap_sem);
+not_handled:
+    return 0;
+handled:
+    up_write(&mm->mmap_sem);
+    return 1;
+}
+
+/**
  *
  * <MEASURED perf_process_mapping_request>
  */
@@ -1381,6 +1466,7 @@ void process_mapping_request(struct work_struct* work) {
     };
     char* plpath;
     char lpath[512];
+    int try_count = 0;
 
     // Perf start
     PERF_MEASURE_START(&perf_process_mapping_request);
@@ -1430,6 +1516,8 @@ mm_found:
 
     // OK, if mm was found, look up the mapping.
     if(mm) {
+retry:
+        try_count++;
         vma = find_vma(mm, address & PAGE_MASK);
         // Validate find_vma result
         if( (!vma) || 
@@ -1448,12 +1536,21 @@ mm_found:
         walk_page_range(address & PAGE_MASK, 
                 (address & PAGE_MASK) + PAGE_SIZE, &walk);
 
-        if(resolved != 0) {
+        if(vma && resolved != 0) {
+
             PSPRINTK("mapping found! %lx for vaddr %lx\n",resolved,
                     address & PAGE_MASK);
 
+            // break the cow if necessary
+            if(try_count < 2 && break_cow(mm, vma, address & PAGE_MASK)) {
+                // cow broken, start over again.
+                resolved = 0;
+                vma = NULL;
+                goto retry;
+            }
+
             // Turn off caching for this vma
-            vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+            vma->vm_page_prot = /*pgprot_noncached(*/vma->vm_page_prot/*)*/;
             // Then clear the cache to drop any already-cached entries
             flush_cache_range(vma,vma->vm_start,vma->vm_end);
             flush_tlb_range(vma,vma->vm_start,vma->vm_end);
@@ -1535,7 +1632,7 @@ mm_found:
  */
 void process_exit_item(struct work_struct* work) {
     exit_work_t* w = (exit_work_t*) work;
-    //pid_t pid = w->pid;
+    pid_t pid = w->pid;
     struct task_struct *task = w->task;
 
     if(unlikely(!task)) {
@@ -2383,7 +2480,7 @@ int process_server_import_address_space(unsigned long* ip,
                             pte_curr->vaddr,
                             pte_curr->paddr >> PAGE_SHIFT,
                             PAGE_SIZE,
-                            pgprot_noncached(vma->vm_page_prot));
+                            /*pgprot_noncached(*/vma->vm_page_prot/*)*/);
                     ptes_installed++;
                     pte_curr = (pte_data_t*)pte_curr->header.next;
                     if(err) {
@@ -2784,7 +2881,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     // Check to see if this is a user mode fault.  We should never
     // try to handle a kernel mode fault.
     if(!(error_code & 4/*PF_USER*/)) {
-        printk("%s: ERROR, kernel-mode fault\n",__func__);
+        PSPRINTK("%s: ERROR, kernel-mode fault\n",__func__);
         goto not_handled_no_perf;
     }
 
@@ -2979,7 +3076,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                    data->vaddr_mapping,
                    data->paddr_mapping >> PAGE_SHIFT,
                    PAGE_SIZE,
-                   pgprot_noncached(vm_get_page_prot(vma->vm_flags)));
+                   /*pgprot_noncached(*/vm_get_page_prot(vma->vm_flags)/*)*/);
 
             // If this VMA specifies VM_WRITE, make the mapping writable.
             // this function does not the flag check.
@@ -3193,8 +3290,8 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         unsigned long start_brk = task->mm->start_brk;
 
         // Transfer the stack and heap only
-        if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start)||
-             (start_brk   <= curr->vm_end && start_brk   >= curr->vm_start))) {
+        if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start)/*||
+             (start_brk   <= curr->vm_end && start_brk   >= curr->vm_start)*/)) {
             curr = curr->vm_next;
             continue;
         }
