@@ -60,6 +60,8 @@ early_param("kernel_init", popcorn_kernel_init);
 void popcorn_init(void)
 {
 
+	if(bucket_phys_addr !=NULL)
+	{
 	int i=0;
 	ssize_t bucket_size =sizeof(long)*max_nodes;
 
@@ -96,6 +98,7 @@ void popcorn_init(void)
 
 
 	printk("POP_INIT:Virt add : 0x%p --- shm kernel id address: 0x%lx\n",token_bucket,bucket_phys_addr);
+	}
 
 	/*int apicid, apicid_1;
     for (i = 0; i < NR_CPUS; i++) {
