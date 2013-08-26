@@ -2475,7 +2475,7 @@ static inline void cow_user_page(struct page *dst, struct page *src, unsigned lo
  * but allow concurrent faults), with pte both mapped and locked.
  * We return with mmap_sem still held, but pte unmapped and unlocked.
  */
-static int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
+/*static*/ int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
 		spinlock_t *ptl, pte_t orig_pte)
 	__releases(ptl)
