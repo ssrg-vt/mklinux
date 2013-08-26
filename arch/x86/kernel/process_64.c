@@ -577,7 +577,7 @@ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
 		cpu = get_cpu();
 		/* handle small bases via the GDT because that's faster to
 		   switch. */
-		if (addr <= 0xffffffff) {
+/*		if (addr <= 0xffffffff) {
 			set_32bit_tls(task, FS_TLS, addr);
 			if (doit) {
 				load_TLS(&task->thread, cpu);
@@ -586,6 +586,13 @@ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
 			task->thread.fsindex = FS_TLS_SEL;
 			task->thread.fs = 0;
 		} else {
+*/			
+// the "optimization" do not allow my code to work!!! Antonio
+if (addr <= 0xffffffff)
+  printk("prctl optimization! \n");
+else
+  printk("prctl plain \n");
+
 			task->thread.fsindex = 0;
 			task->thread.fs = addr;
 			if (doit) {
@@ -593,7 +600,7 @@ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
 				   __switch_to */
 				loadsegment(fs, 0);
 				ret = checking_wrmsrl(MSR_FS_BASE, addr);
-			}
+//			}
 		}
 		put_cpu();
 		break;
