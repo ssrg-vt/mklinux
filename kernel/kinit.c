@@ -42,7 +42,7 @@ extern unsigned long orig_boot_params;
 
 unsigned long *token_bucket;
 unsigned int Kernel_Id;
-unsigned long long bucket_phys_addr;
+unsigned long long bucket_phys_addr = 0;
 
 EXPORT_SYMBOL(Kernel_Id);
 EXPORT_SYMBOL(bucket_phys_addr);
@@ -60,7 +60,7 @@ early_param("kernel_init", popcorn_kernel_init);
 void popcorn_init(void)
 {
 
-	if(bucket_phys_addr !=NULL)
+	if(bucket_phys_addr != 0)
 	{
 	int i=0;
 	ssize_t bucket_size =sizeof(long)*max_nodes;
