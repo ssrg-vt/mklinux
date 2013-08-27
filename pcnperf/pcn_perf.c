@@ -248,7 +248,7 @@ static void dump_data(void) {
     while(curr) {
         entry = curr->entry_list;
         while(entry) {
-            printk("pcn_perf: %s - %llu %d %d %d %d %s\n",
+            printk("pcn_perf: %s;%llu;%d;%d;%d;%d;%s\n",
                     curr->name,
                     entry->end - entry->start,
                     curr->home_cpu,

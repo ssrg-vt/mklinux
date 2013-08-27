@@ -58,7 +58,7 @@
 /**
  * Perf
  */
-#define MEASURE_PERF 0
+#define MEASURE_PERF 1
 #if MEASURE_PERF
 #define PERF_INIT() perf_init()
 #define PERF_MEASURE_START(x) perf_measure_start(x)
@@ -1550,10 +1550,10 @@ retry:
             }
 
             // Turn off caching for this vma
-            vma->vm_page_prot = /*pgprot_noncached(*/vma->vm_page_prot/*)*/;
+            //vma->vm_page_prot = /*pgprot_noncached(*/vma->vm_page_prot/*)*/;
             // Then clear the cache to drop any already-cached entries
-            flush_cache_range(vma,vma->vm_start,vma->vm_end);
-            flush_tlb_range(vma,vma->vm_start,vma->vm_end);
+            //flush_cache_range(vma,vma->vm_start,vma->vm_end);
+            //flush_tlb_range(vma,vma->vm_start,vma->vm_end);
 
             response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
             response.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -2335,14 +2335,57 @@ perf_ee = native_read_tsc();
     return 0;
 }
 
-/**
- * Message passing helper functions
- */
-
 // TODO
 static bool __user_addr (unsigned long x ) 
 {
     return (x < PAGE_OFFSET);   
+}
+
+/**
+ * Find the mm_struct for a given distributed thread.  If one does not exist,
+ * then return NULL.
+ */
+static struct mm_struct* find_thread_mm(int tgroup_home_cpu, int tgroup_home_id, int *used_saved_mm) {
+    struct task_struct *task;
+    struct mm_struct * mm = NULL;
+    data_header_t* data_curr;
+    mm_data_t* mm_data;
+
+    // First, look through all active processes.
+    for_each_process(task) {
+        if(task->tgroup_home_cpu == tgroup_home_cpu &&
+           task->tgroup_home_id  == tgroup_home_id) {
+            mm = task->mm;
+            *used_saved_mm = 0;
+            goto out;
+        }
+    }
+
+    // Failing that, look through saved mm's.
+    spin_lock(&_data_head_lock);
+    data_curr = _data_head;
+    while(data_curr) {
+
+        if(data_curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
+            mm_data = (mm_data_t*)data_curr;
+        
+            if((mm_data->tgroup_home_cpu == tgroup_home_cpu) &&
+               (mm_data->tgroup_home_id  == tgroup_home_id)) {
+                mm = mm_data->mm;
+                *used_saved_mm = 1;
+                break;
+            }
+        }
+
+        data_curr = data_curr->next;
+
+    } // while
+
+    spin_unlock(&_data_head_lock);
+
+
+out:
+    return mm;
 }
 
 
@@ -2376,7 +2419,11 @@ int process_server_import_address_space(unsigned long* ip,
     int mmap_flags = 0;
     int vmas_installed = 0;
     int ptes_installed = 0;
-perf_a = native_read_tsc();
+    struct mm_struct* thread_mm = NULL;
+    int used_saved_mm = 0;
+
+    perf_a = native_read_tsc();
+    
     PSPRINTK("import address space\n");
     
     // Verify that we're a delegated task.
@@ -2392,112 +2439,131 @@ perf_a = native_read_tsc();
         PERF_MEASURE_STOP(&perf_process_server_import_address_space,"Clone data missing, early exit");
         return -1;
     }
-perf_b = native_read_tsc();    
-    // Gut existing mappings
+
+    perf_b = native_read_tsc();    
     
-    down_write(&current->mm->mmap_sem);
+    // Search for existing thread members to share an mm with
+    thread_mm = find_thread_mm(clone_data->tgroup_home_cpu,
+                               clone_data->tgroup_home_id,
+                               &used_saved_mm); 
 
-    current->enable_distributed_munmap = 0;
+    if(!thread_mm) {
 
-    vma = current->mm->mmap;
-    while(vma) {
-        PSPRINTK("Unmapping vma at %lx\n",vma->vm_start);
-        munmap_ret = do_munmap(current->mm, vma->vm_start, vma->vm_end - vma->vm_start);
+        down_write(&current->mm->mmap_sem);
+
+        // Gut existing mappings
+        current->enable_distributed_munmap = 0;
         vma = current->mm->mmap;
-    }
-     
-    current->enable_distributed_munmap = 1;
+        while(vma) {
+            PSPRINTK("Unmapping vma at %lx\n",vma->vm_start);
+            munmap_ret = do_munmap(current->mm, vma->vm_start, vma->vm_end - vma->vm_start);
+            vma = current->mm->mmap;
+        }
+        current->enable_distributed_munmap = 1;
+        // Clean out cache and tlb
+        flush_tlb_mm(current->mm);
+        flush_cache_mm(current->mm);
+        up_write(&current->mm->mmap_sem);
+        
+        // import exe_file
+        f = filp_open(clone_data->exe_path,O_RDONLY | O_LARGEFILE, 0);
+        if(f) {
+            get_file(f);
+            current->mm->exe_file = f;
+            filp_close(f,NULL);
+        }
 
-    // Clean out cache and tlb
-    flush_tlb_mm(current->mm);
-    flush_cache_mm(current->mm);
+        perf_c = native_read_tsc();    
 
-    up_write(&current->mm->mmap_sem);
-    
-    // import exe_file
-    f = filp_open(clone_data->exe_path,O_RDONLY | O_LARGEFILE, 0);
-    if(f) {
-        get_file(f);
-        current->mm->exe_file = f;
-        filp_close(f,NULL);
-    }
-perf_c = native_read_tsc();    
-    // Import address space
-    vma_curr = clone_data->vma_list;
+        // Import address space
+        vma_curr = clone_data->vma_list;
 
-
-    while(vma_curr) {
-        PSPRINTK("do_mmap() at %lx\n",vma_curr->start);
-        if(vma_curr->path[0] != '\0') {
-            mmap_flags = /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_PRIVATE;
-            f = filp_open(vma_curr->path,
-                            O_RDONLY | O_LARGEFILE,
-                            0);
-            if(f) {
+        while(vma_curr) {
+            PSPRINTK("do_mmap() at %lx\n",vma_curr->start);
+            if(vma_curr->path[0] != '\0') {
+                mmap_flags = /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_PRIVATE;
+                f = filp_open(vma_curr->path,
+                                O_RDONLY | O_LARGEFILE,
+                                0);
+                if(f) {
+                    down_write(&current->mm->mmap_sem);
+                    vma_curr->mmapping_in_progress = 1;
+                    err = do_mmap(f, 
+                            vma_curr->start, 
+                            vma_curr->end - vma_curr->start,
+                            PROT_READ|PROT_WRITE|PROT_EXEC, 
+                            mmap_flags, 
+                            vma_curr->pgoff << PAGE_SHIFT);
+                    vmas_installed++;
+                    vma_curr->mmapping_in_progress = 0;
+                    up_write(&current->mm->mmap_sem);
+                    filp_close(f,NULL);
+                    if(err != vma_curr->start) {
+                        PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
+                                vma_curr->start,err);
+                    }
+                }
+            } else {
+                mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
                 down_write(&current->mm->mmap_sem);
-                vma_curr->mmapping_in_progress = 1;
-                err = do_mmap(f, 
-                        vma_curr->start, 
-                        vma_curr->end - vma_curr->start,
-                        PROT_READ|PROT_WRITE|PROT_EXEC, 
-                        mmap_flags, 
-                        vma_curr->pgoff << PAGE_SHIFT);
+                err = do_mmap(NULL, 
+                    vma_curr->start, 
+                    vma_curr->end - vma_curr->start,
+                    PROT_READ|PROT_WRITE/*|PROT_EXEC*/, 
+                    mmap_flags, 
+                    0);
                 vmas_installed++;
-                vma_curr->mmapping_in_progress = 0;
+                //PSPRINTK("mmap error for %lx = %lx\n",vma_curr->start,err);
                 up_write(&current->mm->mmap_sem);
-                filp_close(f,NULL);
                 if(err != vma_curr->start) {
                     PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
                             vma_curr->start,err);
                 }
             }
-        } else {
-            mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
-            down_write(&current->mm->mmap_sem);
-            err = do_mmap(NULL, 
-                vma_curr->start, 
-                vma_curr->end - vma_curr->start,
-                PROT_READ|PROT_WRITE/*|PROT_EXEC*/, 
-                mmap_flags, 
-                0);
-            vmas_installed++;
-            //PSPRINTK("mmap error for %lx = %lx\n",vma_curr->start,err);
-            up_write(&current->mm->mmap_sem);
-            if(err != vma_curr->start) {
-                PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
-                        vma_curr->start,err);
-            }
-        }
-       
-        if(err > 0) {
-            // mmap_region succeeded
-            vma = find_vma(current->mm, vma_curr->start);
-            PSPRINTK("vma mmapped, pulling in pte's\n");
-            if(vma && (vma->vm_start <= vma_curr->start) && (vma->vm_end > vma_curr->start)) {
-                pte_curr = vma_curr->pte_list;
-                if(pte_curr == NULL) {
-                    PSPRINTK("vma->pte_curr == null\n");
-                }
-                while(pte_curr) {
-                    // MAP it
-                
-                    err = remap_pfn_range(vma,
-                            pte_curr->vaddr,
-                            pte_curr->paddr >> PAGE_SHIFT,
-                            PAGE_SIZE,
-                            /*pgprot_noncached(*/vma->vm_page_prot/*)*/);
-                    ptes_installed++;
-                    pte_curr = (pte_data_t*)pte_curr->header.next;
-                    if(err) {
-                        PSPRINTK("Fault - remap_pfn_range failed to map %lx to %lx with error %lx\n",
-                                pte_curr->paddr,pte_curr->vaddr,err);
+           
+            if(err > 0) {
+                // mmap_region succeeded
+                vma = find_vma(current->mm, vma_curr->start);
+                PSPRINTK("vma mmapped, pulling in pte's\n");
+                if(vma && (vma->vm_start <= vma_curr->start) && (vma->vm_end > vma_curr->start)) {
+                    pte_curr = vma_curr->pte_list;
+                    if(pte_curr == NULL) {
+                        PSPRINTK("vma->pte_curr == null\n");
+                    }
+                    while(pte_curr) {
+                        // MAP it
+                    
+                        err = remap_pfn_range(vma,
+                                pte_curr->vaddr,
+                                pte_curr->paddr >> PAGE_SHIFT,
+                                PAGE_SIZE,
+                                /*pgprot_noncached(*/vma->vm_page_prot/*)*/);
+                        ptes_installed++;
+                        pte_curr = (pte_data_t*)pte_curr->header.next;
+                        if(err) {
+                            PSPRINTK("Fault - remap_pfn_range failed to map %lx to %lx with error %lx\n",
+                                    pte_curr->paddr,pte_curr->vaddr,err);
+                        }
                     }
                 }
             }
+            vma_curr = (vma_data_t*)vma_curr->header.next;
         }
-        vma_curr = (vma_data_t*)vma_curr->header.next;
+    } else {
+        // use_existing_mm
+        flush_tlb_mm(current->mm);
+        flush_cache_mm(current->mm);
+        mm_update_next_owner(current->mm);
+        mmput(current->mm);
+        current->mm = thread_mm;
+        current->active_mm = current->mm;
+        if(!used_saved_mm) {
+            atomic_inc(&current->mm->mm_users);
+        }
     }
-perf_d = native_read_tsc();
+
+    perf_d = native_read_tsc();
+
     // install memory information
     current->mm->start_stack = clone_data->stack_start;
     current->mm->start_brk = clone_data->heap_start;
@@ -2592,11 +2658,12 @@ perf_d = native_read_tsc();
     dump_task(current,NULL,0);
 
     PERF_MEASURE_STOP(&perf_process_server_import_address_space, "Exit success");
-perf_e = native_read_tsc();
-printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
-       __func__,
-       perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
-       perf_a, perf_b, perf_c, perf_d, perf_e);
+
+    perf_e = native_read_tsc();
+    printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+            __func__,
+            perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
+            perf_a, perf_b, perf_c, perf_d, perf_e);
 
     return 0;
 }
@@ -2643,7 +2710,8 @@ int process_server_do_exit() {
     msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = current->pid;
     memcpy(&msg.regs,task_pt_regs(current),sizeof(struct pt_regs));
-    msg.regs.ip = (unsigned long)msg.regs.ip -2;
+    //msg.regs.ip = (unsigned long)msg.regs.ip -2;  This causes process
+    //                                              to never exit.
     msg.thread_fs = current->thread.fs;
     msg.thread_gs = current->thread.gs;
     msg.thread_sp0 = current->thread.sp0;
@@ -3092,7 +3160,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             // If this VMA specifies VM_WRITE, make the mapping writable.
             // this function does not the flag check.
             if(vma->vm_flags & VM_WRITE) {
-                mk_page_writable(mm, vma, data->vaddr_mapping);
+                //mk_page_writable(mm, vma, data->vaddr_mapping);
             }
 
             //dump_mm(mm);
