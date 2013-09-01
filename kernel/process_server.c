@@ -65,24 +65,78 @@
 #define PERF_MEASURE_STOP(x,y)  perf_measure_stop(x,y)
 
 pcn_perf_context_t perf_process_mapping_request;
+pcn_perf_context_t perf_process_tgroup_closed_item;
 pcn_perf_context_t perf_process_exec_item;
+pcn_perf_context_t perf_process_exit_item;
 pcn_perf_context_t perf_process_server_try_handle_mm_fault;
 pcn_perf_context_t perf_process_server_import_address_space;
 pcn_perf_context_t perf_process_server_do_exit;
 pcn_perf_context_t perf_process_server_do_munmap;
 pcn_perf_context_t perf_process_server_do_migration;
+pcn_perf_context_t perf_process_server_notify_delegated_subprocess_starting;
+pcn_perf_context_t perf_handle_thread_group_exit_notification;
+pcn_perf_context_t perf_handle_remote_thread_count_response;
+pcn_perf_context_t perf_handle_remote_thread_count_request;
+pcn_perf_context_t perf_handle_munmap_response;
+pcn_perf_context_t perf_handle_munmap_request;
+pcn_perf_context_t perf_handle_mapping_response;
+pcn_perf_context_t perf_handle_mapping_request;
+pcn_perf_context_t perf_handle_pte_transfer;
+pcn_perf_context_t perf_handle_vma_transfer;
+pcn_perf_context_t perf_handle_exiting_process_notification;
+pcn_perf_context_t perf_handle_process_pairing_request;
+pcn_perf_context_t perf_handle_clone_request;
 
 /**
  *
  */
 static void perf_init() {
-   perf_init_context(&perf_process_mapping_request,"Process Mapping Request"); 
-   perf_init_context(&perf_process_exec_item,"Process Exec Item");
-   perf_init_context(&perf_process_server_try_handle_mm_fault,"MM Fault Hook");
-   perf_init_context(&perf_process_server_import_address_space,"Import Address Space");
-   perf_init_context(&perf_process_server_do_exit,"Do Exit Hook");
-   perf_init_context(&perf_process_server_do_munmap,"Do Munmap Hook");
-   perf_init_context(&perf_process_server_do_migration,"Do Migration");
+   perf_init_context(&perf_process_mapping_request,
+           "process_mapping_request"); 
+   perf_init_context(&perf_process_tgroup_closed_item,
+           "process_tgroup_closed_item");
+   perf_init_context(&perf_process_exec_item,
+           "process_exec_item");
+   perf_init_context(&perf_process_exit_item,
+           "process_exit_item");
+   perf_init_context(&perf_process_server_try_handle_mm_fault,
+           "process_server_try_handle_mm_fault");
+   perf_init_context(&perf_process_server_import_address_space,
+           "process_server_import_address_space");
+   perf_init_context(&perf_process_server_do_exit,
+           "process_server_do_exit");
+   perf_init_context(&perf_process_server_do_munmap,
+           "process_server_do_munmap");
+   perf_init_context(&perf_process_server_do_migration,
+           "process_server_do_migration");
+   perf_init_context(&perf_process_server_notify_delegated_subprocess_starting,
+           "process_server_notify_delegated_subprocess_starting");
+   perf_init_context(&perf_handle_thread_group_exit_notification,
+           "handle_thread_group_exit_notification");
+   perf_init_context(&perf_handle_remote_thread_count_response,
+           "handle_remote_thread_count_response");
+   perf_init_context(&perf_handle_remote_thread_count_request,
+           "handle_remote_thread_count_request");
+   perf_init_context(&perf_handle_munmap_response,
+           "handle_munmap_response");
+   perf_init_context(&perf_handle_munmap_request,
+           "handle_munmap_request");
+   perf_init_context(&perf_handle_mapping_response,
+           "handle_mapping_response");
+   perf_init_context(&perf_handle_mapping_request,
+           "handle_mapping_request");
+   perf_init_context(&perf_handle_pte_transfer,
+           "handle_pte_transfer");
+   perf_init_context(&perf_handle_vma_transfer,
+           "handle_vma_transfer");
+   perf_init_context(&perf_handle_exiting_process_notification,
+           "handle_exiting_process_notification");
+   perf_init_context(&perf_handle_process_pairing_request,
+           "handle_process_pairing_request");
+   perf_init_context(&perf_handle_clone_request,
+           "handle_clone_request");
+   
+
 }
 
 #else
@@ -1293,6 +1347,8 @@ static int count_thread_members(int tgroup_home_cpu, int tgroup_home_id,
 
 /*
  * Work exec
+ *
+ * <MEASURE perf_process_tgroup_closed_item>
  */
 
 void process_tgroup_closed_item(struct work_struct* work) {
@@ -1303,6 +1359,8 @@ void process_tgroup_closed_item(struct work_struct* work) {
     struct task_struct *g, *task;
     int tgroup_closed = 0;
     int pass;
+
+    PERF_MEASURE_START(&perf_process_tgroup_closed_item);
 
     PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("%s: received group exit notification\n",__func__);
@@ -1362,6 +1420,8 @@ void process_tgroup_closed_item(struct work_struct* work) {
     spin_unlock(&_data_head_lock);
 
     kfree(work);
+
+    PERF_MEASURE_STOP(&perf_process_tgroup_closed_item," ");
 }
 
 /**
@@ -1621,19 +1681,22 @@ retry:
     kfree(work);
 
     // Perf stop
-    PERF_MEASURE_STOP(&perf_process_mapping_request,"hello");
+    PERF_MEASURE_STOP(&perf_process_mapping_request," ");
 
     return;
 }
 
 unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
+
 /**
- *
+ * <MEASURE perf_process_exit_item>
  */
 void process_exit_item(struct work_struct* work) {
     exit_work_t* w = (exit_work_t*) work;
     pid_t pid = w->pid;
     struct task_struct *task = w->task;
+
+    PERF_MEASURE_START(&perf_process_exit_item);
 
     if(unlikely(!task)) {
         printk("%s: ERROR - empty task\n",__func__);
@@ -1664,6 +1727,8 @@ void process_exit_item(struct work_struct* work) {
     wake_up_process(task);
 
     kfree(work);
+
+    PERF_MEASURE_STOP(&perf_process_exit_item," ");
 }
 
 /**
@@ -1717,7 +1782,7 @@ perf_aa = native_read_tsc();
 perf_bb = native_read_tsc();
     kfree(work);
 
-    PERF_MEASURE_STOP(&perf_process_exec_item,"goodbye");
+    PERF_MEASURE_STOP(&perf_process_exec_item," ");
 }
 
 
@@ -1726,7 +1791,7 @@ perf_bb = native_read_tsc();
  */
 
 /**
- *
+ * <MEASURE perf_handle_thread_group_exit_notification>
  */
 static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_msg) {
     thread_group_exited_notification_t* msg = (thread_group_exited_notification_t*) inc_msg;
@@ -1734,6 +1799,8 @@ static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_
     tgroup_closed_work_t* exit_work;
 
     PSPRINTK("%s: entered\n",__func__);
+
+    PERF_MEASURE_START(&perf_handle_thread_group_exit_notification);
 
     // Spin up bottom half to process this event
     exit_work = kmalloc(sizeof(tgroup_closed_work_t),GFP_ATOMIC);
@@ -1746,17 +1813,23 @@ static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_
 
     pcn_kmsg_free_msg(inc_msg);
 
+    PERF_MEASURE_STOP(&perf_handle_thread_group_exit_notification," ");
+
     return 0;
 }
 
 /**
- *
+ * <MEASURE perf_handle_remote_thread_count_response>
  */
 static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg) {
     remote_thread_count_response_t* msg = (remote_thread_count_response_t*) inc_msg;
-    remote_thread_count_request_data_t* data = find_remote_thread_count_data(
-                                                            msg->tgroup_home_cpu,
-                                                            msg->tgroup_home_id);
+
+    remote_thread_count_request_data_t* data;
+
+    PERF_MEASURE_START(&perf_handle_remote_thread_count_response);
+
+    data = find_remote_thread_count_data(msg->tgroup_home_cpu,
+                                         msg->tgroup_home_id);
 
     PSPRINTK("%s: entered - cpu{%d}, id{%d}, count{%d}\n",
             __func__,
@@ -1773,20 +1846,23 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
     // Register this response.
     data->responses++;
     data->count += msg->count;
-    //PSPRINTK("%s: total count - %d\n",__func__,data->count);
 
     pcn_kmsg_free_msg(inc_msg);
+
+    PERF_MEASURE_STOP(&perf_handle_remote_thread_count_response," ");
 
     return 0;
 }
 
 /**
- *
+ * <MEASURE perf_handle_remote_thread_count_request>
  */
 static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) {
     remote_thread_count_request_t* msg = (remote_thread_count_request_t*)inc_msg;
     remote_thread_count_response_t response;
     struct task_struct *task, *g;
+
+    PERF_MEASURE_START(&perf_handle_remote_thread_count_request);
 
     PSPRINTK("%s: entered - cpu{%d}, id{%d}\n",
             __func__,
@@ -1831,18 +1907,24 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
 
     pcn_kmsg_free_msg(inc_msg);
 
+    PERF_MEASURE_STOP(&perf_handle_remote_thread_count_request," ");
+
     return 0;
 }
 
 /**
- *
+ * <MEASURE perf_handle_munmap_response>
  */
 static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
     munmap_response_t* msg = (munmap_response_t*)inc_msg;
-    munmap_request_data_t* data = find_munmap_request_data(
-                                        msg->tgroup_home_cpu,
-                                        msg->tgroup_home_id,
-                                        msg->vaddr_start);
+    munmap_request_data_t* data;
+   
+    PERF_MEASURE_START(&perf_handle_munmap_response);
+
+    data = find_munmap_request_data(
+                                   msg->tgroup_home_cpu,
+                                   msg->tgroup_home_id,
+                                   msg->vaddr_start);
 
     if(data == NULL) {
         PSPRINTK("unable to find munmap data\n");
@@ -1855,11 +1937,13 @@ static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
 
     pcn_kmsg_free_msg(inc_msg);
 
+    PERF_MEASURE_STOP(&perf_handle_munmap_response," ");
+
     return 0;
 }
 
 /**
- *
+ * <MEASURE perf_handle_munmap_request>
  */
 static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     munmap_request_t* msg = (munmap_request_t*)inc_msg;
@@ -1867,6 +1951,8 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     struct task_struct *task, *g;
     data_header_t *curr;
     mm_data_t* mm_data;
+
+    PERF_MEASURE_START(&perf_handle_munmap_request);
 
     PSPRINTK("%s: entered\n",__func__);
 
@@ -1925,18 +2011,24 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
 
     pcn_kmsg_free_msg(inc_msg);
 
+    PERF_MEASURE_STOP(&perf_handle_munmap_request," ");
+
     return 0;
 }
 
 /**
- *
+ *  <MEASURE perf_handle_mapping_response>
  */
 static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     mapping_response_t* msg = (mapping_response_t*)inc_msg;
-    mapping_request_data_t* data = find_mapping_request_data(
-                                        msg->tgroup_home_cpu,
-                                        msg->tgroup_home_id,
-                                        msg->address);
+    mapping_request_data_t* data;
+   
+    PERF_MEASURE_START(&perf_handle_mapping_response);
+
+    data = find_mapping_request_data(
+                                     msg->tgroup_home_cpu,
+                                     msg->tgroup_home_id,
+                                     msg->address);
 
 
     PSPRINTK("%s: entered\n",__func__);
@@ -1945,6 +2037,8 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     if(data == NULL) {
         PSPRINTK("data not found\n");
         pcn_kmsg_free_msg(inc_msg);
+        PERF_MEASURE_STOP(&perf_handle_mapping_response,
+                "early exit");
         return -1;
     }
 
@@ -2000,16 +2094,20 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 
 out:
     pcn_kmsg_free_msg(inc_msg);
+    
+    PERF_MEASURE_STOP(&perf_handle_mapping_response," ");
 
     return 0;
 }
 
 /**
- * TODO: try breaking this into top and bottom halves
+ * <MEASRE perf_handle_mapping_request>
  */
 static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     mapping_request_t* msg = (mapping_request_t*)inc_msg;
     mapping_request_work_t* work;
+
+    PERF_MEASURE_START(&perf_handle_mapping_request);
 
     work = kmalloc(sizeof(mapping_request_work_t),GFP_ATOMIC);
     if(work) {
@@ -2024,21 +2122,29 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     // Clean up incoming message
     pcn_kmsg_free_msg(inc_msg);
 
+    PERF_MEASURE_STOP(&perf_handle_mapping_request," ");
+
     return 0;
 }
 
 /**
- *
+ * <MEASURE perf_handle_pte_transfer>
  */
 static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
     pte_transfer_t* msg = (pte_transfer_t*)inc_msg;
     unsigned int source_cpu = msg->header.from_cpu;
     data_header_t* curr = NULL;
     vma_data_t* vma = NULL;
-    pte_data_t* pte_data = kmalloc(sizeof(pte_data_t),GFP_ATOMIC);
+    pte_data_t* pte_data;
+    
+    PERF_MEASURE_START(&perf_handle_pte_transfer);
+
+    pte_data = kmalloc(sizeof(pte_data_t),GFP_ATOMIC);
+    
     PSPRINTK("%s: entered\n",__func__);
     if(!pte_data) {
         PSPRINTK("Failed to allocate pte_data_t\n");
+        PERF_MEASURE_STOP(&perf_handle_pte_transfer,"kmalloc failure");
         return 0;
     }
 
@@ -2088,22 +2194,30 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
     spin_unlock(&_data_head_lock);
 
     pcn_kmsg_free_msg(inc_msg);
+
+    PERF_MEASURE_STOP(&perf_handle_pte_transfer," ");
     
     return 0;
 }
 
 /**
- *
+ * <MEASURE perf_handle_vma_transfer>
  */
 static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
     vma_transfer_t* msg = (vma_transfer_t*)inc_msg;
     unsigned int source_cpu = msg->header.from_cpu;
-    vma_data_t* vma_data = kmalloc(sizeof(vma_data_t),GFP_ATOMIC);
+    vma_data_t* vma_data;
+    
+    PERF_MEASURE_START(&perf_handle_vma_transfer);
+    
+    vma_data = kmalloc(sizeof(vma_data_t),GFP_ATOMIC);
+    
     PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("handle_vma_transfer %d\n",msg->vma_id);
     
     if(!vma_data) {
         PSPRINTK("Failed to allocate vma_data_t\n");
+        PERF_MEASURE_STOP(&perf_handle_vma_transfer,"kmalloc failure");
         return 0;
     }
 
@@ -2126,18 +2240,24 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
    
     pcn_kmsg_free_msg(inc_msg);
 
+    PERF_MEASURE_STOP(&perf_handle_vma_transfer," ");
+
     return 0;
 }
 
 /**
  * Handler function for when either a remote placeholder or a remote delegate process dies,
  * and its local counterpart must be killed to reflect that.
+ *
+ * <MEASURE perf_handle_exiting_process_notification>
  */
 static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg) {
     exiting_process_t* msg = (exiting_process_t*)inc_msg;
     unsigned int source_cpu = msg->header.from_cpu;
     struct task_struct *task, *g;
     exit_work_t* exit_work;
+
+    PERF_MEASURE_START(&perf_handle_exiting_process_notification);
 
     PSPRINTK("%s: cpu: %d msg: (pid: %d from_cpu: %d [%d])\n", 
 	   __func__, smp_processor_id(), msg->my_pid,  inc_msg->hdr.from_cpu, source_cpu);
@@ -2183,22 +2303,29 @@ done:
 
     pcn_kmsg_free_msg(inc_msg);
 
+    PERF_MEASURE_STOP(&perf_handle_exiting_process_notification," ");
+
     return 0;
 }
 
 /**
  * Handler function for when another processor informs the current cpu
  * of a pid pairing.
+ *
+ * <MEASURE perf_handle_process_pairing_request>
  */
 static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
     create_process_pairing_t* msg = (create_process_pairing_t*)inc_msg;
     unsigned int source_cpu = msg->header.from_cpu;
     struct task_struct *task, *g;
 
+    PERF_MEASURE_START(&perf_handle_process_pairing_request);
+
     PSPRINTK("%s entered\n",__func__);
 
     if(msg == NULL) {
         PSPRINTK("%s msg == null - ERROR\n",__func__);
+        PERF_MEASURE_STOP(&perf_handle_process_pairing_request,"ERROR, msg == null");
         return 0;
     }
 
@@ -2232,6 +2359,8 @@ done:
 
     pcn_kmsg_free_msg(inc_msg);
 
+    PERF_MEASURE_STOP(&perf_handle_process_pairing_request," ");
+
     return 0;
 }
 
@@ -2246,6 +2375,9 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     data_header_t* curr;
     data_header_t* next;
     vma_data_t* vma;
+
+    PERF_MEASURE_START(&perf_handle_clone_request);
+
 perf_cc = native_read_tsc();
     PSPRINTK("%s: entered\n",__func__);
     
@@ -2332,6 +2464,7 @@ perf_dd = native_read_tsc();
 
     pcn_kmsg_free_msg(inc_msg);
 perf_ee = native_read_tsc();
+    PERF_MEASURE_STOP(&perf_handle_clone_request," ");
     return 0;
 }
 
@@ -2657,7 +2790,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     dump_task(current,NULL,0);
 
-    PERF_MEASURE_STOP(&perf_process_server_import_address_space, "Exit success");
+    PERF_MEASURE_STOP(&perf_process_server_import_address_space, " ");
 
     perf_e = native_read_tsc();
     printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
@@ -2815,7 +2948,7 @@ finished_membership_search:
         destroy_clone_data(clone_data);
     }
 
-    PERF_MEASURE_STOP(&perf_process_server_do_exit,"Exit success");
+    PERF_MEASURE_STOP(&perf_process_server_do_exit," ");
 
     return tx_ret;
 }
@@ -2831,6 +2964,8 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
     create_process_pairing_t msg;
     int tx_ret = -1;
 
+    PERF_MEASURE_START(&perf_process_server_notify_delegated_subprocess_starting);
+
     PSPRINTK("kmkprocsrv: notify_subprocess_starting: pid{%d}, remote_pid{%d}, remote_cpu{%d}\n",pid,remote_pid,remote_cpu);
     
     // Notify remote cpu of pairing between current task and remote
@@ -2843,6 +2978,9 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
     tx_ret = pcn_kmsg_send_long(remote_cpu, 
                 (struct pcn_kmsg_long_message*)&msg, 
                 sizeof(msg) - sizeof(msg.header));
+
+    PERF_MEASURE_STOP(&perf_process_server_notify_delegated_subprocess_starting,
+            " ");
 
     return tx_ret;
 
@@ -3514,7 +3652,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     //dump_task(task,regs,request->stack_ptr);
     
-    PERF_MEASURE_STOP(&perf_process_server_do_migration,"test2");
+    PERF_MEASURE_STOP(&perf_process_server_do_migration," ");
 
     return PROCESS_SERVER_CLONE_SUCCESS;
 
