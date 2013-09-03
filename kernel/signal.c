@@ -52,7 +52,7 @@
 static int _cpu = -1;
 static struct list_head out_head;
 static struct list_head inc_head;
-static atomic_t counter_id;
+atomic_t counter_id;
 
 DEFINE_SPINLOCK(out_list_lock);
 DEFINE_SPINLOCK(in_list_lock);
@@ -3606,10 +3606,6 @@ int do_sigaltstack(const stack_t __user *uss, stack_t __user *uoss,
 	unsigned long sp) {
 stack_t oss;
 int error;
-
-struct task_struct *t = current;
-pid_t p = t->pid;
-printk("current pid: %d\n", p);
 
 oss.ss_sp = (void __user *) current->sas_ss_sp;
 oss.ss_size = current->sas_ss_size;
