@@ -52,7 +52,7 @@
 static int _cpu = -1;
 static struct list_head out_head;
 static struct list_head inc_head;
-static atomic_t counter_id;
+atomic_t counter_id;
 
 DEFINE_SPINLOCK(out_list_lock);
 DEFINE_SPINLOCK(in_list_lock);
@@ -138,13 +138,35 @@ struct _incomming_remote_signal_pool {
 
 typedef struct _incomming_remote_signal_pool _incomming_remote_signal_pool_t;
 
+
+
+struct _remote_sigproc_request {
+	struct pcn_kmsg_hdr header;
+	int sig;
+	pid_t pid;
+	pid_t tgid;
+	int request_id;
+	char pad_string[48];
+}__attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _remote_sigproc_request _remote_sigproc_request_t;
+
+struct _remote_sigproc_response {
+	struct pcn_kmsg_hdr header;
+	int errno;
+	int request_id;
+	char pad_string[52];
+}__attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _remote_sigproc_response _remote_sigproc_response_t;
+
 static int get_counter_id() {
 	atomic_inc(&counter_id);
 }
 
 _incomming_remote_signal_pool_t * add_incomming(int pid,int cpu_id, int request_id, struct list_head *head) {
 	_incomming_remote_signal_pool_t *Ptr = (_incomming_remote_signal_pool_t *) kmalloc(
-			sizeof(_incomming_remote_signal_pool_t), GFP_KERNEL);
+			sizeof(_incomming_remote_signal_pool_t), GFP_ATOMIC);
 
 	Ptr->req_id = request_id;
 	Ptr->cpu_id = cpu_id;
@@ -187,7 +209,7 @@ _incomming_remote_signal_pool_t * find_incomming(int pid, struct list_head *head
 
 _outgoing_remote_signal_pool_t * add_outgoing(int request_id, struct list_head *head) {
 	_outgoing_remote_signal_pool_t *Ptr = (_outgoing_remote_signal_pool_t *) kmalloc(
-			sizeof(_outgoing_remote_signal_pool_t), GFP_KERNEL);
+			sizeof(_outgoing_remote_signal_pool_t), GFP_ATOMIC);
 
 	memset(Ptr, 0, sizeof(_outgoing_remote_signal_pool_t));
 	Ptr->request_id = request_id;
@@ -270,7 +292,7 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	printk("%s: request -- entered \n", "handle_remote_kill_request");
 
 	// Finish constructing response
-	response.header.type = PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE;
+	response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
 	response.header.prio = PCN_KMSG_PRIO_NORMAL;
 
 	struct siginfo info;
@@ -348,7 +370,7 @@ static int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 	request->pid = pid;
 	request->tgid = -1;
 
-	request->header.type = PCN_KMSG_TYPE_REMOTE_KILL_REQUEST;
+	request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
 
 	spin_lock(&out_list_lock);
@@ -406,7 +428,7 @@ int remote_kill_pid_info_thread(void *data) {
 				request->pid = killinfo->pid;
 				request->tgid = -1;
 
-				request->header.type = PCN_KMSG_TYPE_REMOTE_KILL_REQUEST;
+				request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 				request->header.prio = PCN_KMSG_PRIO_NORMAL;
 
 				spin_lock(&out_list_lock);
@@ -432,7 +454,7 @@ int remote_kill_pid_info_thread(void *data) {
 
 				_remote_kill_response_t response;
 				// Finish constructing response
-				response.header.type = PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE;
+				response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
 				response.header.prio = PCN_KMSG_PRIO_NORMAL;
 
 				response.errno = killinfo->respon;
@@ -454,7 +476,7 @@ int remote_kill_pid_info_thread(void *data) {
 			/*else if (recv_signal == SIGUSR1 || recv_signal == SIGUSR2) {
 				_remote_kill_response_t response;
 				// Finish constructing response
-					response.header.type = PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE;
+					response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
 					response.header.prio = PCN_KMSG_PRIO_NORMAL;
 					if(killinfo->respon !=0 || recv_signal == SIGUSR2)
 					response.errno = -ESRCH;
@@ -505,7 +527,7 @@ static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
 	request->pid = pid;
 	request->tgid = tgid;
 
-	request->header.type = PCN_KMSG_TYPE_REMOTE_KILL_REQUEST;
+	request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
 
 	spin_lock(&out_list_lock);
@@ -868,8 +890,11 @@ __sigqueue_alloc(int sig, struct task_struct *t, gfp_t flags,
 static void __sigqueue_free(struct sigqueue *q) {
 	if (q->flags & SIGQUEUE_PREALLOC)
 		return;
+
+	if(q->user!=NULL)
+	{
 	atomic_dec(&q->user->sigpending);
-	free_uid(q->user);
+	free_uid(q->user);}
 	kmem_cache_free(sigqueue_cachep, q);
 }
 
@@ -880,7 +905,12 @@ void flush_sigqueue(struct sigpending *queue) {
 	while (!list_empty(&queue->list)) {
 		q = list_entry(queue->list.next, struct sigqueue , list);
 		list_del_init(&q->list);
+		if(q->user!=NULL)
+		{
 		__sigqueue_free(q);
+		}
+		else if(q->user==NULL && q->list.next == q->list.prev)
+			break;
 	}
 }
 
@@ -1001,7 +1031,7 @@ void unblock_all_signals(void) {
 }
 
 static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
-	struct sigqueue *q,*n, *first = NULL;
+	struct sigqueue *q,*n,*user=NULL, *first = NULL;
 
 	/*
 	 * Collect the siginfo appropriate to this signal.  Check if
@@ -1009,9 +1039,20 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 	 */
 	list_for_each_entry_safe(q,n, &list->list, list)
 	{
+		if(q->user==NULL  && q->list.next == q->list.prev)
+		{
+			/*mklinux_akshay*/
+				/**
+				 * TODO: need to correct the user part of the migrated process. this is a stop gap arrangement.
+				*/
+			/*mklinux_akshay*/
+						user=q;
+						break;
+		}
 		if (q->info.si_signo == sig) {
 			if (first)
 			goto still_pending;
+
 			first = q;
 		}
 	}
@@ -1022,7 +1063,17 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 		still_pending: list_del_init(&first->list);
 		copy_siginfo(info, &first->info);
 		__sigqueue_free(first);
-	} else {
+
+	}
+	else if(user && sig==SIGKILL)
+	{
+		//remove_without_sigqueue: list_del_init(&user->list);
+		copy_siginfo(info, &user->info);
+		sigemptyset(&list->signal);
+		sigaddsetmask(&list->signal,sigmask(SIGKILL));
+	}
+	else {
+
 		/*
 		 * Ok, it wasn't in the queue.  This must be
 		 * a fast-pathed signal or we must have been
@@ -1038,7 +1089,27 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 
 static int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
 		siginfo_t *info) {
+	struct sigqueue *q,*n,*user=NULL;
+
+
+
 	int sig = next_signal(pending, mask);
+
+	/*mklinux_akshay*/
+	/**
+	 * TODO: need to correct the user part of the migrated process. this is a stop gap arrangement.
+	*/
+	/*mklinux_akshay*/
+	list_for_each_entry_safe(q,n, &pending->list, list)
+		{
+				if(q->user==NULL  && q->list.next == q->list.prev)
+				{
+					sigemptyset(&pending->signal);
+					clear_thread_flag(_TIF_USER_RETURN_NOTIFY);
+					return 0;
+				}
+		}
+
 
 	if (sig) {
 		if (current->notifier) {
@@ -1961,12 +2032,12 @@ if (pid > 0) {
 		origin_pid = p->origin_pid;
 		}
 	rcu_read_lock();
-	if(origin_pid!=-1){
+	/*if(origin_pid!=-1){
 		 struct task_struct *task = pid_task(find_vpid(pid), PIDTYPE_PID);
 		 if(task){
 		 __set_task_state(task,TASK_INTERRUPTIBLE);
-		//  flush_signals(task);
-		 }}
+		// flush_signals(task);
+		 }}*/
 	ret = kill_pid_info(sig, info, find_vpid(pid));
 	rcu_read_unlock();
 	/*mklinux_akshay*/
@@ -3036,6 +3107,20 @@ spin_unlock_irq(&tsk->sighand->siglock);
  */
 int sigprocmask(int how, sigset_t *set, sigset_t *oldset) {
 struct task_struct *tsk = current;
+
+pid_t next_pid = -1;
+pid_t prev_pid = -1;
+pid_t origin_pid = -1;
+
+struct task_struct *p = current;
+if (p) {
+		next_pid = p->next_pid;
+		prev_pid = p->prev_pid;
+		origin_pid = p->origin_pid;
+}
+
+if(isPidLocalKernel(p->pid))
+{
 sigset_t newset;
 
 /* Lockless, only current can change ->blocked, never from irq */
@@ -3054,9 +3139,24 @@ case SIG_SETMASK:
 	break;
 default:
 	return -EINVAL;
+
+	if(origin_pid!=-1 && next_pid!=-1)
+	{
+		/**
+		 * TODO: //send to remote using kthreads after seeing if its is needeed from user point of view
+		 */
+
+	}
 }
 
 set_current_blocked(&newset);
+}
+else
+{
+	/**
+	 * TODO: //send to remote after seeing if its is needeed from user point of view
+	 */
+}
 return 0;
 }
 
@@ -3206,6 +3306,11 @@ return err;
  *  @info: if non-null, the signal's siginfo is returned here
  *  @ts: upper bound on process time suspension
  */
+/*mklinux_akshay*/
+/**
+ * TODO: need to modify to correct the time wasted due to network latency
+*/
+/*mklinux_akshay*/
 int do_sigtimedwait(const sigset_t *which, siginfo_t *info,
 	const struct timespec *ts) {
 struct task_struct *tsk = current;
@@ -3501,10 +3606,6 @@ int do_sigaltstack(const stack_t __user *uss, stack_t __user *uoss,
 stack_t oss;
 int error;
 
-struct task_struct *t = current;
-pid_t p = t->pid;
-printk("current pid: %d\n", p);
-
 oss.ss_sp = (void __user *) current->sas_ss_sp;
 oss.ss_size = current->sas_ss_size;
 oss.ss_flags = sas_ss_flags(sp);
@@ -3765,9 +3866,9 @@ sigaddset(&waiting_thread->pending.signal, SIGSTOP);
 set_tsk_thread_flag(waiting_thread, TIF_SIGPENDING);
 __set_task_state(waiting_thread, TASK_INTERRUPTIBLE);
 
-pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_KILL_REQUEST,
+pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST,
 		handle_remote_kill_request);
-pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_KILL_RESPONSE,
+pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE,
 		handle_remote_kill_response);
 /*mklinux_akshay*/
 }

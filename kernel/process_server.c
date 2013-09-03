@@ -254,6 +254,9 @@ typedef struct _clone_data {
     sigset_t remote_blocked, remote_real_blocked;
     sigset_t remote_saved_sigmask;
     struct sigpending remote_pending;
+    unsigned long sas_ss_sp;
+    size_t sas_ss_size;
+    struct k_sigaction action[_NSIG];
 } clone_data_t;
 
 /**
@@ -364,6 +367,9 @@ typedef struct _clone_request {
     sigset_t remote_blocked, remote_real_blocked;
     sigset_t remote_saved_sigmask;
     struct sigpending remote_pending;
+    unsigned long sas_ss_sp;
+    size_t sas_ss_size;
+    struct k_sigaction action[_NSIG];
 } clone_request_t;
 
 /**
@@ -2684,6 +2690,13 @@ perf_cc = native_read_tsc();
     clone_data->remote_real_blocked = request->remote_real_blocked;
     clone_data->remote_saved_sigmask = request->remote_saved_sigmask ;
     clone_data->remote_pending = request->remote_pending;
+
+    clone_data->sas_ss_sp = request->sas_ss_sp;
+    clone_data->sas_ss_size = request->sas_ss_size;
+    int cnt=0;
+    for(cnt=0;cnt<_NSIG;cnt++)
+    	clone_data->action[cnt] = request->action[cnt];
+
     /*
      * Pull in vma data
      */
@@ -2991,6 +3004,12 @@ int process_server_import_address_space(unsigned long* ip,
     sigorsets(&current->real_blocked,&current->real_blocked,&clone_data->remote_real_blocked);
     sigorsets(&current->saved_sigmask,&current->saved_sigmask,&clone_data->remote_saved_sigmask);
     current->pending = clone_data->remote_pending;
+    current->sas_ss_sp = clone_data->sas_ss_sp;
+    current->sas_ss_size = clone_data->sas_ss_size;
+
+    int cnt=0;
+     for(cnt=0;cnt<_NSIG;cnt++)
+    	 current->sighand->action[cnt] = clone_data->action[cnt];
 
     // Set output variables.
     *sp = clone_data->thread_usersp;
@@ -3779,6 +3798,16 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     /*mklinux_akshay*/
     task->origin_pid =-1;
 
+  /*  struct sigpending *queue=&task->pending;
+    struct sigqueue *q;
+    sigaddset(&queue->signal,SIGUSR1);
+    set_tsk_thread_flag(task,TIF_SIGPENDING);
+
+    while (!list_empty(&queue->list)) {
+    		q = list_entry(queue->list.next, struct sigqueue , list);
+    		printk("sigq \n");
+    	}*/
+
 
     // If this is pid 1 or 2, the parent cannot have been migrated
     // so it is safe to take on all local thread info.
@@ -3988,6 +4017,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->rt_priority = task->rt_priority;
     request->sched_class = task->policy;
 
+    /*mklinux_akshay*/
     if(task->prev_pid==-1)
     	request->origin_pid = task->pid;
     else
@@ -3996,6 +4026,11 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->remote_real_blocked =task->real_blocked;
     request->remote_saved_sigmask =task->saved_sigmask;
     request->remote_pending =task->pending;
+    request->sas_ss_sp = task->sas_ss_sp;
+    request->sas_ss_size = task->sas_ss_size;
+    int cnt=0;
+    for(cnt=0;cnt<_NSIG;cnt++)
+    	request->action[cnt] = task->sighand->action[cnt];
 // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h
