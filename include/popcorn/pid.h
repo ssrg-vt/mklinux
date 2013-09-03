@@ -25,5 +25,14 @@
 
 
 
+static inline int isPidLocalKernel(int id)
+{
+	if(ORIG_NODE(id)==Kernel_Id)
+		return 1;
+
+	return 0;
+}
+
+
 
 #endif
