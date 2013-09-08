@@ -83,9 +83,6 @@ static _function_args_t kthread_param={
 		.req_id = -1
 };
 
-static int _cpu = -1;
-static int wait = -1;
-int err_no = -ESRCH;
 
 static struct task_struct *waiting_thread;
 
