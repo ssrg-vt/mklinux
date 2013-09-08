@@ -46,12 +46,9 @@
 #include <popcorn/pid.h>
 #include <linux/kthread.h>
 
-<<<<<<< HEAD
-=======
 
 //static DECLARE_WAIT_QUEUE_HEAD( wq);
 
->>>>>>> Some merge issues
 static int _cpu = -1;
 static struct list_head out_head;
 static struct list_head inc_head;
@@ -86,9 +83,6 @@ static _function_args_t kthread_param={
 		.req_id = -1
 };
 
-static int _cpu = -1;
-static int wait = -1;
-int err_no = -ESRCH;
 
 static struct task_struct *waiting_thread;
 
