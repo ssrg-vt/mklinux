@@ -13,6 +13,7 @@
 #include <linux/pcn_kmsg.h>
 #include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/proc_fs.h>
 
 #include <asm/system.h>
 #include <asm/apic.h>
@@ -101,7 +102,7 @@ static inline unsigned long win_inuse(struct pcn_kmsg_window *win)
 {
 	return win->head - win->tail;
 }
-
+static long unsigned int msg_put=0;
 static inline int win_put(struct pcn_kmsg_window *win, 
 			  struct pcn_kmsg_message *msg,
 			  int no_block) 
@@ -134,10 +135,11 @@ static inline int win_put(struct pcn_kmsg_window *win,
 
 	/* set completed flag */
 	win->buffer[ticket & RB_MASK].hdr.ready = 1;
-
+msg_put++;
 	return 0;
 }
 
+static long unsigned msg_get=0;
 static inline int win_get(struct pcn_kmsg_window *win, 
 			  struct pcn_kmsg_reverse_message **msg) 
 {
@@ -165,7 +167,7 @@ static inline int win_get(struct pcn_kmsg_window *win,
 	rcvd->hdr.ready = 0;
 
 	*msg = rcvd;	
-
+msg_get++;
 	return 0;
 }
 
@@ -559,6 +561,21 @@ static int do_checkin(void)
 	return rc;
 }
 
+static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eof, void *data)
+{
+	char *p= page;
+        int len;
+
+	p += sprintf(p, "messages get: %ld\n", msg_get);
+        p += sprintf(p, "messages put: %ld\n", msg_put);
+	len = (p -page) - off;
+	if (len < 0)
+		len = 0;
+	*eof = (len <= count) ? 1 : 0;
+	*start = page + off;
+	return len;
+}
+
 static int __init pcn_kmsg_init(void)
 {
 	int rc;
@@ -675,6 +692,16 @@ static int __init pcn_kmsg_init(void)
 			return -1;
 		}
 	} 
+
+	/* if everything is ok create a proc interface */
+	struct proc_dir_entry *res;
+	res = create_proc_entry("pcnmsg", S_IRUGO, NULL);
+	if (!res) {
+		printk("%s: create_proc_entry failed (%p)\n", __func__, res);
+		return -ENOMEM;
+	}
+	res->read_proc = pcn_read_proc;
+
 
 	return 0;
 }
