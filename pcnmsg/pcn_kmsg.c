@@ -75,6 +75,21 @@ static void pcn_kmsg_action(struct softirq_action *h);
 /* workqueue for operations that can sleep */
 struct workqueue_struct *kmsg_wq;
 
+/* statistics /proc */
+static long unsigned int msg_put=0;
+static long unsigned int msg_put_failed=0;
+static long unsigned int msg_get=0;
+static long unsigned int msg_get_failed=0;
+static long unsigned int msg_mput=0;
+static long unsigned int msg_mput_failed=0;
+static long unsigned int msg_mget=0;
+static long unsigned int msg_mget_failed=0;
+static long unsigned int ipi_send=0;
+static long unsigned int ipi_send_suppressed=0;
+static long unsigned int long_send=0;
+static long unsigned int callback_called=0;
+// irq_popcorn_kmsg_count ???
+
 /* RING BUFFER */
 
 #define RB_SHIFT 6
@@ -102,7 +117,7 @@ static inline unsigned long win_inuse(struct pcn_kmsg_window *win)
 {
 	return win->head - win->tail;
 }
-static long unsigned int msg_put=0;
+
 static inline int win_put(struct pcn_kmsg_window *win, 
 			  struct pcn_kmsg_message *msg,
 			  int no_block) 
@@ -113,6 +128,7 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	   return EAGAIN */
 	if (no_block && (win_inuse(win) >= RB_SIZE)) {
 		KMSG_PRINTK("window full, caller should try again...\n");
+		msg_put_failed++;
 		return -EAGAIN;
 	}
 
@@ -135,11 +151,11 @@ static inline int win_put(struct pcn_kmsg_window *win,
 
 	/* set completed flag */
 	win->buffer[ticket & RB_MASK].hdr.ready = 1;
-msg_put++;
+
+	msg_put++;
 	return 0;
 }
 
-static long unsigned msg_get=0;
 static inline int win_get(struct pcn_kmsg_window *win, 
 			  struct pcn_kmsg_reverse_message **msg) 
 {
@@ -148,10 +164,11 @@ static inline int win_get(struct pcn_kmsg_window *win,
 	if (!win_inuse(win)) {
 
 		KMSG_PRINTK("nothing in buffer, returning...\n");
+		msg_get_failed++;
 		return -1;
 	}
 
-	KMSG_PRINTK("reached win_get, head %lu, tail %lu\n", 
+	PCN_DEBUG("reached win_get, head %lu, tail %lu\n",
 		    win->head, win->tail);	
 
 	/* spin until entry.ready at end of cache line is set */
@@ -166,8 +183,9 @@ static inline int win_get(struct pcn_kmsg_window *win,
 
 	rcvd->hdr.ready = 0;
 
-	*msg = rcvd;	
-msg_get++;
+	*msg = rcvd;
+
+	msg_get++;
 	return 0;
 }
 
@@ -209,18 +227,20 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 	/* if the queue is already really long, return EAGAIN */
 	if (mcastwin_inuse(id) >= RB_SIZE) {
 		MCAST_PRINTK("window full, caller should try again...\n");
+		msg_mput_failed++;
 		return -EAGAIN;
 	}
 
 	/* grab ticket */
 	ticket = fetch_and_add(&MCASTWIN(id)->head, 1);
-	MCAST_PRINTK("ticket = %lu, head = %lu, tail = %lu\n",
+	PCN_DEBUG("ticket = %lu, head = %lu, tail = %lu\n",
 		     ticket, MCASTWIN(id)->head, MCASTWIN(id)->tail);
 
 	/* spin until there's a spot free for me */
 	while (mcastwin_inuse(id) >= RB_SIZE) {
 		if (unlikely(time_after(jiffies, time_limit))) {
 			MCAST_PRINTK("spinning too long to wait for window to be free; this is bad!\n");
+			msg_mput_failed++;
 			return -1;
 		}
 	}
@@ -246,14 +266,14 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 	atomic_set(&MCASTWIN(id)->read_counter[ticket & RB_MASK],
 		rkinfo->mcast_wininfo[id].num_members - 1);
 
-	MCAST_PRINTK("set counter to %d\n", 
+	PCN_DEBUG("set counter to %d\n",
 		     rkinfo->mcast_wininfo[id].num_members - 1);
 
 	pcn_barrier();
 
 	/* set completed flag */
 	MCASTWIN(id)->buffer[ticket & RB_MASK].hdr.ready = 1;
-
+	msg_mput++;
 	return 0;
 }
 
@@ -277,6 +297,7 @@ retry:
 
 	if (MCASTWIN(id)->head == LOCAL_TAIL(id)) {
 		MCAST_PRINTK("nothing in buffer, returning...\n");
+		msg_mget_failed++;
 		return -1;
 	}
 
@@ -296,7 +317,7 @@ retry:
 	}
 
 	*msg = rcvd;
-
+	msg_mget++;
 	return 0;
 }
 
@@ -322,7 +343,7 @@ static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
 	//char printstr[256];
 	//char intstr[16];
 
-	MCAST_PRINTK("local tail currently on slot %lu, read counter %d\n", 
+	PCN_DEBUG("local tail currently on slot %lu, read counter %d\n",
 		     LOCAL_TAIL(id), atomic_read(&MCASTWIN(id)->read_counter[slot]));
 
 	/*
@@ -564,10 +585,15 @@ static int do_checkin(void)
 static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eof, void *data)
 {
 	char *p= page;
-        int len;
+    int len;
 
-	p += sprintf(p, "messages get: %ld\n", msg_get);
-        p += sprintf(p, "messages put: %ld\n", msg_put);
+	p += sprintf(p, "msg_get: %ld failed: %ld\n", msg_get, msg_get_failed);
+    p += sprintf(p, "msg_put: %ld failed: %ld\n", msg_put, msg_put_failed);
+    p += sprintf(p, "msg_mput: %ld failed: %ld\n", msg_mget, msg_mget_failed);
+    p += sprintf(p, "msg_mput: %ld failed: %ld\n", msg_mput, msg_mput_failed);
+    p += sprintf(p, "ipi: %ld suppressed: %ld\n", ipi_send, ipi_send_suppressed);
+    p += sprintf(p, "long_send: %ld\n", long_send);
+    p += sprintf(p, "callbacks: %ld\n", callback_called);
 	len = (p -page) - off;
 	if (len < 0)
 		len = 0;
@@ -575,6 +601,25 @@ static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eo
 	*start = page + off;
 	return len;
 }
+
+static int pcn_write_proc(struct file *file, const char __user *buffer, unsigned long count, void *data)
+{
+	msg_put=0;
+	msg_put_failed=0;
+	msg_get=0;
+	msg_get_failed=0;
+	msg_mput=0;
+	msg_mput_failed=0;
+	msg_mget=0;
+	msg_mget_failed=0;
+	ipi_send=0;
+	ipi_send_suppressed=0;
+	long_send=0;
+	callback_called=0;
+
+	return count;
+}
+
 
 static int __init pcn_kmsg_init(void)
 {
@@ -701,7 +746,7 @@ static int __init pcn_kmsg_init(void)
 		return -ENOMEM;
 	}
 	res->read_proc = pcn_read_proc;
-
+	res->write_proc = pcn_write_proc;
 
 	return 0;
 }
@@ -781,11 +826,13 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 
 	/* send IPI */
 	if (win_int_enabled(dest_window)) {
-		KMSG_PRINTK("Interrupts enabled; sending IPI...\n");
+		PCN_DEBUG("Interrupts enabled; sending IPI...\n");
 		rdtscll(int_ts);
 		apic->send_IPI_single(dest_cpu, POPCORN_KMSG_VECTOR);
+		ipi_send++;
 	} else {
-		KMSG_PRINTK("Interrupts not enabled; not sending IPI...\n");
+		PCN_DEBUG("Interrupts not enabled; not sending IPI...\n");
+		ipi_send_suppressed++;
 	}
 
 	return 0;
@@ -825,7 +872,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		num_chunks++;
 	}
 
-	KMSG_PRINTK("Sending large message to CPU %d, type %d, payload size %d bytes, %d chunks\n", 
+	KMSG_PRINTK("Sending large message to CPU %d, type %d, payload size %d bytes, %d chunks\n",
 		    dest_cpu, lmsg->hdr.type, payload_size, num_chunks);
 
 	this_chunk.hdr.type = lmsg->hdr.type;
@@ -845,8 +892,11 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       PCN_KMSG_PAYLOAD_SIZE);
 
 		__pcn_kmsg_send(dest_cpu, &this_chunk, 0);
+// TODO check for errors!!!
+// TODO check for errors!!!
+// TODO check for errors!!!
 	}
-
+	long_send++;
 	return 0;
 }
 
@@ -874,6 +924,8 @@ static int process_message_list(struct list_head *head)
 		}
 
 		rc = callback_table[msg->hdr.type](msg);
+		callback_called++;
+
 		if (!rc_overall) {
 			rc_overall = rc;
 		}
@@ -1568,6 +1620,7 @@ out:
 	pcn_kmsg_free_msg(message);
 	return rc;
 }
+
 
 
 
