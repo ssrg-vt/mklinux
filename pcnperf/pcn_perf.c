@@ -248,7 +248,7 @@ static void dump_data(void) {
     while(curr) {
         entry = curr->entry_list;
         while(entry) {
-            printk("pcn_perf: %s - %llu %d %d %d %d %s\n",
+            printk("pcn_perf: %s;%llu;%d;%d;%d;%d;%s\n",
                     curr->name,
                     entry->end - entry->start,
                     curr->home_cpu,
@@ -333,7 +333,7 @@ void perf_measure_start(pcn_perf_context_t *cxt) {
     pcn_perf_entry_t* entry;
     if(!cxt->is_active) return;
     
-    entry = kmalloc(sizeof(pcn_perf_entry_t),GFP_KERNEL);
+    entry = kmalloc(sizeof(pcn_perf_entry_t),GFP_ATOMIC);
     entry->next = NULL;
     entry->context_id = cxt->context_id;
     entry->start = 0;
