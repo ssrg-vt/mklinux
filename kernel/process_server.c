@@ -227,6 +227,9 @@ typedef struct _clone_data {
     unsigned short thread_gsindex;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int prio, static_prio, normal_prio; //from sched.c
+	unsigned int rt_priority; //from sched.c
+	int sched_class; //from sched.c but here we are using SCHED_NORMAL, SCHED_FIFO, etc.
     vma_data_t* vma_list;
     vma_data_t* pending_vma_list;
 } clone_data_t;
@@ -323,6 +326,9 @@ typedef struct _clone_request {
     unsigned short thread_gsindex;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int prio, static_prio, normal_prio; //from sched.c
+	unsigned int rt_priority; //from sched.c
+	int sched_class; //from sched.c but here we are using SCHED_NORMAL, SCHED_FIFO, etc.
 } clone_request_t;
 
 /**
@@ -2417,6 +2423,11 @@ perf_cc = native_read_tsc();
     clone_data->vma_list = NULL;
     clone_data->tgroup_home_cpu = request->tgroup_home_cpu;
     clone_data->tgroup_home_id = request->tgroup_home_id;
+    clone_data->prio = request->prio;
+    clone_data->static_prio = request->static_prio;
+    clone_data->normal_prio = request->normal_prio;
+    clone_data->rt_priority = request->rt_priority;
+    clone_data->sched_class = request->sched_class;
     clone_data->lock = __SPIN_LOCK_UNLOCKED(&clone_data->lock);
 
     /*
@@ -2728,6 +2739,37 @@ int process_server_import_address_space(unsigned long* ip,
     memcpy(regs,&clone_data->regs,sizeof(struct pt_regs)); 
     regs->ax = 0; // Fake success for the "sched_setaffinity" syscall
                   // that this process just "returned from"
+
+    printk("%s: usermodehelper prio: %d static: %d normal: %d rt: %u class: %s\n",
+    		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
+    		(current->sched_class == &stop_sched_class) ? "STOP" :
+    				(current->sched_class == &rt_sched_class) ? "RT" :
+    						(current->sched_class == &fair_sched_class) ? "FAIR" :
+    								(current->sched_class == &idle_sched_class) ? "IDLE" : "N/A");
+    current->prio = clone_data->prio;
+    current->static_prio = clone_data->static_prio;
+    current->normal_prio = clone_data->normal_prio;
+    current->rt_priority = clone_data->rt_priority;
+    switch (clone_data->sched_class) {
+    case SCHED_RR:
+    	current->sched_class = &stop_sched_class;
+    	break;
+    case SCHED_FIFO:
+    	current->sched_class = &rt_sched_class;
+    	break;
+    case SCHED_NORMAL:
+    	current->sched_class = &fair_sched_class;
+    	break;
+    case SCHED_IDLE:
+    	current->sched_class = &idle_sched_class;
+    	break;
+    }
+    printk("%s: clone_data prio: %d static: %d normal: %d rt: %u class: %s\n",
+    		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
+    		(current->sched_class == &stop_sched_class) ? "STOP" :
+    				(current->sched_class == &rt_sched_class) ? "RT" :
+    						(current->sched_class == &fair_sched_class) ? "FAIR" :
+    								(current->sched_class == &idle_sched_class) ? "IDLE" : "N/A");
 
     // We assume that an exec is going on
     // and the current process is the one is executing
@@ -3583,6 +3625,27 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->placeholder_tgid = task->tgid;
     request->tgroup_home_cpu = task->tgroup_home_cpu;
     request->tgroup_home_id = task->tgroup_home_id;
+    request->prio = task->prio;
+    request->static_prio = task->static_prio;
+    request->normal_prio = task->normal_prio;
+    request->rt_priority = task->rt_priority;
+
+    switch (task->sched_class) {
+    case (&stop_sched_class):
+    		request->sched_class = SCHED_RR
+    		break;
+    case (&rt_sched_class):
+			request->sched_class = SCHED_FIFO;
+    		break;
+    case (&fair_sched_class):
+			request->sched_class = SCHED_NORMAL;
+    		break;
+    case (&idle_sched_class):
+			request->sched_class = SCHED_IDLE;
+    		break;
+    else
+    	request->sched_class = -1;
+    }
 // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h
