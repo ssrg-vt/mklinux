@@ -331,7 +331,17 @@ void perf_init_context( pcn_perf_context_t * cxt, char * name ) {
  */
 void perf_measure_start(pcn_perf_context_t *cxt) {
     pcn_perf_entry_t* entry;
+
+    // Don't continue if we are not currently interested in taking any
+    // measurements
     if(!cxt->is_active) return;
+
+    // We should not allow a measurement to start if another is already in
+    // progress for this context
+    if(cxt->entry_list && 
+            (cxt->entry_list->in_progress || cxt->entry_list->end == 0)) 
+        return;
+    
     
     entry = kmalloc(sizeof(pcn_perf_entry_t),GFP_ATOMIC);
     entry->next = NULL;
