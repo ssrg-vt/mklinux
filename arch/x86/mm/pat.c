@@ -382,7 +382,9 @@ int free_memtype(u64 start, u64 end)
  * Returns _PAGE_CACHE_WB, _PAGE_CACHE_WC, _PAGE_CACHE_UC_MINUS or
  * _PAGE_CACHE_UC
  */
-static unsigned long lookup_memtype(u64 paddr)
+//>>>> Following change is for debugging cache-ability of the messaging layer
+//static unsigned long lookup_memtype(u64 paddr)
+unsigned long lookup_memtype(u64 paddr)
 {
 	int rettype = _PAGE_CACHE_WB;
 	struct memtype *entry;
@@ -415,6 +417,7 @@ static unsigned long lookup_memtype(u64 paddr)
 	spin_unlock(&memtype_lock);
 	return rettype;
 }
+EXPORT_SYMBOL_GPL(lookup_memtype);
 
 /**
  * io_reserve_memtype - Request a memory type mapping for a region of memory
