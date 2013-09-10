@@ -587,13 +587,12 @@ static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eo
 	char *p= page;
     int len;
 
-	p += sprintf(p, "msg_get: %ld failed: %ld\n", msg_get, msg_get_failed);
-    p += sprintf(p, "msg_put: %ld failed: %ld\n", msg_put, msg_put_failed);
+	p += sprintf(p, "msg_get : %ld failed: %ld\n", msg_get, msg_get_failed);
+    p += sprintf(p, "msg_put : %ld failed: %ld\n", msg_put, msg_put_failed);
     p += sprintf(p, "msg_mput: %ld failed: %ld\n", msg_mget, msg_mget_failed);
     p += sprintf(p, "msg_mput: %ld failed: %ld\n", msg_mput, msg_mput_failed);
     p += sprintf(p, "ipi: %ld suppressed: %ld\n", ipi_send, ipi_send_suppressed);
-    p += sprintf(p, "long_send: %ld\n", long_send);
-    p += sprintf(p, "callbacks: %ld\n", callback_called);
+    p += sprintf(p, "long_send: %ld callbacks: %ld\n", long_send, callback_called);
 	len = (p -page) - off;
 	if (len < 0)
 		len = 0;
