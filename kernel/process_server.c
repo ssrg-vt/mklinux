@@ -2739,10 +2739,11 @@ int process_server_import_address_space(unsigned long* ip,
     regs->ax = 0; // Fake success for the "sched_setaffinity" syscall
                   // that this process just "returned from"
 
-    printk("%s: usermodehelper prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
+/*    printk("%s: usermodehelper prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
+__func__,
     		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
 		current->policy, rt_prio (current->prio));
-    
+  */  
 current->prio = clone_data->prio;
     current->static_prio = clone_data->static_prio;
     current->normal_prio = clone_data->normal_prio;
@@ -2760,10 +2761,11 @@ current->prio = clone_data->prio;
     	current->sched_class = &idle_sched_class;
     	break;
     }
-*/    printk("%s: clone_data prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
+*/  /*  printk("%s: clone_data prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
+__func__,
     		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
 		current->policy, rt_prio (current->prio));
-
+*/
     // We assume that an exec is going on
     // and the current process is the one is executing
     // (a switch will occur if it is not the one that must execute)
@@ -2861,6 +2863,11 @@ int process_server_do_exit(void) {
         return -1;
     }
 
+/*     printk("%s: CHANGED? prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
+		__func__,
+                 current->prio, current->static_prio, current->normal_prio, current->rt_priority,
+                 current->policy, rt_prio (current->prio));
+*/
     PERF_MEASURE_START(&perf_process_server_do_exit);
 
     // Count the number of threads in this distributed thread group

@@ -90,6 +90,9 @@ static long unsigned int long_send=0;
 static long unsigned int callback_called=0;
 // irq_popcorn_kmsg_count ???
 
+//exported from arch/x86/mm/pat.c
+unsigned long lookup_memtype(u64 paddr);
+
 /* RING BUFFER */
 
 #define RB_SHIFT 6
@@ -377,6 +380,7 @@ static int pcn_kmsg_mcast_callback(struct pcn_kmsg_message *message);
 
 static void map_msg_win(pcn_kmsg_work_t *w)
 {
+	unsigned long mem_type;
 	int cpu = w->cpu_to_add;
 
 	if (cpu < 0 || cpu >= POPCORN_MAX_CPUS) {
@@ -386,6 +390,13 @@ static void map_msg_win(pcn_kmsg_work_t *w)
 
 	rkvirt[cpu] = ioremap_cache(rkinfo->phys_addr[cpu],
 				    sizeof(struct pcn_kmsg_window));
+	mem_type = lookup_memtype(rkinfo->phys_addr[cpu]);
+	printk("%s: ioremap_cache %p is %s\n",
+			__func__, rkinfo->phys_addr[cpu],
+			(mem_type == _PAGE_CACHE_WB) ?  "WB" :
+					(mem_type == _PAGE_CACHE_WC) ? "WC" :
+							(mem_type == _PAGE_CACHE_UC_MINUS) ? "UC-" :
+									(mem_type == _PAGE_CACHE_UC) ? : "UC" : "?");
 	if (rkvirt[cpu]) {
 		KMSG_INIT("ioremapped window, virt addr 0x%p\n", 
 			  rkvirt[cpu]);
@@ -552,6 +563,7 @@ static int do_checkin(void)
 {
 	int rc = 0;
 	int i;
+	unsigned long mem_type;
 
 	for (i = 0; i < POPCORN_MAX_CPUS; i++) {
 		if (i == my_cpu) {
@@ -561,6 +573,14 @@ static int do_checkin(void)
 		if (rkinfo->phys_addr[i]) {
 			rkvirt[i] = ioremap_cache(rkinfo->phys_addr[i],
 						  sizeof(struct pcn_kmsg_window));
+			mem_type = lookup_memtype(rkinfo->phys_addr[i]);
+			printk("%s: ioremap_cache %p is %s\n",
+					__func__, rkinfo->phys_addr[i],
+					(mem_type == _PAGE_CACHE_WB) ?  "WB" :
+							(mem_type == _PAGE_CACHE_WC) ? "WC" :
+									(mem_type == _PAGE_CACHE_UC_MINUS) ? "UC-" :
+											(mem_type == _PAGE_CACHE_UC) ? : "UC" : "?");
+
 			if (rkvirt[i]) {
 				KMSG_INIT("ioremapped CPU %d's window, virt addr 0x%p\n", 
 					  i, rkvirt[i]);
@@ -587,13 +607,12 @@ static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eo
 	char *p= page;
     int len;
 
-	p += sprintf(p, "msg_get: %ld failed: %ld\n", msg_get, msg_get_failed);
-    p += sprintf(p, "msg_put: %ld failed: %ld\n", msg_put, msg_put_failed);
+	p += sprintf(p, "msg_get : %ld failed: %ld\n", msg_get, msg_get_failed);
+    p += sprintf(p, "msg_put : %ld failed: %ld\n", msg_put, msg_put_failed);
     p += sprintf(p, "msg_mput: %ld failed: %ld\n", msg_mget, msg_mget_failed);
     p += sprintf(p, "msg_mput: %ld failed: %ld\n", msg_mput, msg_mput_failed);
     p += sprintf(p, "ipi: %ld suppressed: %ld\n", ipi_send, ipi_send_suppressed);
-    p += sprintf(p, "long_send: %ld\n", long_send);
-    p += sprintf(p, "callbacks: %ld\n", callback_called);
+    p += sprintf(p, "long_send: %ld callbacks: %ld\n", long_send, callback_called);
 	len = (p -page) - off;
 	if (len < 0)
 		len = 0;
@@ -624,7 +643,7 @@ static int pcn_write_proc(struct file *file, const char __user *buffer, unsigned
 static int __init pcn_kmsg_init(void)
 {
 	int rc;
-	unsigned long win_phys_addr, rkinfo_phys_addr;
+	unsigned long win_phys_addr, rkinfo_phys_addr, mem_type;
 	struct pcn_kmsg_window *win_virt_addr;
 	struct boot_params * boot_params_va;
 
@@ -698,6 +717,13 @@ static int __init pcn_kmsg_init(void)
 		rkinfo_phys_addr = boot_params.pcn_kmsg_master_window;
 		rkinfo = ioremap_cache(rkinfo_phys_addr, 
 				       sizeof(struct pcn_kmsg_rkinfo));
+		mem_type = lookup_memtype(rkinfo_phys_addr);
+		printk("%s: ioremap_cache %p is %s\n",
+				__func__, rkinfo_phys_addr,
+				(mem_type == _PAGE_CACHE_WB) ?  "WB" :
+						(mem_type == _PAGE_CACHE_WC) ? "WC" :
+								(mem_type == _PAGE_CACHE_UC_MINUS) ? "UC-" :
+										(mem_type == _PAGE_CACHE_UC) ? : "UC" : "?");
 
 		if (!rkinfo) {
 			KMSG_ERR("Failed to map rkinfo from master kernel!\n");

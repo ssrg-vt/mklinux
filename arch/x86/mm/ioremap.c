@@ -120,12 +120,19 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 		if (!is_new_memtype_allowed(phys_addr, size,
 					    prot_val, new_prot_val)) {
 			printk(KERN_ERR
-		"ioremap error for 0x%llx-0x%llx, requested 0x%lx, got 0x%lx\n",
+		"ioremap ERROR for 0x%llx-0x%llx, requested 0x%lx, got 0x%lx\n",
 				(unsigned long long)phys_addr,
 				(unsigned long long)(phys_addr + size),
 				prot_val, new_prot_val);
 			goto err_free_memtype;
 		}
+		printk(KERN_ERR
+	"%s: ioremap WARN 0x%llx-0x%llx, requested 0x%lx, got 0x%lx\n",
+			__func__,
+			(unsigned long long)phys_addr,
+			(unsigned long long)(phys_addr + size),
+			prot_val, new_prot_val);
+
 		prot_val = new_prot_val;
 	}
 

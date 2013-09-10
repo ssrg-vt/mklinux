@@ -17,7 +17,7 @@
 
 extern unsigned long orig_boot_params;
 
-int mklinux_boot;
+int mklinux_boot = 0;
 EXPORT_SYMBOL(mklinux_boot);
 
 static int __init setup_mklinux(char *arg)
