@@ -90,7 +90,7 @@ pcn_perf_context_t perf_handle_clone_request;
 /**
  *
  */
-static void perf_init() {
+static void perf_init(void) {
    perf_init_context(&perf_process_mapping_request,
            "process_mapping_request"); 
    perf_init_context(&perf_process_tgroup_closed_item,
@@ -227,6 +227,9 @@ typedef struct _clone_data {
     unsigned short thread_gsindex;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int prio, static_prio, normal_prio; //from sched.c
+	unsigned int rt_priority; //from sched.c
+	int sched_class; //from sched.c but here we are using SCHED_NORMAL, SCHED_FIFO, etc.
     vma_data_t* vma_list;
     vma_data_t* pending_vma_list;
 } clone_data_t;
@@ -323,6 +326,9 @@ typedef struct _clone_request {
     unsigned short thread_gsindex;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int prio, static_prio, normal_prio; //from sched.c
+	unsigned int rt_priority; //from sched.c
+	int sched_class; //from sched.c but here we are using SCHED_NORMAL, SCHED_FIFO, etc.
 } clone_request_t;
 
 /**
@@ -625,7 +631,7 @@ static void mk_page_writable(struct mm_struct* mm,
 
     arch_leave_lazy_mmu_mode();
 
-out_unlock:
+//out_unlock:
     pte_unmap_unlock(pte, ptl);
 out:
     return;
@@ -720,7 +726,6 @@ void dump_task(struct task_struct* task, struct pt_regs* regs, unsigned long sta
  *
  */
 static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr) {
-    int i;
     if(!thread) return;
     PSPRINTK("DUMP STACK\n");
     if(thread->sp) {
@@ -1062,7 +1067,7 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
  */
 static void dump_mm(struct mm_struct* mm) {
     struct vm_area_struct * curr;
-    char buf[256];
+//    char buf[256];
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
         .mm = mm,
@@ -1693,7 +1698,7 @@ unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
  */
 void process_exit_item(struct work_struct* work) {
     exit_work_t* w = (exit_work_t*) work;
-    pid_t pid = w->pid;
+//    pid_t pid = w->pid;
     struct task_struct *task = w->task;
 
     PERF_MEASURE_START(&perf_process_exit_item);
@@ -2417,6 +2422,11 @@ perf_cc = native_read_tsc();
     clone_data->vma_list = NULL;
     clone_data->tgroup_home_cpu = request->tgroup_home_cpu;
     clone_data->tgroup_home_id = request->tgroup_home_id;
+    clone_data->prio = request->prio;
+    clone_data->static_prio = request->static_prio;
+    clone_data->normal_prio = request->normal_prio;
+    clone_data->rt_priority = request->rt_priority;
+    clone_data->sched_class = request->sched_class;
     clone_data->lock = __SPIN_LOCK_UNLOCKED(&clone_data->lock);
 
     /*
@@ -2729,6 +2739,31 @@ int process_server_import_address_space(unsigned long* ip,
     regs->ax = 0; // Fake success for the "sched_setaffinity" syscall
                   // that this process just "returned from"
 
+    printk("%s: usermodehelper prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
+    		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
+		current->policy, rt_prio (current->prio));
+    
+current->prio = clone_data->prio;
+    current->static_prio = clone_data->static_prio;
+    current->normal_prio = clone_data->normal_prio;
+    current->rt_priority = clone_data->rt_priority;
+    current->policy = clone_data->sched_class;
+/*    switch (clone_data->sched_class) {
+    case SCHED_RR:
+    case SCHED_FIFO:
+    	current->sched_class = &rt_sched_class;
+    	break;
+    case SCHED_NORMAL:
+    	current->sched_class = &fair_sched_class;
+    	break;
+    case SCHED_IDLE:
+    	current->sched_class = &idle_sched_class;
+    	break;
+    }
+*/    printk("%s: clone_data prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
+    		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
+		current->policy, rt_prio (current->prio));
+
     // We assume that an exec is going on
     // and the current process is the one is executing
     // (a switch will occur if it is not the one that must execute)
@@ -2809,7 +2844,7 @@ int process_server_import_address_space(unsigned long* ip,
  *
  * <MEASURE perf_process_server_do_exit>
  */
-int process_server_do_exit() {
+int process_server_do_exit(void) {
 
     exiting_process_t msg;
     int tx_ret = -1;
@@ -2823,7 +2858,7 @@ int process_server_do_exit() {
 
     // Select only relevant tasks to operate on
     if(!(current->executing_for_remote || current->tgroup_distributed)) {
-        return;
+        return -1;
     }
 
     PERF_MEASURE_START(&perf_process_server_do_exit);
@@ -3504,7 +3539,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     while(curr) {
         unsigned long start_stack = task->mm->start_stack;
-        unsigned long start_brk = task->mm->start_brk;
+//        unsigned long start_brk = task->mm->start_brk;
 
         // Transfer the stack and heap only
         if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start)/*||
@@ -3583,6 +3618,11 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->placeholder_tgid = task->tgid;
     request->tgroup_home_cpu = task->tgroup_home_cpu;
     request->tgroup_home_id = task->tgroup_home_id;
+    request->prio = task->prio;
+    request->static_prio = task->static_prio;
+    request->normal_prio = task->normal_prio;
+    request->rt_priority = task->rt_priority;
+    request->sched_class = task->policy;
 // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h

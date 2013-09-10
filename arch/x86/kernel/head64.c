@@ -108,8 +108,7 @@ void __init x86_64_start_reservations(char *real_mode_data)
 	memblock_init();
 
 	memblock_x86_reserve_range(__pa_symbol(&_text), __pa_symbol(&__bss_stop), "TEXT DATA BSS");
-
-    memblock_x86_reserve_range(real_mode_data, real_mode_data + (sizeof boot_params), "boot_params");
+	memblock_x86_reserve_range((u64)real_mode_data, (u64)(real_mode_data + (sizeof boot_params)), "boot_params");
 
 #ifdef CONFIG_BLK_DEV_INITRD
 #define RAMDISK_MAGIC 0xdf
