@@ -396,7 +396,7 @@ static void map_msg_win(pcn_kmsg_work_t *w)
 			(mem_type == _PAGE_CACHE_WB) ?  "WB" :
 					(mem_type == _PAGE_CACHE_WC) ? "WC" :
 							(mem_type == _PAGE_CACHE_UC_MINUS) ? "UC-" :
-									(mem_type == _PAGE_CACHE_UC) ? : "UC" : "?");
+									(mem_type == _PAGE_CACHE_UC) ? "UC" : "?");
 	if (rkvirt[cpu]) {
 		KMSG_INIT("ioremapped window, virt addr 0x%p\n", 
 			  rkvirt[cpu]);
@@ -579,7 +579,7 @@ static int do_checkin(void)
 					(mem_type == _PAGE_CACHE_WB) ?  "WB" :
 							(mem_type == _PAGE_CACHE_WC) ? "WC" :
 									(mem_type == _PAGE_CACHE_UC_MINUS) ? "UC-" :
-											(mem_type == _PAGE_CACHE_UC) ? : "UC" : "?");
+											(mem_type == _PAGE_CACHE_UC) ? "UC" : "?");
 
 			if (rkvirt[i]) {
 				KMSG_INIT("ioremapped CPU %d's window, virt addr 0x%p\n", 
@@ -723,7 +723,7 @@ static int __init pcn_kmsg_init(void)
 				(mem_type == _PAGE_CACHE_WB) ?  "WB" :
 						(mem_type == _PAGE_CACHE_WC) ? "WC" :
 								(mem_type == _PAGE_CACHE_UC_MINUS) ? "UC-" :
-										(mem_type == _PAGE_CACHE_UC) ? : "UC" : "?");
+										(mem_type == _PAGE_CACHE_UC) ? "UC" : "?");
 
 		if (!rkinfo) {
 			KMSG_ERR("Failed to map rkinfo from master kernel!\n");
