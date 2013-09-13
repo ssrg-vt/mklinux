@@ -44,27 +44,33 @@
 
 #include "util.h"
 
+/*mklinux_akshay*/
+#include "shm_remote.h"
+/*
 struct shm_file_data {
 	int id;
 	struct ipc_namespace *ns;
 	struct file *file;
 	const struct vm_operations_struct *vm_ops;
-};
+};*/
 
 #define shm_file_data(file) (*((struct shm_file_data **)&(file)->private_data))
 
-static const struct file_operations shm_file_operations;
+//static
+const struct file_operations shm_file_operations;
 static const struct vm_operations_struct shm_vm_ops;
 
-#define shm_ids(ns)	((ns)->ids[IPC_SHM_IDS])
+/*mklinux_akshay*/ //moved to util.h
+/*#define shm_ids(ns)	((ns)->ids[IPC_SHM_IDS])
 
 #define shm_unlock(shp)			\
 	ipc_unlock(&(shp)->shm_perm)
-
-static int newseg(struct ipc_namespace *, struct ipc_params *);
+*/
+/*mklinux_akshay*///static
+int newseg(struct ipc_namespace *, struct ipc_params *);
 static void shm_open(struct vm_area_struct *vma);
 static void shm_close(struct vm_area_struct *vma);
-static void shm_destroy (struct ipc_namespace *ns, struct shmid_kernel *shp);
+void shm_destroy (struct ipc_namespace *ns, struct shmid_kernel *shp);
 #ifdef CONFIG_PROC_FS
 static int sysvipc_shm_proc_show(struct seq_file *s, void *it);
 #endif
@@ -128,7 +134,8 @@ void __init shm_init (void)
  * shm_lock_(check_) routines are called in the paths where the rw_mutex
  * is not necessarily held.
  */
-static inline struct shmid_kernel *shm_lock(struct ipc_namespace *ns, int id)
+//static inline
+struct shmid_kernel *shm_lock(struct ipc_namespace *ns, int id)
 {
 	struct kern_ipc_perm *ipcp = ipc_lock(&shm_ids(ns), id);
 
@@ -144,7 +151,8 @@ static inline void shm_lock_by_ptr(struct shmid_kernel *ipcp)
 	spin_lock(&ipcp->shm_perm.lock);
 }
 
-static inline struct shmid_kernel *shm_lock_check(struct ipc_namespace *ns,
+//static inline
+struct shmid_kernel *shm_lock_check(struct ipc_namespace *ns,
 						int id)
 {
 	struct kern_ipc_perm *ipcp = ipc_lock_check(&shm_ids(ns), id);
@@ -185,7 +193,8 @@ static void shm_open(struct vm_area_struct *vma)
  * It has to be called with shp and shm_ids.rw_mutex (writer) locked,
  * but returns with shp unlocked and freed.
  */
-static void shm_destroy(struct ipc_namespace *ns, struct shmid_kernel *shp)
+//static
+void shm_destroy(struct ipc_namespace *ns, struct shmid_kernel *shp)
 {
 	ns->shm_tot -= (shp->shm_segsz + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	shm_rmid(ns, shp);
@@ -210,7 +219,8 @@ static void shm_destroy(struct ipc_namespace *ns, struct shmid_kernel *shp)
  *
  * 2) sysctl kernel.shm_rmid_forced is set to 1.
  */
-static bool shm_may_destroy(struct ipc_namespace *ns, struct shmid_kernel *shp)
+//static
+bool shm_may_destroy(struct ipc_namespace *ns, struct shmid_kernel *shp)
 {
 	return (shp->shm_nattch == 0) &&
 	       (ns->shm_rmid_forced ||
@@ -402,7 +412,8 @@ static unsigned long shm_get_unmapped_area(struct file *file,
 						pgoff, flags);
 }
 
-static const struct file_operations shm_file_operations = {
+//static
+const struct file_operations shm_file_operations = {
 	.mmap		= shm_mmap,
 	.fsync		= shm_fsync,
 	.release	= shm_release,
@@ -412,7 +423,8 @@ static const struct file_operations shm_file_operations = {
 	.llseek		= noop_llseek,
 };
 
-static const struct file_operations shm_file_operations_huge = {
+//static
+const struct file_operations shm_file_operations_huge = {
 	.mmap		= shm_mmap,
 	.fsync		= shm_fsync,
 	.release	= shm_release,
@@ -443,7 +455,8 @@ static const struct vm_operations_struct shm_vm_ops = {
  * Called with shm_ids.rw_mutex held as a writer.
  */
 
-static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
+/*mklinux_akshay*/ //static
+int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 {
 	key_t key = params->key;
 	int shmflg = params->flg;
@@ -469,7 +482,9 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 	shp->shm_perm.key = key;
 	shp->shm_perm.mode = (shmflg & S_IRWXUGO);
 	shp->mlock_user = NULL;
-
+	/*mklinux_akshay*/
+	shp->shm_perm.global_key = GLOBAL_KEY(shp->shm_perm.key);
+	/*mklinux_akshay*/
 	shp->shm_perm.security = NULL;
 	error = security_shm_alloc(shp);
 	if (error) {
@@ -536,7 +551,8 @@ no_file:
 /*
  * Called with shm_ids.rw_mutex and ipcp locked.
  */
-static inline int shm_security(struct kern_ipc_perm *ipcp, int shmflg)
+/*mklinux_akshay*/ //static inline
+int shm_security(struct kern_ipc_perm *ipcp, int shmflg)
 {
 	struct shmid_kernel *shp;
 
@@ -547,7 +563,8 @@ static inline int shm_security(struct kern_ipc_perm *ipcp, int shmflg)
 /*
  * Called with shm_ids.rw_mutex and ipcp locked.
  */
-static inline int shm_more_checks(struct kern_ipc_perm *ipcp,
+/*mklinux_akshay*/ //static inline
+int shm_more_checks(struct kern_ipc_perm *ipcp,
 				struct ipc_params *params)
 {
 	struct shmid_kernel *shp;
@@ -565,6 +582,9 @@ SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
 	struct ipc_ops shm_ops;
 	struct ipc_params shm_params;
 
+	/*mklinux_akshay*/
+	struct remoteipc_ops remoteshm_ops;
+	/*mklinux_akshay*/
 	ns = current->nsproxy->ipc_ns;
 
 	shm_ops.getnew = newseg;
@@ -575,7 +595,11 @@ SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
 	shm_params.flg = shmflg;
 	shm_params.u.size = size;
 
-	return ipcget(ns, &shm_ids(ns), &shm_ops, &shm_params);
+	/*mklinux_akshay*/
+	remoteshm_ops.ipc_getipcid=remote_ipc_shm_getid;
+
+
+	return _ipcget(ns, &shm_ids(ns), &shm_ops, &remoteshm_ops, &shm_params);
 }
 
 static inline unsigned long copy_shmid_to_user(void __user *buf, struct shmid64_ds *in, int version)
@@ -1090,7 +1114,14 @@ SYSCALL_DEFINE3(shmat, int, shmid, char __user *, shmaddr, int, shmflg)
 	unsigned long ret;
 	long err;
 
+	if(isLocalKernel(shmid))
+	{
 	err = do_shmat(shmid, shmaddr, shmflg, &ret);
+	}
+	else
+	{
+	err = remote_ipc_shm_shmat(shmid, shmaddr, shmflg, &ret);
+	}
 	if (err)
 		return err;
 	force_successful_syscall_return();

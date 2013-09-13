@@ -355,10 +355,10 @@ SYSCALL_DEFINE3(semget, key_t, key, int, nsems, int, semflg)
 	sem_params.u.nsems = nsems;
 
 	/*mklinux_akshay*/
-	remotesem_ops.ipc_getsemid=remote_ipc_sem_getid;
+	remotesem_ops.ipc_getipcid=remote_ipc_sem_getid;
 
 
-	return _ipcget(ns, &sem_ids(ns), &sem_ops,&remotesem_ops, &sem_params);/*mklinux_akshay*/
+	return _ipcget(ns, &sem_ids(ns), &sem_ops, &remotesem_ops, &sem_params);/*mklinux_akshay*/
 }
 
 /*

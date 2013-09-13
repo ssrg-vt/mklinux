@@ -446,7 +446,7 @@ retry:
 			err=0;
 			if (rops!=NULL)
 			{
-			   err = rops->ipc_getsemid(ids, params);
+			   err = rops->ipc_getipcid(ids, params);
 			}
 			if(err)
 				 goto finish;

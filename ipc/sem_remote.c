@@ -6,7 +6,9 @@
 #include <linux/string.h>
 #include <linux/wait.h>
 
-#include <linux/ipc.h>
+
+#include "remote_ipc_function.h"
+//#include <linux/ipc.h>
 #include "sem_remote.h"
 #include "util.h"
 
@@ -51,7 +53,7 @@ struct _remote_ipc_semget_response {
 
 typedef struct _remote_ipc_semget_response _remote_ipc_semget_response_t;
 
-
+/*
 struct kern_ipc_perm *remote_ipc_findkey(struct ipc_ids *ids, key_t key)
 {
 	struct kern_ipc_perm *ipc;
@@ -73,7 +75,7 @@ struct kern_ipc_perm *remote_ipc_findkey(struct ipc_ids *ids, key_t key)
 
 	return NULL;
 }
-
+*/
 int remote_semget( struct ipc_params *params)
 {
 		struct ipc_namespace *ns;
