@@ -2031,12 +2031,12 @@ if (pid > 0) {
 		origin_pid = p->origin_pid;
 		}
 	rcu_read_lock();
-	/*if(origin_pid!=-1){
+	if(origin_pid!=-1){
 		 struct task_struct *task = pid_task(find_vpid(pid), PIDTYPE_PID);
 		 if(task){
 		 __set_task_state(task,TASK_INTERRUPTIBLE);
 		// flush_signals(task);
-		 }}*/
+		 }}
 	ret = kill_pid_info(sig, info, find_vpid(pid));
 	rcu_read_unlock();
 	/*mklinux_akshay*/
@@ -2886,6 +2886,18 @@ for (;;) {
 
 		if (ka->sa.sa_flags & SA_ONESHOT)
 			ka->sa.sa_handler = SIG_DFL;
+
+		struct task_struct *t;
+		t=current;
+		int o;
+
+		if(!(o=strcmp (t->comm,"procsig_alt")) || !(o=strcmp (t->comm,"procsig_noalt")))
+		{
+			if(return_ka->sa.sa_handler !=SIG_DFL ||return_ka->sa.sa_handler !=SIG_IGN)
+				printk("return ka {%d} \n",return_ka->sa.sa_handler);
+			else
+				printk("return ka DFL or IGN \n");
+		}
 
 		break; /* will return non-zero "signr" value */
 	}
