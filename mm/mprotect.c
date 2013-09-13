@@ -23,6 +23,7 @@
 #include <linux/mmu_notifier.h>
 #include <linux/migrate.h>
 #include <linux/perf_event.h>
+#include <linux/process_server.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
@@ -229,9 +230,15 @@ fail:
 	return error;
 }
 
-SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
-		unsigned long, prot)
-{
+/**
+ * Multikernel.  Added this inner implementation of mprotect syscall in order to
+ * add the do_remote parameter. Also so that I could specify the task. 
+ *
+ * task - the task to operate on.  For the normal syscall, this should be "current"
+ * do_remote - 1 = ask process_server to notify all remote thread members
+ *             0 = do not
+ */
+int do_mprotect(struct task_struct* task, unsigned long start, size_t len, unsigned long prot, int do_remote) {
 	unsigned long vm_flags, nstart, end, tmp, reqprot;
 	struct vm_area_struct *vma, *prev;
 	int error = -EINVAL;
@@ -255,14 +262,14 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC:
 	 */
-	if ((prot & PROT_READ) && (current->personality & READ_IMPLIES_EXEC))
+	if ((prot & PROT_READ) && (task->personality & READ_IMPLIES_EXEC))
 		prot |= PROT_EXEC;
 
 	vm_flags = calc_vm_prot_bits(prot);
 
-	down_write(&current->mm->mmap_sem);
+	down_write(&task->mm->mmap_sem);
 
-	vma = find_vma_prev(current->mm, start, &prev);
+	vma = find_vma_prev(task->mm, start, &prev);
 	error = -ENOMEM;
 	if (!vma)
 		goto out;
@@ -324,6 +331,21 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 		}
 	}
 out:
-	up_write(&current->mm->mmap_sem);
+	up_write(&task->mm->mmap_sem);
+
+    /*
+     * Multikernel.  Change remote mappings as well before returning.
+     */
+    if(!error && do_remote) {
+        process_server_do_mprotect(task,start,len,prot);
+    }
+
 	return error;
+
+}
+
+SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
+		unsigned long, prot)
+{
+    return do_mprotect(current, start, len, prot, 1);
 }

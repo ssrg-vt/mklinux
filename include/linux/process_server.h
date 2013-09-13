@@ -37,5 +37,9 @@ int process_server_do_munmap(struct mm_struct* mm,
                                 struct vm_area_struct *vma,
                                 unsigned long start, 
                                 unsigned long len);
+void process_server_do_mprotect(struct task_struct* task,
+                                unsigned long addr,
+                                size_t len,
+                                unsigned long prot);
 int process_server_dup_task(struct task_struct* orig, struct task_struct* task);
 #endif // _PROCESS_SERVER_H

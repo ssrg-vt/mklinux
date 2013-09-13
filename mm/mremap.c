@@ -19,6 +19,7 @@
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/mmu_notifier.h>
+#include <linux/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -525,6 +526,15 @@ unsigned long do_mremap(unsigned long addr,
 		if (ret)
 			goto out;
 		ret = move_vma(vma, addr, old_len, new_len, new_addr);
+        
+        /*
+         * Multikernel - In this case, we want to unload the old mapping
+         * from all remote kernels.  To do this, pretend we're doing a munmap
+         * operation, and notify all remotes of a munmap.  If they want to access
+         * the new space, they will fault and re-acquire the mapping.
+         */
+        process_server_do_munmap(mm, vma, addr, old_len);
+
 	}
 out:
 	if (ret & ~PAGE_MASK)

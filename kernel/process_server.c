@@ -54,6 +54,7 @@
 #define PROCESS_SERVER_MUNMAP_REQUEST_DATA_TYPE 5
 #define PROCESS_SERVER_MM_DATA_TYPE 6
 #define PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE 7
+#define PROCESS_SERVER_MPROTECT_DATA_TYPE 8
 
 /**
  * Perf
@@ -68,11 +69,13 @@ pcn_perf_context_t perf_process_mapping_request;
 pcn_perf_context_t perf_process_tgroup_closed_item;
 pcn_perf_context_t perf_process_exec_item;
 pcn_perf_context_t perf_process_exit_item;
+pcn_perf_context_t perf_process_mprotect_item;
 pcn_perf_context_t perf_process_server_try_handle_mm_fault;
 pcn_perf_context_t perf_process_server_import_address_space;
 pcn_perf_context_t perf_process_server_do_exit;
 pcn_perf_context_t perf_process_server_do_munmap;
 pcn_perf_context_t perf_process_server_do_migration;
+pcn_perf_context_t perf_process_server_do_mprotect;
 pcn_perf_context_t perf_process_server_notify_delegated_subprocess_starting;
 pcn_perf_context_t perf_handle_thread_group_exit_notification;
 pcn_perf_context_t perf_handle_remote_thread_count_response;
@@ -86,6 +89,8 @@ pcn_perf_context_t perf_handle_vma_transfer;
 pcn_perf_context_t perf_handle_exiting_process_notification;
 pcn_perf_context_t perf_handle_process_pairing_request;
 pcn_perf_context_t perf_handle_clone_request;
+pcn_perf_context_t perf_handle_mprotect_response;
+pcn_perf_context_t perf_handle_mprotect_request;
 
 /**
  *
@@ -99,6 +104,8 @@ static void perf_init(void) {
            "process_exec_item");
    perf_init_context(&perf_process_exit_item,
            "process_exit_item");
+   perf_init_context(&perf_process_mprotect_item,
+           "process_mprotect_item");
    perf_init_context(&perf_process_server_try_handle_mm_fault,
            "process_server_try_handle_mm_fault");
    perf_init_context(&perf_process_server_import_address_space,
@@ -109,6 +116,8 @@ static void perf_init(void) {
            "process_server_do_munmap");
    perf_init_context(&perf_process_server_do_migration,
            "process_server_do_migration");
+   perf_init_context(&perf_process_server_do_mprotect,
+           "process_server_do_mprotect");
    perf_init_context(&perf_process_server_notify_delegated_subprocess_starting,
            "process_server_notify_delegated_subprocess_starting");
    perf_init_context(&perf_handle_thread_group_exit_notification,
@@ -135,6 +144,10 @@ static void perf_init(void) {
            "handle_process_pairing_request");
    perf_init_context(&perf_handle_clone_request,
            "handle_clone_request");
+   perf_init_context(&perf_handle_mprotect_request,
+           "handle_mprotect_request");
+   perf_init_context(&perf_handle_mprotect_response,
+           "handle_mprotect_resonse");
    
 
 }
@@ -290,6 +303,15 @@ typedef struct _mm_data {
     int tgroup_home_id;
     struct mm_struct* mm;
 } mm_data_t;
+
+typedef struct _mprotect_data {
+    data_header_t header;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    unsigned long start;
+    int responses;
+    int expected_responses;
+} mprotect_data_t;
 
 /**
  * This message is sent to a remote cpu in order to 
@@ -505,8 +527,35 @@ struct _remote_thread_count_response {
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _remote_thread_count_response remote_thread_count_response_t;
 
+/**
+ *
+ */
+struct _mprotect_request {
+    struct pcn_kmsg_hdr header; 
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+    unsigned long start;        // 8
+    size_t len;                 // 4
+    unsigned long prot;         // 8
+                                // ---
+                                // 28 -> 32 bytes of padding needed
+    char pad[32];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _mprotect_request mprotect_request_t;
 
-
+/**
+ *
+ */
+struct _mprotect_response {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+    unsigned long start;        // 8
+                                // ---
+                                // 16 -> 44 bytes of padding needed
+    char pad[44];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _mprotect_response mprotect_response_t;
 
 
 
@@ -568,6 +617,19 @@ typedef struct {
 } tgroup_closed_work_t;
 
 /**
+ * 
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    unsigned long start;
+    size_t len;
+    unsigned long prot;
+    int from_cpu;
+} mprotect_work_t;
+
+/**
  * Prototypes
  */
 static int handle_clone_request(struct pcn_kmsg_message* msg);
@@ -583,11 +645,18 @@ static void dump_task(struct task_struct* task,struct pt_regs* regs,unsigned lon
 static void dump_thread(struct thread_struct* thread);
 static void dump_regs(struct pt_regs* regs);
 static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr); 
+
+/**
+ * Prototypes from parts of the kernel that I modified or made available to external
+ * modules.
+ */
 // I removed the 'static' modifier in mm/memory.c for do_wp_page so I could use it 
 // here.
 int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
                unsigned long address, pte_t *page_table, pmd_t *pmd,
                spinlock_t *ptl, pte_t orig_pte);
+int do_mprotect(struct task_struct* task, unsigned long start, size_t len, unsigned long prot, int do_remote);
+
 /**
  * Module variables
  */
@@ -893,6 +962,35 @@ static munmap_request_data_t* find_munmap_request_data(int cpu, int id, unsigned
             if(request->tgroup_home_cpu == cpu && 
                     request->tgroup_home_id == id &&
                     request->vaddr_start == address) {
+                ret = request;
+                break;
+            }
+        }
+        curr = curr->next;
+    }
+
+    spin_unlock(&_data_head_lock);
+
+    return ret;
+
+}
+
+/**
+ *
+ */
+static mprotect_data_t* find_mprotect_request_data(int cpu, int id, unsigned long start) {
+    data_header_t* curr = NULL;
+    mprotect_data_t* request = NULL;
+    mprotect_data_t* ret = NULL;
+    spin_lock(&_data_head_lock);
+    
+    curr = _data_head;
+    while(curr) {
+        if(curr->data_type == PROCESS_SERVER_MPROTECT_DATA_TYPE) {
+            request = (mprotect_data_t*)curr;
+            if(request->tgroup_home_cpu == cpu && 
+                    request->tgroup_home_id == id &&
+                    request->start == start) {
                 ret = request;
                 break;
             }
@@ -1790,6 +1888,54 @@ perf_bb = native_read_tsc();
     PERF_MEASURE_STOP(&perf_process_exec_item," ");
 }
 
+/**
+ * <MEASRURE perf_process_mprotect_item>
+ */
+void process_mprotect_item(struct work_struct* work) {
+    mprotect_response_t response;
+    mprotect_work_t* w = (mprotect_work_t*)work;
+    int tgroup_home_cpu = w->tgroup_home_cpu;
+    int tgroup_home_id  = w->tgroup_home_id;
+    unsigned long start = w->start;
+    size_t len = w->len;
+    unsigned long prot = w->prot;
+    struct task_struct* task;
+
+    PERF_MEASURE_START(&perf_process_mprotect_item);
+
+    // Handle protect
+    printk("mprotect placeholder - cpu{%d}, id{%d}, start{%lx}, len{%d}, prot{%lx}\n");
+
+    // Find the task
+    for_each_process(task) {
+        if(task->tgroup_home_cpu == tgroup_home_cpu &&
+           task->tgroup_home_id  == tgroup_home_id) {
+            
+            // do_mprotect
+            do_mprotect(task,start,len,prot,0);
+
+            // then quit
+            goto done;
+
+        }
+    }
+done:
+
+    // Construct response
+    response.header.type = PCN_KMSG_TYPE_PROC_SRV_MPROTECT_RESPONSE;
+    response.header.prio = PCN_KMSG_PRIO_NORMAL;
+    response.tgroup_home_cpu = tgroup_home_cpu;
+    response.tgroup_home_id = tgroup_home_id;
+    response.start = start;
+    
+    // Send response
+    pcn_kmsg_send(w->from_cpu,
+             (struct pcn_kmsg_message*)(&response));
+
+    kfree(work);
+
+    PERF_MEASURE_STOP(&perf_process_mprotect_item," ");
+}
 
 /**
  * Request implementations
@@ -2017,6 +2163,72 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     pcn_kmsg_free_msg(inc_msg);
 
     PERF_MEASURE_STOP(&perf_handle_munmap_request," ");
+
+    return 0;
+}
+
+/**
+ * <MEASURE perf_handle_mprotect_response>
+ */
+static int handle_mprotect_response(struct pcn_kmsg_message* inc_msg) {
+    mprotect_response_t* msg = (mprotect_response_t*)inc_msg;
+    mprotect_data_t* data;
+  
+
+    PERF_MEASURE_START(&perf_handle_mprotect_response);
+
+    data = find_mprotect_request_data(
+                                   msg->tgroup_home_cpu,
+                                   msg->tgroup_home_id,
+                                   msg->start);
+
+    if(data == NULL) {
+        PSPRINTK("unable to find mprotect data\n");
+        pcn_kmsg_free_msg(inc_msg);
+        return -1;
+    }
+
+    // Register this response.
+    data->responses++;
+
+    pcn_kmsg_free_msg(inc_msg);
+
+    PERF_MEASURE_STOP(&perf_handle_mprotect_response," ");
+
+    return 0;
+}
+
+/**
+ * <MEASURE perf_handle_mprotect_request>
+ */
+static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
+    mprotect_request_t* msg = (mprotect_request_t*)inc_msg;
+    mprotect_work_t* work;
+    unsigned long start = msg->start;
+    size_t len = msg->len;
+    unsigned long prot = msg->prot;
+    int tgroup_home_cpu = msg->tgroup_home_cpu;
+    int tgroup_home_id = msg->tgroup_home_id;
+
+
+    PERF_MEASURE_START(&perf_handle_mprotect_request);
+
+    // Schedule work
+    work = kmalloc(sizeof(mprotect_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_mprotect_item  );
+        work->tgroup_home_id = tgroup_home_id;
+        work->tgroup_home_cpu = tgroup_home_cpu;
+        work->start = start;
+        work->len = len;
+        work->prot = prot;
+        work->from_cpu = msg->header.from_cpu;
+        queue_work(mapping_wq, (struct work_struct*)work);
+    }
+
+    pcn_kmsg_free_msg(inc_msg);
+
+    PERF_MEASURE_STOP(&perf_handle_mprotect_request," ");
 
     return 0;
 }
@@ -3107,6 +3319,86 @@ exit:
 }
 
 /**
+ * 
+ */
+void process_server_do_mprotect(struct task_struct* task,
+                                unsigned long start,
+                                size_t len,
+                                unsigned long prot) {
+    mprotect_data_t* data;
+    mprotect_request_t request;
+    int i;
+    int s;
+
+     // Nothing to do for a thread group that's not distributed.
+    if(!current->tgroup_distributed) {
+        goto exit;
+    }
+
+    printk("%s entered\n",__func__);
+
+    PERF_MEASURE_START(&perf_process_server_do_mprotect);
+
+    data = kmalloc(sizeof(mprotect_data_t),GFP_KERNEL);
+    if(!data) goto exit;
+
+    data->header.data_type = PROCESS_SERVER_MPROTECT_DATA_TYPE;
+    data->responses = 0;
+    data->expected_responses = 0;
+    data->tgroup_home_cpu = task->tgroup_home_cpu;
+    data->tgroup_home_id = task->tgroup_home_id;
+    data->start = start;
+
+    add_data_entry(data);
+
+    request.header.type = PCN_KMSG_TYPE_PROC_SRV_MPROTECT_REQUEST;
+    request.header.prio = PCN_KMSG_PRIO_NORMAL;
+    request.start = start;
+    request.len  = len;
+    request.prot = prot;
+    request.tgroup_home_cpu = task->tgroup_home_cpu;
+    request.tgroup_home_id  = task->tgroup_home_id;
+
+    printk("Sending mprotect request to all other kernels... ");
+
+    for(i = 0; i < NR_CPUS; i++) {
+
+        // Skip the current cpu
+        if (i == _cpu) continue;
+
+        // Send the request to this cpu.
+        s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
+        if(!s) {
+            // A successful send operation, increase the number
+            // of expected responses.
+            data->expected_responses++;
+        }
+    }
+
+    printk("done\nWaiting for responses... ");
+
+    // Wait for all cpus to respond.
+    while(data->expected_responses != data->responses) {
+        schedule();
+    }
+
+    printk("done\n");
+
+    // OK, all responses are in, we can proceed.
+
+    spin_lock(&_data_head_lock);
+    remove_data_entry(data);
+    spin_unlock(&_data_head_lock);
+
+    kfree(data);
+
+exit:
+
+    PERF_MEASURE_STOP(&perf_process_server_do_mprotect," ");
+
+}
+
+/**
  * Fault hook
  * 0 = not handled
  * 1 = handled
@@ -3752,6 +4044,10 @@ static int __init process_server_init(void) {
             handle_remote_thread_count_response);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION,
             handle_thread_group_exited_notification);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MPROTECT_REQUEST,
+            handle_mprotect_request);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MPROTECT_RESPONSE,
+            handle_mprotect_response);
     PERF_INIT(); 
     return 0;
 }
