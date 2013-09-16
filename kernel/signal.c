@@ -67,6 +67,7 @@ struct _function_args {
 	int signal;
 	struct siginfo *info;
 	pid_t pid;
+	pid_t calling_pid;
 	int respon;
 	int ret_cpu;
 	int req_id;
@@ -78,6 +79,7 @@ static _function_args_t kthread_param={
 		.signal = -1,
 		.info = NULL,
 		.pid =-1,
+		.calling_pid=-1,
 		.respon =-1,
 		.ret_cpu =-1,
 		.req_id = -1
@@ -105,6 +107,25 @@ struct _remote_kill_response {
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 typedef struct _remote_kill_response _remote_kill_response_t;
+
+
+struct _remote_sigproc_request {
+	struct pcn_kmsg_hdr header;
+	pid_t pid;
+	sigset_t _set;
+	int request_id;
+	char pad_string[48];
+}__attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _remote_sigproc_request _remote_sigproc_request_t;
+
+struct _remote_sigproc_response {
+	struct pcn_kmsg_hdr header;
+	int errno;
+	char pad_string[56];
+}__attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _remote_sigproc_response _remote_sigproc_response_t;
 
 struct _outgoing_remote_signal_pool {
 	int request_id;
@@ -134,28 +155,6 @@ struct _incomming_remote_signal_pool {
 };
 
 typedef struct _incomming_remote_signal_pool _incomming_remote_signal_pool_t;
-
-
-
-struct _remote_sigproc_request {
-	struct pcn_kmsg_hdr header;
-	int sig;
-	pid_t pid;
-	pid_t tgid;
-	int request_id;
-	char pad_string[48];
-}__attribute__((packed)) __attribute__((aligned(64)));
-
-typedef struct _remote_sigproc_request _remote_sigproc_request_t;
-
-struct _remote_sigproc_response {
-	struct pcn_kmsg_hdr header;
-	int errno;
-	int request_id;
-	char pad_string[52];
-}__attribute__((packed)) __attribute__((aligned(64)));
-
-typedef struct _remote_sigproc_response _remote_sigproc_response_t;
 
 static int get_counter_id() {
 	atomic_inc(&counter_id);
@@ -397,7 +396,7 @@ int remote_kill_pid_info_thread(void *data) {
 	allow_signal(SIGSTOP);
 	allow_signal(SIGCONT);
 	set_freezable();
-	int res = 0;
+	int res = 0,ret=0;
 	_function_args_t *killinfo = data;
 	volatile unsigned long recv_signal = SIGSTOP;
 
@@ -435,7 +434,7 @@ int remote_kill_pid_info_thread(void *data) {
 				request->request_id = req_id;
 				spin_unlock(&out_list_lock);
 
-				// Send response
+				// Send response to kill migrated pid
 				res = pcn_kmsg_send(killinfo->kernel,
 						(struct pcn_kmsg_message*) (request));
 
@@ -450,16 +449,30 @@ int remote_kill_pid_info_thread(void *data) {
 				//send the expecting process to continue
 				//kill_pid(find_vpid(killinfo->ret_pid), SIGCONT,1);
 
+				/*struct task_struct *task = pid_task(find_vpid(killinfo->calling_pid), PIDTYPE_PID);
+
+				if(task){
+					__set_task_state(task,TASK_INTERRUPTIBLE);
+				}
+
+				//send signal to current pid
+				rcu_read_lock();
+					ret = kill_pid_info(killinfo->signal, killinfo->info, find_vpid(killinfo->calling_pid));
+				rcu_read_unlock();*/
+
+
+
 				_remote_kill_response_t response;
 				// Finish constructing response
 				response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
 				response.header.prio = PCN_KMSG_PRIO_NORMAL;
 
-				response.errno = killinfo->respon;
+				response.errno = (
+						killinfo->respon ? killinfo->respon : (ret ? ret : 0));
 				response.request_id = killinfo->req_id;
 				printk("%s: request --remote:errno: %d \n", "remote_kill_pid_info_thread",
 											response.errno );
-				// Send response
+				// Send response to the calling kernel
 				pcn_kmsg_send(killinfo->ret_cpu, (struct pcn_kmsg_message*) (&response));
 
 				spin_lock(&in_list_lock);
@@ -546,6 +559,100 @@ static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
 	spin_unlock(&out_list_lock);
 
 	return res;
+}
+
+
+static int handle_remote_sigproc_response(struct pcn_kmsg_message* inc_msg) {
+	_remote_kill_response_t* msg = (_remote_kill_response_t*) inc_msg;
+
+	printk("%s: response --- errno stored - errno{%d} \n",
+			"handle_remote_kill_response", msg->errno);
+
+	_outgoing_remote_signal_pool_t *ptr = find_outgoing(msg->request_id, &out_head);
+	ptr->status = DONE;
+	ptr->errno = msg->errno;
+	wake_up_interruptible(&ptr->wq);
+
+	pcn_kmsg_free_msg(inc_msg);
+
+	return 0;
+}
+
+static int handle_remote_sigproc_request(struct pcn_kmsg_message* inc_msg) {
+
+	_remote_kill_request_t* msg = (_remote_kill_request_t*) inc_msg;
+	_remote_kill_response_t response;
+
+	_incomming_remote_signal_pool_t *ptr;
+
+	int ret = -ESRCH;
+	int signum = 0;
+
+	printk("%s: request -- entered \n", "handle_remote_kill_request");
+
+	// Finish constructing response
+	response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
+	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+
+
+	struct siginfo info;
+
+	info.si_signo = msg->sig;
+	info.si_errno = 0;
+	info.si_code = SI_USER;
+	info.si_pid = task_tgid_vnr(current);
+	info.si_uid = current_uid();
+	info.si_remote = true;
+
+	spin_lock(&in_list_lock);
+	ptr = add_incomming( msg->pid,msg->header.from_cpu,msg->request_id, &inc_head);
+	spin_unlock(&in_list_lock);
+
+	//perform action
+
+	if (msg->tgid == -1) // for killing process
+			{
+		ret = kill_something_info(msg->sig, &info, msg->pid);
+	} else //for killing with tgid
+	{
+		ret = do_send_specific(msg->tgid, msg->pid, msg->sig, &info);
+	}
+
+	if(ptr->assign_for_kthread == 0)
+	{
+	response.errno = ret;
+	response.request_id = msg->request_id;
+
+	printk("%s: request --remote:errno: %d \n", "handle_remote_kill_request",
+			ret);
+
+	// Send response
+	pcn_kmsg_send(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response));
+
+	spin_lock(&in_list_lock);
+		find_and_delete_incomming(msg->pid,&inc_head);
+	spin_unlock(&in_list_lock);
+	}
+	else
+	{
+		//do nothing...taken care by kthread.
+		/*spin_lock(&kthread_lock);
+		if(ret==0)
+			signum = SIGUSR1;
+		else
+			signum = SIGUSR2;
+		//
+		signalfd_notify(waiting_thread, signum);
+		sigaddset(&waiting_thread->pending.signal, signum);
+		set_tsk_thread_flag(waiting_thread, TIF_SIGPENDING);
+		signal_wake_up(waiting_thread, 0);
+
+		spin_unlock(&kthread_lock);*/
+	}
+
+	pcn_kmsg_free_msg(inc_msg);
+
+	return 0;
 }
 /*mklinux_akshay*/
 
@@ -1037,7 +1144,7 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 	 */
 	list_for_each_entry_safe(q,n, &list->list, list)
 	{
-		if(q->user==NULL  && q->list.next == q->list.prev)
+		if(q->user==NULL)//&& q->list.next == q->list.prev
 		{
 			/*mklinux_akshay*/
 				/**
@@ -1063,12 +1170,14 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 		__sigqueue_free(first);
 
 	}
-	else if(user && sig==SIGKILL)
+	else if(user)
 	{
+		list_del_init(&user->list);
+		sigemptyset(&list->signal);
+		if(sig==SIGKILL){
 		//remove_without_sigqueue: list_del_init(&user->list);
 		copy_siginfo(info, &user->info);
-		sigemptyset(&list->signal);
-		sigaddsetmask(&list->signal,sigmask(SIGKILL));
+		sigaddsetmask(&list->signal,sigmask(SIGKILL));}
 	}
 	else {
 
@@ -2029,15 +2138,18 @@ if (pid > 0) {
 		prev_pid = p->prev_pid;
 		origin_pid = p->origin_pid;
 		}
+
+	if(origin_pid!=-1 && next_pid != -1){
+			/* struct task_struct *task = pid_task(find_vpid(pid), PIDTYPE_PID);
+			 if(task){
+			 __set_task_state(task,TASK_INTERRUPTIBLE);}*/
+			 ret=0;
+	}
+	else{
 	rcu_read_lock();
-	if(origin_pid!=-1){
-		 struct task_struct *task = pid_task(find_vpid(pid), PIDTYPE_PID);
-		 if(task){
-		 __set_task_state(task,TASK_INTERRUPTIBLE);
-		// flush_signals(task);
-		 }}
 	ret = kill_pid_info(sig, info, find_vpid(pid));
 	rcu_read_unlock();
+	}
 	/*mklinux_akshay*/
 	if (ret == -ESRCH) {
 
@@ -2077,6 +2189,7 @@ if (pid > 0) {
 					kthread_param.signal = sig;
 					kthread_param.info = info;
 					kthread_param.pid = next_pid;
+					kthread_param.calling_pid=pid;
 					kthread_param.ret_cpu = ptr->cpu_id;
 					kthread_param.req_id = ptr->req_id;
 
@@ -3107,6 +3220,31 @@ __set_task_blocked(tsk, newset);
 spin_unlock_irq(&tsk->sighand->siglock);
 }
 
+int do_sigprocmask(int how, sigset_t *set, sigset_t *oldset,struct task_struct *tsk)
+{
+	sigset_t newset;
+
+	/* Lockless, only current can change ->blocked, never from irq */
+	if (oldset)
+		*oldset = tsk->blocked;
+
+	switch (how) {
+	case SIG_BLOCK:
+		sigorsets(&newset, &tsk->blocked, set);
+		break;
+	case SIG_UNBLOCK:
+		sigandnsets(&newset, &tsk->blocked, set);
+		break;
+	case SIG_SETMASK:
+		newset = *set;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	set_current_blocked(&newset);
+}
+
 /*
  * This is also useful for kernel threads that want to temporarily
  * (or permanently) block certain signals.
@@ -3121,6 +3259,7 @@ struct task_struct *tsk = current;
 pid_t next_pid = -1;
 pid_t prev_pid = -1;
 pid_t origin_pid = -1;
+int ret=0;
 
 struct task_struct *p = current;
 if (p) {
@@ -3129,45 +3268,23 @@ if (p) {
 		origin_pid = p->origin_pid;
 }
 
-if(isPidLocalKernel(p->pid))
+if(origin_pid==-1)
 {
-sigset_t newset;
-
-/* Lockless, only current can change ->blocked, never from irq */
-if (oldset)
-	*oldset = tsk->blocked;
-
-switch (how) {
-case SIG_BLOCK:
-	sigorsets(&newset, &tsk->blocked, set);
-	break;
-case SIG_UNBLOCK:
-	sigandnsets(&newset, &tsk->blocked, set);
-	break;
-case SIG_SETMASK:
-	newset = *set;
-	break;
-default:
-	return -EINVAL;
-
-	if(origin_pid!=-1 && next_pid!=-1)
-	{
-		/**
-		 * TODO: //send to remote using kthreads after seeing if its is needeed from user point of view
-		 */
-
-	}
-}
-
-set_current_blocked(&newset);
+	ret=do_sigprocmask(how, set, oldset,tsk);
 }
 else
 {
-	/**
-	 * TODO: //send to remote after seeing if its is needeed from user point of view
-	 */
+			/**
+			 * TODO: //send to remote using kthreads after seeing if its is needeed from user point of view
+			 */
+
+
+/*	else
+	{   //the migrated thread is local
+		ret=do_sigprocmask(int how, sigset_t *set, sigset_t *oldset,tsk);
+	}*/
 }
-return 0;
+return ret;
 }
 
 /**
@@ -3880,6 +3997,11 @@ pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST,
 		handle_remote_kill_request);
 pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE,
 		handle_remote_kill_response);
+pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_SENDSIGPROCMASK_REQUEST,
+		handle_remote_sigproc_request);
+pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_SENDSIGPROCMASK_RESPONSE,
+		handle_remote_sigproc_response);
+
 /*mklinux_akshay*/
 }
 
