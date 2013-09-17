@@ -1630,7 +1630,12 @@ void process_mapping_request(struct work_struct* work) {
     char* plpath;
     char lpath[512];
     int try_count = 0;
-
+    
+    // for perf
+    int used_saved_mm = 0;
+    int found_vma = 1;
+    int found_pte = 1;
+    
     // Perf start
     PERF_MEASURE_START(&perf_process_mapping_request);
 
@@ -1665,6 +1670,7 @@ mm_found:
                    (mm_data->tgroup_home_id  == w->tgroup_home_id)) {
                     PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
                     mm = mm_data->mm;
+                    used_saved_mm = 1;
                     break;
                 }
             }
@@ -1712,12 +1718,6 @@ retry:
                 goto retry;
             }
 
-            // Turn off caching for this vma
-            //vma->vm_page_prot = /*pgprot_noncached(*/vma->vm_page_prot/*)*/;
-            // Then clear the cache to drop any already-cached entries
-            //flush_cache_range(vma,vma->vm_start,vma->vm_end);
-            //flush_tlb_range(vma,vma->vm_start,vma->vm_end);
-
             response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
             response.header.prio = PCN_KMSG_PRIO_NORMAL;
             response.tgroup_home_cpu = w->tgroup_home_cpu;
@@ -1744,6 +1744,8 @@ retry:
 
     // Not found, respond accordingly
     if(resolved == 0) {
+        found_vma = 0;
+        found_pte = 0;
         PSPRINTK("Mapping not found\n");
         response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
         response.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -1759,6 +1761,7 @@ retry:
         // Handle case where vma was present but no pte.
         if(vma) {
             PSPRINTK("But vma present\n");
+            found_vma = 1;
             response.present = 1;
             response.vaddr_mapping = address & PAGE_MASK;
             response.vaddr_start = vma->vm_start;
@@ -1784,7 +1787,27 @@ retry:
     kfree(work);
 
     // Perf stop
-    PERF_MEASURE_STOP(&perf_process_mapping_request," ");
+    if(used_saved_mm && found_vma && found_pte) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "Saved MM + VMA + PTE");
+    } else if (used_saved_mm && found_vma && !found_pte) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "Saved MM + VMA + no PTE");
+    } else if (used_saved_mm && !found_vma) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "Saved MM + no VMA");
+    } else if (!used_saved_mm && found_vma && found_pte) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "VMA + PTE");
+    } else if (!used_saved_mm && found_vma && !found_pte) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "VMA + no PTE");
+    } else if (!used_saved_mm && !found_vma) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "no VMA");
+    } else {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,"ERR");
+    }
 
     return;
 }
@@ -2956,7 +2979,7 @@ __func__,
     		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
 		current->policy, rt_prio (current->prio));
   */  
-current->prio = clone_data->prio;
+    current->prio = clone_data->prio;
     current->static_prio = clone_data->static_prio;
     current->normal_prio = clone_data->normal_prio;
     current->rt_priority = clone_data->rt_priority;
@@ -3424,6 +3447,12 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     char path[512];
     char* ppath;
 
+    // for perf
+    int pte_provided = 0;
+    int is_anonymous = 0;
+    int vma_not_found = 1;
+    int adjusted_permissions = 0;
+
     // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
         goto not_handled_no_perf;
@@ -3455,9 +3484,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // It will also probably cause problems for genuine COW mappings..
         if(vma->vm_flags & VM_WRITE) {
             mk_page_writable(mm,vma,address & PAGE_MASK);
-            PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Adjusted permissions on page");
-            return 1;
-            
+            adjusted_permissions = 1;
+            ret = 1;
         }
 
         goto not_handled;
@@ -3543,6 +3571,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 data->vm_flags,
                 data->path,
                 data->pgoff);
+        vma_not_found = 0;
 
         // Figure out how to protect this region.
         prot |= (data->vm_flags & VM_READ)?  PROT_READ  : 0;
@@ -3555,6 +3584,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             PSPRINTK("vma not present\n");
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
+                is_anonymous = 1;
                 err = do_mmap(NULL,
                         data->vaddr_start,
                         data->vaddr_size,
@@ -3565,6 +3595,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         0);
             } else {
                 PSPRINTK("opening file to map\n");
+                is_anonymous = 0;
 
                 // Temporary, check to see if the path is /dev/null (deleted), it should just
                 // be /dev/null in that case.  TODO: Add logic to detect and remove the 
@@ -3613,6 +3644,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
         // We should have a vma now, so map physical memory into it.
         if(vma && data->paddr_mapping) { 
+
+            pte_provided = 1;
 
             // PCD - Page Cache Disable
             // PWT - Page Write-Through (as opposed to Page Write-Back)
@@ -3665,13 +3698,27 @@ exit_remove_data:
 
     PSPRINTK("exiting fault handler\n");
 
-    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Exit success");
-
-    return ret;
-    
 not_handled:
 
-    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"test");
+    if (adjusted_permissions) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Adjusted Permissions");
+    } else if (is_anonymous && pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Anonymous + PTE");
+    } else if (is_anonymous && !pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Anonymous + No PTE");
+    } else if (!is_anonymous && pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "File Backed + PTE");
+    } else if (!is_anonymous && !pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "File Backed + No PTE");
+    } else {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"test");
+    }
+
+    return ret;
 
 not_handled_no_perf:
 
