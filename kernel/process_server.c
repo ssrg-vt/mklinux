@@ -3452,6 +3452,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     int is_anonymous = 0;
     int vma_not_found = 1;
     int adjusted_permissions = 0;
+    int is_new_vma = 0;
 
     // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
@@ -3582,6 +3583,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
             PSPRINTK("vma not present\n");
+            is_new_vma = 1;
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
                 is_anonymous = 1;
@@ -3702,18 +3704,30 @@ not_handled:
 
     if (adjusted_permissions) {
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Adjusted Permissions");
-    } else if (is_anonymous && pte_provided) {
+    } else if (is_new_vma && is_anonymous && pte_provided) {
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
-                "Anonymous + PTE");
-    } else if (is_anonymous && !pte_provided) {
+                "New Anonymous VMA + PTE");
+    } else if (is_new_vma && is_anonymous && !pte_provided) {
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
-                "Anonymous + No PTE");
-    } else if (!is_anonymous && pte_provided) {
+                "New Anonymous VMA + No PTE");
+    } else if (is_new_vma && !is_anonymous && pte_provided) {
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
-                "File Backed + PTE");
-    } else if (!is_anonymous && !pte_provided) {
+                "New File Backed VMA + PTE");
+    } else if (is_new_vma && !is_anonymous && !pte_provided) {
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
-                "File Backed + No PTE");
+                "New File Backed VMA + No PTE");
+    } else if (!is_new_vma && is_anonymous && pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Existing Anonymous VMA + PTE");
+    } else if (!is_new_vma && is_anonymous && !pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Existing Anonymous VMA + No PTE");
+    } else if (!is_new_vma && !is_anonymous && pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Existing File Backed VMA + PTE");
+    } else if (!is_new_vma && !is_anonymous && !pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Existing File Backed VMA + No PTE");
     } else {
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"test");
     }
