@@ -1658,6 +1658,10 @@ int __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		struct vm_area_struct *vma;
 
 		vma = find_extend_vma(mm, start);
+
+		 unsigned long pfn ;
+		 pfn = __pa((u64)vma->vm_pgoff << PAGE_SHIFT) >> PAGE_SHIFT;
+		 //printk("memory pfn : {%lx}  pgoff {%lx}, pa {%lx}\n",pfn,vma->vm_pgoff,__pa((u64)vma->vm_pgoff << PAGE_SHIFT));
 		if (!vma && in_gate_area(mm, start)) {
 			unsigned long pg = start & PAGE_MASK;
 			pgd_t *pgd;
@@ -1708,7 +1712,11 @@ int __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		if (!vma ||
 		    (vma->vm_flags & (VM_IO | VM_PFNMAP)) ||
 		    !(vm_flags & vma->vm_flags))
+		{
+			//if(pfn_valid(pfn))
+
 			return i ? : -EFAULT;
+		}
 
 		if (is_vm_hugetlb_page(vma)) {
 			i = follow_hugetlb_page(mm, vma, pages, vmas,

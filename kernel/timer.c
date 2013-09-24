@@ -1354,13 +1354,13 @@ SYSCALL_DEFINE1(alarm, unsigned int, seconds)
  */
 SYSCALL_DEFINE0(getpid)
 {
-	/*mklinux_akshay*/
+	/*mklinux_akshay
 	if(current->executing_for_remote==1)
 	{
 		printk(KERN_ALERT "called getpid");
 		return current->origin_pid;
 	}
-	else
+	else*/
 		return task_tgid_vnr(current);
 }
 

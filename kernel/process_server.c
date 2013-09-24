@@ -3502,10 +3502,10 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
     // Check to see if this is a user mode fault.  We should never
     // try to handle a kernel mode fault.
-    if(!(error_code & 4/*PF_USER*/)) {
-        PSPRINTK("%s: ERROR, kernel-mode fault\n",__func__);
-        goto not_handled_no_perf;
-    }
+  //  if(!(error_code & 4/*PF_USER*/)) {
+  //      PSPRINTK("%s: ERROR, kernel-mode fault\n",__func__);
+  //      goto not_handled_no_perf;
+  //  }
 
     PERF_MEASURE_START(&perf_process_server_try_handle_mm_fault);
 
@@ -3906,6 +3906,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     else
     	task->origin_pid=task->origin_pid;
 
+   struct task_struct *par = task->parent;
 
     // Book keeping for distributed threads.
     task->tgroup_distributed = 1;

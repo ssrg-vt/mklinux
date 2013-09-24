@@ -42,6 +42,9 @@
 struct e820map e820;
 struct e820map e820_saved;
 
+unsigned long kernel_start_addr=0;
+EXPORT_SYMBOL(kernel_start_addr);
+
 /* For PCI or other memory-mapped resources */
 unsigned long pci_mem_start = 0xaeedbabe;
 #ifdef CONFIG_PCI
@@ -903,6 +906,7 @@ static int __init parse_memmap_opt(char *p)
 	userdef = 1;
 	if (*p == '@') {
 		start_at = memparse(p+1, &p);
+		kernel_start_addr = start_at;
 		e820_add_region(start_at, mem_size, E820_RAM);
 	} else if (*p == '#') {
 		start_at = memparse(p+1, &p);

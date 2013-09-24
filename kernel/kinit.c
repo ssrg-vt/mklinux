@@ -27,6 +27,8 @@
 #include <linux/cpufreq.h>
 
 #include <popcorn/cpuinfo.h>
+#include <linux/bootmem.h>
+//#include <linux/multikernel.h>
 
 extern unsigned long orig_boot_params;
 #define max_nodes 1 << 8
@@ -108,6 +110,9 @@ void popcorn_init(void)
     }*/
 	Kernel_Id=smp_processor_id();;
     printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
+    printk("POP_INIT: kernel start add is 0x%lx",kernel_start_addr);
+    printk("POP_INIT:max_low_pfn id is 0x%lx\n",PFN_PHYS(max_low_pfn));
+    printk("POP_INIT:min_low_pfn id is 0x%lx\n",PFN_PHYS(min_low_pfn));
 }
 
 

@@ -112,9 +112,10 @@ typedef struct _remote_kill_response _remote_kill_response_t;
 struct _remote_sigproc_request {
 	struct pcn_kmsg_hdr header;
 	pid_t pid;
-	sigset_t _set;
-	int request_id;
-	char pad_string[48];
+	int how;
+	sigset_t new_set;
+	sigset_t old_set;
+	//char pad_string[44];
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 typedef struct _remote_sigproc_request _remote_sigproc_request_t;
@@ -562,16 +563,50 @@ static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
 }
 
 
+int do_sigprocmask(int how, sigset_t *set, sigset_t *oldset,struct task_struct *tsk);
+static int remote_send_sigprocmask(int kernel, pid_t pid, int how, sigset_t *new,
+		sigset_t *old);
+
+static int remote_sigprocmask(pid_t pid,int how, sigset_t *set, sigset_t *oldset) {
+struct task_struct *tsk = current;
+
+pid_t next_pid = -1;
+pid_t prev_pid = -1;
+pid_t origin_pid = -1;
+int ret=0;
+
+struct task_struct *p = pid_task(find_vpid(pid), PIDTYPE_PID);
+if (p) {
+		next_pid = p->next_pid;
+		prev_pid = p->prev_pid;
+		origin_pid = p->origin_pid;
+}
+
+if(origin_pid== p->pid && next_pid != -1) //if it is the origin node send to the next node
+{
+	ret=do_sigprocmask(how, set, oldset,tsk);
+	ret=remote_send_sigprocmask(ORIG_NODE(next_pid),next_pid,how, set, oldset);
+
+}
+else if(origin_pid!= p->pid && next_pid != -1) //if it is the middle node send it to next node
+{
+	ret=do_sigprocmask(how, set, oldset,tsk);
+	ret=remote_send_sigprocmask(ORIG_NODE(next_pid),next_pid,how, set, oldset);
+
+}
+else if(origin_pid!= p->pid && next_pid == -1) //if it is the running thread/process set it.
+{
+	ret=do_sigprocmask(how, set, oldset,tsk);
+}
+return ret;
+}
+
+
 static int handle_remote_sigproc_response(struct pcn_kmsg_message* inc_msg) {
 	_remote_kill_response_t* msg = (_remote_kill_response_t*) inc_msg;
 
 	printk("%s: response --- errno stored - errno{%d} \n",
-			"handle_remote_kill_response", msg->errno);
-
-	_outgoing_remote_signal_pool_t *ptr = find_outgoing(msg->request_id, &out_head);
-	ptr->status = DONE;
-	ptr->errno = msg->errno;
-	wake_up_interruptible(&ptr->wq);
+			"handle_remote_sigproc_response", msg->errno);
 
 	pcn_kmsg_free_msg(inc_msg);
 
@@ -580,80 +615,56 @@ static int handle_remote_sigproc_response(struct pcn_kmsg_message* inc_msg) {
 
 static int handle_remote_sigproc_request(struct pcn_kmsg_message* inc_msg) {
 
-	_remote_kill_request_t* msg = (_remote_kill_request_t*) inc_msg;
-	_remote_kill_response_t response;
+	_remote_sigproc_request_t* msg = (_remote_sigproc_request_t*) inc_msg;
 
-	_incomming_remote_signal_pool_t *ptr;
 
 	int ret = -ESRCH;
-	int signum = 0;
 
-	printk("%s: request -- entered \n", "handle_remote_kill_request");
+	printk("%s: request -- entered \n", "handle_remote_sigproc_request");
 
-	// Finish constructing response
-	response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
-	response.header.prio = PCN_KMSG_PRIO_NORMAL;
-
-
-	struct siginfo info;
-
-	info.si_signo = msg->sig;
-	info.si_errno = 0;
-	info.si_code = SI_USER;
-	info.si_pid = task_tgid_vnr(current);
-	info.si_uid = current_uid();
-	info.si_remote = true;
-
-	spin_lock(&in_list_lock);
-	ptr = add_incomming( msg->pid,msg->header.from_cpu,msg->request_id, &inc_head);
-	spin_unlock(&in_list_lock);
-
-	//perform action
-
-	if (msg->tgid == -1) // for killing process
-			{
-		ret = kill_something_info(msg->sig, &info, msg->pid);
-	} else //for killing with tgid
-	{
-		ret = do_send_specific(msg->tgid, msg->pid, msg->sig, &info);
-	}
-
-	if(ptr->assign_for_kthread == 0)
-	{
-	response.errno = ret;
-	response.request_id = msg->request_id;
+	ret = remote_sigprocmask(msg->pid,msg->how, &msg->new_set,&msg->old_set);
 
 	printk("%s: request --remote:errno: %d \n", "handle_remote_kill_request",
 			ret);
-
-	// Send response
-	pcn_kmsg_send(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response));
-
-	spin_lock(&in_list_lock);
-		find_and_delete_incomming(msg->pid,&inc_head);
-	spin_unlock(&in_list_lock);
-	}
-	else
-	{
-		//do nothing...taken care by kthread.
-		/*spin_lock(&kthread_lock);
-		if(ret==0)
-			signum = SIGUSR1;
-		else
-			signum = SIGUSR2;
-		//
-		signalfd_notify(waiting_thread, signum);
-		sigaddset(&waiting_thread->pending.signal, signum);
-		set_tsk_thread_flag(waiting_thread, TIF_SIGPENDING);
-		signal_wake_up(waiting_thread, 0);
-
-		spin_unlock(&kthread_lock);*/
-	}
 
 	pcn_kmsg_free_msg(inc_msg);
 
 	return 0;
 }
+
+
+static int remote_send_sigprocmask(int kernel, pid_t pid, int how, sigset_t *new,
+		sigset_t *old) {
+
+	int res = 0;
+	_remote_sigproc_request_t *request = kmalloc(sizeof(_remote_sigproc_request_t),
+	GFP_KERNEL);
+
+	sigset_t local_new;
+	sigset_t local_old;
+	int i=0;
+
+	for(i=0;i<_NSIG_WORDS;i++){
+		local_new.sig[i] = new->sig[0];
+		local_old.sig[i] = new->sig[0];
+	}
+	_outgoing_remote_signal_pool_t *ptr;
+	// Build request
+
+	request->how = how;
+	request->pid = pid;
+	request->new_set = local_new;
+	request->old_set = local_old;
+
+	request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
+	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+
+	// Send response
+	res = pcn_kmsg_send(kernel, (struct pcn_kmsg_message*) (request));
+
+	return res;
+}
+
 /*mklinux_akshay*/
 
 /*
@@ -3268,21 +3279,21 @@ if (p) {
 		origin_pid = p->origin_pid;
 }
 
-if(origin_pid==-1)
+if(origin_pid==-1) //not a migrated process
 {
 	ret=do_sigprocmask(how, set, oldset,tsk);
 }
-else
+/*else if(origin_pid== p->pid && next_pid != -1) //if it is the origin node send to the next node
 {
-			/**
-			 * TODO: //send to remote using kthreads after seeing if its is needeed from user point of view
-			 */
-
-
-/*	else
-	{   //the migrated thread is local
-		ret=do_sigprocmask(int how, sigset_t *set, sigset_t *oldset,tsk);
-	}*/
+	ret=remote_send_sigprocmask(ORIG_NODE(next_pid),next_pid,how, set, oldset);
+}
+else if(origin_pid!= p->pid && next_pid != -1) //if it is the middle node send it to next node
+{
+	ret=remote_send_sigprocmask(ORIG_NODE(next_pid),next_pid,how, set, oldset);
+}*/
+else if(origin_pid!= p->pid && next_pid == -1) //if it is the running thread/process set it.
+{
+	ret=do_sigprocmask(how, set, oldset,tsk);
 }
 return ret;
 }
