@@ -678,6 +678,7 @@ static struct workqueue_struct *mapping_wq;
  * General helper functions and debugging tools
  */
 
+
 /**
  * A best effort at making a page writable
  */
@@ -1550,11 +1551,6 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     if(!(vma->vm_flags & VM_WRITE)) {
         goto not_handled;
     }
-
-    // Don't bother if this is file backed
-    //if(vma->vm_file == NULL) {
-    //    goto not_handled;
-    //}
 
     down_write(&mm->mmap_sem);
 
@@ -2723,11 +2719,17 @@ static bool __user_addr (unsigned long x )
  * Find the mm_struct for a given distributed thread.  If one does not exist,
  * then return NULL.
  */
-static struct mm_struct* find_thread_mm(int tgroup_home_cpu, int tgroup_home_id, int *used_saved_mm) {
+static struct mm_struct* find_thread_mm(
+        int tgroup_home_cpu, 
+        int tgroup_home_id, 
+        mm_data_t **used_saved_mm) {
+
     struct task_struct *task;
     struct mm_struct * mm = NULL;
     data_header_t* data_curr;
     mm_data_t* mm_data;
+
+    *used_saved_mm = NULL;
 
     // First, look through all active processes.
     for_each_process(task) {
@@ -2750,7 +2752,7 @@ static struct mm_struct* find_thread_mm(int tgroup_home_cpu, int tgroup_home_id,
             if((mm_data->tgroup_home_cpu == tgroup_home_cpu) &&
                (mm_data->tgroup_home_id  == tgroup_home_id)) {
                 mm = mm_data->mm;
-                *used_saved_mm = 1;
+                *used_saved_mm = mm_data;
                 break;
             }
         }
@@ -2798,7 +2800,7 @@ int process_server_import_address_space(unsigned long* ip,
     int vmas_installed = 0;
     int ptes_installed = 0;
     struct mm_struct* thread_mm = NULL;
-    int used_saved_mm = 0;
+    mm_data_t* used_saved_mm = NULL;
 
     perf_a = native_read_tsc();
     
@@ -2928,15 +2930,31 @@ int process_server_import_address_space(unsigned long* ip,
             vma_curr = (vma_data_t*)vma_curr->header.next;
         }
     } else {
-        // use_existing_mm
+        // use_existing_mm.  Flush cache, to ensure
+        // that the current processes cache entries
+        // are never used.  Then, take ownership of
+        // the mm.
         flush_tlb_mm(current->mm);
         flush_cache_mm(current->mm);
         mm_update_next_owner(current->mm);
         mmput(current->mm);
         current->mm = thread_mm;
         current->active_mm = current->mm;
-        if(!used_saved_mm) {
+        if(NULL == used_saved_mm) {
+            // Did not use a saved MM.  Saved MM's have artificially
+            // incremented mm_users fields to keep them from being
+            // destroyed when the last tgroup member exits.  So we can
+            // just use the current value of mm_users.  Since in this case
+            // we are not using a saved mm, we must increment mm_users.
             atomic_inc(&current->mm->mm_users);
+        } else {
+            // Used a saved MM.  Must delete the saved mm entry.
+            // It is safe to do so now, since we have ingested
+            // its mm at this point.
+            spin_lock(&_data_head_lock);
+            remove_data_entry(used_saved_mm);
+            spin_unlock(&_data_head_lock);
+            kfree(used_saved_mm);
         }
     }
 
