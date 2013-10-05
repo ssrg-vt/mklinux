@@ -3376,7 +3376,7 @@ void process_server_do_mprotect(struct task_struct* task,
         goto exit;
     }
 
-    printk("%s entered\n",__func__);
+    PSPRINTK("%s entered\n",__func__);
 
     PERF_MEASURE_START(&perf_process_server_do_mprotect);
 
@@ -3400,7 +3400,7 @@ void process_server_do_mprotect(struct task_struct* task,
     request.tgroup_home_cpu = task->tgroup_home_cpu;
     request.tgroup_home_id  = task->tgroup_home_id;
 
-    printk("Sending mprotect request to all other kernels... ");
+    PSPRINTK("Sending mprotect request to all other kernels... ");
 
     for(i = 0; i < NR_CPUS; i++) {
 
@@ -3416,14 +3416,14 @@ void process_server_do_mprotect(struct task_struct* task,
         }
     }
 
-    printk("done\nWaiting for responses... ");
+    PSPRINTK("done\nWaiting for responses... ");
 
     // Wait for all cpus to respond.
     while(data->expected_responses != data->responses) {
         schedule();
     }
 
-    printk("done\n");
+    PSPRINTK("done\n");
 
     // OK, all responses are in, we can proceed.
 
