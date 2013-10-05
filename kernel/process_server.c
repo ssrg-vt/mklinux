@@ -3917,11 +3917,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     while(curr) {
         unsigned long start_stack = task->mm->start_stack;
-//        unsigned long start_brk = task->mm->start_brk;
 
-        // Transfer the stack and heap only
-        if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start)/*||
-             (start_brk   <= curr->vm_end && start_brk   >= curr->vm_start)*/)) {
+        // Transfer the stack only
+        if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start))) {
             curr = curr->vm_next;
             continue;
         }
