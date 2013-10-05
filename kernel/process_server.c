@@ -1920,11 +1920,11 @@ void process_mprotect_item(struct work_struct* work) {
     unsigned long prot = w->prot;
     struct task_struct* task;
 
-    PERF_MEASURE_START(&perf_process_mprotect_item);
-
     // Handle protect
-    printk("mprotect placeholder - cpu{%d}, id{%d}, start{%lx}, len{%d}, prot{%lx}\n");
+    PSPRINTK("mprotect placeholder - cpu{%d}, id{%d}, start{%lx}, len{%d}, prot{%lx}\n");
 
+    PERF_MEASURE_START(&perf_process_mprotect_item);
+    
     // Find the task
     for_each_process(task) {
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
