@@ -36,7 +36,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -1166,7 +1166,7 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
  */
 static void dump_mm(struct mm_struct* mm) {
     struct vm_area_struct * curr;
-//    char buf[256];
+    char buf[256];
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
         .mm = mm,
@@ -3553,6 +3553,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     data->present = 0;
     data->responses = 0;
     data->expected_responses = 0;
+    data->paddr_mapping = 0;
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
 
