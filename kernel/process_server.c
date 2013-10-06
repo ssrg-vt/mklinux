@@ -1815,7 +1815,7 @@ unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
  */
 void process_exit_item(struct work_struct* work) {
     exit_work_t* w = (exit_work_t*) work;
-//    pid_t pid = w->pid;
+    pid_t pid = w->pid;
     struct task_struct *task = w->task;
 
     PERF_MEASURE_START(&perf_process_exit_item);
@@ -2301,10 +2301,19 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         // This is not a problem here because if part of a mapping is 
         // accessed that is not part of an existig mapping, that new 
         // part will be merged in the resulting mapping request.
+        //
+        // Also, prefer responses that provide values for paddr.
         if(data->present == 1) {
+
             // another cpu already responded.
             if(!data->from_saved_mm && msg->from_saved_mm) {
                 PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
+                goto out;
+            }
+
+            // Ensure that we keep physical mappings around.
+            if(data->paddr_mapping && !msg->paddr_mapping) {
+                PSPRINTK("%s: prevented mapping resolver from downgrading from mapping with paddr to one without\n",__func__);
                 goto out;
             }
         }
