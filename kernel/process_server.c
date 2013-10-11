@@ -2306,7 +2306,10 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         if(data->present == 1) {
 
             // another cpu already responded.
-            if(!data->from_saved_mm && msg->from_saved_mm) {
+            if(!data->from_saved_mm && msg->from_saved_mm
+                    // but we need to add an exception in case a physical address
+                    // is mapped into the saved mm, but not in the unsaved mm...
+                    && !(msg->paddr_mapping && !data->paddr_mapping)) {
                 PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
                 goto out;
             }
@@ -2520,9 +2523,6 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
             
             exit_work = kmalloc(sizeof(exit_work_t),GFP_ATOMIC);
             if(exit_work) {
-                // TODO This task is sometimes scheduled after the 
-                // thread group closes.  Do something to synchronize
-                // that.
                 INIT_WORK( (struct work_struct*)exit_work, process_exit_item);
                 exit_work->task = task;
                 exit_work->pid = task->pid;
