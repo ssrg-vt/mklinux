@@ -710,6 +710,30 @@ out:
 /**
  *
  */
+static int is_page_writable(struct mm_struct* mm,
+                            struct vm_area_struct* vma,
+                            unsigned long addr) {
+    spinlock_t* ptl;
+    pte_t *ptep, pte, entry;
+    int ret = 0;
+
+    ptep = get_locked_pte(mm,vaddr,&ptl);
+    if(!ptep)
+        goto out;
+
+    pte = *ptep;
+
+    ret = pte_write(pte);
+
+    pte_unmap_unlock(pte, ptl);
+
+out:
+    return ret;
+}
+
+/**
+ *
+ */
 static clone_data_t* get_current_clone_data(void) {
     clone_data_t* ret = NULL;
 
@@ -3510,7 +3534,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // should this thing be writable?  if so, set it and exit
         // This is a security hole, and is VERY bad.
         // It will also probably cause problems for genuine COW mappings..
-        if(vma->vm_flags & VM_WRITE) {
+        if(vma->vm_flags & VM_WRITE && 
+                !is_page_writable(mm, vma, address&PAGE_MASK)) {
+
             mk_page_writable(mm,vma,address & PAGE_MASK);
             adjusted_permissions = 1;
             ret = 1;
