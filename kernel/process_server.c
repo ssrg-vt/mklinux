@@ -3693,9 +3693,11 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                    /*pgprot_noncached(*/vm_get_page_prot(vma->vm_flags)/*)*/);
 
             // If this VMA specifies VM_WRITE, make the mapping writable.
-            // this function does not the flag check.
+            // this function does not do the flag check.  This is safe,
+            // since COW mappings should be broken by the time this code
+            // is invoked.
             if(vma->vm_flags & VM_WRITE) {
-                //mk_page_writable(mm, vma, data->vaddr_mapping);
+                mk_page_writable(mm, vma, data->vaddr_mapping);
             }
 
             //dump_mm(mm);
