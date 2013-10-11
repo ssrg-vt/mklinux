@@ -717,7 +717,7 @@ static int is_page_writable(struct mm_struct* mm,
     pte_t *ptep, pte, entry;
     int ret = 0;
 
-    ptep = get_locked_pte(mm,vaddr,&ptl);
+    ptep = get_locked_pte(mm,addr,&ptl);
     if(!ptep)
         goto out;
 
