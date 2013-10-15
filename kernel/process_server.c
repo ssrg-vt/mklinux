@@ -660,14 +660,23 @@ int do_mprotect(struct task_struct* task, unsigned long start, size_t len, unsig
 /**
  * Module variables
  */
-static struct task_struct* process_server_task = NULL;     // Remember the kthread task_struct
 static int _vma_id = 0;
 static int _clone_request_id = 0;
 static int _cpu = -1;
-data_header_t* _data_head = NULL;        // General purpose data store
-DEFINE_SPINLOCK(_data_head_lock);        // Lock for _data_head
-DEFINE_SPINLOCK(_vma_id_lock);           // Lock for _vma_id
-DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
+data_header_t* _saved_mm_head = NULL;             // Saved MM list
+DEFINE_SPINLOCK(_saved_mm_head_lock);             // Lock for _saved_mm_head
+data_header_t* _mapping_request_data_head = NULL; // Mapping request data head
+DEFINE_SPINLOCK(_mapping_request_data_head_lock);  // Lock for above
+data_header_t* _count_remote_tmembers_data_head = NULL;
+DEFINE_SPINLOCK(_count_remote_tmembers_data_head_lock);
+data_header_t* _munmap_data_head = NULL;
+DEFINE_SPINLOCK(_munmap_data_head_lock);
+data_header_t* _mprotect_data_head = NULL;
+DEFINE_SPINLOCK(_mprotect_data_head_lock);
+data_header_t* _data_head = NULL;                 // General purpose data store
+DEFINE_SPINLOCK(_data_head_lock);                 // Lock for _data_head
+DEFINE_SPINLOCK(_vma_id_lock);                    // Lock for _vma_id
+DEFINE_SPINLOCK(_clone_request_id_lock);          // Lock for _clone_request_id
 
 // Work Queues
 static struct workqueue_struct *clone_wq;
@@ -714,7 +723,7 @@ static int is_page_writable(struct mm_struct* mm,
                             struct vm_area_struct* vma,
                             unsigned long addr) {
     spinlock_t* ptl;
-    pte_t *ptep, pte, entry;
+    pte_t *ptep, pte;
     int ret = 0;
 
     ptep = get_locked_pte(mm,addr,&ptl);
@@ -951,22 +960,20 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
     remote_thread_count_request_data_t* request = NULL;
     remote_thread_count_request_data_t* ret = NULL;
 
-    spin_lock(&_data_head_lock);
+    spin_lock(&_count_remote_tmembers_data_head_lock);
 
-    curr = _data_head;
+    curr = _count_remote_tmembers_data_head;
     while(curr) {
-        if(curr->data_type == PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE) {
-            request = (remote_thread_count_request_data_t*)curr;
-            if(request->tgroup_home_cpu == cpu &&
-               request->tgroup_home_id == id) {
-                ret = request;
-                break;
-            }
+        request = (remote_thread_count_request_data_t*)curr;
+        if(request->tgroup_home_cpu == cpu &&
+           request->tgroup_home_id == id) {
+            ret = request;
+            break;
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    spin_unlock(&_count_remote_tmembers_data_head_lock);
 
     return ret;
 }
@@ -978,23 +985,21 @@ static munmap_request_data_t* find_munmap_request_data(int cpu, int id, unsigned
     data_header_t* curr = NULL;
     munmap_request_data_t* request = NULL;
     munmap_request_data_t* ret = NULL;
-    spin_lock(&_data_head_lock);
+    spin_lock(&_munmap_data_head_lock);
     
-    curr = _data_head;
+    curr = _munmap_data_head;
     while(curr) {
-        if(curr->data_type == PROCESS_SERVER_MUNMAP_REQUEST_DATA_TYPE) {
-            request = (munmap_request_data_t*)curr;
-            if(request->tgroup_home_cpu == cpu && 
-                    request->tgroup_home_id == id &&
-                    request->vaddr_start == address) {
-                ret = request;
-                break;
-            }
+        request = (munmap_request_data_t*)curr;
+        if(request->tgroup_home_cpu == cpu && 
+                request->tgroup_home_id == id &&
+                request->vaddr_start == address) {
+            ret = request;
+            break;
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    spin_unlock(&_munmap_data_head_lock);
 
     return ret;
 
@@ -1007,23 +1012,21 @@ static mprotect_data_t* find_mprotect_request_data(int cpu, int id, unsigned lon
     data_header_t* curr = NULL;
     mprotect_data_t* request = NULL;
     mprotect_data_t* ret = NULL;
-    spin_lock(&_data_head_lock);
+    spin_lock(&_mprotect_data_head_lock);
     
-    curr = _data_head;
+    curr = _mprotect_data_head;
     while(curr) {
-        if(curr->data_type == PROCESS_SERVER_MPROTECT_DATA_TYPE) {
-            request = (mprotect_data_t*)curr;
-            if(request->tgroup_home_cpu == cpu && 
-                    request->tgroup_home_id == id &&
-                    request->start == start) {
-                ret = request;
-                break;
-            }
+        request = (mprotect_data_t*)curr;
+        if(request->tgroup_home_cpu == cpu && 
+                request->tgroup_home_id == id &&
+                request->start == start) {
+            ret = request;
+            break;
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    spin_unlock(&_mprotect_data_head_lock);
 
     return ret;
 
@@ -1036,23 +1039,21 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, unsign
     data_header_t* curr = NULL;
     mapping_request_data_t* request = NULL;
     mapping_request_data_t* ret = NULL;
-    spin_lock(&_data_head_lock);
+    spin_lock(&_mapping_request_data_head_lock);
     
-    curr = _data_head;
+    curr = _mapping_request_data_head;
     while(curr) {
-        if(curr->data_type == PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE) {
-            request = (mapping_request_data_t*)curr;
-            if(request->tgroup_home_cpu == cpu && 
-                    request->tgroup_home_id == id &&
-                    request->address == address) {
-                ret = request;
-                break;
-            }
+        request = (mapping_request_data_t*)curr;
+        if(request->tgroup_home_cpu == cpu && 
+                request->tgroup_home_id == id &&
+                request->address == address) {
+            ret = request;
+            break;
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    spin_unlock(&_mapping_request_data_head_lock);
 
     return ret;
 }
@@ -1242,8 +1243,75 @@ static void dump_mm(struct mm_struct* mm) {
  * Data library
  */
 
+/**
+ * Add data entry
+ */
+static void add_data_entry_to(void* entry, spinlock_t* lock, data_header_t** head) {
+    data_header_t* hdr = (data_header_t*)entry;
+    data_header_t* curr = NULL;
+
+    if(!entry) {
+        return;
+    }
+
+    // Always clear out the link information
+    hdr->next = NULL;
+    hdr->prev = NULL;
+
+    spin_lock(lock);
+    
+    if (!*head) {
+        *head = hdr;
+        hdr->next = NULL;
+        hdr->prev = NULL;
+    } else {
+        curr = *head;
+        while(curr->next != NULL) {
+            if(curr == entry) {
+                return;// It's already in the list!
+            }
+            curr = curr->next;
+        }
+        // Now curr should be the last entry.
+        // Append the new entry to curr.
+        curr->next = hdr;
+        hdr->next = NULL;
+        hdr->prev = curr;
+    }
+
+    spin_unlock(lock);
+}
 
 /**
+ * Remove a data entry
+ * Requires user to hold lock
+ */
+static void remove_data_entry_from(void* entry, data_header_t** head) {
+    data_header_t* hdr = entry;
+
+    if(!entry) {
+        return;
+    }
+
+    if(*head == hdr) {
+        *head = hdr->next;
+    }
+
+    if(hdr->next) {
+        hdr->next->prev = hdr->prev;
+    }
+
+    if(hdr->prev) {
+        hdr->prev->next = hdr->next;
+    }
+
+    hdr->prev = NULL;
+    hdr->next = NULL;
+
+}
+
+/**
+ * General purpose library
  * Add data entry
  */
 static void add_data_entry(void* entry) {
@@ -1386,7 +1454,9 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     data->tgroup_home_id = tgroup_home_id;
     data->count = 0;
 
-    add_data_entry(data);
+    add_data_entry_to(data,
+                      &_count_remote_tmembers_data_head_lock,
+                      &_count_remote_tmembers_data_head);
 
     request.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_REQUEST;
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -1420,9 +1490,10 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     PSPRINTK("%s: found a total of %d remote threads in group\n",__func__,
             data->count);
 
-    spin_lock(&_data_head_lock);
-    remove_data_entry(data);
-    spin_unlock(&_data_head_lock);
+    spin_lock(&_count_remote_tmembers_data_head_lock);
+    remove_data_entry_from(data,
+                           &_count_remote_tmembers_data_head_lock);
+    spin_unlock(&_count_remote_tmembers_data_head_lock);
 
     kfree(data);
 
@@ -1514,38 +1585,35 @@ void process_tgroup_closed_item(struct work_struct* work) {
         }
     }
 
-    spin_lock(&_data_head_lock);
+    spin_lock(&_saved_mm_head_lock);
     
     // Remove all saved mm's for this thread group.
-    curr = _data_head;
+    curr = _saved_mm_head;
     while(curr) {
         next = curr->next;
-        if(curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
-            mm_data = (mm_data_t*)curr;
-            if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
-               mm_data->tgroup_home_id  == w->tgroup_home_id) {
-                // We need to remove this data entry
-                remove_data_entry(curr);
+        mm_data = (mm_data_t*)curr;
+        if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
+           mm_data->tgroup_home_id  == w->tgroup_home_id) {
+            // We need to remove this data entry
+            remove_data_entry_from(curr,&_saved_mm_head);
 
-                PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
-                        __func__,
-                        w->tgroup_home_cpu,
-                        w->tgroup_home_id);
+            PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
+                    __func__,
+                    w->tgroup_home_cpu,
+                    w->tgroup_home_id);
 
-                // Remove mm
-                //atomic_dec(&mm_data->mm->mm_users);
-                mmput(mm_data->mm);
+            // Remove mm
+            mmput(mm_data->mm);
 
-                PSPRINTK("%s: mm removed\n",__func__);
+            PSPRINTK("%s: mm removed\n",__func__);
 
-                // Free up the data entry
-                kfree(curr);
-            }
+            // Free up the data entry
+            kfree(curr);
         }
         curr = next;
     }
 
-    spin_unlock(&_data_head_lock);
+    spin_unlock(&_saved_mm_head_lock);
 
     kfree(work);
 
@@ -1638,7 +1706,6 @@ void process_mapping_request(struct work_struct* work) {
     data_header_t* data_curr;
     mm_data_t* mm_data;
     struct task_struct* task = NULL;
-    struct task_struct* g;
     struct vm_area_struct* vma = NULL;
     struct mm_struct* mm = NULL;
     unsigned long address = w->address;
@@ -1665,46 +1732,43 @@ void process_mapping_request(struct work_struct* work) {
             w->tgroup_home_cpu,
             w->tgroup_home_id);
 
-    // First, search through existing threads.
-    do_each_thread(g,task) {
+    // First, search through existing processes
+    for_each_process(task) {
         if((task->tgroup_home_cpu == w->tgroup_home_cpu) &&
            (task->tgroup_home_id  == w->tgroup_home_id )) {
             PSPRINTK("mapping request found common thread group here\n");
             mm = task->mm;
             goto mm_found;
         }
-    } while_each_thread(g,task);
+    };
 
-mm_found:
-
-    // Failing the thread search, look through saved mm's.
+    // Failing the process search, look through saved mm's.
     if(!mm) {
-        spin_lock(&_data_head_lock);
-        data_curr = _data_head;
+        spin_lock(&_saved_mm_head_lock);
+        data_curr = _saved_mm_head;
         while(data_curr) {
 
-            if(data_curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
-                mm_data = (mm_data_t*)data_curr;
+            mm_data = (mm_data_t*)data_curr;
             
-                if((mm_data->tgroup_home_cpu == w->tgroup_home_cpu) &&
-                   (mm_data->tgroup_home_id  == w->tgroup_home_id)) {
-                    PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
-                    mm = mm_data->mm;
-                    used_saved_mm = 1;
-                    break;
-                }
+            if((mm_data->tgroup_home_cpu == w->tgroup_home_cpu) &&
+               (mm_data->tgroup_home_id  == w->tgroup_home_id)) {
+                PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
+                mm = mm_data->mm;
+                used_saved_mm = 1;
+                break;
             }
 
             data_curr = data_curr->next;
 
         } // while
 
-        spin_unlock(&_data_head_lock);
+        spin_unlock(&_saved_mm_head_lock);
     }
 
 
     // OK, if mm was found, look up the mapping.
     if(mm) {
+mm_found:
 retry:
         try_count++;
         vma = find_vma(mm, address & PAGE_MASK);
@@ -1945,7 +2009,7 @@ void process_mprotect_item(struct work_struct* work) {
     struct task_struct* task;
 
     // Handle protect
-    PSPRINTK("mprotect placeholder - cpu{%d}, id{%d}, start{%lx}, len{%d}, prot{%lx}\n");
+    PSPRINTK("%s entered\n",__func__);
 
     PERF_MEASURE_START(&perf_process_mprotect_item);
     
@@ -2171,24 +2235,22 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     // group members from being resolved accidentally after
     // being munmap()ped, as that would cause security/coherency
     // problems.
-    spin_lock(&_data_head_lock);
+    spin_lock(&_saved_mm_head_lock);
 
-    curr = _data_head;
+    curr = _saved_mm_head;
     while(curr) {
-        if(curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
-            mm_data = (mm_data_t*)curr;
-            if(mm_data->tgroup_home_cpu == msg->tgroup_home_cpu &&
-               mm_data->tgroup_home_id  == msg->tgroup_home_id) {
-                
-                // Entry found, perform munmap on this saved mm.
-                do_munmap(mm_data->mm, msg->vaddr_start, msg->vaddr_size);
+        mm_data = (mm_data_t*)curr;
+        if(mm_data->tgroup_home_cpu == msg->tgroup_home_cpu &&
+           mm_data->tgroup_home_id  == msg->tgroup_home_id) {
+            
+            // Entry found, perform munmap on this saved mm.
+            do_munmap(mm_data->mm, msg->vaddr_start, msg->vaddr_size);
 
-            }
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    spin_unlock(&_saved_mm_head_lock);
 
 
     // Construct response
@@ -2775,26 +2837,24 @@ static struct mm_struct* find_thread_mm(
     }
 
     // Failing that, look through saved mm's.
-    spin_lock(&_data_head_lock);
-    data_curr = _data_head;
+    spin_lock(&_saved_mm_head_lock);
+    data_curr = _saved_mm_head;
     while(data_curr) {
 
-        if(data_curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
-            mm_data = (mm_data_t*)data_curr;
-        
-            if((mm_data->tgroup_home_cpu == tgroup_home_cpu) &&
-               (mm_data->tgroup_home_id  == tgroup_home_id)) {
-                mm = mm_data->mm;
-                *used_saved_mm = mm_data;
-                break;
-            }
+        mm_data = (mm_data_t*)data_curr;
+    
+        if((mm_data->tgroup_home_cpu == tgroup_home_cpu) &&
+           (mm_data->tgroup_home_id  == tgroup_home_id)) {
+            mm = mm_data->mm;
+            *used_saved_mm = mm_data;
+            break;
         }
 
         data_curr = data_curr->next;
 
     } // while
 
-    spin_unlock(&_data_head_lock);
+    spin_unlock(&_saved_mm_head_lock);
 
 
 out:
@@ -2984,9 +3044,9 @@ int process_server_import_address_space(unsigned long* ip,
             // Used a saved MM.  Must delete the saved mm entry.
             // It is safe to do so now, since we have ingested
             // its mm at this point.
-            spin_lock(&_data_head_lock);
-            remove_data_entry(used_saved_mm);
-            spin_unlock(&_data_head_lock);
+            spin_lock(&_saved_mm_head_lock);
+            remove_data_entry_from(used_saved_mm,&_saved_mm_head);
+            spin_unlock(&_saved_mm_head_lock);
             kfree(used_saved_mm);
         }
     }
@@ -3258,7 +3318,9 @@ finished_membership_search:
             mm_data->tgroup_home_id  = current->tgroup_home_id;
 
             // Add the data entry
-            add_data_entry(mm_data);
+            add_data_entry_to(mm_data,
+                              &_saved_mm_head_lock,
+                              &_saved_mm_head);
 
         }
 
@@ -3350,7 +3412,9 @@ int process_server_do_munmap(struct mm_struct* mm,
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
 
-    add_data_entry(data);
+    add_data_entry_to(data,
+                      &_munmap_data_head_lock,
+                      &_munmap_data_head);
 
     request.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_REQUEST;
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -3379,9 +3443,10 @@ int process_server_do_munmap(struct mm_struct* mm,
 
     // OK, all responses are in, we can proceed.
 
-    spin_lock(&_data_head_lock);
-    remove_data_entry(data);
-    spin_unlock(&_data_head_lock);
+    spin_lock(&_munmap_data_head_lock);
+    remove_data_entry_from(data,
+                           &_munmap_data_head);
+    spin_unlock(&_munmap_data_head_lock);
 
     kfree(data);
 
@@ -3423,7 +3488,9 @@ void process_server_do_mprotect(struct task_struct* task,
     data->tgroup_home_id = task->tgroup_home_id;
     data->start = start;
 
-    add_data_entry(data);
+    add_data_entry_to(data,
+                      &_mprotect_data_head_lock,
+                      &_mprotect_data_head);
 
     request.header.type = PCN_KMSG_TYPE_PROC_SRV_MPROTECT_REQUEST;
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -3460,9 +3527,10 @@ void process_server_do_mprotect(struct task_struct* task,
 
     // OK, all responses are in, we can proceed.
 
-    spin_lock(&_data_head_lock);
-    remove_data_entry(data);
-    spin_unlock(&_data_head_lock);
+    spin_lock(&_mprotect_data_head_lock);
+    remove_data_entry_from(data,
+                           &_mprotect_data_head);
+    spin_unlock(&_mprotect_data_head_lock);
 
     kfree(data);
 
@@ -3584,7 +3652,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     data->tgroup_home_id = current->tgroup_home_id;
 
     // Make data entry visible to handler.
-    add_data_entry(data);
+    add_data_entry_to(data,
+                      &_mapping_request_data_head_lock,
+                      &_mapping_request_data_head);
 
     // Send out requests, tracking the number of successful
     // send operations.  That number is the number of requests
@@ -3748,9 +3818,10 @@ exit_remove_data:
     PSPRINTK("removing data entry\n");
 
     // Clean up data.
-    spin_lock(&_data_head_lock);
-    remove_data_entry(data);
-    spin_unlock(&_data_head_lock);
+    spin_lock(&_mapping_request_data_head_lock);
+    remove_data_entry_from(data,
+                      &_mapping_request_data_head);
+    spin_unlock(&_mapping_request_data_head_lock);
 
     kfree(data);
 
