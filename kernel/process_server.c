@@ -1492,7 +1492,7 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
 
     spin_lock(&_count_remote_tmembers_data_head_lock);
     remove_data_entry_from(data,
-                           &_count_remote_tmembers_data_head_lock);
+                           &_count_remote_tmembers_data_head);
     spin_unlock(&_count_remote_tmembers_data_head_lock);
 
     kfree(data);
