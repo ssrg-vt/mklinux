@@ -19,17 +19,10 @@ extern int _init_RemoteCPUMask(void);
 //extern struct _remote_cpu_info_list rlist;
 //list for cpuinfo
 extern struct list_head rlist_head;
-//list for pfn range of each kernels
-struct _pfn_range_list
-{
-	unsigned long start_pfn_addr;
-	unsigned long end_pfn_addr;
-	int kernel_number;
-	struct list_head pfn_list_member;
-};
-typedef struct _pfn_range_list _pfn_range_list_t;
 
 extern struct list_head pfn_list_head;
+
+extern int _init_RemotePFN(void);
 
 #endif /* __POPCORN_INIT_H */
 

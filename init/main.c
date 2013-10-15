@@ -105,6 +105,7 @@ extern void pcn_kmsg_init(void);
 
 extern void popcorn_init(void);
 extern int _init_RemoteCPUMask(void);
+extern int  _init_RemotePFN(void);
 /*
  * Debug helper: via this flag we know that we are in 'early bootup code'
  * where only the boot processor is running with IRQ disabled.  This means
@@ -866,6 +867,7 @@ static int __init kernel_init(void * unused)
 	/*mklinux_akshay*/
 
 		_init_RemoteCPUMask();
+		_init_RemotePFN();
 
 	init_post();
 	return 0;

@@ -28,6 +28,7 @@
 
 #include <popcorn/cpuinfo.h>
 #include <linux/bootmem.h>
+#include <popcorn/remote_pfn.h>
 //#include <linux/multikernel.h>
 
 extern unsigned long orig_boot_params;
@@ -58,6 +59,242 @@ static int __init popcorn_kernel_init(char *arg)
 }
 
 early_param("kernel_init", popcorn_kernel_init);
+
+
+
+
+/*
+ *  Variables
+ */
+static int wait_cpu_list = -1;
+
+static DECLARE_WAIT_QUEUE_HEAD( wq_cpu);
+
+struct list_head rlist_head;
+
+static int wait_pfn_list = -1;
+
+static DECLARE_WAIT_QUEUE_HEAD( wq_pfn);
+
+struct list_head pfn_list_head;
+
+
+struct _remote_pfn_request {
+	struct pcn_kmsg_hdr header;
+	_pfn_range_list_t _data;
+}__attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _remote_pfn_request _remote_pfn_request_t;
+
+struct _remote_pfn_response {
+	struct pcn_kmsg_hdr header;
+	_pfn_range_list_t _data;
+}__attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _remote_pfn_response _remote_pfn_response_t;
+
+/*
+ * ******************************* Define variables holding Result *******************************************
+ */
+static _remote_pfn_response_t *pfn_result;
+/*
+ * ******************************* Common Functions **********************************************************
+ */
+
+int flush_pfn_var() {
+	pfn_result = NULL;
+	wait_pfn_list = -1;
+	return 0;
+}
+
+
+
+void add_pfn_node(int kernel_number, unsigned long start_pfn_addr,unsigned long end_pfn_addr, struct list_head *head)
+{
+	_pfn_range_list_t *Ptr = (_pfn_range_list_t *)kmalloc(sizeof(struct _pfn_range_list),GFP_KERNEL);
+
+
+    Ptr->start_pfn_addr = start_pfn_addr;
+    Ptr->end_pfn_addr = end_pfn_addr;
+    Ptr->kernel_number = kernel_number;
+    INIT_LIST_HEAD(&Ptr->pfn_list_member);
+    list_add(&Ptr->pfn_list_member, head);
+}
+
+
+
+int delete_pfn(int kernel_number, struct list_head *head)
+{
+    struct list_head *iter;
+    _pfn_range_list_t *objPtr;
+
+    list_for_each(iter, head) {
+        objPtr = list_entry(iter, _pfn_range_list_t, pfn_list_member);
+        if(objPtr->kernel_number == kernel_number) {
+            list_del(&objPtr->pfn_list_member);
+            kfree(objPtr);
+            return 1;
+        }
+    }
+}
+
+
+_pfn_range_list_t* find_pfn(int kernel_number,struct list_head *head)
+{
+    struct list_head *iter;
+    _pfn_range_list_t *objPtr;
+
+    list_for_each(iter, head) {
+        objPtr = list_entry(iter, _pfn_range_list_t, pfn_list_member);
+        if(objPtr->kernel_number == kernel_number) {
+                    return objPtr;
+                }
+    }
+    return NULL;
+}
+
+_pfn_range_list_t* d_pfn(struct list_head *head)
+{
+    struct list_head *iter;
+    _pfn_range_list_t *objPtr;
+
+    list_for_each(iter, head) {
+        objPtr = list_entry(iter, _pfn_range_list_t, pfn_list_member);
+        printk("k {%d} s {%lx} e {%lx}",objPtr->kernel_number,objPtr->start_pfn_addr,objPtr->end_pfn_addr);
+    }
+}
+
+
+static int handle_remote_pfn_response(
+		struct pcn_kmsg_message* inc_msg) {
+	_remote_pfn_response_t* msg = (_remote_pfn_response_t*) inc_msg;
+
+	printk("%s: Entered remote pfn response \n", "handle_remote_pfn_response");
+
+	wait_pfn_list = 1;
+	if (msg != NULL)
+		pfn_result = msg;
+	wake_up_interruptible(&wq_pfn);
+	printk("%s: response ---- wait_pfn_list{%d} \n", "handle_remote_pfn_response", wait_pfn_list);
+
+	pcn_kmsg_free_msg(inc_msg);
+
+	return 0;
+}
+
+static int handle_remote_pfn_request(struct pcn_kmsg_message* inc_msg) {
+
+	printk("%s : %d!!!", "handle_remote_pfn_request",_cpu);
+
+	int i;
+		 printk("\n");
+    _remote_pfn_request_t* msg = (_remote_pfn_request_t*) inc_msg;
+    _remote_pfn_response_t response;
+    _pfn_range_list_t data;
+
+	printk("%s: Entered remote  pfn request \n", "handle_remote_pfn_request");
+
+	// Finish constructing response
+	response.header.type = PCN_KMSG_TYPE_REMOTE_PFN_RESPONSE;
+	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+
+	add_pfn_node(msg->_data.kernel_number,msg->_data.start_pfn_addr,msg->_data.end_pfn_addr,&pfn_list_head);
+
+	_pfn_range_list_t *temp = find_pfn(Kernel_Id,&pfn_list_head);
+	data.kernel_number = temp->kernel_number;
+	data.start_pfn_addr = temp->start_pfn_addr;
+	data.end_pfn_addr = temp->end_pfn_addr;
+
+	response._data = data;
+
+	// Send response
+	pcn_kmsg_send_long(msg->header.from_cpu,
+			(struct pcn_kmsg_message*) (&response),
+			sizeof(_remote_pfn_response_t) - sizeof(struct pcn_kmsg_hdr));
+
+	pcn_kmsg_free_msg(inc_msg);
+
+	return 0;
+}
+
+int send_pfn_request(int KernelId) {
+
+	int res = -1;
+	_remote_pfn_request_t* request = kmalloc(
+			sizeof(_remote_pfn_request_t),
+			GFP_KERNEL);
+	// Build request
+	request->header.type = PCN_KMSG_TYPE_REMOTE_PFN_REQUEST;
+	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+	_pfn_range_list_t *t = find_pfn(Kernel_Id,&pfn_list_head);
+    if(t!=NULL){
+	request->_data.kernel_number = t->kernel_number;
+	request->_data.start_pfn_addr = t->start_pfn_addr;
+	request->_data.end_pfn_addr = t->end_pfn_addr;
+	// Send response
+	res = pcn_kmsg_send_long(KernelId, (struct pcn_kmsg_message*) (request),
+			sizeof(_remote_pfn_request_t) - sizeof(struct pcn_kmsg_hdr));
+    }
+	return res;
+}
+
+int _init_remote_pfn(void)
+{
+	int i = 0;
+
+			int result = 0;
+			int retval;
+
+			for (i = 0; i < NR_CPUS; i++) {
+
+				flush_pfn_var();
+				// Skip the current cpu
+				if (i == _cpu)
+					continue;
+				result = send_pfn_request(i);
+
+				if (!result) {
+
+					PRINTK("%s : go to sleep!!!!", __func__);
+								wait_event_interruptible(wq_pfn, wait_pfn_list != -1);
+								wait_pfn_list = -1;
+
+								add_pfn_node(pfn_result->_data.kernel_number,pfn_result->_data.start_pfn_addr,pfn_result->_data.end_pfn_addr,&pfn_list_head);
+
+				}
+			}
+
+			return 0;
+}
+
+/*
+ * ************************************* Function (hook) to be called from other file ********************
+ */
+int _init_local_pfn(void)
+{
+
+
+	unsigned int i;
+	printk("%s : %d!!!", "_init_local_pfn: ",_cpu);
+
+	  printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
+	  printk("POP_INIT: kernel start add is 0x%lx",kernel_start_addr);
+	  printk("POP_INIT:max_low_pfn id is 0x%lx\n",PFN_PHYS(max_low_pfn));
+
+
+	  add_pfn_node(Kernel_Id,kernel_start_addr,PFN_PHYS(max_low_pfn),&pfn_list_head);
+
+	return 0;
+}
+
+int _init_RemotePFN(void)
+{
+	 _init_local_pfn();
+	 _init_remote_pfn();
+
+	  d_pfn(&pfn_list_head);
+	  return 0;
+}
 
 void popcorn_init(void)
 {
@@ -113,18 +350,9 @@ void popcorn_init(void)
     printk("POP_INIT: kernel start add is 0x%lx",kernel_start_addr);
     printk("POP_INIT:max_low_pfn id is 0x%lx\n",PFN_PHYS(max_low_pfn));
     printk("POP_INIT:min_low_pfn id is 0x%lx\n",PFN_PHYS(min_low_pfn));
+
 }
 
-
-
-/*
- *  Variables
- */
-static int wait = -1;
-
-static DECLARE_WAIT_QUEUE_HEAD( wq);
-
-struct list_head rlist_head;
 
 
 /*
@@ -201,7 +429,7 @@ static _remote_cpu_info_response_t *cpu_result;
 
 int flush_cpu_info_var() {
 	cpu_result = NULL;
-	wait = -1;
+	wait_cpu_list = -1;
 	return 0;
 }
 
@@ -303,11 +531,11 @@ static int handle_remote_proc_cpu_info_response(
 
 	printk("%s: Entered remote cpu info response \n", "handle_remote_proc_cpu_info_response");
 
-	wait = 1;
+	wait_cpu_list = 1;
 	if (msg != NULL)
 		cpu_result = msg;
-	wake_up_interruptible(&wq);
-	printk("%s: response ---- wait{%d} \n", "handle_remote_proc_cpu_info_response", wait);
+	wake_up_interruptible(&wq_cpu);
+	printk("%s: response ---- wait_cpu_list{%d} \n", "handle_remote_proc_cpu_info_response", wait_cpu_list);
 
 	pcn_kmsg_free_msg(inc_msg);
 
@@ -407,8 +635,8 @@ int _init_RemoteCPUMask(void)
 			if (!result) {
 
 				PRINTK("%s : go to sleep!!!!", __func__);
-							wait_event_interruptible(wq, wait != -1);
-							wait = -1;
+							wait_event_interruptible(wq_cpu, wait_cpu_list != -1);
+							wait_cpu_list = -1;
 
 							cpumask_or(cpu_global_online_mask,cpu_global_online_mask,(const struct cpumask *)(cpu_result->_data._cpumask));
 
@@ -437,6 +665,8 @@ static int __init cpu_info_handler_init(void)
 
     INIT_LIST_HEAD(&rlist_head);
 
+    INIT_LIST_HEAD(&pfn_list_head);
+
   /*  ptrlist = &rlist;
 
     ptrlist->_data=NULL;
@@ -447,6 +677,11 @@ static int __init cpu_info_handler_init(void)
 				    		handle_remote_proc_cpu_info_request);
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE,
 							handle_remote_proc_cpu_info_response);
+
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PFN_REQUEST,
+					    		handle_remote_pfn_request);
+		pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PFN_RESPONSE,
+								handle_remote_pfn_response);
 
 
 	return 0;

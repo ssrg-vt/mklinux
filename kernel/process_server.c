@@ -3845,7 +3845,6 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     return 1;
 
 }
-
 /**
  * Migrate the specified task <task> to cpu <cpu>
  * Currently, this function will put the specified task to 
@@ -3893,10 +3892,23 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     // This will be a placeholder process for the remote
     // process that is subsequently going to be started.
     // Block its execution.
-    sigaddset(&task->pending.signal,SIGSTOP); 
-    set_tsk_thread_flag(task,TIF_SIGPENDING); 
-    __set_task_state(task,TASK_INTERRUPTIBLE);//mklinux_akshay modified to interruptible state
+    __set_task_state(task,TASK_INTERRUPTIBLE); //mklinux_akshay modified to interruptible state
 
+    int sig;
+    struct task_struct *t=current;
+
+    printk("Procee---Futex: blocked signals\n");
+    for (sig = 1; sig < NSIG; sig++) {
+    	if (sigismember(&t->blocked, sig)) {
+    		printk("POP: %d \n", sig);
+    	}
+    }
+    printk("Procee---futex: pending signals\n");
+    for (sig = 1; sig < NSIG; sig++) {
+    	if (sigismember(&t->pending.signal, sig)) {
+    		printk("POP: %d \n", sig);
+    	}
+    }
     // Book keeping for placeholder process.
     task->represents_remote = 1;
 
