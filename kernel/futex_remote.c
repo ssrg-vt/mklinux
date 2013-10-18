@@ -109,14 +109,29 @@ struct pid_list
 
 
 _global_futex_key_t * add_key(int pid,int address, struct list_head *head) {
-	_global_futex_key_t *Ptr = (_global_futex_key_t *) kmalloc(
+
+
+	_global_futex_key_t *Ptr;
+	if(Ptr = find_key(address,&head))
+	{
+		int i=0;
+		for(i=0;i<10;i++)
+		{
+			if(Ptr->pid[i]!=0) continue;
+			else
+				Ptr->pid[i]=pid; break;
+		}
+	}
+	else
+	{
+	   Ptr	= (_global_futex_key_t *) kmalloc(
 			sizeof(_global_futex_key_t), GFP_ATOMIC);
-
-	Ptr->address = address;
-	Ptr->pid = pid;
-	INIT_LIST_HEAD(&Ptr->list_member);
-	list_add(&Ptr->list_member, head);
-
+	   Ptr->address = address;
+	   memset(Ptr->pid,0,sizeof(Ptr->pid));
+	   Ptr->pid[0] = pid;
+	   INIT_LIST_HEAD(&Ptr->list_member);
+	   list_add(&Ptr->list_member, head);
+	}
 	return Ptr;
 }
 
@@ -145,6 +160,7 @@ _global_futex_key_t * find_key(int address, struct list_head *head) {
 		if (objPtr->address == address) {
 			return objPtr;
 		}
+		if(head->next->next==head->next->prev) break;
 	}
 	return NULL;
 }
@@ -215,17 +231,15 @@ struct futex_q * query_q_pid(struct task_struct *t) {
 	for (i = 0; i < end; i++) {
 		hb = &futex_queues[i];
 		if (hb != NULL) {
-			spin_lock(&hb->lock);
 			head = &hb->chain;
 			plist_for_each_entry_safe(this, next, head, list)
 			{
 				temp=this->task;
 				if(temp->tgroup_distributed == 1 && temp->tgroup_home_id == t->tgroup_home_id && temp->pid == t->pid){
-					spin_unlock(&hb->lock);
+					//spin_unlock(&hb->lock);
 					return this;
 				}
 			}
-			spin_unlock(&hb->lock);
 		}
 	}
 	return NULL;
@@ -282,7 +296,11 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 	add_inc( msg->pid,msg->start,msg->end,msg->rflag,msg->origin_pid, &vm_head);
 
 	if(msg->rflag == 0)
+	{
+	  current->mm = (pid_task(find_vpid(msg->origin_pid), PIDTYPE_PID))->mm;
 	  futex_wake(msg->uaddr,msg->flags,msg->nr_wake,msg->bitset);
+	  current->mm = NULL;
+	}
 	else
 	 global_futex_wake(msg->uaddr,msg->flags,msg->nr_wake,msg->bitset, msg->rflag);
 
@@ -346,89 +364,40 @@ int remote_futex_wakeup(unsigned long uaddr,unsigned int flags, int nr_wake, u32
 
 
 int global_futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
-		      ktime_t *abs_time, u32 bitset, pid_t rem)
+		      ktime_t *abs_time, u32 bitset, pid_t rem, pid_t origin)
 {
 	struct futex_hash_bucket *hb;
-	struct futex_q q = futex_q_init;
+	struct futex_q *q = (struct futex_q *) kmalloc(
+			sizeof(struct futex_q), GFP_ATOMIC); //futex_q_init;
+	q->key = FUTEX_KEY_INIT;
+	q->bitset =FUTEX_BITSET_MATCH_ANY;
+	q->rem_pid =-1;
+	u32 uval;
 	int ret;
 	int sig;
-	struct task_struct *tsk = current;
-	int pid=tsk->pid;
-
-	printk(KERN_ALERT "global_futex_wait tsk {%s} pid{%d} \n",tsk->comm,tsk->pid);
 	/*if (!bitset)
 		return -EINVAL;*/
-	q.bitset = bitset;
+	q->bitset = bitset;
 
-    ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &q.key, VERIFY_READ);
+    ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &q->key, VERIFY_READ);
+    //add_key(rem,uaddr,&fq_head);
 
-    hb = hash_futex(&q.key);
-    q.lock_ptr = &hb->lock;
 
-    add_key(rem,uaddr,&fq_head);
-
+    hb = hash_futex(&q->key);
+    q->lock_ptr = &hb->lock;
 //this should be the real code
-/*    spin_lock(&hb->lock);
-    	int prio;
-    	prio = MAX_RT_PRIO+20 ;//min(current->normal_prio, MAX_RT_PRIO);
-    	q.task = NULL;
-    	q.rem_pid = rem;
-    	//q.key.private.mm=NULL;
-    	q.key.private.offset=156;
-    	plist_node_init(&q.list, prio);
-    	plist_add(&q.list, &hb->chain);
 
-    spin_unlock(&hb->lock);*/
-
-	return ret;
-}
-
-
-int global_fpk(u32 __user *uaddr, unsigned int flags, u32 val,
-		      ktime_t *abs_time, u32 bitset)
-{
-	struct futex_hash_bucket *hb;
-	struct futex_q q = futex_q_init;
-	int ret;
-	int sig;
-
-	printk(KERN_ALERT "1  global_futex_wait {%d} \n",1);
-	struct task_struct *tsk = current;
-	int pid=tsk->pid;
-
-	printk(KERN_ALERT "global_futex_wait tsk {%s} pid{%d} \n",tsk->comm,tsk->pid);
-	/*if (!bitset)
-		return -EINVAL;*/
-	q.bitset = bitset;
-
-    ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &q.key, VERIFY_READ);
-
-    hb = hash_futex(&q.key);
-    q.lock_ptr = &hb->lock;
-
-	struct futex_q *this, *next;
-	struct plist_head *head;
-	struct list_head *pos;
     spin_lock(&hb->lock);
-    head = &hb->chain;
-
-	pos=&head->node_list;
-    	plist_for_each_entry_safe(this, next, head, list) {
-
-    		if(this->key.both.ptr == NULL)
-    		{
-    			printk(KERN_ALERT "global_fpk mm is null {%s} pid{%d} \n",tsk->comm,tsk->pid);
-    		}
-    		if(NULL == pos)
-    			break;
-    		if(NULL == pos->next->next)
-    			break;
-
-
-    			pos=pos->next;
-    	}
+     	int prio;
+    	prio = 100 ;//min(current->normal_prio, MAX_RT_PRIO);
+    	q->task = NULL;
+    	q->rem_pid = rem;
+        q->key.private.mm=(pid_task(find_vpid(origin), PIDTYPE_PID))->mm;
+    	q->key.private.offset=156;
+    	plist_node_init(&q->list, prio);
+    	plist_add(&q->list, &hb->chain);
     spin_unlock(&hb->lock);
-
+out:
 	return ret;
 }
 
@@ -474,18 +443,11 @@ static int handle_remote_futex_key_request(struct pcn_kmsg_message* inc_msg) {
 
 	printk("%s: request -- entered \n", "handle_remote_futex_key_request");
 
-	struct task_struct *tsk = current;
-	int pid=tsk->pid;
-
-	printk(KERN_ALERT " handle_remote_futex_key_request tsk {%s} pid{%d} \n",tsk->comm,tsk->pid);
-
-
 	// Finish constructing response
 	response.header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE;
 	response.header.prio = PCN_KMSG_PRIO_NORMAL;
 
-	global_futex_wait(msg->uaddr,msg->flags,msg->val,0,0,msg->pid);
-	//global_fpk(msg->uaddr,msg->flags,msg->val,0,0);
+	global_futex_wait(msg->uaddr,msg->flags,msg->val,0,0,msg->pid,msg->origin_pid);
 
 	pcn_kmsg_free_msg(inc_msg);
 

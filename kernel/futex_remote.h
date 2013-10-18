@@ -113,7 +113,7 @@ extern void put_futex_key(union futex_key *key);
 
 struct _global_futex_key {
 	unsigned int address;
-	int pid;
+	int pid[10];
 	struct list_head list_member;
 };
 
@@ -122,6 +122,8 @@ _global_futex_key_t * add_key(int pid,int address, struct list_head *head) ;
 
 _global_futex_key_t * find_key(int address, struct list_head *head);
 int find_and_delete_key(int address, struct list_head *head) ;
+
+int get_futex_value_locked(u32 *dest, u32 __user *from);
 
 extern struct list_head fq_head;
 

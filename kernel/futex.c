@@ -99,6 +99,7 @@ struct futex_hash_bucket *hash_futex(union futex_key *key)
 {
 	u32 hash = jhash2((u32*)&key->both.word,
 			  (sizeof(key->both.word)+sizeof(key->both.ptr))/4,
+			 // (sizeof(key->both.word))/4,
 			  key->both.offset);
 	ghash=hash;
 	printk(KERN_ALERT" ghash {%u} \n",hash);
@@ -397,7 +398,8 @@ static int cmpxchg_futex_value_locked(u32 *curval, u32 __user *uaddr,
 	return ret;
 }
 
-static int get_futex_value_locked(u32 *dest, u32 __user *from)
+//static
+int get_futex_value_locked(u32 *dest, u32 __user *from)
 {
 	int ret;
 
@@ -947,12 +949,14 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 
 	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &key, VERIFY_READ);
 	unsigned long address=(unsigned long)uaddr;
-	address -= q->key.both.offset;
+	address -= key.both.offset;
+	if(current->mm){
 	struct vm_area_struct *vma;
 	vma = find_extend_vma( current->mm, address);
 	if(vma->vm_flags & VM_PFNMAP)
-	{
+	  {
 			return remote_futex_wakeup(uaddr, flags & FLAGS_SHARED,nr_wake, bitset,&key,0);
+	  }
 	}
 	if (unlikely(ret != 0))
 		goto out;
@@ -964,19 +968,14 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 
 	plist_for_each_entry_safe(this, next, head, list) {
 
-		if(this->key.both.ptr == NULL || this->key.both.word == NULL)
-		{
-		  printk(KERN_ALERT "futex_wake mm is null \n");
-		}
-
-		else if (match_futex (&this->key, &key)) {
-			if (this->pi_state || this->rt_waiter) {
+		if (match_futex (&this->key, &key)) {
+			if (this->rem_pid == -1 && (this->pi_state || this->rt_waiter)) {
 				ret = -EINVAL;
 				break;
 			}
 
 			/* Check if one of the bits is set in both bitsets */
-			if (!(this->bitset & bitset))
+			if (this->rem_pid == -1 && !(this->bitset & bitset))
 				continue;
 			if(this->rem_pid == -1)
 			 wake_futex(this);
@@ -989,12 +988,20 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 			break;
 	}
 
-	_global_futex_key_t *ke =find_key(uaddr, &fq_head);
+	/*_global_futex_key_t *ke =find_key(uaddr, &fq_head);
+	int i=0;
 	if(ke!=NULL)
 	{
-		ret = remote_futex_wakeup(uaddr, flags & FLAGS_SHARED,nr_wake, bitset,&key,ke->pid);
+		for(i=0;i<10;i++)
+		{
+			if(ke->pid[i]!=0)
+				ret = remote_futex_wakeup(uaddr, flags & FLAGS_SHARED,nr_wake, bitset,&key,ke->pid[i]);
+			else
+				break;
+		}
+
 	}
-	find_and_delete_key(uaddr, &fq_head);
+	find_and_delete_key(uaddr, &fq_head);*/
 
 	spin_unlock(&hb->lock);
 	put_futex_key(&key);
@@ -1495,6 +1502,7 @@ static inline void queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
 	plist_node_init(&q->list, prio);
 	plist_add(&q->list, &hb->chain);
 	q->task = current;
+	printk(KERN_ALERT " queue me comm {%s} pid {%d}\n",q->task->comm,q->task->pid);
 	spin_unlock(&hb->lock);
 }
 
