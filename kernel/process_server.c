@@ -15,6 +15,9 @@
 #include <linux/path.h>
 #include <linux/mount.h>
 #include <linux/fs.h>
+#include <linux/fs_struct.h>
+#include <linux/file.h>
+#include <linux/fdtable.h>
 #include <linux/slab.h>
 #include <linux/process_server.h>
 #include <linux/mm.h>
@@ -36,7 +39,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -1706,6 +1709,7 @@ void process_mapping_request(struct work_struct* work) {
     data_header_t* data_curr;
     mm_data_t* mm_data;
     struct task_struct* task = NULL;
+    struct task_struct* g;
     struct vm_area_struct* vma = NULL;
     struct mm_struct* mm = NULL;
     unsigned long address = w->address;
@@ -1733,14 +1737,13 @@ void process_mapping_request(struct work_struct* work) {
             w->tgroup_home_id);
 
     // First, search through existing processes
-    for_each_process(task) {
+    do_each_thread(g,task) {
         if((task->tgroup_home_cpu == w->tgroup_home_cpu) &&
            (task->tgroup_home_id  == w->tgroup_home_id )) {
             PSPRINTK("mapping request found common thread group here\n");
             mm = task->mm;
-            goto mm_found;
         }
-    };
+    } while_each_thread(g,task);
 
     // Failing the process search, look through saved mm's.
     if(!mm) {
@@ -1910,6 +1913,15 @@ void process_exit_item(struct work_struct* work) {
 
     if(unlikely(!task)) {
         printk("%s: ERROR - empty task\n",__func__);
+        kfree(work);
+        PERF_MEASURE_STOP(&perf_process_exit_item,"ERROR");
+        return;
+    }
+
+    if(unlikely(task->pid != pid)) {
+        printk("%s: ERROR - wrong task picked\n",__func__);
+        kfree(work);
+        PERF_MEASURE_STOP(&perf_process_exit_item,"ERROR");
         return;
     }
     
@@ -1921,6 +1933,8 @@ void process_exit_item(struct work_struct* work) {
  
     // set regs
     memcpy(task_pt_regs(task),&w->regs,sizeof(struct pt_regs));
+
+    dump_regs(task_pt_regs(task));
 
     // set thread info
     task->thread.fs = w->thread_fs;
@@ -2006,7 +2020,7 @@ void process_mprotect_item(struct work_struct* work) {
     unsigned long start = w->start;
     size_t len = w->len;
     unsigned long prot = w->prot;
-    struct task_struct* task;
+    struct task_struct* task, *g;
 
     // Handle protect
     PSPRINTK("%s entered\n",__func__);
@@ -2014,7 +2028,7 @@ void process_mprotect_item(struct work_struct* work) {
     PERF_MEASURE_START(&perf_process_mprotect_item);
     
     // Find the task
-    for_each_process(task) {
+    do_each_thread(g,task) {
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
            task->tgroup_home_id  == tgroup_home_id) {
             
@@ -2025,7 +2039,7 @@ void process_mprotect_item(struct work_struct* work) {
             goto done;
 
         }
-    }
+    } while_each_thread(g,task);
 done:
 
     // Construct response
@@ -2137,7 +2151,8 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
            task->exit_state != EXIT_DEAD &&
            !(task->flags & PF_EXITING)) {
 
-            if(msg->include_shadow_threads || (!msg->include_shadow_threads && !task->represents_remote)) {
+            if(msg->include_shadow_threads || 
+                    (!msg->include_shadow_threads && !task->represents_remote)) {
                 response.count++;
                 PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
                         task->pid,
@@ -2598,7 +2613,8 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
     
     do_each_thread(g,task) {
         if(task->next_pid == msg->my_pid &&
-           task->next_cpu == source_cpu) {
+           task->next_cpu == source_cpu &&
+           task->represents_remote) {
 
             PSPRINTK("kmkprocsrv: killing local task pid{%d}\n",task->pid);
 
@@ -2607,7 +2623,9 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
             // Should I be doing this here, or in the bottom-half handler?
             task->represents_remote = 0;
             
-            exit_work = kmalloc(sizeof(exit_work_t),GFP_ATOMIC);
+            /*
+             * For debug purposes, do this work in the handler
+             exit_work = kmalloc(sizeof(exit_work_t),GFP_ATOMIC);
             if(exit_work) {
                 INIT_WORK( (struct work_struct*)exit_work, process_exit_item);
                 exit_work->task = task;
@@ -2624,7 +2642,26 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
                 exit_work->thread_fsindex = msg->thread_fsindex;
                 exit_work->thread_gsindex = msg->thread_gsindex;
                 queue_work(exit_wq, (struct work_struct*)exit_work);
-            }
+            }*/
+
+            // set regs
+            memcpy(task_pt_regs(task),&msg->regs,sizeof(struct pt_regs));
+
+            dump_regs(task_pt_regs(task));
+
+            // set thread info
+            task->thread.fs = msg->thread_fs;
+            task->thread.gs = msg->thread_gs;
+            task->thread.usersp = msg->thread_usersp;
+            task->thread.es = msg->thread_es;
+            task->thread.ds = msg->thread_ds;
+            task->thread.fsindex = msg->thread_fsindex;
+            task->thread.gsindex = msg->thread_gsindex;
+
+            // Now we're executing locally, so update our records
+            task->represents_remote = 0;
+
+            wake_up_process(task);
 
             goto done; // No need to continue;
         }
@@ -2817,9 +2854,10 @@ static bool __user_addr (unsigned long x )
 static struct mm_struct* find_thread_mm(
         int tgroup_home_cpu, 
         int tgroup_home_id, 
-        mm_data_t **used_saved_mm) {
+        mm_data_t **used_saved_mm,
+        struct task_struct** task_out) {
 
-    struct task_struct *task;
+    struct task_struct *task, *g;
     struct mm_struct * mm = NULL;
     data_header_t* data_curr;
     mm_data_t* mm_data;
@@ -2827,14 +2865,15 @@ static struct mm_struct* find_thread_mm(
     *used_saved_mm = NULL;
 
     // First, look through all active processes.
-    for_each_process(task) {
+    do_each_thread(g,task) {
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
            task->tgroup_home_id  == tgroup_home_id) {
             mm = task->mm;
+            *task_out = task;
             *used_saved_mm = 0;
             goto out;
         }
-    }
+    } while_each_thread(g,task);
 
     // Failing that, look through saved mm's.
     spin_lock(&_saved_mm_head_lock);
@@ -2893,6 +2932,7 @@ int process_server_import_address_space(unsigned long* ip,
     int vmas_installed = 0;
     int ptes_installed = 0;
     struct mm_struct* thread_mm = NULL;
+    struct task_struct* thread_task = NULL;
     mm_data_t* used_saved_mm = NULL;
 
     perf_a = native_read_tsc();
@@ -2918,7 +2958,8 @@ int process_server_import_address_space(unsigned long* ip,
     // Search for existing thread members to share an mm with
     thread_mm = find_thread_mm(clone_data->tgroup_home_cpu,
                                clone_data->tgroup_home_id,
-                               &used_saved_mm); 
+                               &used_saved_mm,
+                               &thread_task); 
 
     if(!thread_mm) {
 
@@ -2933,6 +2974,7 @@ int process_server_import_address_space(unsigned long* ip,
             vma = current->mm->mmap;
         }
         current->enable_distributed_munmap = 1;
+
         // Clean out cache and tlb
         flush_tlb_mm(current->mm);
         flush_cache_mm(current->mm);
@@ -3048,6 +3090,64 @@ int process_server_import_address_space(unsigned long* ip,
             remove_data_entry_from(used_saved_mm,&_saved_mm_head);
             spin_unlock(&_saved_mm_head_lock);
             kfree(used_saved_mm);
+        }
+
+        // Transplant thread group information
+        // if there are other thread group members
+        // on this cpu.
+        if(thread_task) {
+
+            write_lock_irq(&tasklist_lock);
+            spin_lock(&thread_task->sighand->siglock);
+
+            // Copy grouping info
+            current->group_leader = thread_task->group_leader;
+            current->tgid = thread_task->tgid;
+            current->real_parent = thread_task->real_parent;
+            current->parent_exec_id = thread_task->parent_exec_id;
+
+            // Unhash sibling 
+            list_del_init(&current->sibling);
+            INIT_LIST_HEAD(&current->sibling);
+
+             // Remove from tasks list, since this is not group leader.
+             // We know that by virtue of the fact that we found another
+             // thread group member.
+            list_del_rcu(&current->tasks);
+
+            // Signal related stuff
+            current->signal = thread_task->signal;     
+            atomic_inc(&thread_task->signal->live);
+            atomic_inc(&thread_task->signal->sigcnt);
+            thread_task->signal->nr_threads++;
+            current->exit_signal = -1;
+            
+            // Sighand related stuff
+            current->sighand = thread_task->sighand;   
+            atomic_inc(&thread_task->sighand->count);
+
+            // Rehash thread_group
+            list_del_rcu(&current->thread_group);
+            list_add_tail_rcu(&current->thread_group,
+                              &current->group_leader->thread_group);
+
+            // Reduce process count
+             __this_cpu_dec(process_counts);
+
+            spin_unlock(&thread_task->sighand->siglock);
+            write_unlock_irq(&tasklist_lock);
+           
+            // copy fs
+            // TODO: This should probably only happen when CLONE_FS is used...
+            current->fs = thread_task->fs;
+            spin_lock(&current->fs->lock);
+            current->fs->users++;
+            spin_unlock(&current->fs->lock);
+
+            // copy files
+            // TODO: This should probably only happen when CLONE_FILES is used...
+            current->files = thread_task->files;
+            atomic_inc(&current->files->count);
         }
     }
 
@@ -3197,9 +3297,9 @@ int process_server_do_exit(void) {
     exiting_process_t msg;
     int tx_ret = -1;
     int is_last_thread_in_local_group = 1;
+    int is_last_thread_in_group;
     struct task_struct *task, *g;
     mm_data_t* mm_data = NULL;
-    int count;
     int i;
     thread_group_exited_notification_t exit_notification;
     clone_data_t* clone_data;
@@ -3216,14 +3316,52 @@ int process_server_do_exit(void) {
 */
     PERF_MEASURE_START(&perf_process_server_do_exit);
 
+    PSPRINTK("%s - pid{%d}\n",__func__,current->pid);
+    
+    // Determine if this is the last _active_ thread in the 
+    // local group.  We have to count shadow tasks because
+    // otherwise we risk missing tasks when they are exiting
+    // and migrating back.
+    do_each_thread(g,task) {
+        if(task->tgid == current->tgid &&           // <--- narrow search to current thread group only 
+                task->pid != current->pid &&        // <--- don't include current in the search
+                //!task->represents_remote &&         // <--- check to see if it's active here
+                task->exit_state != EXIT_ZOMBIE &&  // <-,
+                task->exit_state != EXIT_DEAD &&    // <-|- check to see if it's in a runnable state
+                !(task->flags & PF_EXITING)) {      // <-'
+            is_last_thread_in_local_group = 0;
+            goto finished_membership_search;
+        }
+    } while_each_thread(g,task);
+finished_membership_search:
+
     // Count the number of threads in this distributed thread group
     // this will be useful for determining what to do with the mm.
-    count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id,0,1);
+    // TODO OPTIMIZATION - don't do this if we know we're not the last
+    // in the group based on the local count.
+    if(!is_last_thread_in_local_group) {
+        // Not the last local thread, which means we're not the
+        // last in the distributed thread group either.
+        is_last_thread_in_group = 0;
+    } else {
+        // Last local thread, which means we MIGHT be the last
+        // in the distributed thread group, but we have to check.
+        int count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id,1,1);
+        if (count == 0) {
+            // Distributed thread count yeilded no thread group members
+            // so the current <exiting> task is the last group member.
+            is_last_thread_in_group = 1;
+        } else {
+            // There are more thread group members.
+            is_last_thread_in_group = 0;
+        }
+    }
     
     // Find the clone data, we are going to destroy this very soon.
     clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
-    PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d}\n",current->pid);
+
+    dump_regs(task_pt_regs(current));
 
     // Build the message that is going to migrate this task back 
     // from whence it came.
@@ -3231,8 +3369,10 @@ int process_server_do_exit(void) {
     msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = current->pid;
     memcpy(&msg.regs,task_pt_regs(current),sizeof(struct pt_regs));
-    //msg.regs.ip = (unsigned long)msg.regs.ip -2;  This causes process
-    //                                              to never exit.
+
+    //msg.regs.ip = (unsigned long)msg.regs.ip -2;  // This causes process
+    //                                              // to never exit.
+    //
     msg.thread_fs = current->thread.fs;
     msg.thread_gs = current->thread.gs;
     msg.thread_sp0 = current->thread.sp0;
@@ -3242,7 +3382,7 @@ int process_server_do_exit(void) {
     msg.thread_ds = current->thread.ds;
     msg.thread_fsindex = current->thread.fsindex;
     msg.thread_gsindex = current->thread.gsindex;
-    msg.is_last_tgroup_member = (count == 1? 1 : 0);
+    msg.is_last_tgroup_member = is_last_thread_in_group;
 
     if(current->executing_for_remote) {
 
@@ -3259,21 +3399,7 @@ int process_server_do_exit(void) {
                     sizeof(exiting_process_t) - sizeof(struct pcn_kmsg_hdr));
     } 
 
-    // Save off the mm, and use it to resolve mappings for this thread
-    // But first, determine if this is the last _active_ thread in the 
-    // _local_ group.
-    do_each_thread(g,task) {
-        if(task->tgid == current->tgid &&           // <--- narrow search to current thread group only 
-                task->pid != current->pid &&        // <--- don't include current in the search
-                !task->represents_remote &&         // <--- check to see if it's active here
-                task->exit_state != EXIT_ZOMBIE &&  // <-,
-                task->exit_state != EXIT_DEAD &&    // <-|- check to see if it's in a runnable state
-                !(task->flags & PF_EXITING)) {      // <-'
-            is_last_thread_in_local_group = 0;
-            goto finished_membership_search;
-        }
-    } while_each_thread(g,task);
-finished_membership_search:
+
 
     // If this was the last thread in the local work, we take one of two 
     // courses of action, either we:
@@ -3288,7 +3414,7 @@ finished_membership_search:
     if(is_last_thread_in_local_group) {
         // Check to see if this is the last member of the distributed
         // thread group.
-        if(count == 1) {
+        if(is_last_thread_in_group) {
 
             PSPRINTK("%s: This is the last thread member!\n",__func__);
 
@@ -3602,8 +3728,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // should this thing be writable?  if so, set it and exit
         // This is a security hole, and is VERY bad.
         // It will also probably cause problems for genuine COW mappings..
-        if(vma->vm_flags & VM_WRITE && 
-                !is_page_writable(mm, vma, address&PAGE_MASK)) {
+        if(vma->vm_flags & VM_WRITE /*&& 
+                !is_page_writable(mm, vma, address&PAGE_MASK)*/) {
 
             mk_page_writable(mm,vma,address & PAGE_MASK);
             adjusted_permissions = 1;

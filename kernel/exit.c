@@ -895,10 +895,6 @@ NORET_TYPE void do_exit(long code)
 	struct task_struct *tsk = current;
 	int group_dead;
 
-    /*
-     * Multikernel
-     */
-    process_server_do_exit();
 
 	profile_task_exit(tsk);
 
@@ -946,6 +942,13 @@ NORET_TYPE void do_exit(long code)
 	exit_irq_thread();
 
 	exit_signals(tsk);  /* sets PF_EXITING */
+
+    /*
+     * Multikernel
+     */
+    process_server_do_exit();
+
+
 	/*
 	 * tsk->flags are checked in the futex code to protect against
 	 * an exiting task cleaning up the robust pi futexes.
