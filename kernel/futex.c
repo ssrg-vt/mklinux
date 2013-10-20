@@ -102,7 +102,7 @@ struct futex_hash_bucket *hash_futex(union futex_key *key)
 			 // (sizeof(key->both.word))/4,
 			  key->both.offset);
 	ghash=hash;
-	printk(KERN_ALERT" ghash {%u} \n",hash);
+	//printk(KERN_ALERT" ghash {%u} \n",hash);
 	return &futex_queues[hash & ((1 << FUTEX_HASHBITS)-1)];
 }
 
@@ -187,7 +187,7 @@ get_futex_key(u32 __user *uaddr, int fshared, union futex_key *key, int rw)
 	struct task_struct *tsk = current;
 	int pid=tsk->pid;
 
-	printk(KERN_ALERT " tsk {%s} pid{%d} \n",tsk->comm,tsk->pid);
+//	printk(KERN_ALERT " tsk {%s} pid{%d} \n",tsk->comm,tsk->pid);
 
 	struct page *page, *page_head;
 	int err, ro = 0;
@@ -238,7 +238,7 @@ again:
 		err = 0;
 
 	unsigned long pfn=page_to_pfn(page);
-	 printk("futex pfn : {%lx}\n",pfn);
+	// printk("futex pfn : {%lx}\n",pfn);
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	page_head = page;
@@ -1502,7 +1502,7 @@ static inline void queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
 	plist_node_init(&q->list, prio);
 	plist_add(&q->list, &hb->chain);
 	q->task = current;
-	printk(KERN_ALERT " queue me comm {%s} pid {%d}\n",q->task->comm,q->task->pid);
+	//printk(KERN_ALERT " queue me comm {%s} pid {%d}\n",q->task->comm,q->task->pid);
 	spin_unlock(&hb->lock);
 }
 
@@ -1791,7 +1791,7 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 	}
 	int sig;
 	struct task_struct *t=current;
-	printk("B-+--Futex: blocked signals\n");
+	//printk("B-+--Futex: blocked signals\n");
 	__set_current_state(TASK_RUNNING);
 }
 
@@ -1891,7 +1891,7 @@ static int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 
 	struct task_struct *t=current;
 	int rep_rem = t->tgroup_distributed;
-	printk("1  before task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
+	//printk("1  before task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
 	if (!bitset)
 		return -EINVAL;
 	q.bitset = bitset;
@@ -1918,14 +1918,14 @@ retry:
 
 
 
-	printk("before task {%d} rep_rem {%d}  {%s}\ state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
+	//printk("before task {%d} rep_rem {%d}  {%s}\ state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
 
 
 	/* queue_me and wait for wakeup, timeout, or a signal. */
 	futex_wait_queue_me(hb, &q, to);
 
 
-	printk("1:task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
+//	printk("1:task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
 	/*if (t->tgroup_distributed==1)
 	{
 
@@ -1948,7 +1948,7 @@ retry:
 */
 	/* If we were woken (and unqueued), we succeeded, whatever. */
 	ret = 0;
-	printk("2:task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
+	//printk("2:task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
 	/* unqueue_me() drops q.key ref */
 	if (!unqueue_me(&q))
 		goto out;
@@ -1956,9 +1956,9 @@ retry:
 	if (to && !to->task)
 		goto out;
 
-	printk("3:task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
+	//printk("3:task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
 
-	printk("4: Futex: blocked signals\n");
+	//printk("4: Futex: blocked signals\n");
 	/*
 	 * We expect signal_pending(current), but we might be the
 	 * victim of a spurious wakeup as well.
