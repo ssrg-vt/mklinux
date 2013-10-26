@@ -35,11 +35,12 @@
 #include <asm/prctl.h> // prctl
 #include <asm/proto.h> // do_arch_prctl
 #include <asm/msr.h> // wrmsr_safe
+#include <asm/mmu_context.h>
 
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -257,6 +258,7 @@ typedef struct _mapping_request_data {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long address;
     unsigned long vaddr_mapping;
     unsigned long vaddr_start;
@@ -279,6 +281,7 @@ typedef struct _munmap_request_data {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long vaddr_start;
     unsigned long vaddr_size;
     int responses;
@@ -311,6 +314,7 @@ typedef struct _mprotect_data {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long start;
     int responses;
     int expected_responses;
@@ -428,10 +432,11 @@ struct _mapping_request {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int requester_pid;          // 4
     unsigned long address;      // 8
                                 // ---
-                                // 16 -> 44 bytes of padding needed
-    char pad[44];
+                                // 20 -> 40 bytes of padding needed
+    char pad[40];
 
 } __attribute__((packed)) __attribute__((aligned(64)));
 
@@ -458,6 +463,7 @@ struct _mapping_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        
     int tgroup_home_id; 
+    int requester_pid;
     int from_saved_mm;
     unsigned long address;      
     unsigned long present;      
@@ -479,11 +485,12 @@ struct _munmap_request {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;         // 4
     int tgroup_home_id;          // 4
+    int requester_pid;           // 4
     unsigned long vaddr_start;   // 8
     unsigned long vaddr_size;    // 8
                                  // ---
-                                 // 24 -> 36 bytes of padding needed
-    char pad[36];
+                                 // 28 -> 32 bytes of padding needed
+    char pad[32];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _munmap_request munmap_request_t;
 
@@ -494,11 +501,12 @@ struct _munmap_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int requester_pid;          // 4
     unsigned long vaddr_start;  // 8
     unsigned long vaddr_size;   // 8+
                                 // ---
-                                // 24 -> 36 bytes of padding needed
-    char pad[36];
+                                // 28 -> 32 bytes of padding needed
+    char pad[32];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _munmap_response munmap_response_t;
 
@@ -537,12 +545,13 @@ struct _mprotect_request {
     struct pcn_kmsg_hdr header; 
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int requester_pid;          // 4
     unsigned long start;        // 8
     size_t len;                 // 4
     unsigned long prot;         // 8
                                 // ---
-                                // 28 -> 32 bytes of padding needed
-    char pad[32];
+                                // 32 -> 28 bytes of padding needed
+    char pad[28];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _mprotect_request mprotect_request_t;
 
@@ -553,10 +562,11 @@ struct _mprotect_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int requester_pid;          // 4
     unsigned long start;        // 8
                                 // ---
-                                // 16 -> 44 bytes of padding needed
-    char pad[44];
+                                // 20 -> 40 bytes of padding needed
+    char pad[40];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _mprotect_response mprotect_response_t;
 
@@ -606,6 +616,7 @@ typedef struct {
     struct work_struct work;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long address;
     int from_cpu;
 } mapping_request_work_t;
@@ -617,7 +628,54 @@ typedef struct {
     struct work_struct work;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
+    int from_saved_mm;
+    unsigned long address;      
+    unsigned long present;      
+    unsigned long vaddr_mapping;
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+    unsigned long paddr_mapping;
+    pgprot_t prot;              
+    unsigned long vm_flags;     
+    char path[512];
+    unsigned long pgoff;
+    int from_cpu;
+} mapping_response_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
 } tgroup_closed_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int requester_pid;
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+    int from_cpu;
+} munmap_request_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int requester_pid;
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+} munmap_response_work_t;
 
 /**
  * 
@@ -626,11 +684,14 @@ typedef struct {
     struct work_struct work;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long start;
     size_t len;
     unsigned long prot;
     int from_cpu;
 } mprotect_work_t;
+
+
 
 /**
  * Prototypes
@@ -680,6 +741,8 @@ data_header_t* _data_head = NULL;                 // General purpose data store
 DEFINE_SPINLOCK(_data_head_lock);                 // Lock for _data_head
 DEFINE_SPINLOCK(_vma_id_lock);                    // Lock for _vma_id
 DEFINE_SPINLOCK(_clone_request_id_lock);          // Lock for _clone_request_id
+struct rw_semaphore _import_sem;
+DEFINE_SPINLOCK(_remap_lock);
 
 // Work Queues
 static struct workqueue_struct *clone_wq;
@@ -690,6 +753,11 @@ static struct workqueue_struct *mapping_wq;
  * General helper functions and debugging tools
  */
 
+
+// TODO
+static bool __user_addr (unsigned long x ) {
+    return (x < PAGE_OFFSET);   
+}
 
 /**
  * A best effort at making a page writable
@@ -822,7 +890,7 @@ void dump_task(struct task_struct* task, struct pt_regs* regs, unsigned long sta
     PSPRINTK("Clone_request_id{%d}\n",task->clone_request_id);
     dump_regs(regs);
     dump_thread(&task->thread);
-    dump_mm(task->mm);
+    //dump_mm(task->mm);
     dump_stk(&task->thread,stack_ptr);
     PSPRINTK("TASK DUMP COMPLETE\n");
 #endif
@@ -984,7 +1052,7 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
 /**
  *
  */
-static munmap_request_data_t* find_munmap_request_data(int cpu, int id, unsigned long address) {
+static munmap_request_data_t* find_munmap_request_data(int cpu, int id, int requester_pid, unsigned long address) {
     data_header_t* curr = NULL;
     munmap_request_data_t* request = NULL;
     munmap_request_data_t* ret = NULL;
@@ -995,6 +1063,7 @@ static munmap_request_data_t* find_munmap_request_data(int cpu, int id, unsigned
         request = (munmap_request_data_t*)curr;
         if(request->tgroup_home_cpu == cpu && 
                 request->tgroup_home_id == id &&
+                request->requester_pid == requester_pid &&
                 request->vaddr_start == address) {
             ret = request;
             break;
@@ -1011,7 +1080,7 @@ static munmap_request_data_t* find_munmap_request_data(int cpu, int id, unsigned
 /**
  *
  */
-static mprotect_data_t* find_mprotect_request_data(int cpu, int id, unsigned long start) {
+static mprotect_data_t* find_mprotect_request_data(int cpu, int id, int requester_pid, unsigned long start) {
     data_header_t* curr = NULL;
     mprotect_data_t* request = NULL;
     mprotect_data_t* ret = NULL;
@@ -1022,6 +1091,7 @@ static mprotect_data_t* find_mprotect_request_data(int cpu, int id, unsigned lon
         request = (mprotect_data_t*)curr;
         if(request->tgroup_home_cpu == cpu && 
                 request->tgroup_home_id == id &&
+                request->requester_pid == requester_pid &&
                 request->start == start) {
             ret = request;
             break;
@@ -1038,7 +1108,7 @@ static mprotect_data_t* find_mprotect_request_data(int cpu, int id, unsigned lon
 /**
  *
  */
-static mapping_request_data_t* find_mapping_request_data(int cpu, int id, unsigned long address) {
+static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pid, unsigned long address) {
     data_header_t* curr = NULL;
     mapping_request_data_t* request = NULL;
     mapping_request_data_t* ret = NULL;
@@ -1049,6 +1119,7 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, unsign
         request = (mapping_request_data_t*)curr;
         if(request->tgroup_home_cpu == cpu && 
                 request->tgroup_home_id == id &&
+                request->requester_pid == pid &&
                 request->address == address) {
             ret = request;
             break;
@@ -1809,6 +1880,7 @@ retry:
             response.header.prio = PCN_KMSG_PRIO_NORMAL;
             response.tgroup_home_cpu = w->tgroup_home_cpu;
             response.tgroup_home_id = w->tgroup_home_id;
+            response.requester_pid = w->requester_pid;
             response.address = address;
             response.present = 1;
             response.vaddr_mapping = address & PAGE_MASK;
@@ -1838,6 +1910,7 @@ retry:
         response.header.prio = PCN_KMSG_PRIO_NORMAL;
         response.tgroup_home_cpu = w->tgroup_home_cpu;
         response.tgroup_home_id = w->tgroup_home_id;
+        response.requester_pid = w->requester_pid;
         response.address = address;
         response.paddr_mapping = 0;
         response.present = 0;
@@ -1897,6 +1970,99 @@ retry:
     }
 
     return;
+}
+
+void process_mapping_response(struct work_struct* work) {
+    mapping_request_data_t* data;
+    mapping_response_work_t* w = (mapping_response_work_t*)work; 
+
+    //PERF_MEASURE_START(&perf_handle_mapping_response);
+
+    data = find_mapping_request_data(
+                                     w->tgroup_home_cpu,
+                                     w->tgroup_home_id,
+                                     w->requester_pid,
+                                     w->address);
+
+
+    PSPRINTK("%s: entered\n",__func__);
+    PSPRINTK("received mapping response\n");
+
+    if(data == NULL) {
+        PSPRINTK("data not found\n");
+        kfree(work);
+        //PERF_MEASURE_STOP(&perf_handle_mapping_response,
+        //        "early exit");
+        return;
+    }
+
+    if(w->present) {
+        PSPRINTK("received positive search result from cpu %d\n",
+                w->from_cpu);
+        
+        // Account for this cpu's response
+        data->responses++;
+       
+        // Enforce precedence rules.  Responses from saved mm's
+        // are always ignored when a response from a live thread
+        // can satisfy the mapping request.  The purpose of this
+        // is to ensure that the mapping is not stale, since
+        // mmap() operations will not effect saved mm's.  Saved
+        // mm's are only useful for cases where a thread mmap()ed
+        // some space then died before any other thread was able
+        // to acquire the new mapping.
+        //
+        // A note on a case where multiple cpu's have mappings, but
+        // of different sizes.  It is possible that two cpu's have
+        // partially overlapping mappings.  This is possible because
+        // new mapping's are merged when their regions are contiguous.  
+        // This is not a problem here because if part of a mapping is 
+        // accessed that is not part of an existig mapping, that new 
+        // part will be merged in the resulting mapping request.
+        //
+        // Also, prefer responses that provide values for paddr.
+        if(data->present == 1) {
+
+            // another cpu already responded.
+            if(!data->from_saved_mm && w->from_saved_mm
+                    // but we need to add an exception in case a physical address
+                    // is mapped into the saved mm, but not in the unsaved mm...
+                    && !(w->paddr_mapping && !data->paddr_mapping)) {
+                PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
+                goto out;
+            }
+
+            // Ensure that we keep physical mappings around.
+            if(data->paddr_mapping && !w->paddr_mapping) {
+                PSPRINTK("%s: prevented mapping resolver from downgrading from mapping with paddr to one without\n",__func__);
+                goto out;
+            }
+        }
+       
+        data->from_saved_mm = w->from_saved_mm;
+        data->vaddr_mapping = w->vaddr_mapping;
+        data->vaddr_start = w->vaddr_start;
+        data->vaddr_size = w->vaddr_size;
+        data->paddr_mapping = w->paddr_mapping;
+        data->prot = w->prot;
+        data->vm_flags = w->vm_flags;
+        data->present = 1;
+        strcpy(data->path,w->path);
+        data->pgoff = w->pgoff;
+
+    } else {
+        PSPRINTK("received negative search result from cpu %d\n",
+                w->from_cpu);
+      
+        // Account for this cpu's response.
+        data->responses++;
+    }
+
+out:
+    kfree(work);
+    
+    //PERF_MEASURE_STOP(&perf_handle_mapping_response," ");
+
 }
 
 unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
@@ -2010,6 +2176,116 @@ perf_bb = native_read_tsc();
 }
 
 /**
+ * 
+ */
+void process_munmap_request(struct work_struct* work) {
+    munmap_request_work_t* w = (munmap_request_work_t*)work;
+    munmap_response_t response;
+    struct task_struct *task, *g;
+    data_header_t *curr;
+    mm_data_t* mm_data;
+
+    //PERF_MEASURE_START(&perf_handle_munmap_request);
+
+    PSPRINTK("%s: entered\n",__func__);
+
+    // munmap the specified region in the specified thread group
+    do_each_thread(g,task) {
+
+        // Look for the thread group
+        if(task->tgroup_home_cpu == w->tgroup_home_cpu &&
+           task->tgroup_home_id  == w->tgroup_home_id) {
+
+            // Thread group has been found, perform munmap operation on this
+            // task.
+            down_write(&task->mm->mmap_sem);
+            current->enable_distributed_munmap = 0;
+            do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
+            current->enable_distributed_munmap = 1;
+            up_write(&task->mm->mmap_sem);
+            
+            goto done; // thread grouping - threads all share a common mm.
+
+        }
+    } while_each_thread(g,task);
+done:
+
+    // munmap the specified region in any saved mm's as well.
+    // This keeps old mappings saved in the mm of dead thread
+    // group members from being resolved accidentally after
+    // being munmap()ped, as that would cause security/coherency
+    // problems.
+    spin_lock(&_saved_mm_head_lock);
+
+    curr = _saved_mm_head;
+    while(curr) {
+        mm_data = (mm_data_t*)curr;
+        if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
+           mm_data->tgroup_home_id  == w->tgroup_home_id) {
+            
+            // Entry found, perform munmap on this saved mm.
+            down_write(&mm_data->mm->mmap_sem);
+            current->enable_distributed_munmap = 0;
+            do_munmap(mm_data->mm, w->vaddr_start, w->vaddr_size);
+            current->enable_distributed_munmap = 1;
+            up_write(&mm_data->mm->mmap_sem);
+
+        }
+        curr = curr->next;
+    }
+
+    spin_unlock(&_saved_mm_head_lock);
+
+
+    // Construct response
+    response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
+    response.header.prio = PCN_KMSG_PRIO_NORMAL;
+    response.tgroup_home_cpu = w->tgroup_home_cpu;
+    response.tgroup_home_id = w->tgroup_home_id;
+    response.requester_pid = w->requester_pid;
+    response.vaddr_start = w->vaddr_start;
+    response.vaddr_size = w->vaddr_size;
+    
+    // Send response
+    pcn_kmsg_send(w->from_cpu,
+             (struct pcn_kmsg_message*)(&response));
+
+    kfree(work);
+    
+    //PERF_MEASURE_STOP(&perf_handle_munmap_request," ");
+}
+
+/**
+ *
+ */
+void process_munmap_response(struct work_struct* work) {
+    munmap_response_work_t* w = (munmap_response_work_t*)work;
+    munmap_request_data_t* data;
+   
+    //PERF_MEASURE_START(&perf_handle_munmap_response);
+
+    data = find_munmap_request_data(
+                                   w->tgroup_home_cpu,
+                                   w->tgroup_home_id,
+                                   w->requester_pid,
+                                   w->vaddr_start);
+
+    if(data == NULL) {
+        PSPRINTK("unable to find munmap data\n");
+        kfree(work);
+        return;
+    }
+
+    // Register this response.
+    data->responses++;
+
+    kfree(work);
+
+    //PERF_MEASURE_STOP(&perf_handle_munmap_response," ");
+
+}
+
+/**
  * <MEASRURE perf_process_mprotect_item>
  */
 void process_mprotect_item(struct work_struct* work) {
@@ -2047,6 +2323,7 @@ done:
     response.header.prio = PCN_KMSG_PRIO_NORMAL;
     response.tgroup_home_cpu = tgroup_home_cpu;
     response.tgroup_home_id = tgroup_home_id;
+    response.requester_pid = w->requester_pid;
     response.start = start;
     
     // Send response
@@ -2187,27 +2464,27 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
 
 /**
  * <MEASURE perf_handle_munmap_response>
+ * TODO: START HERE WHEN YOU START WORKING AGAIN!!!!!!!!!!
+ * Need to place this logic in a bottom-side handler.
+ * Already created the new work type: munmap_response_work_t
  */
 static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
     munmap_response_t* msg = (munmap_response_t*)inc_msg;
-    munmap_request_data_t* data;
+    munmap_response_work_t* work;
    
     PERF_MEASURE_START(&perf_handle_munmap_response);
 
-    data = find_munmap_request_data(
-                                   msg->tgroup_home_cpu,
-                                   msg->tgroup_home_id,
-                                   msg->vaddr_start);
-
-    if(data == NULL) {
-        PSPRINTK("unable to find munmap data\n");
-        pcn_kmsg_free_msg(inc_msg);
-        return -1;
+    work = kmalloc(sizeof(munmap_response_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_munmap_response );
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id  = msg->tgroup_home_id;
+        work->requester_pid = msg->requester_pid;
+        work->vaddr_start = msg->vaddr_start;
+        work->vaddr_size  = msg->vaddr_size;
+        queue_work(mapping_wq, (struct work_struct*)work);
     }
-
-    // Register this response.
-    data->responses++;
-
+  
     pcn_kmsg_free_msg(inc_msg);
 
     PERF_MEASURE_STOP(&perf_handle_munmap_response," ");
@@ -2220,65 +2497,21 @@ static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
  */
 static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     munmap_request_t* msg = (munmap_request_t*)inc_msg;
-    munmap_response_t response;
-    struct task_struct *task, *g;
-    data_header_t *curr;
-    mm_data_t* mm_data;
-
+    munmap_request_work_t* work;
+    
     PERF_MEASURE_START(&perf_handle_munmap_request);
 
-    PSPRINTK("%s: entered\n",__func__);
-
-    // munmap the specified region in the specified thread group
-    do_each_thread(g,task) {
-
-        // Look for the thread group
-        if(task->tgroup_home_cpu == msg->tgroup_home_cpu &&
-           task->tgroup_home_id  == msg->tgroup_home_id) {
-
-            // Thread group has been found, perform munmap operation on this
-            // task.
-            //down_write(&task->mm->mmap_sem);
-            do_munmap(task->mm, msg->vaddr_start, msg->vaddr_size);
-            //up_write(&task->mm->mmap_sem);
-
-        }
-    } while_each_thread(g,task);
-
-    // munmap the specified region in any saved mm's as well.
-    // This keeps old mappings saved in the mm of dead thread
-    // group members from being resolved accidentally after
-    // being munmap()ped, as that would cause security/coherency
-    // problems.
-    spin_lock(&_saved_mm_head_lock);
-
-    curr = _saved_mm_head;
-    while(curr) {
-        mm_data = (mm_data_t*)curr;
-        if(mm_data->tgroup_home_cpu == msg->tgroup_home_cpu &&
-           mm_data->tgroup_home_id  == msg->tgroup_home_id) {
-            
-            // Entry found, perform munmap on this saved mm.
-            do_munmap(mm_data->mm, msg->vaddr_start, msg->vaddr_size);
-
-        }
-        curr = curr->next;
+    work = kmalloc(sizeof(munmap_request_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_munmap_request  );
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id =  msg->tgroup_home_id;
+        work->requester_pid = msg->requester_pid;
+        work->from_cpu = msg->header.from_cpu;
+        work->vaddr_start = msg->vaddr_start;
+        work->vaddr_size = msg->vaddr_size;
+        queue_work(mapping_wq, (struct work_struct*)work);
     }
-
-    spin_unlock(&_saved_mm_head_lock);
-
-
-    // Construct response
-    response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
-    response.header.prio = PCN_KMSG_PRIO_NORMAL;
-    response.tgroup_home_cpu = msg->tgroup_home_cpu;
-    response.tgroup_home_id = msg->tgroup_home_id;
-    response.vaddr_start = msg->vaddr_start;
-    response.vaddr_size = msg->vaddr_size;
-    
-    // Send response
-    pcn_kmsg_send(msg->header.from_cpu,
-             (struct pcn_kmsg_message*)(&response));
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -2300,6 +2533,7 @@ static int handle_mprotect_response(struct pcn_kmsg_message* inc_msg) {
     data = find_mprotect_request_data(
                                    msg->tgroup_home_cpu,
                                    msg->tgroup_home_id,
+                                   msg->requester_pid,
                                    msg->start);
 
     if(data == NULL) {
@@ -2339,6 +2573,7 @@ static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
         INIT_WORK( (struct work_struct*)work, process_mprotect_item  );
         work->tgroup_home_id = tgroup_home_id;
         work->tgroup_home_cpu = tgroup_home_cpu;
+        work->requester_pid = msg->requester_pid;
         work->start = start;
         work->len = len;
         work->prot = prot;
@@ -2358,87 +2593,28 @@ static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
  */
 static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     mapping_response_t* msg = (mapping_response_t*)inc_msg;
-    mapping_request_data_t* data;
-   
+    mapping_response_work_t* work;
     PERF_MEASURE_START(&perf_handle_mapping_response);
 
-    data = find_mapping_request_data(
-                                     msg->tgroup_home_cpu,
-                                     msg->tgroup_home_id,
-                                     msg->address);
-
-
-    PSPRINTK("%s: entered\n",__func__);
-    PSPRINTK("received mapping response\n");
-
-    if(data == NULL) {
-        PSPRINTK("data not found\n");
-        pcn_kmsg_free_msg(inc_msg);
-        PERF_MEASURE_STOP(&perf_handle_mapping_response,
-                "early exit");
-        return -1;
-    }
-
-    if(msg->present) {
-        PSPRINTK("received positive search result from cpu %d\n",
-                msg->header.from_cpu);
-        
-        // Account for this cpu's response
-        data->responses++;
-       
-        // Enforce precedence rules.  Responses from saved mm's
-        // are always ignored when a response from a live thread
-        // can satisfy the mapping request.  The purpose of this
-        // is to ensure that the mapping is not stale, since
-        // mmap() operations will not effect saved mm's.  Saved
-        // mm's are only useful for cases where a thread mmap()ed
-        // some space then died before any other thread was able
-        // to acquire the new mapping.
-        //
-        // A note on a case where multiple cpu's have mappings, but
-        // of different sizes.  It is possible that two cpu's have
-        // partially overlapping mappings.  This is possible because
-        // new mapping's are merged when their regions are contiguous.  
-        // This is not a problem here because if part of a mapping is 
-        // accessed that is not part of an existig mapping, that new 
-        // part will be merged in the resulting mapping request.
-        //
-        // Also, prefer responses that provide values for paddr.
-        if(data->present == 1) {
-
-            // another cpu already responded.
-            if(!data->from_saved_mm && msg->from_saved_mm
-                    // but we need to add an exception in case a physical address
-                    // is mapped into the saved mm, but not in the unsaved mm...
-                    && !(msg->paddr_mapping && !data->paddr_mapping)) {
-                PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
-                goto out;
-            }
-
-            // Ensure that we keep physical mappings around.
-            if(data->paddr_mapping && !msg->paddr_mapping) {
-                PSPRINTK("%s: prevented mapping resolver from downgrading from mapping with paddr to one without\n",__func__);
-                goto out;
-            }
-        }
-       
-        data->from_saved_mm = msg->from_saved_mm;
-        data->vaddr_mapping = msg->vaddr_mapping;
-        data->vaddr_start = msg->vaddr_start;
-        data->vaddr_size = msg->vaddr_size;
-        data->paddr_mapping = msg->paddr_mapping;
-        data->prot = msg->prot;
-        data->vm_flags = msg->vm_flags;
-        data->present = 1;
-        strcpy(data->path,msg->path);
-        data->pgoff = msg->pgoff;
-
-    } else {
-        PSPRINTK("received negative search result from cpu %d\n",
-                msg->header.from_cpu);
-      
-        // Account for this cpu's response.
-        data->responses++;
+    work = kmalloc(sizeof(mapping_response_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_mapping_response );
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id  = msg->tgroup_home_id;
+        work->requester_pid = msg->requester_pid;
+        work->from_saved_mm = msg->from_saved_mm;
+        work->address = msg->address;
+        work->present = msg->present;
+        work->vaddr_mapping = msg->vaddr_mapping;
+        work->vaddr_start = msg->vaddr_start;
+        work->vaddr_size = msg->vaddr_size;
+        work->paddr_mapping = msg->paddr_mapping;
+        work->prot = msg->prot;
+        work->vm_flags = msg->vm_flags;
+        memcpy(&work->path,&msg->path,sizeof(work->path));
+        work->pgoff = msg->pgoff;
+        work->from_cpu = msg->header.from_cpu;
+        queue_work(mapping_wq, (struct work_struct*)work);
     }
 
 out:
@@ -2464,6 +2640,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
         work->tgroup_home_cpu = msg->tgroup_home_cpu;
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->address = msg->address;
+        work->requester_pid = msg->requester_pid;
         work->from_cpu = msg->header.from_cpu;
         queue_work(mapping_wq, (struct work_struct*)work);
     }
@@ -2605,6 +2782,7 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
     unsigned int source_cpu = msg->header.from_cpu;
     struct task_struct *task, *g;
     exit_work_t* exit_work;
+    int count = 0;
 
     PERF_MEASURE_START(&perf_handle_exiting_process_notification);
 
@@ -2623,9 +2801,7 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
             // Should I be doing this here, or in the bottom-half handler?
             task->represents_remote = 0;
             
-            /*
-             * For debug purposes, do this work in the handler
-             exit_work = kmalloc(sizeof(exit_work_t),GFP_ATOMIC);
+            exit_work = kmalloc(sizeof(exit_work_t),GFP_ATOMIC);
             if(exit_work) {
                 INIT_WORK( (struct work_struct*)exit_work, process_exit_item);
                 exit_work->task = task;
@@ -2642,27 +2818,9 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
                 exit_work->thread_fsindex = msg->thread_fsindex;
                 exit_work->thread_gsindex = msg->thread_gsindex;
                 queue_work(exit_wq, (struct work_struct*)exit_work);
-            }*/
+            }
 
-            // set regs
-            memcpy(task_pt_regs(task),&msg->regs,sizeof(struct pt_regs));
-
-            dump_regs(task_pt_regs(task));
-
-            // set thread info
-            task->thread.fs = msg->thread_fs;
-            task->thread.gs = msg->thread_gs;
-            task->thread.usersp = msg->thread_usersp;
-            task->thread.es = msg->thread_es;
-            task->thread.ds = msg->thread_ds;
-            task->thread.fsindex = msg->thread_fsindex;
-            task->thread.gsindex = msg->thread_gsindex;
-
-            // Now we're executing locally, so update our records
-            task->represents_remote = 0;
-
-            wake_up_process(task);
-
+          
             goto done; // No need to continue;
         }
     } while_each_thread(g,task);
@@ -2841,11 +2999,6 @@ perf_ee = native_read_tsc();
     return 0;
 }
 
-// TODO
-static bool __user_addr (unsigned long x ) 
-{
-    return (x < PAGE_OFFSET);   
-}
 
 /**
  * Find the mm_struct for a given distributed thread.  If one does not exist,
@@ -2932,6 +3085,7 @@ int process_server_import_address_space(unsigned long* ip,
     int vmas_installed = 0;
     int ptes_installed = 0;
     struct mm_struct* thread_mm = NULL;
+    struct mm_struct* start_mm = NULL;
     struct task_struct* thread_task = NULL;
     mm_data_t* used_saved_mm = NULL;
 
@@ -2955,14 +3109,27 @@ int process_server_import_address_space(unsigned long* ip,
 
     perf_b = native_read_tsc();    
     
-    // Search for existing thread members to share an mm with
+    // Search for existing thread members to share an mm with.
+    // Immediately set tgroup_home_<foo> under lock to keep 
+    // from allowing multiple tgroups to be created when there 
+    // are multiple tasks being migrated at the same time in
+    // the same thread group.
+    down_write(&_import_sem);
+
     thread_mm = find_thread_mm(clone_data->tgroup_home_cpu,
                                clone_data->tgroup_home_id,
                                &used_saved_mm,
-                               &thread_task); 
+                               &thread_task);
 
+
+    current->prev_cpu = clone_data->placeholder_cpu;
+    current->prev_pid = clone_data->placeholder_pid;
+    current->tgroup_home_cpu = clone_data->tgroup_home_cpu;
+    current->tgroup_home_id = clone_data->tgroup_home_id;
+    current->tgroup_distributed = 1;
+  
     if(!thread_mm) {
-
+        
         down_write(&current->mm->mmap_sem);
 
         // Gut existing mappings
@@ -2996,7 +3163,7 @@ int process_server_import_address_space(unsigned long* ip,
         while(vma_curr) {
             PSPRINTK("do_mmap() at %lx\n",vma_curr->start);
             if(vma_curr->path[0] != '\0') {
-                mmap_flags = /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_PRIVATE;
+                mmap_flags = MAP_FIXED|MAP_PRIVATE;
                 f = filp_open(vma_curr->path,
                                 O_RDONLY | O_LARGEFILE,
                                 0);
@@ -3047,34 +3214,68 @@ int process_server_import_address_space(unsigned long* ip,
                     }
                     while(pte_curr) {
                         // MAP it
-                    
-                        err = remap_pfn_range(vma,
-                                pte_curr->vaddr,
-                                pte_curr->paddr >> PAGE_SHIFT,
-                                PAGE_SIZE,
-                                /*pgprot_noncached(*/vma->vm_page_prot/*)*/);
-                        ptes_installed++;
-                        pte_curr = (pte_data_t*)pte_curr->header.next;
-                        if(err) {
-                            PSPRINTK("Fault - remap_pfn_range failed to map %lx to %lx with error %lx\n",
-                                    pte_curr->paddr,pte_curr->vaddr,err);
+                        int domapping = 1;
+                        pte_t* remap_pte = NULL;
+                        pmd_t* remap_pmd = NULL;
+                        pud_t* remap_pud = NULL;
+                        pgd_t* remap_pgd = NULL;
+
+                        down_write(&current->mm->mmap_sem);
+                        //spin_lock(&_remap_lock);
+                        remap_pgd = pgd_offset(current->mm, pte_curr->vaddr);
+                        if(pgd_present(*remap_pgd)) {
+                            remap_pud = pud_offset(remap_pgd,pte_curr->vaddr); 
+                            if(pud_present(*remap_pud)) {
+                                remap_pmd = pmd_offset(remap_pud,pte_curr->vaddr);
+                                if(pmd_present(*remap_pmd)) {
+                                    remap_pte = pte_offset_map(remap_pmd,pte_curr->vaddr);
+                                    if(remap_pte && pte_none(*remap_pte)) {
+                                        // skip the mapping, it already exists!
+                                        domapping = 0;
+                                    }
+                                }
+                            }
                         }
+
+                        if(domapping) {
+                            err = remap_pfn_range(vma,
+                                                    pte_curr->vaddr,
+                                                    pte_curr->paddr >> PAGE_SHIFT,
+                                                    PAGE_SIZE,
+                                                    vma->vm_page_prot);
+                        }
+                        ptes_installed++;
+                        up_write(&current->mm->mmap_sem);
+                        //spin_unlock(&_remap_lock);
+                        
+                        pte_curr = (pte_data_t*)pte_curr->header.next;
                     }
                 }
             }
             vma_curr = (vma_data_t*)vma_curr->header.next;
         }
     } else {
+        struct mm_struct* oldmm;
         // use_existing_mm.  Flush cache, to ensure
         // that the current processes cache entries
         // are never used.  Then, take ownership of
         // the mm.
+        oldmm = current->mm;
+        if(oldmm == thread_mm) {
+            down_write(&oldmm->mmap_sem);
+        } else {
+            down_write(&oldmm->mmap_sem);
+            down_write(&thread_mm->mmap_sem);
+        }
+
         flush_tlb_mm(current->mm);
         flush_cache_mm(current->mm);
         mm_update_next_owner(current->mm);
         mmput(current->mm);
         current->mm = thread_mm;
         current->active_mm = current->mm;
+        percpu_write(cpu_tlbstate.active_mm, thread_mm);
+
         if(NULL == used_saved_mm) {
             // Did not use a saved MM.  Saved MM's have artificially
             // incremented mm_users fields to keep them from being
@@ -3090,6 +3291,13 @@ int process_server_import_address_space(unsigned long* ip,
             remove_data_entry_from(used_saved_mm,&_saved_mm_head);
             spin_unlock(&_saved_mm_head_lock);
             kfree(used_saved_mm);
+        }
+
+        if(oldmm == thread_mm) {
+            up_write(&oldmm->mmap_sem);
+        } else {
+            up_write(&oldmm->mmap_sem);
+            up_write(&thread_mm->mmap_sem);
         }
 
         // Transplant thread group information
@@ -3151,6 +3359,7 @@ int process_server_import_address_space(unsigned long* ip,
         }
     }
 
+
     perf_d = native_read_tsc();
 
     // install memory information
@@ -3170,11 +3379,6 @@ int process_server_import_address_space(unsigned long* ip,
     current->thread.ds = clone_data->thread_ds;
     current->thread.usersp = clone_data->thread_usersp;
    
-    current->prev_cpu = clone_data->placeholder_cpu;
-    current->prev_pid = clone_data->placeholder_pid;
-    current->tgroup_home_cpu = clone_data->tgroup_home_cpu;
-    current->tgroup_home_id = clone_data->tgroup_home_id;
-    current->tgroup_distributed = 1;
 
     // Set output variables.
     *sp = clone_data->thread_usersp;
@@ -3271,9 +3475,12 @@ __func__,
     // Save off clone data
     current->clone_data = clone_data;
 
+    up_write(&_import_sem);
+
     dump_task(current,NULL,0);
 
     PERF_MEASURE_STOP(&perf_process_server_import_address_space, " ");
+
 
     perf_e = native_read_tsc();
     printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
@@ -3316,7 +3523,10 @@ int process_server_do_exit(void) {
 */
     PERF_MEASURE_START(&perf_process_server_do_exit);
 
-    PSPRINTK("%s - pid{%d}\n",__func__,current->pid);
+    PSPRINTK("%s - pid{%d}, prev_cpu{%d}, prev_pid{%d}\n",__func__,
+            current->pid,
+            current->prev_cpu,
+            current->prev_pid);
     
     // Determine if this is the last _active_ thread in the 
     // local group.  We have to count shadow tasks because
@@ -3325,7 +3535,6 @@ int process_server_do_exit(void) {
     do_each_thread(g,task) {
         if(task->tgid == current->tgid &&           // <--- narrow search to current thread group only 
                 task->pid != current->pid &&        // <--- don't include current in the search
-                //!task->represents_remote &&         // <--- check to see if it's active here
                 task->exit_state != EXIT_ZOMBIE &&  // <-,
                 task->exit_state != EXIT_DEAD &&    // <-|- check to see if it's in a runnable state
                 !(task->flags & PF_EXITING)) {      // <-'
@@ -3337,8 +3546,6 @@ finished_membership_search:
 
     // Count the number of threads in this distributed thread group
     // this will be useful for determining what to do with the mm.
-    // TODO OPTIMIZATION - don't do this if we know we're not the last
-    // in the group based on the local count.
     if(!is_last_thread_in_local_group) {
         // Not the last local thread, which means we're not the
         // last in the distributed thread group either.
@@ -3348,7 +3555,7 @@ finished_membership_search:
         // in the distributed thread group, but we have to check.
         int count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id,1,1);
         if (count == 0) {
-            // Distributed thread count yeilded no thread group members
+            // Distributed thread count yielded no thread group members
             // so the current <exiting> task is the last group member.
             is_last_thread_in_group = 1;
         } else {
@@ -3537,6 +3744,7 @@ int process_server_do_munmap(struct mm_struct* mm,
     data->expected_responses = 0;
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
+    data->requester_pid = current->pid;
 
     add_data_entry_to(data,
                       &_munmap_data_head_lock,
@@ -3548,6 +3756,7 @@ int process_server_do_munmap(struct mm_struct* mm,
     request.vaddr_size  = len;
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
+    request.requester_pid = current->pid;
     for(i = 0; i < NR_CPUS; i++) {
 
         // Skip the current cpu
@@ -3612,6 +3821,7 @@ void process_server_do_mprotect(struct task_struct* task,
     data->expected_responses = 0;
     data->tgroup_home_cpu = task->tgroup_home_cpu;
     data->tgroup_home_id = task->tgroup_home_id;
+    data->requester_pid = task->pid;
     data->start = start;
 
     add_data_entry_to(data,
@@ -3625,6 +3835,7 @@ void process_server_do_mprotect(struct task_struct* task,
     request.prot = prot;
     request.tgroup_home_cpu = task->tgroup_home_cpu;
     request.tgroup_home_id  = task->tgroup_home_id;
+    request.requester_pid = task->pid;
 
     PSPRINTK("Sending mprotect request to all other kernels... ");
 
@@ -3691,6 +3902,10 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     int started_outside_vma = 0;
     char path[512];
     char* ppath;
+    int pid = current->pid;
+    int tgid = current->tgid;
+    int tgroup_home_cpu = current->tgroup_home_cpu;
+    int tgroup_home_id  = current->tgroup_home_id;
 
     // for perf
     int pte_provided = 0;
@@ -3715,10 +3930,10 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
     PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
             address,
-            current->tgroup_home_cpu,
-            current->tgroup_home_id,
-            current->pid,
-            current->tgid,
+            tgroup_home_cpu,
+            tgroup_home_id,
+            pid,
+            tgid,
             error_code);
 
     if(is_vaddr_mapped(mm,address)) {
@@ -3728,8 +3943,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // should this thing be writable?  if so, set it and exit
         // This is a security hole, and is VERY bad.
         // It will also probably cause problems for genuine COW mappings..
-        if(vma->vm_flags & VM_WRITE /*&& 
-                !is_page_writable(mm, vma, address&PAGE_MASK)*/) {
+        if(vma->vm_flags & VM_WRITE && 
+                !is_page_writable(mm, vma, address & PAGE_MASK)) {
 
             mk_page_writable(mm,vma,address & PAGE_MASK);
             adjusted_permissions = 1;
@@ -3776,6 +3991,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     data->paddr_mapping = 0;
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
+    data->requester_pid = current->pid;
 
     // Make data entry visible to handler.
     add_data_entry_to(data,
@@ -3790,6 +4006,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     request.address = address;
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
+    request.requester_pid = current->pid;
     for(i = 0; i < NR_CPUS; i++) {
 
         // Skip the current cpu
@@ -3837,6 +4054,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
                 is_anonymous = 1;
+                down_write(&current->mm->mmap_sem);
+                current->enable_distributed_munmap = 0;
                 err = do_mmap(NULL,
                         data->vaddr_start,
                         data->vaddr_size,
@@ -3845,6 +4064,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         MAP_ANONYMOUS|
                         ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                         0);
+                current->enable_distributed_munmap = 1;
+                up_write(&current->mm->mmap_sem);
             } else {
                 PSPRINTK("opening file to map\n");
                 is_anonymous = 0;
@@ -3865,6 +4086,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
+                    down_write(&current->mm->mmap_sem);
+                    current->enable_distributed_munmap = 0;
                     err = do_mmap(f,
                             data->vaddr_start,
                             data->vaddr_size,
@@ -3874,6 +4097,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             ((data->vm_flags & VM_EXECUTABLE)?MAP_EXECUTABLE:0) |
                             ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                             data->pgoff << PAGE_SHIFT);
+                    current->enable_distributed_munmap = 1;
+                    up_write(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                 }
             }
@@ -3896,7 +4121,11 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
         // We should have a vma now, so map physical memory into it.
         if(vma && data->paddr_mapping) { 
-
+            int domapping = 1;
+            pte_t* remap_pte = NULL;
+            pmd_t* remap_pmd = NULL;
+            pud_t* remap_pud = NULL;
+            pgd_t* remap_pgd = NULL;
             pte_provided = 1;
 
             // PCD - Page Cache Disable
@@ -3908,11 +4137,30 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     vma->vm_flags, 
                     vma->vm_page_prot);
 
-            err = remap_pfn_range(vma,
-                   data->vaddr_mapping,
-                   data->paddr_mapping >> PAGE_SHIFT,
-                   PAGE_SIZE,
-                   /*pgprot_noncached(*/vm_get_page_prot(vma->vm_flags)/*)*/);
+            down_write(&current->mm->mmap_sem);
+            remap_pgd = pgd_offset(current->mm, address);
+            if(pgd_present(*remap_pgd)) {
+                remap_pud = pud_offset(remap_pgd,address); 
+                if(pud_present(*remap_pud)) {
+                    remap_pmd = pmd_offset(remap_pud,address);
+                    if(pmd_present(*remap_pmd)) {
+                        remap_pte = pte_offset_map(remap_pmd,address);
+                        if(remap_pte && !pte_none(*remap_pte)) {
+                            // skip the mapping, it already exists!
+                            domapping = 0;
+                        }
+                    }
+                }
+            }
+
+            if(domapping) {
+                err = remap_pfn_range(vma,
+                    data->vaddr_mapping,
+                    data->paddr_mapping >> PAGE_SHIFT,
+                    PAGE_SIZE,
+                    vm_get_page_prot(vma->vm_flags));
+            }
+            up_write(&current->mm->mmap_sem);
 
             // If this VMA specifies VM_WRITE, make the mapping writable.
             // this function does not do the flag check.  This is safe,
@@ -3922,8 +4170,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 mk_page_writable(mm, vma, data->vaddr_mapping);
             }
 
-            //dump_mm(mm);
-
             // Check remap_pfn_range success
             if(err) {
                 PSPRINTK("ERROR: Failed to remap_pfn_range\n");
@@ -3931,7 +4177,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 PSPRINTK("remap_pfn_range succeeded\n");
                 ret = 1;
             }
-
         } 
 
         if(vma) {
@@ -4319,6 +4564,11 @@ static int __init process_server_init(void) {
      * Cache some local information.
      */
     _cpu = smp_processor_id();
+
+    /*
+     * Init global semaphores
+     */
+    init_rwsem(&_import_sem);
 
     /*
      * Create work queues so that we can do bottom side

@@ -9,6 +9,7 @@
 #include <linux/prio_tree.h>
 #include <linux/rbtree.h>
 #include <linux/rwsem.h>
+#include <linux/semaphore.h>
 #include <linux/completion.h>
 #include <linux/cpumask.h>
 #include <linux/page-debug-flags.h>
