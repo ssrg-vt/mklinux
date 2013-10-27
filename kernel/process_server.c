@@ -40,11 +40,42 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
 #define PSPRINTK(...) ;
+#endif
+
+#define PROCESS_SERVER_INSTRUMENT_LOCK 1
+#if PROCESS_SERVER_VERBOSE && PROCESS_SERVER_INSTRUMENT_LOCK
+#define PS_SPIN_LOCK(x) PSPRINTK("Acquiring spin lock in %s at line %d\n",__func__,__LINE__); \
+                       spin_lock(x); \
+                       PSPRINTK("Done acquiring spin lock in %s at line %d\n",__func__,__LINE__)
+#define PS_SPIN_UNLOCK(x) PSPRINTK("Releasing spin lock in %s at line %d\n",__func__,__LINE__); \
+                          spin_unlock(x); \
+                          PSPRINTK("Done releasing spin lock in %s at line %d\n",__func__,__LINE__)
+#define PS_DOWN_READ(x) PSPRINTK("Acquiring read lock in %s at line %d\n",__func__,__LINE__); \
+                        down_read(x); \
+                        PSPRINTK("Done acquiring read lock in %s at line %d\n",__func__,__LINE__)
+#define PS_UP_READ(x) PSPRINTK("Releasing read lock in %s at line %d\n",__func__,__LINE__); \
+                      up_read(x); \
+                      PSPRINTK("Done releasing read lock in %s at line %d\n",__func__,__LINE__)
+#define PS_DOWN_WRITE(x) PSPRINTK("Acquiring write lock in %s at line %d\n",__func__,__LINE__); \
+                         down_write(x); \
+                         PSPRINTK("Done acquiring write lock in %s at line %d\n",__func__,__LINE__)
+#define PS_UP_WRITE(x) PSPRINTK("Releasing read write in %s at line %d\n",__func__,__LINE__); \
+                       up_write(x); \
+                       PSPRINTK("Done releasing write lock in %s at line %d\n",__func__,__LINE__)
+
+
+#else
+#define PS_SPIN_LOCK(x) spin_lock(x)
+#define PS_SPIN_UNLOCK(x) spin_unlock(x)
+#define PS_DOWN_READ(x) down_read(x)
+#define PS_UP_READ(x) up_read(x)
+#define PS_DOWN_WRITE(x) down_write(x)
+#define PS_UP_WRITE(x) up_write(x)
 #endif
 
 /**
@@ -1031,7 +1062,7 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
     remote_thread_count_request_data_t* request = NULL;
     remote_thread_count_request_data_t* ret = NULL;
 
-    spin_lock(&_count_remote_tmembers_data_head_lock);
+    PS_SPIN_LOCK(&_count_remote_tmembers_data_head_lock);
 
     curr = _count_remote_tmembers_data_head;
     while(curr) {
@@ -1044,7 +1075,7 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
         curr = curr->next;
     }
 
-    spin_unlock(&_count_remote_tmembers_data_head_lock);
+    PS_SPIN_UNLOCK(&_count_remote_tmembers_data_head_lock);
 
     return ret;
 }
@@ -1056,7 +1087,7 @@ static munmap_request_data_t* find_munmap_request_data(int cpu, int id, int requ
     data_header_t* curr = NULL;
     munmap_request_data_t* request = NULL;
     munmap_request_data_t* ret = NULL;
-    spin_lock(&_munmap_data_head_lock);
+    PS_SPIN_LOCK(&_munmap_data_head_lock);
     
     curr = _munmap_data_head;
     while(curr) {
@@ -1071,7 +1102,7 @@ static munmap_request_data_t* find_munmap_request_data(int cpu, int id, int requ
         curr = curr->next;
     }
 
-    spin_unlock(&_munmap_data_head_lock);
+    PS_SPIN_UNLOCK(&_munmap_data_head_lock);
 
     return ret;
 
@@ -1084,7 +1115,7 @@ static mprotect_data_t* find_mprotect_request_data(int cpu, int id, int requeste
     data_header_t* curr = NULL;
     mprotect_data_t* request = NULL;
     mprotect_data_t* ret = NULL;
-    spin_lock(&_mprotect_data_head_lock);
+    PS_SPIN_LOCK(&_mprotect_data_head_lock);
     
     curr = _mprotect_data_head;
     while(curr) {
@@ -1099,7 +1130,7 @@ static mprotect_data_t* find_mprotect_request_data(int cpu, int id, int requeste
         curr = curr->next;
     }
 
-    spin_unlock(&_mprotect_data_head_lock);
+    PS_SPIN_UNLOCK(&_mprotect_data_head_lock);
 
     return ret;
 
@@ -1112,7 +1143,7 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pi
     data_header_t* curr = NULL;
     mapping_request_data_t* request = NULL;
     mapping_request_data_t* ret = NULL;
-    spin_lock(&_mapping_request_data_head_lock);
+    PS_SPIN_LOCK(&_mapping_request_data_head_lock);
     
     curr = _mapping_request_data_head;
     while(curr) {
@@ -1127,7 +1158,7 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pi
         curr = curr->next;
     }
 
-    spin_unlock(&_mapping_request_data_head_lock);
+    PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
 
     return ret;
 }
@@ -1139,7 +1170,7 @@ static clone_data_t* find_clone_data(int cpu, int clone_request_id) {
     data_header_t* curr = NULL;
     clone_data_t* clone = NULL;
     clone_data_t* ret = NULL;
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
     
     curr = _data_head;
     while(curr) {
@@ -1153,7 +1184,7 @@ static clone_data_t* find_clone_data(int cpu, int clone_request_id) {
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 
     return ret;
 }
@@ -1277,7 +1308,7 @@ static void dump_mm(struct mm_struct* mm) {
         return;
     }
 
-    down_read(&mm->mmap_sem);
+    PS_DOWN_READ(&mm->mmap_sem);
 
     curr = mm->mmap;
 
@@ -1310,7 +1341,7 @@ static void dump_mm(struct mm_struct* mm) {
         curr = curr->vm_next;
     }
 
-    up_read(&mm->mmap_sem);
+    PS_UP_READ(&mm->mmap_sem);
 }
 
 /**
@@ -1332,7 +1363,7 @@ static void add_data_entry_to(void* entry, spinlock_t* lock, data_header_t** hea
     hdr->next = NULL;
     hdr->prev = NULL;
 
-    spin_lock(lock);
+    PS_SPIN_LOCK(lock);
     
     if (!*head) {
         *head = hdr;
@@ -1353,7 +1384,7 @@ static void add_data_entry_to(void* entry, spinlock_t* lock, data_header_t** hea
         hdr->prev = curr;
     }
 
-    spin_unlock(lock);
+    PS_SPIN_UNLOCK(lock);
 }
 
 /**
@@ -1400,7 +1431,7 @@ static void add_data_entry(void* entry) {
     hdr->next = NULL;
     hdr->prev = NULL;
 
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
     
     if (!_data_head) {
         _data_head = hdr;
@@ -1421,7 +1452,7 @@ static void add_data_entry(void* entry) {
         hdr->prev = curr;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 }
 
 /**
@@ -1461,7 +1492,7 @@ static void dump_data_list(void) {
     vma_data_t* vma_data = NULL;
     clone_data_t* clone_data = NULL;
 
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
 
     curr = _data_head;
 
@@ -1502,7 +1533,7 @@ static void dump_data_list(void) {
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 }
 
 /**
@@ -1564,10 +1595,10 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     PSPRINTK("%s: found a total of %d remote threads in group\n",__func__,
             data->count);
 
-    spin_lock(&_count_remote_tmembers_data_head_lock);
+    PS_SPIN_LOCK(&_count_remote_tmembers_data_head_lock);
     remove_data_entry_from(data,
                            &_count_remote_tmembers_data_head);
-    spin_unlock(&_count_remote_tmembers_data_head_lock);
+    PS_SPIN_UNLOCK(&_count_remote_tmembers_data_head_lock);
 
     kfree(data);
 
@@ -1659,7 +1690,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
         }
     }
 
-    spin_lock(&_saved_mm_head_lock);
+    PS_SPIN_LOCK(&_saved_mm_head_lock);
     
     // Remove all saved mm's for this thread group.
     curr = _saved_mm_head;
@@ -1687,7 +1718,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
         curr = next;
     }
 
-    spin_unlock(&_saved_mm_head_lock);
+    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
     kfree(work);
 
@@ -1718,7 +1749,7 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
         goto not_handled;
     }
 
-    down_write(&mm->mmap_sem);
+    PS_DOWN_WRITE(&mm->mmap_sem);
 
 
     pgd = pgd_offset(mm, address);
@@ -1750,7 +1781,7 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     
     // break the cow!
     ptl = pte_lockptr(mm,pmd);
-    spin_lock(ptl);
+    PS_SPIN_LOCK(ptl);
    
     PSPRINTK("%s: proceeding\n",__func__);
     do_wp_page(mm,vma,address,ptep,pmd,ptl,pte);
@@ -1762,11 +1793,11 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     goto handled;
 
 not_handled_unlock:
-    up_write(&mm->mmap_sem);
+    PS_UP_WRITE(&mm->mmap_sem);
 not_handled:
     return 0;
 handled:
-    up_write(&mm->mmap_sem);
+    PS_UP_WRITE(&mm->mmap_sem);
     return 1;
 }
 
@@ -1818,7 +1849,7 @@ void process_mapping_request(struct work_struct* work) {
 
     // Failing the process search, look through saved mm's.
     if(!mm) {
-        spin_lock(&_saved_mm_head_lock);
+        PS_SPIN_LOCK(&_saved_mm_head_lock);
         data_curr = _saved_mm_head;
         while(data_curr) {
 
@@ -1836,7 +1867,7 @@ void process_mapping_request(struct work_struct* work) {
 
         } // while
 
-        spin_unlock(&_saved_mm_head_lock);
+        PS_SPIN_UNLOCK(&_saved_mm_head_lock);
     }
 
 
@@ -2198,11 +2229,11 @@ void process_munmap_request(struct work_struct* work) {
 
             // Thread group has been found, perform munmap operation on this
             // task.
-            down_write(&task->mm->mmap_sem);
+            PS_DOWN_WRITE(&task->mm->mmap_sem);
             current->enable_distributed_munmap = 0;
             do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
             current->enable_distributed_munmap = 1;
-            up_write(&task->mm->mmap_sem);
+            PS_UP_WRITE(&task->mm->mmap_sem);
             
             goto done; // thread grouping - threads all share a common mm.
 
@@ -2215,7 +2246,7 @@ done:
     // group members from being resolved accidentally after
     // being munmap()ped, as that would cause security/coherency
     // problems.
-    spin_lock(&_saved_mm_head_lock);
+    PS_SPIN_LOCK(&_saved_mm_head_lock);
 
     curr = _saved_mm_head;
     while(curr) {
@@ -2224,17 +2255,17 @@ done:
            mm_data->tgroup_home_id  == w->tgroup_home_id) {
             
             // Entry found, perform munmap on this saved mm.
-            down_write(&mm_data->mm->mmap_sem);
+            PS_DOWN_WRITE(&mm_data->mm->mmap_sem);
             current->enable_distributed_munmap = 0;
             do_munmap(mm_data->mm, w->vaddr_start, w->vaddr_size);
             current->enable_distributed_munmap = 1;
-            up_write(&mm_data->mm->mmap_sem);
+            PS_UP_WRITE(&mm_data->mm->mmap_sem);
 
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_saved_mm_head_lock);
+    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
 
     // Construct response
@@ -2691,7 +2722,7 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
     pte_data->clone_request_id = msg->clone_request_id;
 
     // Look through data store for matching vma_data_t entries.
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
 
     curr = _data_head;
     while(curr) {
@@ -2701,7 +2732,7 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
                vma->vma_id == pte_data->vma_id &&
                vma->clone_request_id == pte_data->clone_request_id) {
                 // Add to vma data
-                spin_lock(&vma->lock);
+                PS_SPIN_LOCK(&vma->lock);
                 if(vma->pte_list) {
                     pte_data->header.next = (data_header_t*)vma->pte_list;
                     vma->pte_list->header.prev = (data_header_t*)pte_data;
@@ -2710,14 +2741,14 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
                     vma->pte_list = pte_data;
                 }
                 PSPRINTK("PTE added to vma\n");
-                spin_unlock(&vma->lock);
+                PS_SPIN_UNLOCK(&vma->lock);
                 break;
             }
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -2953,7 +2984,7 @@ perf_cc = native_read_tsc();
     /*
      * Pull in vma data
      */
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
 
     curr = _data_head;
     while(curr) {
@@ -2968,20 +2999,20 @@ perf_cc = native_read_tsc();
                 remove_data_entry(vma);
 
                 // Place data entry in this clone request's vma list
-                spin_lock(&clone_data->lock);
+                PS_SPIN_LOCK(&clone_data->lock);
                 if(clone_data->vma_list) {
                     clone_data->vma_list->header.prev = (data_header_t*)vma;
                     vma->header.next = (data_header_t*)clone_data->vma_list;
                 } 
                 clone_data->vma_list = vma;
-                spin_unlock(&clone_data->lock);
+                PS_SPIN_UNLOCK(&clone_data->lock);
             }
         }
 
         curr = next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 
     add_data_entry(clone_data);
 
@@ -3029,7 +3060,7 @@ static struct mm_struct* find_thread_mm(
     } while_each_thread(g,task);
 
     // Failing that, look through saved mm's.
-    spin_lock(&_saved_mm_head_lock);
+    PS_SPIN_LOCK(&_saved_mm_head_lock);
     data_curr = _saved_mm_head;
     while(data_curr) {
 
@@ -3046,7 +3077,7 @@ static struct mm_struct* find_thread_mm(
 
     } // while
 
-    spin_unlock(&_saved_mm_head_lock);
+    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
 
 out:
@@ -3114,7 +3145,7 @@ int process_server_import_address_space(unsigned long* ip,
     // from allowing multiple tgroups to be created when there 
     // are multiple tasks being migrated at the same time in
     // the same thread group.
-    down_write(&_import_sem);
+    PS_DOWN_WRITE(&_import_sem);
 
     thread_mm = find_thread_mm(clone_data->tgroup_home_cpu,
                                clone_data->tgroup_home_id,
@@ -3130,7 +3161,7 @@ int process_server_import_address_space(unsigned long* ip,
   
     if(!thread_mm) {
         
-        down_write(&current->mm->mmap_sem);
+        PS_DOWN_WRITE(&current->mm->mmap_sem);
 
         // Gut existing mappings
         current->enable_distributed_munmap = 0;
@@ -3145,7 +3176,7 @@ int process_server_import_address_space(unsigned long* ip,
         // Clean out cache and tlb
         flush_tlb_mm(current->mm);
         flush_cache_mm(current->mm);
-        up_write(&current->mm->mmap_sem);
+        PS_UP_WRITE(&current->mm->mmap_sem);
         
         // import exe_file
         f = filp_open(clone_data->exe_path,O_RDONLY | O_LARGEFILE, 0);
@@ -3168,7 +3199,7 @@ int process_server_import_address_space(unsigned long* ip,
                                 O_RDONLY | O_LARGEFILE,
                                 0);
                 if(f) {
-                    down_write(&current->mm->mmap_sem);
+                    PS_DOWN_WRITE(&current->mm->mmap_sem);
                     vma_curr->mmapping_in_progress = 1;
                     err = do_mmap(f, 
                             vma_curr->start, 
@@ -3178,7 +3209,7 @@ int process_server_import_address_space(unsigned long* ip,
                             vma_curr->pgoff << PAGE_SHIFT);
                     vmas_installed++;
                     vma_curr->mmapping_in_progress = 0;
-                    up_write(&current->mm->mmap_sem);
+                    PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                     if(err != vma_curr->start) {
                         PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
@@ -3187,7 +3218,7 @@ int process_server_import_address_space(unsigned long* ip,
                 }
             } else {
                 mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
-                down_write(&current->mm->mmap_sem);
+                PS_DOWN_WRITE(&current->mm->mmap_sem);
                 err = do_mmap(NULL, 
                     vma_curr->start, 
                     vma_curr->end - vma_curr->start,
@@ -3196,7 +3227,7 @@ int process_server_import_address_space(unsigned long* ip,
                     0);
                 vmas_installed++;
                 //PSPRINTK("mmap error for %lx = %lx\n",vma_curr->start,err);
-                up_write(&current->mm->mmap_sem);
+                PS_UP_WRITE(&current->mm->mmap_sem);
                 if(err != vma_curr->start) {
                     PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
                             vma_curr->start,err);
@@ -3220,8 +3251,8 @@ int process_server_import_address_space(unsigned long* ip,
                         pud_t* remap_pud = NULL;
                         pgd_t* remap_pgd = NULL;
 
-                        down_write(&current->mm->mmap_sem);
-                        //spin_lock(&_remap_lock);
+                        PS_DOWN_WRITE(&current->mm->mmap_sem);
+                        //PS_SPIN_LOCK(&_remap_lock);
                         remap_pgd = pgd_offset(current->mm, pte_curr->vaddr);
                         if(pgd_present(*remap_pgd)) {
                             remap_pud = pud_offset(remap_pgd,pte_curr->vaddr); 
@@ -3245,8 +3276,8 @@ int process_server_import_address_space(unsigned long* ip,
                                                     vma->vm_page_prot);
                         }
                         ptes_installed++;
-                        up_write(&current->mm->mmap_sem);
-                        //spin_unlock(&_remap_lock);
+                        PS_UP_WRITE(&current->mm->mmap_sem);
+                        //PS_SPIN_UNLOCK(&_remap_lock);
                         
                         pte_curr = (pte_data_t*)pte_curr->header.next;
                     }
@@ -3262,10 +3293,10 @@ int process_server_import_address_space(unsigned long* ip,
         // the mm.
         oldmm = current->mm;
         if(oldmm == thread_mm) {
-            down_write(&oldmm->mmap_sem);
+            PS_DOWN_WRITE(&oldmm->mmap_sem);
         } else {
-            down_write(&oldmm->mmap_sem);
-            down_write(&thread_mm->mmap_sem);
+            PS_DOWN_WRITE(&oldmm->mmap_sem);
+            PS_DOWN_WRITE(&thread_mm->mmap_sem);
         }
 
         flush_tlb_mm(current->mm);
@@ -3287,17 +3318,17 @@ int process_server_import_address_space(unsigned long* ip,
             // Used a saved MM.  Must delete the saved mm entry.
             // It is safe to do so now, since we have ingested
             // its mm at this point.
-            spin_lock(&_saved_mm_head_lock);
+            PS_SPIN_LOCK(&_saved_mm_head_lock);
             remove_data_entry_from(used_saved_mm,&_saved_mm_head);
-            spin_unlock(&_saved_mm_head_lock);
+            PS_SPIN_UNLOCK(&_saved_mm_head_lock);
             kfree(used_saved_mm);
         }
 
         if(oldmm == thread_mm) {
-            up_write(&oldmm->mmap_sem);
+            PS_UP_WRITE(&oldmm->mmap_sem);
         } else {
-            up_write(&oldmm->mmap_sem);
-            up_write(&thread_mm->mmap_sem);
+            PS_UP_WRITE(&oldmm->mmap_sem);
+            PS_UP_WRITE(&thread_mm->mmap_sem);
         }
 
         // Transplant thread group information
@@ -3306,7 +3337,7 @@ int process_server_import_address_space(unsigned long* ip,
         if(thread_task) {
 
             write_lock_irq(&tasklist_lock);
-            spin_lock(&thread_task->sighand->siglock);
+            PS_SPIN_LOCK(&thread_task->sighand->siglock);
 
             // Copy grouping info
             current->group_leader = thread_task->group_leader;
@@ -3342,15 +3373,15 @@ int process_server_import_address_space(unsigned long* ip,
             // Reduce process count
              __this_cpu_dec(process_counts);
 
-            spin_unlock(&thread_task->sighand->siglock);
+            PS_SPIN_UNLOCK(&thread_task->sighand->siglock);
             write_unlock_irq(&tasklist_lock);
            
             // copy fs
             // TODO: This should probably only happen when CLONE_FS is used...
             current->fs = thread_task->fs;
-            spin_lock(&current->fs->lock);
+            PS_SPIN_LOCK(&current->fs->lock);
             current->fs->users++;
-            spin_unlock(&current->fs->lock);
+            PS_SPIN_UNLOCK(&current->fs->lock);
 
             // copy files
             // TODO: This should probably only happen when CLONE_FILES is used...
@@ -3475,7 +3506,7 @@ __func__,
     // Save off clone data
     current->clone_data = clone_data;
 
-    up_write(&_import_sem);
+    PS_UP_WRITE(&_import_sem);
 
     dump_task(current,NULL,0);
 
@@ -3665,9 +3696,9 @@ finished_membership_search:
     // with it again, so remove its clone_data from the linked list, and
     // nuke it.
     if(clone_data) {
-        spin_lock(&_data_head_lock);
+        PS_SPIN_LOCK(&_data_head_lock);
         remove_data_entry(clone_data);
-        spin_unlock(&_data_head_lock);
+        PS_SPIN_UNLOCK(&_data_head_lock);
         destroy_clone_data(clone_data);
     }
 
@@ -3778,10 +3809,10 @@ int process_server_do_munmap(struct mm_struct* mm,
 
     // OK, all responses are in, we can proceed.
 
-    spin_lock(&_munmap_data_head_lock);
+    PS_SPIN_LOCK(&_munmap_data_head_lock);
     remove_data_entry_from(data,
                            &_munmap_data_head);
-    spin_unlock(&_munmap_data_head_lock);
+    PS_SPIN_UNLOCK(&_munmap_data_head_lock);
 
     kfree(data);
 
@@ -3864,10 +3895,10 @@ void process_server_do_mprotect(struct task_struct* task,
 
     // OK, all responses are in, we can proceed.
 
-    spin_lock(&_mprotect_data_head_lock);
+    PS_SPIN_LOCK(&_mprotect_data_head_lock);
     remove_data_entry_from(data,
                            &_mprotect_data_head);
-    spin_unlock(&_mprotect_data_head_lock);
+    PS_SPIN_UNLOCK(&_mprotect_data_head_lock);
 
     kfree(data);
 
@@ -4054,7 +4085,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
                 is_anonymous = 1;
-                down_write(&current->mm->mmap_sem);
+                PS_DOWN_WRITE(&current->mm->mmap_sem);
                 current->enable_distributed_munmap = 0;
                 err = do_mmap(NULL,
                         data->vaddr_start,
@@ -4065,7 +4096,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                         0);
                 current->enable_distributed_munmap = 1;
-                up_write(&current->mm->mmap_sem);
+                PS_UP_WRITE(&current->mm->mmap_sem);
             } else {
                 PSPRINTK("opening file to map\n");
                 is_anonymous = 0;
@@ -4086,7 +4117,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
-                    down_write(&current->mm->mmap_sem);
+                    PS_DOWN_WRITE(&current->mm->mmap_sem);
                     current->enable_distributed_munmap = 0;
                     err = do_mmap(f,
                             data->vaddr_start,
@@ -4098,7 +4129,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                             data->pgoff << PAGE_SHIFT);
                     current->enable_distributed_munmap = 1;
-                    up_write(&current->mm->mmap_sem);
+                    PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                 }
             }
@@ -4137,7 +4168,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     vma->vm_flags, 
                     vma->vm_page_prot);
 
-            down_write(&current->mm->mmap_sem);
+            PS_DOWN_WRITE(&current->mm->mmap_sem);
             remap_pgd = pgd_offset(current->mm, address);
             if(pgd_present(*remap_pgd)) {
                 remap_pud = pud_offset(remap_pgd,address); 
@@ -4160,7 +4191,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     PAGE_SIZE,
                     vm_get_page_prot(vma->vm_flags));
             }
-            up_write(&current->mm->mmap_sem);
+            PS_UP_WRITE(&current->mm->mmap_sem);
 
             // If this VMA specifies VM_WRITE, make the mapping writable.
             // this function does not do the flag check.  This is safe,
@@ -4189,10 +4220,10 @@ exit_remove_data:
     PSPRINTK("removing data entry\n");
 
     // Clean up data.
-    spin_lock(&_mapping_request_data_head_lock);
+    PS_SPIN_LOCK(&_mapping_request_data_head_lock);
     remove_data_entry_from(data,
                       &_mapping_request_data_head);
-    spin_unlock(&_mapping_request_data_head_lock);
+    PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
 
     kfree(data);
 
@@ -4383,11 +4414,11 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     } while_each_thread(g,tgroup_iterator);
 
     // Pick an id for this remote process request
-    spin_lock(&_clone_request_id_lock);
+    PS_SPIN_LOCK(&_clone_request_id_lock);
     lclone_request_id = _clone_request_id++;
-    spin_unlock(&_clone_request_id_lock);
+    PS_SPIN_UNLOCK(&_clone_request_id_lock);
 
-    down_read(&task->mm->mmap_sem);
+    PS_DOWN_READ(&task->mm->mmap_sem);
     
     // VM Entries
     curr = task->mm->mmap;
@@ -4418,9 +4449,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         //
         // Transfer the vma
         //
-        spin_lock(&_vma_id_lock);
+        PS_SPIN_LOCK(&_vma_id_lock);
         vma_xfer->vma_id = _vma_id++;
-        spin_unlock(&_vma_id_lock);
+        PS_SPIN_UNLOCK(&_vma_id_lock);
         vma_xfer->start = curr->vm_start;
         vma_xfer->end = curr->vm_end;
         vma_xfer->prot = curr->vm_page_prot;
@@ -4449,7 +4480,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         curr = curr->vm_next;
     }
 
-    up_read(&task->mm->mmap_sem);
+    PS_UP_READ(&task->mm->mmap_sem);
 
     // Build request
     request->header.type = PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST;
