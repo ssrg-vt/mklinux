@@ -585,13 +585,13 @@ if (p) {
 if(origin_pid== p->pid && next_pid != -1) //if it is the origin node send to the next node
 {
 	ret=do_sigprocmask(how, set, oldset,tsk);
-	ret=remote_send_sigprocmask(ORIG_NODE(next_pid),next_pid,how, set, oldset);
+	//ret=remote_send_sigprocmask(ORIG_NODE(next_pid),next_pid,how, set, oldset);
 
 }
 else if(origin_pid!= p->pid && next_pid != -1) //if it is the middle node send it to next node
 {
 	ret=do_sigprocmask(how, set, oldset,tsk);
-	ret=remote_send_sigprocmask(ORIG_NODE(next_pid),next_pid,how, set, oldset);
+	//ret=remote_send_sigprocmask(ORIG_NODE(next_pid),next_pid,how, set, oldset);
 
 }
 else if(origin_pid!= p->pid && next_pid == -1) //if it is the running thread/process set it.
@@ -3271,7 +3271,7 @@ pid_t next_pid = -1;
 pid_t prev_pid = -1;
 pid_t origin_pid = -1;
 int ret=0;
-
+/*
 struct task_struct *p = current;
 if (p) {
 		next_pid = p->next_pid;
@@ -3290,12 +3290,60 @@ if(origin_pid==-1) //not a migrated process
 else if(origin_pid!= p->pid && next_pid != -1) //if it is the middle node send it to next node
 {
 	ret=remote_send_sigprocmask(ORIG_NODE(next_pid),next_pid,how, set, oldset);
-}*/
+}
 else if(origin_pid!= p->pid && next_pid == -1) //if it is the running thread/process set it.
 {
 	ret=do_sigprocmask(how, set, oldset,tsk);
 }
-return ret;
+return ret;*/
+
+ struct task_struct *p = current;
+ if (p) {
+                 next_pid = p->next_pid;
+                 prev_pid = p->prev_pid;
+                 origin_pid = p->origin_pid;
+ }
+
+ if(isPidLocalKernel(p->pid))
+ {
+ sigset_t newset;
+
+ /* Lockless, only current can change ->blocked, never from irq */
+ if (oldset)
+         *oldset = tsk->blocked;
+
+ switch (how) {
+ case SIG_BLOCK:
+         sigorsets(&newset, &tsk->blocked, set);
+         break;
+ case SIG_UNBLOCK:
+         sigandnsets(&newset, &tsk->blocked, set);
+         break;
+ case SIG_SETMASK:
+         newset = *set;
+         break;
+ default:
+         return -EINVAL;
+
+        if(origin_pid!=-1 && next_pid!=-1)
+         {
+                 /**
+                  * TODO: //send to remote using kthreads after seeing if its is needeed from user point of view
+                  */
+
+         }
+ }
+
+ set_current_blocked(&newset);
+ }
+ else
+ {
+         /**
+          * TODO: //send to remote after seeing if its is needeed from user point of view
+          */
+}
+ return 0;
+
 }
 
 /**

@@ -98,8 +98,8 @@ static unsigned int ghash=0;
 struct futex_hash_bucket *hash_futex(union futex_key *key)
 {
 	u32 hash = jhash2((u32*)&key->both.word,
-			  (sizeof(key->both.word)+sizeof(key->both.ptr))/4,
-			 // (sizeof(key->both.word))/4,
+			 // (sizeof(key->both.word)+sizeof(key->both.ptr))/4,
+			  (sizeof(key->both.word)+8)/4,
 			  key->both.offset);
 	ghash=hash;
 	//printk(KERN_ALERT" ghash {%u} \n",hash);
@@ -953,14 +953,16 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 	if(current->mm){
 	struct vm_area_struct *vma;
 	vma = find_extend_vma( current->mm, address);
-	if(vma->vm_flags & VM_PFNMAP)
+	if(vma!=NULL && (vma->vm_flags & VM_PFNMAP))
 	  {
+		printk(KERN_ALERT " futex_wake: current pid origin{%d}\n",current->origin_pid);
 			return remote_futex_wakeup(uaddr, flags & FLAGS_SHARED,nr_wake, bitset,&key,0);
 	  }
 	}
 	if (unlikely(ret != 0))
 		goto out;
 
+	if(current->mm){
 	hb = hash_futex(&key);
 	spin_lock(&hb->lock);
 	head = &hb->chain;
@@ -988,6 +990,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 			break;
 	}
 
+
 	/*_global_futex_key_t *ke =find_key(uaddr, &fq_head);
 	int i=0;
 	if(ke!=NULL)
@@ -1005,6 +1008,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 
 	spin_unlock(&hb->lock);
 	put_futex_key(&key);
+	}
 out:
 	return ret;
 }

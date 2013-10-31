@@ -163,6 +163,10 @@ static void perf_init(void) {
 #define PERF_MEASURE_STOP(x, y)
 #endif
 
+
+static DECLARE_WAIT_QUEUE_HEAD( countq);
+
+
 /**
  * Library
  */
@@ -1403,15 +1407,16 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
 
     PSPRINTK("%s: waiting on %d responses\n",__func__,data->expected_responses);
 
+    wait_event_interruptible(countq, data->expected_responses != data->responses);
     // Wait for all cpus to respond.
-    while(data->expected_responses != data->responses) {
+  /*  while(data->expected_responses != data->responses) {
         schedule();
-    }
+    }*/
 
     // OK, all responses are in, we can proceed.
     ret = data->count;
 
-    PSPRINTK("%s: found a total of %d remote threads in group\n",__func__,
+    printk(KERN_ALERT "found a total of %d remote threads in group\n",
             data->count);
 
     spin_lock(&_data_head_lock);
@@ -2042,6 +2047,7 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
     // Register this response.
     data->responses++;
     data->count += msg->count;
+    wake_up_interruptible(&countq);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -3009,6 +3015,8 @@ int process_server_import_address_space(unsigned long* ip,
     current->sas_ss_sp = clone_data->sas_ss_sp;
     current->sas_ss_size = clone_data->sas_ss_size;
 
+    printk(KERN_ALERT "origin pid {%d}-{%d} \n",current->origin_pid,clone_data->origin_pid);
+
     int cnt=0;
      for(cnt=0;cnt<_NSIG;cnt++)
     	 current->sighand->action[cnt] = clone_data->action[cnt];
@@ -3141,6 +3149,7 @@ int process_server_do_exit(void) {
     thread_group_exited_notification_t exit_notification;
     clone_data_t* clone_data;
 
+
     // Select only relevant tasks to operate on
     if(!(current->executing_for_remote || current->tgroup_distributed)) {
         return -1;
@@ -3160,7 +3169,7 @@ int process_server_do_exit(void) {
     // Find the clone data, we are going to destroy this very soon.
     clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
-    PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d}\n",current->pid);
+    PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d} count{%d} cpu{%d}\n",current->pid,count,_cpu);
 
     // Build the message that is going to migrate this task back 
     // from whence it came.
@@ -3260,7 +3269,7 @@ finished_membership_search:
         }
 
     } else {
-        PSPRINTK("%s: This is not the last local thread member\n",__func__);
+    	PSPRINTK(": This is not the last local thread member\n");
     }
 
     // We know that this task is exiting, and we will never have to work
@@ -3920,6 +3929,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
    struct task_struct *par = task->parent;
 
+
     // Book keeping for distributed threads.
     task->tgroup_distributed = 1;
     do_each_thread(g,tgroup_iterator) {
@@ -4046,6 +4056,8 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     int cnt=0;
     for(cnt=0;cnt<_NSIG;cnt++)
     	request->action[cnt] = task->sighand->action[cnt];
+
+    printk(KERN_ALERT "origin pid {%d}- pid{%d} \n",request->origin_pid,task->pid);
 // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h
