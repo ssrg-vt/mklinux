@@ -40,7 +40,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -412,16 +412,6 @@ typedef struct _exiting_process {
     struct pcn_kmsg_hdr header;
     int my_pid;                 
     int is_last_tgroup_member;  
-    struct pt_regs regs;
-    unsigned long thread_fs;
-    unsigned long thread_gs;
-    unsigned long thread_sp0;
-    unsigned long thread_sp;
-    unsigned long thread_usersp;
-    unsigned short thread_es;
-    unsigned short thread_ds;
-    unsigned short thread_fsindex;
-    unsigned short thread_gsindex;
 }  exiting_process_t;
 
 /**
@@ -1873,7 +1863,6 @@ void process_mapping_request(struct work_struct* work) {
 
     // OK, if mm was found, look up the mapping.
     if(mm) {
-mm_found:
 retry:
         try_count++;
         vma = find_vma(mm, address & PAGE_MASK);
@@ -2127,20 +2116,6 @@ void process_exit_item(struct work_struct* work) {
     PSPRINTK("%s: killing task - is_last_tgroup_member{%d}\n",
             __func__,
             w->is_last_tgroup_member);
- 
-    // set regs
-    memcpy(task_pt_regs(task),&w->regs,sizeof(struct pt_regs));
-
-    dump_regs(task_pt_regs(task));
-
-    // set thread info
-    task->thread.fs = w->thread_fs;
-    task->thread.gs = w->thread_gs;
-    task->thread.usersp = w->thread_usersp;
-    task->thread.es = w->thread_es;
-    task->thread.ds = w->thread_ds;
-    task->thread.fsindex = w->thread_fsindex;
-    task->thread.gsindex = w->thread_gsindex;
 
     // Now we're executing locally, so update our records
     task->represents_remote = 0;
@@ -2648,7 +2623,6 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         queue_work(mapping_wq, (struct work_struct*)work);
     }
 
-out:
     pcn_kmsg_free_msg(inc_msg);
     
     PERF_MEASURE_STOP(&perf_handle_mapping_response," ");
@@ -2813,7 +2787,6 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
     unsigned int source_cpu = msg->header.from_cpu;
     struct task_struct *task, *g;
     exit_work_t* exit_work;
-    int count = 0;
 
     PERF_MEASURE_START(&perf_handle_exiting_process_notification);
 
@@ -2838,16 +2811,6 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
                 exit_work->task = task;
                 exit_work->pid = task->pid;
                 exit_work->is_last_tgroup_member = msg->is_last_tgroup_member;
-                memcpy(&exit_work->regs,&msg->regs,sizeof(struct pt_regs));
-                exit_work->thread_fs = msg->thread_fs;
-                exit_work->thread_gs = msg->thread_gs;
-                exit_work->thread_sp0 = msg->thread_sp0;
-                exit_work->thread_sp = msg->thread_sp;
-                exit_work->thread_usersp = msg->thread_usersp;
-                exit_work->thread_es = msg->thread_es;
-                exit_work->thread_ds = msg->thread_ds;
-                exit_work->thread_fsindex = msg->thread_fsindex;
-                exit_work->thread_gsindex = msg->thread_gsindex;
                 queue_work(exit_wq, (struct work_struct*)exit_work);
             }
 
@@ -3116,7 +3079,6 @@ int process_server_import_address_space(unsigned long* ip,
     int vmas_installed = 0;
     int ptes_installed = 0;
     struct mm_struct* thread_mm = NULL;
-    struct mm_struct* start_mm = NULL;
     struct task_struct* thread_task = NULL;
     mm_data_t* used_saved_mm = NULL;
 
@@ -3598,28 +3560,11 @@ finished_membership_search:
     // Find the clone data, we are going to destroy this very soon.
     clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
-
-    dump_regs(task_pt_regs(current));
-
     // Build the message that is going to migrate this task back 
     // from whence it came.
     msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
     msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = current->pid;
-    memcpy(&msg.regs,task_pt_regs(current),sizeof(struct pt_regs));
-
-    //msg.regs.ip = (unsigned long)msg.regs.ip -2;  // This causes process
-    //                                              // to never exit.
-    //
-    msg.thread_fs = current->thread.fs;
-    msg.thread_gs = current->thread.gs;
-    msg.thread_sp0 = current->thread.sp0;
-    msg.thread_sp = current->thread.sp;
-    msg.thread_usersp = current->thread.usersp;
-    msg.thread_es = current->thread.es;
-    msg.thread_ds = current->thread.ds;
-    msg.thread_fsindex = current->thread.fsindex;
-    msg.thread_gsindex = current->thread.gsindex;
     msg.is_last_tgroup_member = is_last_thread_in_group;
 
     if(current->executing_for_remote) {
@@ -3933,10 +3878,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     int started_outside_vma = 0;
     char path[512];
     char* ppath;
-    int pid = current->pid;
-    int tgid = current->tgid;
-    int tgroup_home_cpu = current->tgroup_home_cpu;
-    int tgroup_home_id  = current->tgroup_home_id;
 
     // for perf
     int pte_provided = 0;
@@ -3970,16 +3911,20 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     if(is_vaddr_mapped(mm,address)) {
         PSPRINTK("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
                 address,current->tgroup_home_cpu,current->tgroup_home_id);
-        
+
+        dump_regs(task_pt_regs(current)); 
+
         // should this thing be writable?  if so, set it and exit
         // This is a security hole, and is VERY bad.
         // It will also probably cause problems for genuine COW mappings..
         if(vma->vm_flags & VM_WRITE && 
                 !is_page_writable(mm, vma, address & PAGE_MASK)) {
-
+            PSPRINTK("Touching up write setting\n");
             mk_page_writable(mm,vma,address & PAGE_MASK);
             adjusted_permissions = 1;
             ret = 1;
+        } else {
+            //dump_mm(mm);
         }
 
         goto not_handled;
