@@ -5585,8 +5585,8 @@ if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
     memset(buf_in, 0, 64); memset(buf_present, 0, 64);
     cpumask_scnprintf(buf_in, 63, in_mask);
     cpumask_scnprintf(buf_present, 63, cpu_present_mask);
-    printk("%s: in_mask %s cpu_present_mask %s\n",
-	__func__, buf_in, buf_present);
+    //printk("%s: in_mask %s cpu_present_mask %s\n",
+	//        __func__, buf_in, buf_present);
 
     for(i = 0; i < NR_CPUS; i++) {
         if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {

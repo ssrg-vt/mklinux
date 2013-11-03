@@ -101,10 +101,13 @@
 #define PERF_MEASURE_STOP(x,y)  perf_measure_stop(x,y)
 
 pcn_perf_context_t perf_process_mapping_request;
+pcn_perf_context_t perf_process_mapping_response;
 pcn_perf_context_t perf_process_tgroup_closed_item;
 pcn_perf_context_t perf_process_exec_item;
 pcn_perf_context_t perf_process_exit_item;
 pcn_perf_context_t perf_process_mprotect_item;
+pcn_perf_context_t perf_process_munmap_request;
+pcn_perf_context_t perf_process_munmap_response;
 pcn_perf_context_t perf_process_server_try_handle_mm_fault;
 pcn_perf_context_t perf_process_server_import_address_space;
 pcn_perf_context_t perf_process_server_do_exit;
@@ -133,6 +136,8 @@ pcn_perf_context_t perf_handle_mprotect_request;
 static void perf_init(void) {
    perf_init_context(&perf_process_mapping_request,
            "process_mapping_request"); 
+   perf_init_context(&perf_process_mapping_response,
+           "process_mapping_response");
    perf_init_context(&perf_process_tgroup_closed_item,
            "process_tgroup_closed_item");
    perf_init_context(&perf_process_exec_item,
@@ -141,6 +146,10 @@ static void perf_init(void) {
            "process_exit_item");
    perf_init_context(&perf_process_mprotect_item,
            "process_mprotect_item");
+   perf_init_context(&perf_process_munmap_request,
+           "process_munmap_request");
+   perf_init_context(&perf_process_munmap_response,
+           "process_munmap_response");
    perf_init_context(&perf_process_server_try_handle_mm_fault,
            "process_server_try_handle_mm_fault");
    perf_init_context(&perf_process_server_import_address_space,
@@ -1992,11 +2001,14 @@ retry:
     return;
 }
 
+/**
+ * <MEASURE perf_process_mapping_response>
+ */
 void process_mapping_response(struct work_struct* work) {
     mapping_request_data_t* data;
     mapping_response_work_t* w = (mapping_response_work_t*)work; 
 
-    //PERF_MEASURE_START(&perf_handle_mapping_response);
+    PERF_MEASURE_START(&perf_process_mapping_response);
 
     data = find_mapping_request_data(
                                      w->tgroup_home_cpu,
@@ -2011,8 +2023,8 @@ void process_mapping_response(struct work_struct* work) {
     if(data == NULL) {
         PSPRINTK("data not found\n");
         kfree(work);
-        //PERF_MEASURE_STOP(&perf_handle_mapping_response,
-        //        "early exit");
+        PERF_MEASURE_STOP(&perf_process_mapping_response,
+                "early exit");
         return;
     }
 
@@ -2081,7 +2093,7 @@ void process_mapping_response(struct work_struct* work) {
 out:
     kfree(work);
     
-    //PERF_MEASURE_STOP(&perf_handle_mapping_response," ");
+    PERF_MEASURE_STOP(&perf_process_mapping_response," ");
 
 }
 
@@ -2182,7 +2194,7 @@ perf_bb = native_read_tsc();
 }
 
 /**
- * 
+ * <MEASURE perf_process_munmap_request>
  */
 void process_munmap_request(struct work_struct* work) {
     munmap_request_work_t* w = (munmap_request_work_t*)work;
@@ -2191,7 +2203,7 @@ void process_munmap_request(struct work_struct* work) {
     data_header_t *curr;
     mm_data_t* mm_data;
 
-    //PERF_MEASURE_START(&perf_handle_munmap_request);
+    PERF_MEASURE_START(&perf_process_munmap_request);
 
     PSPRINTK("%s: entered\n",__func__);
 
@@ -2258,17 +2270,17 @@ done:
 
     kfree(work);
     
-    //PERF_MEASURE_STOP(&perf_handle_munmap_request," ");
+    PERF_MEASURE_STOP(&perf_process_munmap_request," ");
 }
 
 /**
- *
+ * <MEASURE perf_process_munmap_response>
  */
 void process_munmap_response(struct work_struct* work) {
     munmap_response_work_t* w = (munmap_response_work_t*)work;
     munmap_request_data_t* data;
    
-    //PERF_MEASURE_START(&perf_handle_munmap_response);
+    PERF_MEASURE_START(&perf_process_munmap_response);
 
     data = find_munmap_request_data(
                                    w->tgroup_home_cpu,
@@ -2287,7 +2299,7 @@ void process_munmap_response(struct work_struct* work) {
 
     kfree(work);
 
-    //PERF_MEASURE_STOP(&perf_handle_munmap_response," ");
+    PERF_MEASURE_STOP(&perf_process_munmap_response," ");
 
 }
 
