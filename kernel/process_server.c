@@ -15,6 +15,9 @@
 #include <linux/path.h>
 #include <linux/mount.h>
 #include <linux/fs.h>
+#include <linux/fs_struct.h>
+#include <linux/file.h>
+#include <linux/fdtable.h>
 #include <linux/slab.h>
 #include <linux/process_server.h>
 #include <linux/mm.h>
@@ -32,6 +35,7 @@
 #include <asm/prctl.h> // prctl
 #include <asm/proto.h> // do_arch_prctl
 #include <asm/msr.h> // wrmsr_safe
+#include <asm/mmu_context.h>
 
 
 #define  NSIG 32
@@ -46,6 +50,37 @@
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
 #define PSPRINTK(...) ;
+#endif
+
+#define PROCESS_SERVER_INSTRUMENT_LOCK 1
+#if PROCESS_SERVER_VERBOSE && PROCESS_SERVER_INSTRUMENT_LOCK
+#define PS_SPIN_LOCK(x) PSPRINTK("Acquiring spin lock in %s at line %d\n",__func__,__LINE__); \
+                       spin_lock(x); \
+                       PSPRINTK("Done acquiring spin lock in %s at line %d\n",__func__,__LINE__)
+#define PS_SPIN_UNLOCK(x) PSPRINTK("Releasing spin lock in %s at line %d\n",__func__,__LINE__); \
+                          spin_unlock(x); \
+                          PSPRINTK("Done releasing spin lock in %s at line %d\n",__func__,__LINE__)
+#define PS_DOWN_READ(x) PSPRINTK("Acquiring read lock in %s at line %d\n",__func__,__LINE__); \
+                        down_read(x); \
+                        PSPRINTK("Done acquiring read lock in %s at line %d\n",__func__,__LINE__)
+#define PS_UP_READ(x) PSPRINTK("Releasing read lock in %s at line %d\n",__func__,__LINE__); \
+                      up_read(x); \
+                      PSPRINTK("Done releasing read lock in %s at line %d\n",__func__,__LINE__)
+#define PS_DOWN_WRITE(x) PSPRINTK("Acquiring write lock in %s at line %d\n",__func__,__LINE__); \
+                         down_write(x); \
+                         PSPRINTK("Done acquiring write lock in %s at line %d\n",__func__,__LINE__)
+#define PS_UP_WRITE(x) PSPRINTK("Releasing read write in %s at line %d\n",__func__,__LINE__); \
+                       up_write(x); \
+                       PSPRINTK("Done releasing write lock in %s at line %d\n",__func__,__LINE__)
+
+
+#else
+#define PS_SPIN_LOCK(x) spin_lock(x)
+#define PS_SPIN_UNLOCK(x) spin_unlock(x)
+#define PS_DOWN_READ(x) down_read(x)
+#define PS_UP_READ(x) up_read(x)
+#define PS_DOWN_WRITE(x) down_write(x)
+#define PS_UP_WRITE(x) up_write(x)
 #endif
 
 /**
@@ -71,10 +106,13 @@
 #define PERF_MEASURE_STOP(x,y)  perf_measure_stop(x,y)
 
 pcn_perf_context_t perf_process_mapping_request;
+pcn_perf_context_t perf_process_mapping_response;
 pcn_perf_context_t perf_process_tgroup_closed_item;
 pcn_perf_context_t perf_process_exec_item;
 pcn_perf_context_t perf_process_exit_item;
 pcn_perf_context_t perf_process_mprotect_item;
+pcn_perf_context_t perf_process_munmap_request;
+pcn_perf_context_t perf_process_munmap_response;
 pcn_perf_context_t perf_process_server_try_handle_mm_fault;
 pcn_perf_context_t perf_process_server_import_address_space;
 pcn_perf_context_t perf_process_server_do_exit;
@@ -103,6 +141,8 @@ pcn_perf_context_t perf_handle_mprotect_request;
 static void perf_init(void) {
    perf_init_context(&perf_process_mapping_request,
            "process_mapping_request"); 
+   perf_init_context(&perf_process_mapping_response,
+           "process_mapping_response");
    perf_init_context(&perf_process_tgroup_closed_item,
            "process_tgroup_closed_item");
    perf_init_context(&perf_process_exec_item,
@@ -111,6 +151,10 @@ static void perf_init(void) {
            "process_exit_item");
    perf_init_context(&perf_process_mprotect_item,
            "process_mprotect_item");
+   perf_init_context(&perf_process_munmap_request,
+           "process_munmap_request");
+   perf_init_context(&perf_process_munmap_response,
+           "process_munmap_response");
    perf_init_context(&perf_process_server_try_handle_mm_fault,
            "process_server_try_handle_mm_fault");
    perf_init_context(&perf_process_server_import_address_space,
@@ -270,6 +314,7 @@ typedef struct _mapping_request_data {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long address;
     unsigned long vaddr_mapping;
     unsigned long vaddr_start;
@@ -292,6 +337,7 @@ typedef struct _munmap_request_data {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long vaddr_start;
     unsigned long vaddr_size;
     int responses;
@@ -324,6 +370,7 @@ typedef struct _mprotect_data {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long start;
     int responses;
     int expected_responses;
@@ -397,16 +444,6 @@ typedef struct _exiting_process {
     struct pcn_kmsg_hdr header;
     int my_pid;                 
     int is_last_tgroup_member;  
-    struct pt_regs regs;
-    unsigned long thread_fs;
-    unsigned long thread_gs;
-    unsigned long thread_sp0;
-    unsigned long thread_sp;
-    unsigned long thread_usersp;
-    unsigned short thread_es;
-    unsigned short thread_ds;
-    unsigned short thread_fsindex;
-    unsigned short thread_gsindex;
 }  exiting_process_t;
 
 /**
@@ -448,10 +485,11 @@ struct _mapping_request {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int requester_pid;          // 4
     unsigned long address;      // 8
                                 // ---
-                                // 16 -> 44 bytes of padding needed
-    char pad[44];
+                                // 20 -> 40 bytes of padding needed
+    char pad[40];
 
 } __attribute__((packed)) __attribute__((aligned(64)));
 
@@ -478,6 +516,7 @@ struct _mapping_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        
     int tgroup_home_id; 
+    int requester_pid;
     int from_saved_mm;
     unsigned long address;      
     unsigned long present;      
@@ -499,11 +538,12 @@ struct _munmap_request {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;         // 4
     int tgroup_home_id;          // 4
+    int requester_pid;           // 4
     unsigned long vaddr_start;   // 8
     unsigned long vaddr_size;    // 8
                                  // ---
-                                 // 24 -> 36 bytes of padding needed
-    char pad[36];
+                                 // 28 -> 32 bytes of padding needed
+    char pad[32];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _munmap_request munmap_request_t;
 
@@ -514,11 +554,12 @@ struct _munmap_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int requester_pid;          // 4
     unsigned long vaddr_start;  // 8
     unsigned long vaddr_size;   // 8+
                                 // ---
-                                // 24 -> 36 bytes of padding needed
-    char pad[36];
+                                // 28 -> 32 bytes of padding needed
+    char pad[32];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _munmap_response munmap_response_t;
 
@@ -557,12 +598,13 @@ struct _mprotect_request {
     struct pcn_kmsg_hdr header; 
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int requester_pid;          // 4
     unsigned long start;        // 8
     size_t len;                 // 4
     unsigned long prot;         // 8
                                 // ---
-                                // 28 -> 32 bytes of padding needed
-    char pad[32];
+                                // 32 -> 28 bytes of padding needed
+    char pad[28];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _mprotect_request mprotect_request_t;
 
@@ -573,10 +615,11 @@ struct _mprotect_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int requester_pid;          // 4
     unsigned long start;        // 8
                                 // ---
-                                // 16 -> 44 bytes of padding needed
-    char pad[44];
+                                // 20 -> 40 bytes of padding needed
+    char pad[40];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _mprotect_response mprotect_response_t;
 
@@ -626,6 +669,7 @@ typedef struct {
     struct work_struct work;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long address;
     int from_cpu;
 } mapping_request_work_t;
@@ -637,7 +681,54 @@ typedef struct {
     struct work_struct work;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
+    int from_saved_mm;
+    unsigned long address;      
+    unsigned long present;      
+    unsigned long vaddr_mapping;
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+    unsigned long paddr_mapping;
+    pgprot_t prot;              
+    unsigned long vm_flags;     
+    char path[512];
+    unsigned long pgoff;
+    int from_cpu;
+} mapping_response_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
 } tgroup_closed_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int requester_pid;
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+    int from_cpu;
+} munmap_request_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int requester_pid;
+    unsigned long vaddr_start;
+    unsigned long vaddr_size;
+} munmap_response_work_t;
 
 /**
  * 
@@ -646,11 +737,14 @@ typedef struct {
     struct work_struct work;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int requester_pid;
     unsigned long start;
     size_t len;
     unsigned long prot;
     int from_cpu;
 } mprotect_work_t;
+
+
 
 /**
  * Prototypes
@@ -683,14 +777,25 @@ int do_mprotect(struct task_struct* task, unsigned long start, size_t len, unsig
 /**
  * Module variables
  */
-static struct task_struct* process_server_task = NULL;     // Remember the kthread task_struct
 static int _vma_id = 0;
 static int _clone_request_id = 0;
 static int _cpu = -1;
-data_header_t* _data_head = NULL;        // General purpose data store
-DEFINE_SPINLOCK(_data_head_lock);        // Lock for _data_head
-DEFINE_SPINLOCK(_vma_id_lock);           // Lock for _vma_id
-DEFINE_SPINLOCK(_clone_request_id_lock); // Lock for _clone_request_id
+data_header_t* _saved_mm_head = NULL;             // Saved MM list
+DEFINE_SPINLOCK(_saved_mm_head_lock);             // Lock for _saved_mm_head
+data_header_t* _mapping_request_data_head = NULL; // Mapping request data head
+DEFINE_SPINLOCK(_mapping_request_data_head_lock);  // Lock for above
+data_header_t* _count_remote_tmembers_data_head = NULL;
+DEFINE_SPINLOCK(_count_remote_tmembers_data_head_lock);
+data_header_t* _munmap_data_head = NULL;
+DEFINE_SPINLOCK(_munmap_data_head_lock);
+data_header_t* _mprotect_data_head = NULL;
+DEFINE_SPINLOCK(_mprotect_data_head_lock);
+data_header_t* _data_head = NULL;                 // General purpose data store
+DEFINE_SPINLOCK(_data_head_lock);                 // Lock for _data_head
+DEFINE_SPINLOCK(_vma_id_lock);                    // Lock for _vma_id
+DEFINE_SPINLOCK(_clone_request_id_lock);          // Lock for _clone_request_id
+struct rw_semaphore _import_sem;
+DEFINE_SPINLOCK(_remap_lock);
 
 // Work Queues
 static struct workqueue_struct *clone_wq;
@@ -700,6 +805,12 @@ static struct workqueue_struct *mapping_wq;
 /**
  * General helper functions and debugging tools
  */
+
+
+// TODO
+static bool __user_addr (unsigned long x ) {
+    return (x < PAGE_OFFSET);   
+}
 
 /**
  * A best effort at making a page writable
@@ -727,6 +838,30 @@ static void mk_page_writable(struct mm_struct* mm,
     pte_unmap_unlock(pte, ptl);
 out:
     return;
+}
+
+/**
+ *
+ */
+static int is_page_writable(struct mm_struct* mm,
+                            struct vm_area_struct* vma,
+                            unsigned long addr) {
+    spinlock_t* ptl;
+    pte_t *ptep, pte;
+    int ret = 0;
+
+    ptep = get_locked_pte(mm,addr,&ptl);
+    if(!ptep)
+        goto out;
+
+    pte = *ptep;
+
+    ret = pte_write(pte);
+
+    pte_unmap_unlock(pte, ptl);
+
+out:
+    return ret;
 }
 
 /**
@@ -808,7 +943,7 @@ void dump_task(struct task_struct* task, struct pt_regs* regs, unsigned long sta
     PSPRINTK("Clone_request_id{%d}\n",task->clone_request_id);
     dump_regs(regs);
     dump_thread(&task->thread);
-    dump_mm(task->mm);
+    //dump_mm(task->mm);
     dump_stk(&task->thread,stack_ptr);
     PSPRINTK("TASK DUMP COMPLETE\n");
 #endif
@@ -949,22 +1084,20 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
     remote_thread_count_request_data_t* request = NULL;
     remote_thread_count_request_data_t* ret = NULL;
 
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_count_remote_tmembers_data_head_lock);
 
-    curr = _data_head;
+    curr = _count_remote_tmembers_data_head;
     while(curr) {
-        if(curr->data_type == PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE) {
-            request = (remote_thread_count_request_data_t*)curr;
-            if(request->tgroup_home_cpu == cpu &&
-               request->tgroup_home_id == id) {
-                ret = request;
-                break;
-            }
+        request = (remote_thread_count_request_data_t*)curr;
+        if(request->tgroup_home_cpu == cpu &&
+           request->tgroup_home_id == id) {
+            ret = request;
+            break;
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_count_remote_tmembers_data_head_lock);
 
     return ret;
 }
@@ -972,27 +1105,26 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
 /**
  *
  */
-static munmap_request_data_t* find_munmap_request_data(int cpu, int id, unsigned long address) {
+static munmap_request_data_t* find_munmap_request_data(int cpu, int id, int requester_pid, unsigned long address) {
     data_header_t* curr = NULL;
     munmap_request_data_t* request = NULL;
     munmap_request_data_t* ret = NULL;
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_munmap_data_head_lock);
     
-    curr = _data_head;
+    curr = _munmap_data_head;
     while(curr) {
-        if(curr->data_type == PROCESS_SERVER_MUNMAP_REQUEST_DATA_TYPE) {
-            request = (munmap_request_data_t*)curr;
-            if(request->tgroup_home_cpu == cpu && 
-                    request->tgroup_home_id == id &&
-                    request->vaddr_start == address) {
-                ret = request;
-                break;
-            }
+        request = (munmap_request_data_t*)curr;
+        if(request->tgroup_home_cpu == cpu && 
+                request->tgroup_home_id == id &&
+                request->requester_pid == requester_pid &&
+                request->vaddr_start == address) {
+            ret = request;
+            break;
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_munmap_data_head_lock);
 
     return ret;
 
@@ -1001,27 +1133,26 @@ static munmap_request_data_t* find_munmap_request_data(int cpu, int id, unsigned
 /**
  *
  */
-static mprotect_data_t* find_mprotect_request_data(int cpu, int id, unsigned long start) {
+static mprotect_data_t* find_mprotect_request_data(int cpu, int id, int requester_pid, unsigned long start) {
     data_header_t* curr = NULL;
     mprotect_data_t* request = NULL;
     mprotect_data_t* ret = NULL;
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_mprotect_data_head_lock);
     
-    curr = _data_head;
+    curr = _mprotect_data_head;
     while(curr) {
-        if(curr->data_type == PROCESS_SERVER_MPROTECT_DATA_TYPE) {
-            request = (mprotect_data_t*)curr;
-            if(request->tgroup_home_cpu == cpu && 
-                    request->tgroup_home_id == id &&
-                    request->start == start) {
-                ret = request;
-                break;
-            }
+        request = (mprotect_data_t*)curr;
+        if(request->tgroup_home_cpu == cpu && 
+                request->tgroup_home_id == id &&
+                request->requester_pid == requester_pid &&
+                request->start == start) {
+            ret = request;
+            break;
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_mprotect_data_head_lock);
 
     return ret;
 
@@ -1030,27 +1161,26 @@ static mprotect_data_t* find_mprotect_request_data(int cpu, int id, unsigned lon
 /**
  *
  */
-static mapping_request_data_t* find_mapping_request_data(int cpu, int id, unsigned long address) {
+static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pid, unsigned long address) {
     data_header_t* curr = NULL;
     mapping_request_data_t* request = NULL;
     mapping_request_data_t* ret = NULL;
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_mapping_request_data_head_lock);
     
-    curr = _data_head;
+    curr = _mapping_request_data_head;
     while(curr) {
-        if(curr->data_type == PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE) {
-            request = (mapping_request_data_t*)curr;
-            if(request->tgroup_home_cpu == cpu && 
-                    request->tgroup_home_id == id &&
-                    request->address == address) {
-                ret = request;
-                break;
-            }
+        request = (mapping_request_data_t*)curr;
+        if(request->tgroup_home_cpu == cpu && 
+                request->tgroup_home_id == id &&
+                request->requester_pid == pid &&
+                request->address == address) {
+            ret = request;
+            break;
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
 
     return ret;
 }
@@ -1062,7 +1192,7 @@ static clone_data_t* find_clone_data(int cpu, int clone_request_id) {
     data_header_t* curr = NULL;
     clone_data_t* clone = NULL;
     clone_data_t* ret = NULL;
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
     
     curr = _data_head;
     while(curr) {
@@ -1076,7 +1206,7 @@ static clone_data_t* find_clone_data(int cpu, int clone_request_id) {
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 
     return ret;
 }
@@ -1188,7 +1318,7 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
  */
 static void dump_mm(struct mm_struct* mm) {
     struct vm_area_struct * curr;
-//    char buf[256];
+    char buf[256];
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
         .mm = mm,
@@ -1200,7 +1330,7 @@ static void dump_mm(struct mm_struct* mm) {
         return;
     }
 
-    down_read(&mm->mmap_sem);
+    PS_DOWN_READ(&mm->mmap_sem);
 
     curr = mm->mmap;
 
@@ -1233,15 +1363,82 @@ static void dump_mm(struct mm_struct* mm) {
         curr = curr->vm_next;
     }
 
-    up_read(&mm->mmap_sem);
+    PS_UP_READ(&mm->mmap_sem);
 }
 
 /**
  * Data library
  */
 
+/**
+ * Add data entry
+ */
+static void add_data_entry_to(void* entry, spinlock_t* lock, data_header_t** head) {
+    data_header_t* hdr = (data_header_t*)entry;
+    data_header_t* curr = NULL;
+
+    if(!entry) {
+        return;
+    }
+
+    // Always clear out the link information
+    hdr->next = NULL;
+    hdr->prev = NULL;
+
+    PS_SPIN_LOCK(lock);
+    
+    if (!*head) {
+        *head = hdr;
+        hdr->next = NULL;
+        hdr->prev = NULL;
+    } else {
+        curr = *head;
+        while(curr->next != NULL) {
+            if(curr == entry) {
+                return;// It's already in the list!
+            }
+            curr = curr->next;
+        }
+        // Now curr should be the last entry.
+        // Append the new entry to curr.
+        curr->next = hdr;
+        hdr->next = NULL;
+        hdr->prev = curr;
+    }
+
+    PS_SPIN_UNLOCK(lock);
+}
 
 /**
+ * Remove a data entry
+ * Requires user to hold lock
+ */
+static void remove_data_entry_from(void* entry, data_header_t** head) {
+    data_header_t* hdr = entry;
+
+    if(!entry) {
+        return;
+    }
+
+    if(*head == hdr) {
+        *head = hdr->next;
+    }
+
+    if(hdr->next) {
+        hdr->next->prev = hdr->prev;
+    }
+
+    if(hdr->prev) {
+        hdr->prev->next = hdr->next;
+    }
+
+    hdr->prev = NULL;
+    hdr->next = NULL;
+
+}
+
+/**
+ * General purpose library
  * Add data entry
  */
 static void add_data_entry(void* entry) {
@@ -1256,7 +1453,7 @@ static void add_data_entry(void* entry) {
     hdr->next = NULL;
     hdr->prev = NULL;
 
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
     
     if (!_data_head) {
         _data_head = hdr;
@@ -1277,7 +1474,7 @@ static void add_data_entry(void* entry) {
         hdr->prev = curr;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 }
 
 /**
@@ -1317,7 +1514,7 @@ static void dump_data_list(void) {
     vma_data_t* vma_data = NULL;
     clone_data_t* clone_data = NULL;
 
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
 
     curr = _data_head;
 
@@ -1358,7 +1555,7 @@ static void dump_data_list(void) {
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 }
 
 /**
@@ -1384,7 +1581,9 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     data->tgroup_home_id = tgroup_home_id;
     data->count = 0;
 
-    add_data_entry(data);
+    add_data_entry_to(data,
+                      &_count_remote_tmembers_data_head_lock,
+                      &_count_remote_tmembers_data_head);
 
     request.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_REQUEST;
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -1419,9 +1618,10 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     printk(KERN_ALERT "found a total of %d remote threads in group\n",
             data->count);
 
-    spin_lock(&_data_head_lock);
-    remove_data_entry(data);
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_LOCK(&_count_remote_tmembers_data_head_lock);
+    remove_data_entry_from(data,
+                           &_count_remote_tmembers_data_head);
+    PS_SPIN_UNLOCK(&_count_remote_tmembers_data_head_lock);
 
     kfree(data);
 
@@ -1537,38 +1737,35 @@ void process_tgroup_closed_item(struct work_struct* work) {
         }
     }
 
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_saved_mm_head_lock);
     
     // Remove all saved mm's for this thread group.
-    curr = _data_head;
+    curr = _saved_mm_head;
     while(curr) {
         next = curr->next;
-        if(curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
-            mm_data = (mm_data_t*)curr;
-            if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
-               mm_data->tgroup_home_id  == w->tgroup_home_id) {
-                // We need to remove this data entry
-                remove_data_entry(curr);
+        mm_data = (mm_data_t*)curr;
+        if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
+           mm_data->tgroup_home_id  == w->tgroup_home_id) {
+            // We need to remove this data entry
+            remove_data_entry_from(curr,&_saved_mm_head);
 
-                PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
-                        __func__,
-                        w->tgroup_home_cpu,
-                        w->tgroup_home_id);
+            PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
+                    __func__,
+                    w->tgroup_home_cpu,
+                    w->tgroup_home_id);
 
-                // Remove mm
-                //atomic_dec(&mm_data->mm->mm_users);
-                mmput(mm_data->mm);
+            // Remove mm
+            mmput(mm_data->mm);
 
-                PSPRINTK("%s: mm removed\n",__func__);
+            PSPRINTK("%s: mm removed\n",__func__);
 
-                // Free up the data entry
-                kfree(curr);
-            }
+            // Free up the data entry
+            kfree(curr);
         }
         curr = next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
     kfree(work);
 
@@ -1599,12 +1796,7 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
         goto not_handled;
     }
 
-    // Don't bother if this is file backed
-    //if(vma->vm_file == NULL) {
-    //    goto not_handled;
-    //}
-
-    down_write(&mm->mmap_sem);
+    PS_DOWN_WRITE(&mm->mmap_sem);
 
 
     pgd = pgd_offset(mm, address);
@@ -1636,7 +1828,7 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     
     // break the cow!
     ptl = pte_lockptr(mm,pmd);
-    spin_lock(ptl);
+    PS_SPIN_LOCK(ptl);
    
     PSPRINTK("%s: proceeding\n",__func__);
     do_wp_page(mm,vma,address,ptep,pmd,ptl,pte);
@@ -1648,11 +1840,11 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     goto handled;
 
 not_handled_unlock:
-    up_write(&mm->mmap_sem);
+    PS_UP_WRITE(&mm->mmap_sem);
 not_handled:
     return 0;
 handled:
-    up_write(&mm->mmap_sem);
+    PS_UP_WRITE(&mm->mmap_sem);
     return 1;
 }
 
@@ -1678,7 +1870,12 @@ void process_mapping_request(struct work_struct* work) {
     char* plpath;
     char lpath[512];
     int try_count = 0;
-
+    
+    // for perf
+    int used_saved_mm = 0;
+    int found_vma = 1;
+    int found_pte = 1;
+    
     // Perf start
     PERF_MEASURE_START(&perf_process_mapping_request);
 
@@ -1688,40 +1885,36 @@ void process_mapping_request(struct work_struct* work) {
             w->tgroup_home_cpu,
             w->tgroup_home_id);
 
-    // First, search through existing threads.
+    // First, search through existing processes
     do_each_thread(g,task) {
         if((task->tgroup_home_cpu == w->tgroup_home_cpu) &&
            (task->tgroup_home_id  == w->tgroup_home_id )) {
             PSPRINTK("mapping request found common thread group here\n");
             mm = task->mm;
-            goto mm_found;
         }
     } while_each_thread(g,task);
 
-mm_found:
-
-    // Failing the thread search, look through saved mm's.
+    // Failing the process search, look through saved mm's.
     if(!mm) {
-        spin_lock(&_data_head_lock);
-        data_curr = _data_head;
+        PS_SPIN_LOCK(&_saved_mm_head_lock);
+        data_curr = _saved_mm_head;
         while(data_curr) {
 
-            if(data_curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
-                mm_data = (mm_data_t*)data_curr;
+            mm_data = (mm_data_t*)data_curr;
             
-                if((mm_data->tgroup_home_cpu == w->tgroup_home_cpu) &&
-                   (mm_data->tgroup_home_id  == w->tgroup_home_id)) {
-                    PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
-                    mm = mm_data->mm;
-                    break;
-                }
+            if((mm_data->tgroup_home_cpu == w->tgroup_home_cpu) &&
+               (mm_data->tgroup_home_id  == w->tgroup_home_id)) {
+                PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
+                mm = mm_data->mm;
+                used_saved_mm = 1;
+                break;
             }
 
             data_curr = data_curr->next;
 
         } // while
 
-        spin_unlock(&_data_head_lock);
+        PS_SPIN_UNLOCK(&_saved_mm_head_lock);
     }
 
 
@@ -1760,16 +1953,11 @@ retry:
                 goto retry;
             }
 
-            // Turn off caching for this vma
-            //vma->vm_page_prot = /*pgprot_noncached(*/vma->vm_page_prot/*)*/;
-            // Then clear the cache to drop any already-cached entries
-            //flush_cache_range(vma,vma->vm_start,vma->vm_end);
-            //flush_tlb_range(vma,vma->vm_start,vma->vm_end);
-
             response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
             response.header.prio = PCN_KMSG_PRIO_NORMAL;
             response.tgroup_home_cpu = w->tgroup_home_cpu;
             response.tgroup_home_id = w->tgroup_home_id;
+            response.requester_pid = w->requester_pid;
             response.address = address;
             response.present = 1;
             response.vaddr_mapping = address & PAGE_MASK;
@@ -1792,11 +1980,14 @@ retry:
 
     // Not found, respond accordingly
     if(resolved == 0) {
+        found_vma = 0;
+        found_pte = 0;
         PSPRINTK("Mapping not found\n");
         response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
         response.header.prio = PCN_KMSG_PRIO_NORMAL;
         response.tgroup_home_cpu = w->tgroup_home_cpu;
         response.tgroup_home_id = w->tgroup_home_id;
+        response.requester_pid = w->requester_pid;
         response.address = address;
         response.paddr_mapping = 0;
         response.present = 0;
@@ -1807,6 +1998,7 @@ retry:
         // Handle case where vma was present but no pte.
         if(vma) {
             PSPRINTK("But vma present\n");
+            found_vma = 1;
             response.present = 1;
             response.vaddr_mapping = address & PAGE_MASK;
             response.vaddr_start = vma->vm_start;
@@ -1832,9 +2024,125 @@ retry:
     kfree(work);
 
     // Perf stop
-    PERF_MEASURE_STOP(&perf_process_mapping_request," ");
+    if(used_saved_mm && found_vma && found_pte) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "Saved MM + VMA + PTE");
+    } else if (used_saved_mm && found_vma && !found_pte) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "Saved MM + VMA + no PTE");
+    } else if (used_saved_mm && !found_vma) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "Saved MM + no VMA");
+    } else if (!used_saved_mm && found_vma && found_pte) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "VMA + PTE");
+    } else if (!used_saved_mm && found_vma && !found_pte) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "VMA + no PTE");
+    } else if (!used_saved_mm && !found_vma) {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,
+                "no VMA");
+    } else {
+        PERF_MEASURE_STOP(&perf_process_mapping_request,"ERR");
+    }
 
     return;
+}
+
+/**
+ * <MEASURE perf_process_mapping_response>
+ */
+void process_mapping_response(struct work_struct* work) {
+    mapping_request_data_t* data;
+    mapping_response_work_t* w = (mapping_response_work_t*)work; 
+
+    PERF_MEASURE_START(&perf_process_mapping_response);
+
+    data = find_mapping_request_data(
+                                     w->tgroup_home_cpu,
+                                     w->tgroup_home_id,
+                                     w->requester_pid,
+                                     w->address);
+
+
+    PSPRINTK("%s: entered\n",__func__);
+    PSPRINTK("received mapping response\n");
+
+    if(data == NULL) {
+        PSPRINTK("data not found\n");
+        kfree(work);
+        PERF_MEASURE_STOP(&perf_process_mapping_response,
+                "early exit");
+        return;
+    }
+
+    if(w->present) {
+        PSPRINTK("received positive search result from cpu %d\n",
+                w->from_cpu);
+        
+        // Account for this cpu's response
+        data->responses++;
+       
+        // Enforce precedence rules.  Responses from saved mm's
+        // are always ignored when a response from a live thread
+        // can satisfy the mapping request.  The purpose of this
+        // is to ensure that the mapping is not stale, since
+        // mmap() operations will not effect saved mm's.  Saved
+        // mm's are only useful for cases where a thread mmap()ed
+        // some space then died before any other thread was able
+        // to acquire the new mapping.
+        //
+        // A note on a case where multiple cpu's have mappings, but
+        // of different sizes.  It is possible that two cpu's have
+        // partially overlapping mappings.  This is possible because
+        // new mapping's are merged when their regions are contiguous.  
+        // This is not a problem here because if part of a mapping is 
+        // accessed that is not part of an existig mapping, that new 
+        // part will be merged in the resulting mapping request.
+        //
+        // Also, prefer responses that provide values for paddr.
+        if(data->present == 1) {
+
+            // another cpu already responded.
+            if(!data->from_saved_mm && w->from_saved_mm
+                    // but we need to add an exception in case a physical address
+                    // is mapped into the saved mm, but not in the unsaved mm...
+                    && !(w->paddr_mapping && !data->paddr_mapping)) {
+                PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
+                goto out;
+            }
+
+            // Ensure that we keep physical mappings around.
+            if(data->paddr_mapping && !w->paddr_mapping) {
+                PSPRINTK("%s: prevented mapping resolver from downgrading from mapping with paddr to one without\n",__func__);
+                goto out;
+            }
+        }
+       
+        data->from_saved_mm = w->from_saved_mm;
+        data->vaddr_mapping = w->vaddr_mapping;
+        data->vaddr_start = w->vaddr_start;
+        data->vaddr_size = w->vaddr_size;
+        data->paddr_mapping = w->paddr_mapping;
+        data->prot = w->prot;
+        data->vm_flags = w->vm_flags;
+        data->present = 1;
+        strcpy(data->path,w->path);
+        data->pgoff = w->pgoff;
+
+    } else {
+        PSPRINTK("received negative search result from cpu %d\n",
+                w->from_cpu);
+      
+        // Account for this cpu's response.
+        data->responses++;
+    }
+
+out:
+    kfree(work);
+    
+    PERF_MEASURE_STOP(&perf_process_mapping_response," ");
+
 }
 
 unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
@@ -1844,13 +2152,22 @@ unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
  */
 void process_exit_item(struct work_struct* work) {
     exit_work_t* w = (exit_work_t*) work;
-//    pid_t pid = w->pid;
+    pid_t pid = w->pid;
     struct task_struct *task = w->task;
 
     PERF_MEASURE_START(&perf_process_exit_item);
 
     if(unlikely(!task)) {
         printk("%s: ERROR - empty task\n",__func__);
+        kfree(work);
+        PERF_MEASURE_STOP(&perf_process_exit_item,"ERROR");
+        return;
+    }
+
+    if(unlikely(task->pid != pid)) {
+        printk("%s: ERROR - wrong task picked\n",__func__);
+        kfree(work);
+        PERF_MEASURE_STOP(&perf_process_exit_item,"ERROR");
         return;
     }
     
@@ -1859,18 +2176,6 @@ void process_exit_item(struct work_struct* work) {
     PSPRINTK("%s: killing task - is_last_tgroup_member{%d}\n",
             __func__,
             w->is_last_tgroup_member);
- 
-    // set regs
-    memcpy(task_pt_regs(task),&w->regs,sizeof(struct pt_regs));
-
-    // set thread info
-    task->thread.fs = w->thread_fs;
-    task->thread.gs = w->thread_gs;
-    task->thread.usersp = w->thread_usersp;
-    task->thread.es = w->thread_es;
-    task->thread.ds = w->thread_ds;
-    task->thread.fsindex = w->thread_fsindex;
-    task->thread.gsindex = w->thread_gsindex;
 
     // Now we're executing locally, so update our records
     task->represents_remote = 0;
@@ -1939,6 +2244,116 @@ perf_bb = native_read_tsc();
 }
 
 /**
+ * <MEASURE perf_process_munmap_request>
+ */
+void process_munmap_request(struct work_struct* work) {
+    munmap_request_work_t* w = (munmap_request_work_t*)work;
+    munmap_response_t response;
+    struct task_struct *task, *g;
+    data_header_t *curr;
+    mm_data_t* mm_data;
+
+    PERF_MEASURE_START(&perf_process_munmap_request);
+
+    PSPRINTK("%s: entered\n",__func__);
+
+    // munmap the specified region in the specified thread group
+    do_each_thread(g,task) {
+
+        // Look for the thread group
+        if(task->tgroup_home_cpu == w->tgroup_home_cpu &&
+           task->tgroup_home_id  == w->tgroup_home_id) {
+
+            // Thread group has been found, perform munmap operation on this
+            // task.
+            PS_DOWN_WRITE(&task->mm->mmap_sem);
+            current->enable_distributed_munmap = 0;
+            do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
+            current->enable_distributed_munmap = 1;
+            PS_UP_WRITE(&task->mm->mmap_sem);
+            
+            goto done; // thread grouping - threads all share a common mm.
+
+        }
+    } while_each_thread(g,task);
+done:
+
+    // munmap the specified region in any saved mm's as well.
+    // This keeps old mappings saved in the mm of dead thread
+    // group members from being resolved accidentally after
+    // being munmap()ped, as that would cause security/coherency
+    // problems.
+    PS_SPIN_LOCK(&_saved_mm_head_lock);
+
+    curr = _saved_mm_head;
+    while(curr) {
+        mm_data = (mm_data_t*)curr;
+        if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
+           mm_data->tgroup_home_id  == w->tgroup_home_id) {
+            
+            // Entry found, perform munmap on this saved mm.
+            PS_DOWN_WRITE(&mm_data->mm->mmap_sem);
+            current->enable_distributed_munmap = 0;
+            do_munmap(mm_data->mm, w->vaddr_start, w->vaddr_size);
+            current->enable_distributed_munmap = 1;
+            PS_UP_WRITE(&mm_data->mm->mmap_sem);
+
+        }
+        curr = curr->next;
+    }
+
+    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
+
+
+    // Construct response
+    response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
+    response.header.prio = PCN_KMSG_PRIO_NORMAL;
+    response.tgroup_home_cpu = w->tgroup_home_cpu;
+    response.tgroup_home_id = w->tgroup_home_id;
+    response.requester_pid = w->requester_pid;
+    response.vaddr_start = w->vaddr_start;
+    response.vaddr_size = w->vaddr_size;
+    
+    // Send response
+    pcn_kmsg_send(w->from_cpu,
+             (struct pcn_kmsg_message*)(&response));
+
+    kfree(work);
+    
+    PERF_MEASURE_STOP(&perf_process_munmap_request," ");
+}
+
+/**
+ * <MEASURE perf_process_munmap_response>
+ */
+void process_munmap_response(struct work_struct* work) {
+    munmap_response_work_t* w = (munmap_response_work_t*)work;
+    munmap_request_data_t* data;
+   
+    PERF_MEASURE_START(&perf_process_munmap_response);
+
+    data = find_munmap_request_data(
+                                   w->tgroup_home_cpu,
+                                   w->tgroup_home_id,
+                                   w->requester_pid,
+                                   w->vaddr_start);
+
+    if(data == NULL) {
+        PSPRINTK("unable to find munmap data\n");
+        kfree(work);
+        return;
+    }
+
+    // Register this response.
+    data->responses++;
+
+    kfree(work);
+
+    PERF_MEASURE_STOP(&perf_process_munmap_response," ");
+
+}
+
+/**
  * <MEASRURE perf_process_mprotect_item>
  */
 void process_mprotect_item(struct work_struct* work) {
@@ -1949,15 +2364,15 @@ void process_mprotect_item(struct work_struct* work) {
     unsigned long start = w->start;
     size_t len = w->len;
     unsigned long prot = w->prot;
-    struct task_struct* task;
-
-    PERF_MEASURE_START(&perf_process_mprotect_item);
+    struct task_struct* task, *g;
 
     // Handle protect
-    printk("mprotect placeholder - cpu{%d}, id{%d}, start{%lx}, len{%d}, prot{%lx}\n");
+    PSPRINTK("%s entered\n",__func__);
 
+    PERF_MEASURE_START(&perf_process_mprotect_item);
+    
     // Find the task
-    for_each_process(task) {
+    do_each_thread(g,task) {
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
            task->tgroup_home_id  == tgroup_home_id) {
             
@@ -1968,7 +2383,7 @@ void process_mprotect_item(struct work_struct* work) {
             goto done;
 
         }
-    }
+    } while_each_thread(g,task);
 done:
 
     // Construct response
@@ -1976,6 +2391,7 @@ done:
     response.header.prio = PCN_KMSG_PRIO_NORMAL;
     response.tgroup_home_cpu = tgroup_home_cpu;
     response.tgroup_home_id = tgroup_home_id;
+    response.requester_pid = w->requester_pid;
     response.start = start;
     
     // Send response
@@ -2081,7 +2497,8 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
            task->exit_state != EXIT_DEAD &&
            !(task->flags & PF_EXITING)) {
 
-            if(msg->include_shadow_threads || (!msg->include_shadow_threads && !task->represents_remote)) {
+            if(msg->include_shadow_threads || 
+                    (!msg->include_shadow_threads && !task->represents_remote)) {
                 response.count++;
                 PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
                         task->pid,
@@ -2116,27 +2533,27 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
 
 /**
  * <MEASURE perf_handle_munmap_response>
+ * TODO: START HERE WHEN YOU START WORKING AGAIN!!!!!!!!!!
+ * Need to place this logic in a bottom-side handler.
+ * Already created the new work type: munmap_response_work_t
  */
 static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
     munmap_response_t* msg = (munmap_response_t*)inc_msg;
-    munmap_request_data_t* data;
+    munmap_response_work_t* work;
    
     PERF_MEASURE_START(&perf_handle_munmap_response);
 
-    data = find_munmap_request_data(
-                                   msg->tgroup_home_cpu,
-                                   msg->tgroup_home_id,
-                                   msg->vaddr_start);
-
-    if(data == NULL) {
-        PSPRINTK("unable to find munmap data\n");
-        pcn_kmsg_free_msg(inc_msg);
-        return -1;
+    work = kmalloc(sizeof(munmap_response_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_munmap_response );
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id  = msg->tgroup_home_id;
+        work->requester_pid = msg->requester_pid;
+        work->vaddr_start = msg->vaddr_start;
+        work->vaddr_size  = msg->vaddr_size;
+        queue_work(mapping_wq, (struct work_struct*)work);
     }
-
-    // Register this response.
-    data->responses++;
-
+  
     pcn_kmsg_free_msg(inc_msg);
 
     PERF_MEASURE_STOP(&perf_handle_munmap_response," ");
@@ -2149,67 +2566,21 @@ static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
  */
 static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
     munmap_request_t* msg = (munmap_request_t*)inc_msg;
-    munmap_response_t response;
-    struct task_struct *task, *g;
-    data_header_t *curr;
-    mm_data_t* mm_data;
-
+    munmap_request_work_t* work;
+    
     PERF_MEASURE_START(&perf_handle_munmap_request);
 
-    PSPRINTK("%s: entered\n",__func__);
-
-    // munmap the specified region in the specified thread group
-    do_each_thread(g,task) {
-
-        // Look for the thread group
-        if(task->tgroup_home_cpu == msg->tgroup_home_cpu &&
-           task->tgroup_home_id  == msg->tgroup_home_id) {
-
-            // Thread group has been found, perform munmap operation on this
-            // task.
-            //down_write(&task->mm->mmap_sem);
-            do_munmap(task->mm, msg->vaddr_start, msg->vaddr_size);
-            //up_write(&task->mm->mmap_sem);
-
-        }
-    } while_each_thread(g,task);
-
-    // munmap the specified region in any saved mm's as well.
-    // This keeps old mappings saved in the mm of dead thread
-    // group members from being resolved accidentally after
-    // being munmap()ped, as that would cause security/coherency
-    // problems.
-    spin_lock(&_data_head_lock);
-
-    curr = _data_head;
-    while(curr) {
-        if(curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
-            mm_data = (mm_data_t*)curr;
-            if(mm_data->tgroup_home_cpu == msg->tgroup_home_cpu &&
-               mm_data->tgroup_home_id  == msg->tgroup_home_id) {
-                
-                // Entry found, perform munmap on this saved mm.
-                do_munmap(mm_data->mm, msg->vaddr_start, msg->vaddr_size);
-
-            }
-        }
-        curr = curr->next;
+    work = kmalloc(sizeof(munmap_request_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_munmap_request  );
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id =  msg->tgroup_home_id;
+        work->requester_pid = msg->requester_pid;
+        work->from_cpu = msg->header.from_cpu;
+        work->vaddr_start = msg->vaddr_start;
+        work->vaddr_size = msg->vaddr_size;
+        queue_work(mapping_wq, (struct work_struct*)work);
     }
-
-    spin_unlock(&_data_head_lock);
-
-
-    // Construct response
-    response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
-    response.header.prio = PCN_KMSG_PRIO_NORMAL;
-    response.tgroup_home_cpu = msg->tgroup_home_cpu;
-    response.tgroup_home_id = msg->tgroup_home_id;
-    response.vaddr_start = msg->vaddr_start;
-    response.vaddr_size = msg->vaddr_size;
-    
-    // Send response
-    pcn_kmsg_send(msg->header.from_cpu,
-             (struct pcn_kmsg_message*)(&response));
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -2231,6 +2602,7 @@ static int handle_mprotect_response(struct pcn_kmsg_message* inc_msg) {
     data = find_mprotect_request_data(
                                    msg->tgroup_home_cpu,
                                    msg->tgroup_home_id,
+                                   msg->requester_pid,
                                    msg->start);
 
     if(data == NULL) {
@@ -2270,6 +2642,7 @@ static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
         INIT_WORK( (struct work_struct*)work, process_mprotect_item  );
         work->tgroup_home_id = tgroup_home_id;
         work->tgroup_home_cpu = tgroup_home_cpu;
+        work->requester_pid = msg->requester_pid;
         work->start = start;
         work->len = len;
         work->prot = prot;
@@ -2289,78 +2662,30 @@ static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
  */
 static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     mapping_response_t* msg = (mapping_response_t*)inc_msg;
-    mapping_request_data_t* data;
-   
+    mapping_response_work_t* work;
     PERF_MEASURE_START(&perf_handle_mapping_response);
 
-    data = find_mapping_request_data(
-                                     msg->tgroup_home_cpu,
-                                     msg->tgroup_home_id,
-                                     msg->address);
-
-
-    PSPRINTK("%s: entered\n",__func__);
-    PSPRINTK("received mapping response\n");
-
-    if(data == NULL) {
-        PSPRINTK("data not found\n");
-        pcn_kmsg_free_msg(inc_msg);
-        PERF_MEASURE_STOP(&perf_handle_mapping_response,
-                "early exit");
-        return -1;
+    work = kmalloc(sizeof(mapping_response_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_mapping_response );
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id  = msg->tgroup_home_id;
+        work->requester_pid = msg->requester_pid;
+        work->from_saved_mm = msg->from_saved_mm;
+        work->address = msg->address;
+        work->present = msg->present;
+        work->vaddr_mapping = msg->vaddr_mapping;
+        work->vaddr_start = msg->vaddr_start;
+        work->vaddr_size = msg->vaddr_size;
+        work->paddr_mapping = msg->paddr_mapping;
+        work->prot = msg->prot;
+        work->vm_flags = msg->vm_flags;
+        memcpy(&work->path,&msg->path,sizeof(work->path));
+        work->pgoff = msg->pgoff;
+        work->from_cpu = msg->header.from_cpu;
+        queue_work(mapping_wq, (struct work_struct*)work);
     }
 
-    if(msg->present) {
-        PSPRINTK("received positive search result from cpu %d\n",
-                msg->header.from_cpu);
-        
-        // Account for this cpu's response
-        data->responses++;
-       
-        // Enforce precedence rules.  Responses from saved mm's
-        // are always ignored when a response from a live thread
-        // can satisfy the mapping request.  The purpose of this
-        // is to ensure that the mapping is not stale, since
-        // mmap() operations will not effect saved mm's.  Saved
-        // mm's are only useful for cases where a thread mmap()ed
-        // some space then died before any other thread was able
-        // to acquire the new mapping.
-        //
-        // A note on a case where multiple cpu's have mappings, but
-        // of different sizes.  It is possible that two cpu's have
-        // partially overlapping mappings.  This is possible because
-        // new mapping's are merged when their regions are contiguous.  
-        // This is not a problem here because if part of a mapping is 
-        // accessed that is not part of an existig mapping, that new 
-        // part will be merged in the resulting mapping request.
-        if(data->present == 1) {
-            // another cpu already responded.
-            if(!data->from_saved_mm && msg->from_saved_mm) {
-                PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
-                goto out;
-            }
-        }
-       
-        data->from_saved_mm = msg->from_saved_mm;
-        data->vaddr_mapping = msg->vaddr_mapping;
-        data->vaddr_start = msg->vaddr_start;
-        data->vaddr_size = msg->vaddr_size;
-        data->paddr_mapping = msg->paddr_mapping;
-        data->prot = msg->prot;
-        data->vm_flags = msg->vm_flags;
-        data->present = 1;
-        strcpy(data->path,msg->path);
-        data->pgoff = msg->pgoff;
-
-    } else {
-        PSPRINTK("received negative search result from cpu %d\n",
-                msg->header.from_cpu);
-      
-        // Account for this cpu's response.
-        data->responses++;
-    }
-
-out:
     pcn_kmsg_free_msg(inc_msg);
     
     PERF_MEASURE_STOP(&perf_handle_mapping_response," ");
@@ -2383,6 +2708,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
         work->tgroup_home_cpu = msg->tgroup_home_cpu;
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->address = msg->address;
+        work->requester_pid = msg->requester_pid;
         work->from_cpu = msg->header.from_cpu;
         queue_work(mapping_wq, (struct work_struct*)work);
     }
@@ -2433,7 +2759,7 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
     pte_data->clone_request_id = msg->clone_request_id;
 
     // Look through data store for matching vma_data_t entries.
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
 
     curr = _data_head;
     while(curr) {
@@ -2443,7 +2769,7 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
                vma->vma_id == pte_data->vma_id &&
                vma->clone_request_id == pte_data->clone_request_id) {
                 // Add to vma data
-                spin_lock(&vma->lock);
+                PS_SPIN_LOCK(&vma->lock);
                 if(vma->pte_list) {
                     pte_data->header.next = (data_header_t*)vma->pte_list;
                     vma->pte_list->header.prev = (data_header_t*)pte_data;
@@ -2452,14 +2778,14 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
                     vma->pte_list = pte_data;
                 }
                 PSPRINTK("PTE added to vma\n");
-                spin_unlock(&vma->lock);
+                PS_SPIN_UNLOCK(&vma->lock);
                 break;
             }
         }
         curr = curr->next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -2532,7 +2858,8 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
     
     do_each_thread(g,task) {
         if(task->next_pid == msg->my_pid &&
-           task->next_cpu == source_cpu) {
+           task->next_cpu == source_cpu &&
+           task->represents_remote) {
 
             PSPRINTK("kmkprocsrv: killing local task pid{%d}\n",task->pid);
 
@@ -2543,26 +2870,14 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
             
             exit_work = kmalloc(sizeof(exit_work_t),GFP_ATOMIC);
             if(exit_work) {
-                // TODO This task is sometimes scheduled after the 
-                // thread group closes.  Do something to synchronize
-                // that.
                 INIT_WORK( (struct work_struct*)exit_work, process_exit_item);
                 exit_work->task = task;
                 exit_work->pid = task->pid;
                 exit_work->is_last_tgroup_member = msg->is_last_tgroup_member;
-                memcpy(&exit_work->regs,&msg->regs,sizeof(struct pt_regs));
-                exit_work->thread_fs = msg->thread_fs;
-                exit_work->thread_gs = msg->thread_gs;
-                exit_work->thread_sp0 = msg->thread_sp0;
-                exit_work->thread_sp = msg->thread_sp;
-                exit_work->thread_usersp = msg->thread_usersp;
-                exit_work->thread_es = msg->thread_es;
-                exit_work->thread_ds = msg->thread_ds;
-                exit_work->thread_fsindex = msg->thread_fsindex;
-                exit_work->thread_gsindex = msg->thread_gsindex;
                 queue_work(exit_wq, (struct work_struct*)exit_work);
             }
 
+          
             goto done; // No need to continue;
         }
     } while_each_thread(g,task);
@@ -2708,7 +3023,7 @@ perf_cc = native_read_tsc();
     /*
      * Pull in vma data
      */
-    spin_lock(&_data_head_lock);
+    PS_SPIN_LOCK(&_data_head_lock);
 
     curr = _data_head;
     while(curr) {
@@ -2723,20 +3038,20 @@ perf_cc = native_read_tsc();
                 remove_data_entry(vma);
 
                 // Place data entry in this clone request's vma list
-                spin_lock(&clone_data->lock);
+                PS_SPIN_LOCK(&clone_data->lock);
                 if(clone_data->vma_list) {
                     clone_data->vma_list->header.prev = (data_header_t*)vma;
                     vma->header.next = (data_header_t*)clone_data->vma_list;
                 } 
                 clone_data->vma_list = vma;
-                spin_unlock(&clone_data->lock);
+                PS_SPIN_UNLOCK(&clone_data->lock);
             }
         }
 
         curr = next;
     }
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_data_head_lock);
 
     add_data_entry(clone_data);
 
@@ -2754,53 +3069,54 @@ perf_ee = native_read_tsc();
     return 0;
 }
 
-// TODO
-static bool __user_addr (unsigned long x ) 
-{
-    return (x < PAGE_OFFSET);   
-}
 
 /**
  * Find the mm_struct for a given distributed thread.  If one does not exist,
  * then return NULL.
  */
-static struct mm_struct* find_thread_mm(int tgroup_home_cpu, int tgroup_home_id, int *used_saved_mm) {
-    struct task_struct *task;
+static struct mm_struct* find_thread_mm(
+        int tgroup_home_cpu, 
+        int tgroup_home_id, 
+        mm_data_t **used_saved_mm,
+        struct task_struct** task_out) {
+
+    struct task_struct *task, *g;
     struct mm_struct * mm = NULL;
     data_header_t* data_curr;
     mm_data_t* mm_data;
 
+    *used_saved_mm = NULL;
+
     // First, look through all active processes.
-    for_each_process(task) {
+    do_each_thread(g,task) {
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
            task->tgroup_home_id  == tgroup_home_id) {
             mm = task->mm;
+            *task_out = task;
             *used_saved_mm = 0;
             goto out;
         }
-    }
+    } while_each_thread(g,task);
 
     // Failing that, look through saved mm's.
-    spin_lock(&_data_head_lock);
-    data_curr = _data_head;
+    PS_SPIN_LOCK(&_saved_mm_head_lock);
+    data_curr = _saved_mm_head;
     while(data_curr) {
 
-        if(data_curr->data_type == PROCESS_SERVER_MM_DATA_TYPE) {
-            mm_data = (mm_data_t*)data_curr;
-        
-            if((mm_data->tgroup_home_cpu == tgroup_home_cpu) &&
-               (mm_data->tgroup_home_id  == tgroup_home_id)) {
-                mm = mm_data->mm;
-                *used_saved_mm = 1;
-                break;
-            }
+        mm_data = (mm_data_t*)data_curr;
+    
+        if((mm_data->tgroup_home_cpu == tgroup_home_cpu) &&
+           (mm_data->tgroup_home_id  == tgroup_home_id)) {
+            mm = mm_data->mm;
+            *used_saved_mm = mm_data;
+            break;
         }
 
         data_curr = data_curr->next;
 
     } // while
 
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
 
 out:
@@ -2839,7 +3155,8 @@ int process_server_import_address_space(unsigned long* ip,
     int vmas_installed = 0;
     int ptes_installed = 0;
     struct mm_struct* thread_mm = NULL;
-    int used_saved_mm = 0;
+    struct task_struct* thread_task = NULL;
+    mm_data_t* used_saved_mm = NULL;
 
     perf_a = native_read_tsc();
     
@@ -2861,14 +3178,28 @@ int process_server_import_address_space(unsigned long* ip,
 
     perf_b = native_read_tsc();    
     
-    // Search for existing thread members to share an mm with
+    // Search for existing thread members to share an mm with.
+    // Immediately set tgroup_home_<foo> under lock to keep 
+    // from allowing multiple tgroups to be created when there 
+    // are multiple tasks being migrated at the same time in
+    // the same thread group.
+    PS_DOWN_WRITE(&_import_sem);
+
     thread_mm = find_thread_mm(clone_data->tgroup_home_cpu,
                                clone_data->tgroup_home_id,
-                               &used_saved_mm); 
+                               &used_saved_mm,
+                               &thread_task);
 
+
+    current->prev_cpu = clone_data->placeholder_cpu;
+    current->prev_pid = clone_data->placeholder_pid;
+    current->tgroup_home_cpu = clone_data->tgroup_home_cpu;
+    current->tgroup_home_id = clone_data->tgroup_home_id;
+    current->tgroup_distributed = 1;
+  
     if(!thread_mm) {
-
-        down_write(&current->mm->mmap_sem);
+        
+        PS_DOWN_WRITE(&current->mm->mmap_sem);
 
         // Gut existing mappings
         current->enable_distributed_munmap = 0;
@@ -2879,10 +3210,11 @@ int process_server_import_address_space(unsigned long* ip,
             vma = current->mm->mmap;
         }
         current->enable_distributed_munmap = 1;
+
         // Clean out cache and tlb
         flush_tlb_mm(current->mm);
         flush_cache_mm(current->mm);
-        up_write(&current->mm->mmap_sem);
+        PS_UP_WRITE(&current->mm->mmap_sem);
         
         // import exe_file
         f = filp_open(clone_data->exe_path,O_RDONLY | O_LARGEFILE, 0);
@@ -2900,12 +3232,12 @@ int process_server_import_address_space(unsigned long* ip,
         while(vma_curr) {
             PSPRINTK("do_mmap() at %lx\n",vma_curr->start);
             if(vma_curr->path[0] != '\0') {
-                mmap_flags = /*MAP_UNINITIALIZED|*/MAP_FIXED|MAP_PRIVATE;
+                mmap_flags = MAP_FIXED|MAP_PRIVATE;
                 f = filp_open(vma_curr->path,
                                 O_RDONLY | O_LARGEFILE,
                                 0);
                 if(f) {
-                    down_write(&current->mm->mmap_sem);
+                    PS_DOWN_WRITE(&current->mm->mmap_sem);
                     vma_curr->mmapping_in_progress = 1;
                     err = do_mmap(f, 
                             vma_curr->start, 
@@ -2915,7 +3247,7 @@ int process_server_import_address_space(unsigned long* ip,
                             vma_curr->pgoff << PAGE_SHIFT);
                     vmas_installed++;
                     vma_curr->mmapping_in_progress = 0;
-                    up_write(&current->mm->mmap_sem);
+                    PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                     if(err != vma_curr->start) {
                         PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
@@ -2924,7 +3256,7 @@ int process_server_import_address_space(unsigned long* ip,
                 }
             } else {
                 mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
-                down_write(&current->mm->mmap_sem);
+                PS_DOWN_WRITE(&current->mm->mmap_sem);
                 err = do_mmap(NULL, 
                     vma_curr->start, 
                     vma_curr->end - vma_curr->start,
@@ -2933,7 +3265,7 @@ int process_server_import_address_space(unsigned long* ip,
                     0);
                 vmas_installed++;
                 //PSPRINTK("mmap error for %lx = %lx\n",vma_curr->start,err);
-                up_write(&current->mm->mmap_sem);
+                PS_UP_WRITE(&current->mm->mmap_sem);
                 if(err != vma_curr->start) {
                     PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
                             vma_curr->start,err);
@@ -2951,35 +3283,151 @@ int process_server_import_address_space(unsigned long* ip,
                     }
                     while(pte_curr) {
                         // MAP it
-                    
-                        err = remap_pfn_range(vma,
-                                pte_curr->vaddr,
-                                pte_curr->paddr >> PAGE_SHIFT,
-                                PAGE_SIZE,
-                                /*pgprot_noncached(*/vma->vm_page_prot/*)*/);
-                        ptes_installed++;
-                        pte_curr = (pte_data_t*)pte_curr->header.next;
-                        if(err) {
-                            PSPRINTK("Fault - remap_pfn_range failed to map %lx to %lx with error %lx\n",
-                                    pte_curr->paddr,pte_curr->vaddr,err);
+                        int domapping = 1;
+                        pte_t* remap_pte = NULL;
+                        pmd_t* remap_pmd = NULL;
+                        pud_t* remap_pud = NULL;
+                        pgd_t* remap_pgd = NULL;
+
+                        PS_DOWN_WRITE(&current->mm->mmap_sem);
+                        //PS_SPIN_LOCK(&_remap_lock);
+                        remap_pgd = pgd_offset(current->mm, pte_curr->vaddr);
+                        if(pgd_present(*remap_pgd)) {
+                            remap_pud = pud_offset(remap_pgd,pte_curr->vaddr); 
+                            if(pud_present(*remap_pud)) {
+                                remap_pmd = pmd_offset(remap_pud,pte_curr->vaddr);
+                                if(pmd_present(*remap_pmd)) {
+                                    remap_pte = pte_offset_map(remap_pmd,pte_curr->vaddr);
+                                    if(remap_pte && pte_none(*remap_pte)) {
+                                        // skip the mapping, it already exists!
+                                        domapping = 0;
+                                    }
+                                }
+                            }
                         }
+
+                        if(domapping) {
+                            err = remap_pfn_range(vma,
+                                                    pte_curr->vaddr,
+                                                    pte_curr->paddr >> PAGE_SHIFT,
+                                                    PAGE_SIZE,
+                                                    vma->vm_page_prot);
+                        }
+                        ptes_installed++;
+                        PS_UP_WRITE(&current->mm->mmap_sem);
+                        //PS_SPIN_UNLOCK(&_remap_lock);
+                        
+                        pte_curr = (pte_data_t*)pte_curr->header.next;
                     }
                 }
             }
             vma_curr = (vma_data_t*)vma_curr->header.next;
         }
     } else {
-        // use_existing_mm
+        struct mm_struct* oldmm;
+        // use_existing_mm.  Flush cache, to ensure
+        // that the current processes cache entries
+        // are never used.  Then, take ownership of
+        // the mm.
+        oldmm = current->mm;
+        if(oldmm == thread_mm) {
+            PS_DOWN_WRITE(&oldmm->mmap_sem);
+        } else {
+            PS_DOWN_WRITE(&oldmm->mmap_sem);
+            PS_DOWN_WRITE(&thread_mm->mmap_sem);
+        }
+
         flush_tlb_mm(current->mm);
         flush_cache_mm(current->mm);
         mm_update_next_owner(current->mm);
         mmput(current->mm);
         current->mm = thread_mm;
         current->active_mm = current->mm;
-        if(!used_saved_mm) {
+        percpu_write(cpu_tlbstate.active_mm, thread_mm);
+
+        if(NULL == used_saved_mm) {
+            // Did not use a saved MM.  Saved MM's have artificially
+            // incremented mm_users fields to keep them from being
+            // destroyed when the last tgroup member exits.  So we can
+            // just use the current value of mm_users.  Since in this case
+            // we are not using a saved mm, we must increment mm_users.
             atomic_inc(&current->mm->mm_users);
+        } else {
+            // Used a saved MM.  Must delete the saved mm entry.
+            // It is safe to do so now, since we have ingested
+            // its mm at this point.
+            PS_SPIN_LOCK(&_saved_mm_head_lock);
+            remove_data_entry_from(used_saved_mm,&_saved_mm_head);
+            PS_SPIN_UNLOCK(&_saved_mm_head_lock);
+            kfree(used_saved_mm);
+        }
+
+        if(oldmm == thread_mm) {
+            PS_UP_WRITE(&oldmm->mmap_sem);
+        } else {
+            PS_UP_WRITE(&oldmm->mmap_sem);
+            PS_UP_WRITE(&thread_mm->mmap_sem);
+        }
+
+        // Transplant thread group information
+        // if there are other thread group members
+        // on this cpu.
+        if(thread_task) {
+
+            write_lock_irq(&tasklist_lock);
+            PS_SPIN_LOCK(&thread_task->sighand->siglock);
+
+            // Copy grouping info
+            current->group_leader = thread_task->group_leader;
+            current->tgid = thread_task->tgid;
+            current->real_parent = thread_task->real_parent;
+            current->parent_exec_id = thread_task->parent_exec_id;
+
+            // Unhash sibling 
+            list_del_init(&current->sibling);
+            INIT_LIST_HEAD(&current->sibling);
+
+             // Remove from tasks list, since this is not group leader.
+             // We know that by virtue of the fact that we found another
+             // thread group member.
+            list_del_rcu(&current->tasks);
+
+            // Signal related stuff
+            current->signal = thread_task->signal;     
+            atomic_inc(&thread_task->signal->live);
+            atomic_inc(&thread_task->signal->sigcnt);
+            thread_task->signal->nr_threads++;
+            current->exit_signal = -1;
+            
+            // Sighand related stuff
+            current->sighand = thread_task->sighand;   
+            atomic_inc(&thread_task->sighand->count);
+
+            // Rehash thread_group
+            list_del_rcu(&current->thread_group);
+            list_add_tail_rcu(&current->thread_group,
+                              &current->group_leader->thread_group);
+
+            // Reduce process count
+             __this_cpu_dec(process_counts);
+
+            PS_SPIN_UNLOCK(&thread_task->sighand->siglock);
+            write_unlock_irq(&tasklist_lock);
+           
+            // copy fs
+            // TODO: This should probably only happen when CLONE_FS is used...
+            current->fs = thread_task->fs;
+            PS_SPIN_LOCK(&current->fs->lock);
+            current->fs->users++;
+            PS_SPIN_UNLOCK(&current->fs->lock);
+
+            // copy files
+            // TODO: This should probably only happen when CLONE_FILES is used...
+            current->files = thread_task->files;
+            atomic_inc(&current->files->count);
         }
     }
+
 
     perf_d = native_read_tsc();
 
@@ -3000,11 +3448,6 @@ int process_server_import_address_space(unsigned long* ip,
     current->thread.ds = clone_data->thread_ds;
     current->thread.usersp = clone_data->thread_usersp;
    
-    current->prev_cpu = clone_data->placeholder_cpu;
-    current->prev_pid = clone_data->placeholder_pid;
-    current->tgroup_home_cpu = clone_data->tgroup_home_cpu;
-    current->tgroup_home_id = clone_data->tgroup_home_id;
-    current->tgroup_distributed = 1;
 
     //mklinux_akshay
     current->origin_pid = clone_data->origin_pid;
@@ -3035,7 +3478,7 @@ __func__,
     		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
 		current->policy, rt_prio (current->prio));
   */  
-current->prio = clone_data->prio;
+    current->prio = clone_data->prio;
     current->static_prio = clone_data->static_prio;
     current->normal_prio = clone_data->normal_prio;
     current->rt_priority = clone_data->rt_priority;
@@ -3116,9 +3559,12 @@ __func__,
     // Save off clone data
     current->clone_data = clone_data;
 
+    PS_UP_WRITE(&_import_sem);
+
     dump_task(current,NULL,0);
 
     PERF_MEASURE_STOP(&perf_process_server_import_address_space, " ");
+
 
     perf_e = native_read_tsc();
     printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
@@ -3142,9 +3588,9 @@ int process_server_do_exit(void) {
     exiting_process_t msg;
     int tx_ret = -1;
     int is_last_thread_in_local_group = 1;
+    int is_last_thread_in_group;
     struct task_struct *task, *g;
     mm_data_t* mm_data = NULL;
-    int count;
     int i;
     thread_group_exited_notification_t exit_notification;
     clone_data_t* clone_data;
@@ -3162,33 +3608,61 @@ int process_server_do_exit(void) {
 */
     PERF_MEASURE_START(&perf_process_server_do_exit);
 
+    PSPRINTK("%s - pid{%d}, prev_cpu{%d}, prev_pid{%d}\n",__func__,
+            current->pid,
+            current->prev_cpu,
+            current->prev_pid);
+    
+    // Determine if this is the last _active_ thread in the 
+    // local group.  We have to count shadow tasks because
+    // otherwise we risk missing tasks when they are exiting
+    // and migrating back.
+    do_each_thread(g,task) {
+        if(task->tgid == current->tgid &&           // <--- narrow search to current thread group only 
+                task->pid != current->pid &&        // <--- don't include current in the search
+                task->exit_state != EXIT_ZOMBIE &&  // <-,
+                task->exit_state != EXIT_DEAD &&    // <-|- check to see if it's in a runnable state
+                !(task->flags & PF_EXITING)) {      // <-'
+            is_last_thread_in_local_group = 0;
+            goto finished_membership_search;
+        }
+    } while_each_thread(g,task);
+finished_membership_search:
+
     // Count the number of threads in this distributed thread group
     // this will be useful for determining what to do with the mm.
-    count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id,0,1);
+    if(!is_last_thread_in_local_group) {
+        // Not the last local thread, which means we're not the
+        // last in the distributed thread group either.
+        is_last_thread_in_group = 0;
+    } else {
+        // Last local thread, which means we MIGHT be the last
+        // in the distributed thread group, but we have to check.
+        int count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id,1,1);
+        if (count == 0) {
+            // Distributed thread count yielded no thread group members
+            // so the current <exiting> task is the last group member.
+            is_last_thread_in_group = 1;
+        } else {
+            // There are more thread group members.
+            is_last_thread_in_group = 0;
+        }
+    }
     
     // Find the clone data, we are going to destroy this very soon.
     clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
+<<<<<<< HEAD
     PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d} count{%d} cpu{%d}\n",current->pid,count,_cpu);
 
+=======
+>>>>>>> origin/davek
     // Build the message that is going to migrate this task back 
     // from whence it came.
     msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
     msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = current->pid;
-    memcpy(&msg.regs,task_pt_regs(current),sizeof(struct pt_regs));
-    //msg.regs.ip = (unsigned long)msg.regs.ip -2;  This causes process
-    //                                              to never exit.
-    msg.thread_fs = current->thread.fs;
-    msg.thread_gs = current->thread.gs;
-    msg.thread_sp0 = current->thread.sp0;
-    msg.thread_sp = current->thread.sp;
-    msg.thread_usersp = current->thread.usersp;
-    msg.thread_es = current->thread.es;
-    msg.thread_ds = current->thread.ds;
-    msg.thread_fsindex = current->thread.fsindex;
-    msg.thread_gsindex = current->thread.gsindex;
-    msg.is_last_tgroup_member = (count == 1? 1 : 0);
+    msg.is_last_tgroup_member = is_last_thread_in_group;
 
     if(current->executing_for_remote) {
 
@@ -3205,21 +3679,7 @@ int process_server_do_exit(void) {
                     sizeof(exiting_process_t) - sizeof(struct pcn_kmsg_hdr));
     } 
 
-    // Save off the mm, and use it to resolve mappings for this thread
-    // But first, determine if this is the last _active_ thread in the 
-    // _local_ group.
-    do_each_thread(g,task) {
-        if(task->tgid == current->tgid &&           // <--- narrow search to current thread group only 
-                task->pid != current->pid &&        // <--- don't include current in the search
-                !task->represents_remote &&         // <--- check to see if it's active here
-                task->exit_state != EXIT_ZOMBIE &&  // <-,
-                task->exit_state != EXIT_DEAD &&    // <-|- check to see if it's in a runnable state
-                !(task->flags & PF_EXITING)) {      // <-'
-            is_last_thread_in_local_group = 0;
-            goto finished_membership_search;
-        }
-    } while_each_thread(g,task);
-finished_membership_search:
+
 
     // If this was the last thread in the local work, we take one of two 
     // courses of action, either we:
@@ -3234,7 +3694,7 @@ finished_membership_search:
     if(is_last_thread_in_local_group) {
         // Check to see if this is the last member of the distributed
         // thread group.
-        if(count == 1) {
+        if(is_last_thread_in_group) {
 
             PSPRINTK("%s: This is the last thread member!\n",__func__);
 
@@ -3264,7 +3724,9 @@ finished_membership_search:
             mm_data->tgroup_home_id  = current->tgroup_home_id;
 
             // Add the data entry
-            add_data_entry(mm_data);
+            add_data_entry_to(mm_data,
+                              &_saved_mm_head_lock,
+                              &_saved_mm_head);
 
         }
 
@@ -3276,9 +3738,9 @@ finished_membership_search:
     // with it again, so remove its clone_data from the linked list, and
     // nuke it.
     if(clone_data) {
-        spin_lock(&_data_head_lock);
+        PS_SPIN_LOCK(&_data_head_lock);
         remove_data_entry(clone_data);
-        spin_unlock(&_data_head_lock);
+        PS_SPIN_UNLOCK(&_data_head_lock);
         destroy_clone_data(clone_data);
     }
 
@@ -3355,8 +3817,11 @@ int process_server_do_munmap(struct mm_struct* mm,
     data->expected_responses = 0;
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
+    data->requester_pid = current->pid;
 
-    add_data_entry(data);
+    add_data_entry_to(data,
+                      &_munmap_data_head_lock,
+                      &_munmap_data_head);
 
     request.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_REQUEST;
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -3364,6 +3829,7 @@ int process_server_do_munmap(struct mm_struct* mm,
     request.vaddr_size  = len;
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
+    request.requester_pid = current->pid;
     for(i = 0; i < NR_CPUS; i++) {
 
         // Skip the current cpu
@@ -3385,9 +3851,10 @@ int process_server_do_munmap(struct mm_struct* mm,
 
     // OK, all responses are in, we can proceed.
 
-    spin_lock(&_data_head_lock);
-    remove_data_entry(data);
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_LOCK(&_munmap_data_head_lock);
+    remove_data_entry_from(data,
+                           &_munmap_data_head);
+    PS_SPIN_UNLOCK(&_munmap_data_head_lock);
 
     kfree(data);
 
@@ -3415,7 +3882,7 @@ void process_server_do_mprotect(struct task_struct* task,
         goto exit;
     }
 
-    printk("%s entered\n",__func__);
+    PSPRINTK("%s entered\n",__func__);
 
     PERF_MEASURE_START(&perf_process_server_do_mprotect);
 
@@ -3427,9 +3894,12 @@ void process_server_do_mprotect(struct task_struct* task,
     data->expected_responses = 0;
     data->tgroup_home_cpu = task->tgroup_home_cpu;
     data->tgroup_home_id = task->tgroup_home_id;
+    data->requester_pid = task->pid;
     data->start = start;
 
-    add_data_entry(data);
+    add_data_entry_to(data,
+                      &_mprotect_data_head_lock,
+                      &_mprotect_data_head);
 
     request.header.type = PCN_KMSG_TYPE_PROC_SRV_MPROTECT_REQUEST;
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -3438,8 +3908,9 @@ void process_server_do_mprotect(struct task_struct* task,
     request.prot = prot;
     request.tgroup_home_cpu = task->tgroup_home_cpu;
     request.tgroup_home_id  = task->tgroup_home_id;
+    request.requester_pid = task->pid;
 
-    printk("Sending mprotect request to all other kernels... ");
+    PSPRINTK("Sending mprotect request to all other kernels... ");
 
     for(i = 0; i < NR_CPUS; i++) {
 
@@ -3455,20 +3926,21 @@ void process_server_do_mprotect(struct task_struct* task,
         }
     }
 
-    printk("done\nWaiting for responses... ");
+    PSPRINTK("done\nWaiting for responses... ");
 
     // Wait for all cpus to respond.
     while(data->expected_responses != data->responses) {
         schedule();
     }
 
-    printk("done\n");
+    PSPRINTK("done\n");
 
     // OK, all responses are in, we can proceed.
 
-    spin_lock(&_data_head_lock);
-    remove_data_entry(data);
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_LOCK(&_mprotect_data_head_lock);
+    remove_data_entry_from(data,
+                           &_mprotect_data_head);
+    PS_SPIN_UNLOCK(&_mprotect_data_head_lock);
 
     kfree(data);
 
@@ -3504,6 +3976,13 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     char path[512];
     char* ppath;
 
+    // for perf
+    int pte_provided = 0;
+    int is_anonymous = 0;
+    int vma_not_found = 1;
+    int adjusted_permissions = 0;
+    int is_new_vma = 0;
+
     // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
         goto not_handled_no_perf;
@@ -3511,33 +3990,39 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
     // Check to see if this is a user mode fault.  We should never
     // try to handle a kernel mode fault.
-  //  if(!(error_code & 4/*PF_USER*/)) {
-  //      PSPRINTK("%s: ERROR, kernel-mode fault\n",__func__);
-  //      goto not_handled_no_perf;
-  //  }
+    //if(!(error_code & 4/*PF_USER*/)) {
+    //    PSPRINTK("%s: ERROR, kernel-mode fault\n",__func__);
+    //    goto not_handled_no_perf;
+    //}
+
 
     PERF_MEASURE_START(&perf_process_server_try_handle_mm_fault);
 
     PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
             address,
-            current->tgroup_home_cpu,
-            current->tgroup_home_id,
-            current->pid,
-            current->tgid,
+            tgroup_home_cpu,
+            tgroup_home_id,
+            pid,
+            tgid,
             error_code);
 
     if(is_vaddr_mapped(mm,address)) {
         PSPRINTK("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
                 address,current->tgroup_home_cpu,current->tgroup_home_id);
-        
+
+        dump_regs(task_pt_regs(current)); 
+
         // should this thing be writable?  if so, set it and exit
         // This is a security hole, and is VERY bad.
         // It will also probably cause problems for genuine COW mappings..
-        if(vma->vm_flags & VM_WRITE) {
+        if(vma->vm_flags & VM_WRITE && 
+                !is_page_writable(mm, vma, address & PAGE_MASK)) {
+            PSPRINTK("Touching up write setting\n");
             mk_page_writable(mm,vma,address & PAGE_MASK);
-            PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Adjusted permissions on page");
-            return 1;
-            
+            adjusted_permissions = 1;
+            ret = 1;
+        } else {
+            //dump_mm(mm);
         }
 
         goto not_handled;
@@ -3577,11 +4062,15 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     data->present = 0;
     data->responses = 0;
     data->expected_responses = 0;
+    data->paddr_mapping = 0;
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
+    data->requester_pid = current->pid;
 
     // Make data entry visible to handler.
-    add_data_entry(data);
+    add_data_entry_to(data,
+                      &_mapping_request_data_head_lock,
+                      &_mapping_request_data_head);
 
     // Send out requests, tracking the number of successful
     // send operations.  That number is the number of requests
@@ -3591,6 +4080,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     request.address = address;
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
+    request.requester_pid = current->pid;
     for(i = 0; i < NR_CPUS; i++) {
 
         // Skip the current cpu
@@ -3623,6 +4113,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 data->vm_flags,
                 data->path,
                 data->pgoff);
+        vma_not_found = 0;
 
         // Figure out how to protect this region.
         prot |= (data->vm_flags & VM_READ)?  PROT_READ  : 0;
@@ -3633,8 +4124,12 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
             PSPRINTK("vma not present\n");
+            is_new_vma = 1;
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
+                is_anonymous = 1;
+                PS_DOWN_WRITE(&current->mm->mmap_sem);
+                current->enable_distributed_munmap = 0;
                 err = do_mmap(NULL,
                         data->vaddr_start,
                         data->vaddr_size,
@@ -3643,8 +4138,11 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         MAP_ANONYMOUS|
                         ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                         0);
+                current->enable_distributed_munmap = 1;
+                PS_UP_WRITE(&current->mm->mmap_sem);
             } else {
                 PSPRINTK("opening file to map\n");
+                is_anonymous = 0;
 
                 // Temporary, check to see if the path is /dev/null (deleted), it should just
                 // be /dev/null in that case.  TODO: Add logic to detect and remove the 
@@ -3662,6 +4160,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
+                    PS_DOWN_WRITE(&current->mm->mmap_sem);
+                    current->enable_distributed_munmap = 0;
                     err = do_mmap(f,
                             data->vaddr_start,
                             data->vaddr_size,
@@ -3671,6 +4171,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             ((data->vm_flags & VM_EXECUTABLE)?MAP_EXECUTABLE:0) |
                             ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                             data->pgoff << PAGE_SHIFT);
+                    current->enable_distributed_munmap = 1;
+                    PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                 }
             }
@@ -3693,6 +4195,12 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
         // We should have a vma now, so map physical memory into it.
         if(vma && data->paddr_mapping) { 
+            int domapping = 1;
+            pte_t* remap_pte = NULL;
+            pmd_t* remap_pmd = NULL;
+            pud_t* remap_pud = NULL;
+            pgd_t* remap_pgd = NULL;
+            pte_provided = 1;
 
             // PCD - Page Cache Disable
             // PWT - Page Write-Through (as opposed to Page Write-Back)
@@ -3703,19 +4211,38 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     vma->vm_flags, 
                     vma->vm_page_prot);
 
-            err = remap_pfn_range(vma,
-                   data->vaddr_mapping,
-                   data->paddr_mapping >> PAGE_SHIFT,
-                   PAGE_SIZE,
-                   /*pgprot_noncached(*/vm_get_page_prot(vma->vm_flags)/*)*/);
-
-            // If this VMA specifies VM_WRITE, make the mapping writable.
-            // this function does not the flag check.
-            if(vma->vm_flags & VM_WRITE) {
-                //mk_page_writable(mm, vma, data->vaddr_mapping);
+            PS_DOWN_WRITE(&current->mm->mmap_sem);
+            remap_pgd = pgd_offset(current->mm, address);
+            if(pgd_present(*remap_pgd)) {
+                remap_pud = pud_offset(remap_pgd,address); 
+                if(pud_present(*remap_pud)) {
+                    remap_pmd = pmd_offset(remap_pud,address);
+                    if(pmd_present(*remap_pmd)) {
+                        remap_pte = pte_offset_map(remap_pmd,address);
+                        if(remap_pte && !pte_none(*remap_pte)) {
+                            // skip the mapping, it already exists!
+                            domapping = 0;
+                        }
+                    }
+                }
             }
 
-            //dump_mm(mm);
+            if(domapping) {
+                err = remap_pfn_range(vma,
+                    data->vaddr_mapping,
+                    data->paddr_mapping >> PAGE_SHIFT,
+                    PAGE_SIZE,
+                    vm_get_page_prot(vma->vm_flags));
+            }
+            PS_UP_WRITE(&current->mm->mmap_sem);
+
+            // If this VMA specifies VM_WRITE, make the mapping writable.
+            // this function does not do the flag check.  This is safe,
+            // since COW mappings should be broken by the time this code
+            // is invoked.
+            if(vma->vm_flags & VM_WRITE) {
+                mk_page_writable(mm, vma, data->vaddr_mapping);
+            }
 
             // Check remap_pfn_range success
             if(err) {
@@ -3724,7 +4251,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 PSPRINTK("remap_pfn_range succeeded\n");
                 ret = 1;
             }
-
         } 
 
         if(vma) {
@@ -3737,21 +4263,48 @@ exit_remove_data:
     PSPRINTK("removing data entry\n");
 
     // Clean up data.
-    spin_lock(&_data_head_lock);
-    remove_data_entry(data);
-    spin_unlock(&_data_head_lock);
+    PS_SPIN_LOCK(&_mapping_request_data_head_lock);
+    remove_data_entry_from(data,
+                      &_mapping_request_data_head);
+    PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
 
     kfree(data);
 
     PSPRINTK("exiting fault handler\n");
 
-    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Exit success");
-
-    return ret;
-    
 not_handled:
 
-    PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"test");
+    if (adjusted_permissions) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Adjusted Permissions");
+    } else if (is_new_vma && is_anonymous && pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "New Anonymous VMA + PTE");
+    } else if (is_new_vma && is_anonymous && !pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "New Anonymous VMA + No PTE");
+    } else if (is_new_vma && !is_anonymous && pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "New File Backed VMA + PTE");
+    } else if (is_new_vma && !is_anonymous && !pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "New File Backed VMA + No PTE");
+    } else if (!is_new_vma && is_anonymous && pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Existing Anonymous VMA + PTE");
+    } else if (!is_new_vma && is_anonymous && !pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Existing Anonymous VMA + No PTE");
+    } else if (!is_new_vma && !is_anonymous && pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Existing File Backed VMA + PTE");
+    } else if (!is_new_vma && !is_anonymous && !pte_provided) {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
+                "Existing File Backed VMA + No PTE");
+    } else {
+        PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"test");
+    }
+
+    return ret;
 
 not_handled_no_perf:
 
@@ -3943,11 +4496,11 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     } while_each_thread(g,tgroup_iterator);
 
     // Pick an id for this remote process request
-    spin_lock(&_clone_request_id_lock);
+    PS_SPIN_LOCK(&_clone_request_id_lock);
     lclone_request_id = _clone_request_id++;
-    spin_unlock(&_clone_request_id_lock);
+    PS_SPIN_UNLOCK(&_clone_request_id_lock);
 
-    down_read(&task->mm->mmap_sem);
+    PS_DOWN_READ(&task->mm->mmap_sem);
     
     // VM Entries
     curr = task->mm->mmap;
@@ -3957,11 +4510,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 
     while(curr) {
         unsigned long start_stack = task->mm->start_stack;
-//        unsigned long start_brk = task->mm->start_brk;
 
-        // Transfer the stack and heap only
-        if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start)/*||
-             (start_brk   <= curr->vm_end && start_brk   >= curr->vm_start)*/)) {
+        // Transfer the stack only
+        if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start))) {
             curr = curr->vm_next;
             continue;
         }
@@ -3980,9 +4531,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         //
         // Transfer the vma
         //
-        spin_lock(&_vma_id_lock);
+        PS_SPIN_LOCK(&_vma_id_lock);
         vma_xfer->vma_id = _vma_id++;
-        spin_unlock(&_vma_id_lock);
+        PS_SPIN_UNLOCK(&_vma_id_lock);
         vma_xfer->start = curr->vm_start;
         vma_xfer->end = curr->vm_end;
         vma_xfer->prot = curr->vm_page_prot;
@@ -4011,7 +4562,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         curr = curr->vm_next;
     }
 
-    up_read(&task->mm->mmap_sem);
+    PS_UP_READ(&task->mm->mmap_sem);
 
     // Build request
     request->header.type = PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST;
@@ -4143,6 +4694,11 @@ static int __init process_server_init(void) {
      * Cache some local information.
      */
     _cpu = smp_processor_id();
+
+    /*
+     * Init global semaphores
+     */
+    init_rwsem(&_import_sem);
 
     /*
      * Create work queues so that we can do bottom side

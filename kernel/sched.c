@@ -5588,24 +5588,29 @@ if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
     memset(buf_in, 0, 64); memset(buf_present, 0, 64);
     cpumask_scnprintf(buf_in, 63, in_mask);
     cpumask_scnprintf(buf_present, 63, cpu_present_mask);
-    printk("%s: in_mask %s cpu_present_mask %s\n",
-	__func__, buf_in, buf_present);
+    //printk("%s: in_mask %s cpu_present_mask %s\n",
+	//        __func__, buf_in, buf_present);
 
     for(i = 0; i < NR_CPUS; i++) {
         if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
             // do the migration
-	    get_task_struct(p);
-	    rcu_read_unlock();
+            get_task_struct(p);
+            rcu_read_unlock();
             process_server_do_migration(p,i);
-	    put_task_struct(p);
-	    put_online_cpus();
+            put_task_struct(p);
+            put_online_cpus();
 
-	    //while (1) {
-	      schedule(); // this will save us from death
-	    //}
-	    
+            schedule(); // this will save us from death
+
+            // OK, right now, the only reason we would ever get here
+            // is because the migrated task has exited, and control
+            // has returned to this core.  Exit!
+            do_exit(0);
+	   
+            // If we reach here, then I no longer understand
+            // this world.
             return task_pt_regs(current)->orig_ax;
-	    return 0;
+            return 0;
         }
     }
 }
