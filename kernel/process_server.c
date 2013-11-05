@@ -101,6 +101,10 @@
 #define PERF_MEASURE_STOP(x,y)  perf_measure_stop(x,y)
 
 pcn_perf_context_t perf_process_mapping_request;
+pcn_perf_context_t perf_process_mapping_request_search_active_mm;
+pcn_perf_context_t perf_process_mapping_request_search_saved_mm;
+pcn_perf_context_t perf_process_mapping_request_do_lookup;
+pcn_perf_context_t perf_process_mapping_request_transmit;
 pcn_perf_context_t perf_process_mapping_response;
 pcn_perf_context_t perf_process_tgroup_closed_item;
 pcn_perf_context_t perf_process_exec_item;
@@ -135,7 +139,15 @@ pcn_perf_context_t perf_handle_mprotect_request;
  */
 static void perf_init(void) {
    perf_init_context(&perf_process_mapping_request,
-           "process_mapping_request"); 
+           "process_mapping_request");
+   perf_init_context(&perf_process_mapping_request_search_active_mm,
+           "process_mapping_request_search_active_mm");
+   perf_init_context(&perf_process_mapping_request_search_saved_mm,
+           "process_mapping_request_search_saved_mm");
+   perf_init_context(&perf_process_mapping_request_do_lookup,
+           "process_mapping_request_do_lookup");
+   perf_init_context(&perf_process_mapping_request_transmit,
+           "process_mapping_request_transmit");
    perf_init_context(&perf_process_mapping_response,
            "process_mapping_response");
    perf_init_context(&perf_process_tgroup_closed_item,
@@ -1838,6 +1850,7 @@ void process_mapping_request(struct work_struct* work) {
             w->tgroup_home_id);
 
     // First, search through existing processes
+    PERF_MEASURE_START(&perf_process_mapping_request_search_active_mm);
     do_each_thread(g,task) {
         if((task->tgroup_home_cpu == w->tgroup_home_cpu) &&
            (task->tgroup_home_id  == w->tgroup_home_id )) {
@@ -1845,9 +1858,12 @@ void process_mapping_request(struct work_struct* work) {
             mm = task->mm;
         }
     } while_each_thread(g,task);
+    PERF_MEASURE_STOP(&perf_process_mapping_request_search_active_mm,
+                      " ");
 
     // Failing the process search, look through saved mm's.
     if(!mm) {
+        PERF_MEASURE_START(&perf_process_mapping_request_search_saved_mm);
         PS_SPIN_LOCK(&_saved_mm_head_lock);
         data_curr = _saved_mm_head;
         while(data_curr) {
@@ -1867,11 +1883,16 @@ void process_mapping_request(struct work_struct* work) {
         } // while
 
         PS_SPIN_UNLOCK(&_saved_mm_head_lock);
+        PERF_MEASURE_STOP(&perf_process_mapping_request_search_saved_mm,
+                          " ");
     }
 
 
     // OK, if mm was found, look up the mapping.
     if(mm) {
+
+        PERF_MEASURE_START(&perf_process_mapping_request_do_lookup);
+
 retry:
         try_count++;
         vma = find_vma(mm, address & PAGE_MASK);
@@ -1928,6 +1949,9 @@ retry:
             PSPRINTK("mapping prot = %lx, vm_flags = %lx\n",
                     response.prot,response.vm_flags);
         }
+        
+        PERF_MEASURE_STOP(&perf_process_mapping_request_do_lookup,
+                          " ");
     }
 
     // Not found, respond accordingly
@@ -1965,13 +1989,15 @@ retry:
                  response.pgoff = vma->vm_pgoff;
              }
         }
-       
     }
 
     // Send response
+    PERF_MEASURE_START(&perf_process_mapping_request_transmit);
     pcn_kmsg_send_long(w->from_cpu,
              (struct pcn_kmsg_long_message*)(&response),
              sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
+    PERF_MEASURE_STOP(&perf_process_mapping_request_transmit,
+                      " ");
 
     kfree(work);
 

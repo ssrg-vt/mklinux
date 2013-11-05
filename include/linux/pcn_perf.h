@@ -9,6 +9,7 @@
 #define PCN_PERF_H_
 
 #include <linux/list.h>
+#include <linux/spinlock.h>
 
 typedef struct _pcn_perf_entry pcn_perf_entry_t;
 struct _pcn_perf_entry {
@@ -27,6 +28,7 @@ struct _pcn_perf_context {
     int context_id;
     int home_cpu;
     int is_active;
+    spinlock_t lock;
     pcn_perf_entry_t* entry_list;
     pcn_perf_context_t* next;
     pcn_perf_context_t* prev;
