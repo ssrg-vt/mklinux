@@ -720,6 +720,10 @@ static void print_bad_pte(struct vm_area_struct *vma, unsigned long addr,
 	printk(KERN_ALERT
 		"addr:%p vm_flags:%08lx anon_vma:%p mapping:%p index:%lx\n",
 		(void *)addr, vma->vm_flags, vma->anon_vma, mapping, index);
+	if(vma->vm_flags & VM_PFNMAP)
+	{
+		printk(KERN_ALERT " vma doesn't map to the phys addr\n");
+	}
 	/*
 	 * Choose text because data symbols depend on CONFIG_KALLSYMS_ALL=y
 	 */

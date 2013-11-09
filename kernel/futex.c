@@ -788,8 +788,11 @@ static void __unqueue_futex(struct futex_q *q)
 {
 	struct futex_hash_bucket *hb;
 
-	if (WARN_ON_SMP(!q->lock_ptr || !spin_is_locked(q->lock_ptr))
-	    || WARN_ON(plist_node_empty(&q->list)))
+	if (WARN_ON_SMP(!q->lock_ptr))
+		return;
+	if(!spin_is_locked(q->lock_ptr))
+		return;
+	if(WARN_ON(plist_node_empty(&q->list)))
 		return;
 
 	hb = container_of(q->lock_ptr, struct futex_hash_bucket, lock);
@@ -943,7 +946,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 	struct plist_head *head;
 	union futex_key key = FUTEX_KEY_INIT;
 	int ret;
-
+	printk(KERN_ALERT " futex_wake:entry uaddr {%lx}\n",uaddr);
 	if (!bitset)
 		return -EINVAL;
 
@@ -1010,6 +1013,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 	put_futex_key(&key);
 	}
 out:
+	printk(KERN_ALERT "futex_wake: exit\n");
 	return ret;
 }
 
@@ -1525,6 +1529,7 @@ static int unqueue_me(struct futex_q *q)
 {
 	spinlock_t *lock_ptr;
 	int ret = 0;
+	printk(KERN_ALERT "unqueue_me task{%s} pid{%d} ",q->task->comm,q->task->pid);
 
 	/* In the common case we don't take the spinlock, which is nice. */
 retry:
@@ -1795,7 +1800,7 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 	}
 	int sig;
 	struct task_struct *t=current;
-	//printk("B-+--Futex: blocked signals\n");
+	printk("B-+--Futex: blocked task {%d} comm {%s}\n",q->task->pid,q->task->comm);
 	__set_current_state(TASK_RUNNING);
 }
 
@@ -1846,9 +1851,10 @@ retry:
 	address -= q->key.both.offset;
 	struct vm_area_struct *vma;
 	vma = find_extend_vma( current->mm, address);
-	if(vma->vm_flags & VM_PFNMAP)
+	if((vma->vm_flags & VM_PFNMAP))
 	{
 			ret= get_set_remote_key(uaddr, val, flags & FLAGS_SHARED, &q->key, VERIFY_READ);
+			printk(KERN_ALERT " pid {%d} uaddr{%lx} ret{%d} \n",current->pid,uaddr,ret);
 	}
 	if (unlikely(ret != 0))
 		return ret;
@@ -1895,7 +1901,7 @@ static int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 
 	struct task_struct *t=current;
 	int rep_rem = t->tgroup_distributed;
-	//printk("1  before task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
+	printk(KERN_ALERT "futex_wait:entry uaddr{%lx} \n",uaddr);
 	if (!bitset)
 		return -EINVAL;
 	q.bitset = bitset;
@@ -1988,6 +1994,7 @@ out:
 		hrtimer_cancel(&to->timer);
 		destroy_hrtimer_on_stack(&to->timer);
 	}
+	printk(KERN_DEBUG " futex_wait:exit\n");
 	return ret;
 }
 
@@ -2679,6 +2686,7 @@ void exit_robust_list(struct task_struct *curr)
 long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
 		u32 __user *uaddr2, u32 val2, u32 val3)
 {
+//	printk(KERN_ALERT "uaddr {%d} \n",uaddr);
 	int ret = -ENOSYS, cmd = op & FUTEX_CMD_MASK;
 	unsigned int flags = 0;
 

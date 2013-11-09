@@ -52,7 +52,7 @@
 #define PSPRINTK(...) ;
 #endif
 
-#define PROCESS_SERVER_INSTRUMENT_LOCK 1
+#define PROCESS_SERVER_INSTRUMENT_LOCK 0
 #if PROCESS_SERVER_VERBOSE && PROCESS_SERVER_INSTRUMENT_LOCK
 #define PS_SPIN_LOCK(x) PSPRINTK("Acquiring spin lock in %s at line %d\n",__func__,__LINE__); \
                        spin_lock(x); \
@@ -1606,11 +1606,11 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
 
     PSPRINTK("%s: waiting on %d responses\n",__func__,data->expected_responses);
 
-    wait_event_interruptible(countq, data->expected_responses != data->responses);
+   // wait_event_interruptible(countq, data->expected_responses != data->responses);
     // Wait for all cpus to respond.
-  /*  while(data->expected_responses != data->responses) {
+   while(data->expected_responses != data->responses) {
         schedule();
-    }*/
+    }
 
     // OK, all responses are in, we can proceed.
     ret = data->count;
@@ -2463,7 +2463,7 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
     // Register this response.
     data->responses++;
     data->count += msg->count;
-    wake_up_interruptible(&countq);
+ //   wake_up_interruptible(&countq);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -3652,11 +3652,9 @@ finished_membership_search:
     // Find the clone data, we are going to destroy this very soon.
     clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
-<<<<<<< HEAD
-    PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d} count{%d} cpu{%d}\n",current->pid,count,_cpu);
+   // PSPRINTK("kmksrv: process_server_task_exit_notification - pid{%d} count{%d} cpu{%d}\n",current->pid,count,_cpu);
 
-=======
->>>>>>> origin/davek
+
     // Build the message that is going to migrate this task back 
     // from whence it came.
     msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
@@ -3998,14 +3996,14 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
     PERF_MEASURE_START(&perf_process_server_try_handle_mm_fault);
 
-    PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
+   /* PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
             address,
             tgroup_home_cpu,
             tgroup_home_id,
             pid,
             tgid,
             error_code);
-
+*/
     if(is_vaddr_mapped(mm,address)) {
         PSPRINTK("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
                 address,current->tgroup_home_cpu,current->tgroup_home_id);

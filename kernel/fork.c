@@ -700,8 +700,14 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 	 * trouble otherwise.  Userland only wants this done for a sys_exit.
 	 */
 	if (tsk->clear_child_tid) {
+		if(mm==NULL)
+		{
+			printk(KERN_ALERT " task comm{%s} pid{%d} \n",tsk->comm,tsk->pid);
+		}
+		else{
 		if (!(tsk->flags & PF_SIGNALED) &&
-		    atomic_read(&mm->mm_users) > 1) {
+		    atomic_read(&mm->mm_users) > 1)
+		    {
 			/*
 			 * We don't check the error code - if userspace has
 			 * not set up a proper pointer then tough luck.
@@ -709,6 +715,7 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 			put_user(0, tsk->clear_child_tid);
 			sys_futex(tsk->clear_child_tid, FUTEX_WAKE,
 					1, NULL, NULL, 0);
+		}
 		}
 		tsk->clear_child_tid = NULL;
 	}
