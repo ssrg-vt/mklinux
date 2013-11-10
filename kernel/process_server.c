@@ -1850,7 +1850,7 @@ void process_mapping_request(struct work_struct* work) {
             w->tgroup_home_id);
 
     // First, search through existing processes
-    PERF_MEASURE_START(&perf_process_mapping_request_search_active_mm);
+    //PERF_MEASURE_START(&perf_process_mapping_request_search_active_mm);
     do_each_thread(g,task) {
         if((task->tgroup_home_cpu == w->tgroup_home_cpu) &&
            (task->tgroup_home_id  == w->tgroup_home_id )) {
@@ -1858,12 +1858,12 @@ void process_mapping_request(struct work_struct* work) {
             mm = task->mm;
         }
     } while_each_thread(g,task);
-    PERF_MEASURE_STOP(&perf_process_mapping_request_search_active_mm,
-                      " ");
+    //PERF_MEASURE_STOP(&perf_process_mapping_request_search_active_mm,
+    //                  " ");
 
     // Failing the process search, look through saved mm's.
     if(!mm) {
-        PERF_MEASURE_START(&perf_process_mapping_request_search_saved_mm);
+        //PERF_MEASURE_START(&perf_process_mapping_request_search_saved_mm);
         PS_SPIN_LOCK(&_saved_mm_head_lock);
         data_curr = _saved_mm_head;
         while(data_curr) {
@@ -1883,15 +1883,15 @@ void process_mapping_request(struct work_struct* work) {
         } // while
 
         PS_SPIN_UNLOCK(&_saved_mm_head_lock);
-        PERF_MEASURE_STOP(&perf_process_mapping_request_search_saved_mm,
-                          " ");
+        //PERF_MEASURE_STOP(&perf_process_mapping_request_search_saved_mm,
+        //                  " ");
     }
 
 
     // OK, if mm was found, look up the mapping.
     if(mm) {
 
-        PERF_MEASURE_START(&perf_process_mapping_request_do_lookup);
+        //PERF_MEASURE_START(&perf_process_mapping_request_do_lookup);
 
 retry:
         try_count++;
@@ -1950,8 +1950,8 @@ retry:
                     response.prot,response.vm_flags);
         }
         
-        PERF_MEASURE_STOP(&perf_process_mapping_request_do_lookup,
-                          " ");
+        //PERF_MEASURE_STOP(&perf_process_mapping_request_do_lookup,
+        //                  " ");
     }
 
     // Not found, respond accordingly
@@ -1992,12 +1992,12 @@ retry:
     }
 
     // Send response
-    PERF_MEASURE_START(&perf_process_mapping_request_transmit);
+    //PERF_MEASURE_START(&perf_process_mapping_request_transmit);
     pcn_kmsg_send_long(w->from_cpu,
              (struct pcn_kmsg_long_message*)(&response),
              sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
-    PERF_MEASURE_STOP(&perf_process_mapping_request_transmit,
-                      " ");
+    //PERF_MEASURE_STOP(&perf_process_mapping_request_transmit,
+    //                  " ");
 
     kfree(work);
 
