@@ -506,9 +506,9 @@ struct _mapping_response {
     int tgroup_home_cpu;        
     int tgroup_home_id; 
     int requester_pid;
+    unsigned long present;      
     int from_saved_mm;
     unsigned long address;      
-    unsigned long present;      
     unsigned long vaddr_mapping;
     unsigned long vaddr_start;
     unsigned long vaddr_size;
@@ -519,6 +519,25 @@ struct _mapping_response {
     unsigned long pgoff;
 };
 typedef struct _mapping_response mapping_response_t;
+
+/**
+ * This is a hack to eliminate the overhead of sending
+ * an entire mapping_response_t when there is no mapping.
+ * The overhead is due to the size of the message, which
+ * requires the _long pcn_kmsg variant to be used.
+ */
+struct _nonpresent_mapping_response {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+    int requester_pid;            // 4
+    unsigned long address;      // 8
+                                // ---
+                                // 20 -> 40 bytes of padding needed
+    char pad[40];
+
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _nonpresent_mapping_response nonpresent_mapping_response_t;
 
 /**
  *
@@ -684,6 +703,17 @@ typedef struct {
     unsigned long pgoff;
     int from_cpu;
 } mapping_response_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int requester_pid;
+    unsigned long address;
+} nonpresent_mapping_response_work_t;
 
 /**
  *
@@ -1992,12 +2022,26 @@ retry:
     }
 
     // Send response
-    //PERF_MEASURE_START(&perf_process_mapping_request_transmit);
-    pcn_kmsg_send_long(w->from_cpu,
-             (struct pcn_kmsg_long_message*)(&response),
-             sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
-    //PERF_MEASURE_STOP(&perf_process_mapping_request_transmit,
-    //                  " ");
+    if(response.present) {
+        //PERF_MEASURE_START(&perf_process_mapping_request_transmit);
+        pcn_kmsg_send_long(w->from_cpu,
+                 (struct pcn_kmsg_long_message*)(&response),
+                 sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
+        //PERF_MEASURE_STOP(&perf_process_mapping_request_transmit,
+        //                  " ");
+    } else {
+        // This is an optimization to get rid of the _long send 
+        // which is a time sink.
+        nonpresent_mapping_response_t nonpresent_response;
+        nonpresent_response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_NONPRESENT;
+        nonpresent_response.header.prio = PCN_KMSG_PRIO_NORMAL;
+        nonpresent_response.tgroup_home_cpu = w->tgroup_home_cpu;
+        nonpresent_response.tgroup_home_id  = w->tgroup_home_id;
+        nonpresent_response.requester_pid = w->requester_pid;
+        nonpresent_response.address = w->address;
+        pcn_kmsg_send(w->from_cpu,(struct pcn_kmsg_message*)(&nonpresent_response));
+
+    }
 
     kfree(work);
 
@@ -2025,6 +2069,27 @@ retry:
     }
 
     return;
+}
+
+void process_nonpresent_mapping_response(struct work_struct* work) {
+
+    mapping_request_data_t* data;
+    nonpresent_mapping_response_work_t* w = (nonpresent_mapping_response_work_t*) work;
+
+    data = find_mapping_request_data(
+                                     w->tgroup_home_cpu,
+                                     w->tgroup_home_id,
+                                     w->requester_pid,
+                                     w->address);
+
+    if(data == NULL) {
+        kfree(work);
+        return;
+    }
+
+    data->responses++;
+
+    kfree(work);
 }
 
 /**
@@ -2628,6 +2693,27 @@ static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
     pcn_kmsg_free_msg(inc_msg);
 
     PERF_MEASURE_STOP(&perf_handle_mprotect_request," ");
+
+    return 0;
+}
+
+/**
+ *
+ */
+static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) {
+    nonpresent_mapping_response_t* msg = (nonpresent_mapping_response_t*)inc_msg;
+    nonpresent_mapping_response_work_t* work;
+
+    work = kmalloc(sizeof(nonpresent_mapping_response_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_nonpresent_mapping_response);
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id  = msg->tgroup_home_id;
+        work->requester_pid = msg->requester_pid;
+        work->address = msg->address;
+        queue_work(mapping_wq, (struct work_struct*)work);
+    }
+    pcn_kmsg_free_msg(inc_msg);
 
     return 0;
 }
@@ -4610,6 +4696,8 @@ static int __init process_server_init(void) {
             handle_mapping_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE,
             handle_mapping_response);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_NONPRESENT,
+            handle_nonpresent_mapping_response);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MUNMAP_REQUEST,
             handle_munmap_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE,
