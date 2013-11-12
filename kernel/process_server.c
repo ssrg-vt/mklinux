@@ -322,8 +322,8 @@ typedef struct _mapping_request_data {
     int from_saved_mm;
     int responses;
     int expected_responses;
-    char path[512];
     unsigned long pgoff;
+    char path[512];
 } mapping_request_data_t;
 
 /**
@@ -515,8 +515,9 @@ struct _mapping_response {
     unsigned long paddr_mapping;
     pgprot_t prot;              
     unsigned long vm_flags;     
-    char path[512];
     unsigned long pgoff;
+    char path[512]; // save to last so we can cut
+                    // off data when possible.
 };
 typedef struct _mapping_response mapping_response_t;
 
@@ -2026,7 +2027,10 @@ retry:
         //PERF_MEASURE_START(&perf_process_mapping_request_transmit);
         pcn_kmsg_send_long(w->from_cpu,
                  (struct pcn_kmsg_long_message*)(&response),
-                 sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
+                    sizeof(mapping_response_t) - 
+                    sizeof(struct pcn_kmsg_hdr) -   //
+                    sizeof(response.path) +         // Chop off the end of the path
+                    strlen(response.path) + 1);     // variable to save bandwidth.
         //PERF_MEASURE_STOP(&perf_process_mapping_request_transmit,
         //                  " ");
     } else {
