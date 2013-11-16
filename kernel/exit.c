@@ -980,8 +980,9 @@ NORET_TYPE void do_exit(long code)
 
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
-
-	exit_mm(tsk);
+	
+	if(tsk->mm!=NULL)
+	     exit_mm(tsk);
 
 	if (group_dead)
 		acct_process();

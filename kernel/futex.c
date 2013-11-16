@@ -98,11 +98,11 @@ static unsigned int ghash=0;
 struct futex_hash_bucket *hash_futex(union futex_key *key)
 {
 	u32 hash = jhash2((u32*)&key->both.word,
-			 // (sizeof(key->both.word)+sizeof(key->both.ptr))/4,
-			  (sizeof(key->both.word)+8)/4,
+			  (sizeof(key->both.word)+sizeof(key->both.ptr))/4,
+			 // (sizeof(key->both.word)+8)/4,
 			  key->both.offset);
 	ghash=hash;
-	//printk(KERN_ALERT" ghash {%u} \n",hash);
+	printk(KERN_ALERT" ghash {%u} num {%d}\n",hash,(hash & ((1 << FUTEX_HASHBITS)-1)));
 	return &futex_queues[hash & ((1 << FUTEX_HASHBITS)-1)];
 }
 
@@ -1030,25 +1030,60 @@ futex_wake_op(u32 __user *uaddr1, unsigned int flags, u32 __user *uaddr2,
 	struct plist_head *head;
 	struct futex_q *this, *next;
 	int ret, op_ret;
-
+printk(KERN_ALERT " futex_wake_op: pid {%d} comm{%s} uaddr1{%lx} uaddr2{%lx}  \n", current->pid,current->comm,uaddr1,uaddr2);
 retry:
 	ret = get_futex_key(uaddr1, flags & FLAGS_SHARED, &key1, VERIFY_READ);
+printk(KERN_ALERT "futex_wake_op: ret key1{%d}\n",ret);
+
+unsigned long address=(unsigned long)uaddr1;
+address -= key1.both.offset;
+if(current->mm){
+	printk(KERN_ALERT "uaddr1 {%lx} mm struct {%p}\n", uaddr1, current->mm);
+	struct vm_area_struct *vma;
+	vma = find_extend_vma( current->mm, address);
+	printk(KERN_ALERT "true {%d} \n",(vma->vm_flags & VM_PFNMAP));
+	if(vma!=NULL && (vma->vm_flags & VM_PFNMAP))
+         {	u32 bitset=1;
+		printk(KERN_ALERT " futex_wake_op: current pid origin{%d}\n",current->origin_pid);
+		ret = remote_futex_wakeup(uaddr1, flags & FLAGS_SHARED,nr_wake, bitset,&key1,0);
+	  }
+	}
+
 	if (unlikely(ret != 0))
 		goto out;
 	ret = get_futex_key(uaddr2, flags & FLAGS_SHARED, &key2, VERIFY_WRITE);
+printk(KERN_ALERT "futex_wake_op: ret key2{%d}\n",ret);
+
+address=(unsigned long)uaddr2;
+address -= key2.both.offset;
+if(current->mm){
+	struct vm_area_struct *vma;
+	vma = find_extend_vma( current->mm, address);
+	if(vma!=NULL && (vma->vm_flags & VM_PFNMAP))
+        {	u32 bitset=1;
+ 		printk(KERN_ALERT " futex_wake_op: current pid origin{%d}\n",current->origin_pid);
+        	ret = remote_futex_wakeup(uaddr2, flags & FLAGS_SHARED,nr_wake, bitset,&key2,0);
+	  }
+	}
+
+
+
 	if (unlikely(ret != 0))
 		goto out_put_key1;
 
+printk(KERN_ALERT "futex_wake_op b4 hb1: both ptr {%p} key: word {%lx} offset{%d} uaddr{%lx} mm{%p}\n ",
+						    		key1.both.ptr,key1.both.word,key1.both.offset,uaddr1,key1.private.mm);
 	hb1 = hash_futex(&key1);
 	hb2 = hash_futex(&key2);
 
 retry_private:
 	double_lock_hb(hb1, hb2);
 	op_ret = futex_atomic_op_inuser(op, uaddr2);
+printk(KERN_ALERT "futex_wake_op: op_ret{%d} \n",op_ret);
 	if (unlikely(op_ret < 0)) {
 
 		double_unlock_hb(hb1, hb2);
-
+printk(KERN_ALERT "futex_wake_op: b4 mmu\n");
 #ifndef CONFIG_MMU
 		/*
 		 * we don't get EFAULT from MMU faults if we don't have an MMU,
@@ -1057,13 +1092,14 @@ retry_private:
 		ret = op_ret;
 		goto out_put_keys;
 #endif
-
+printk(KERN_ALERT "futex_wake_op: before efault \n");
 		if (unlikely(op_ret != -EFAULT)) {
 			ret = op_ret;
 			goto out_put_keys;
 		}
 
 		ret = fault_in_user_writeable(uaddr2);
+printk(KERN_ALERT "futex_wake_op: faultinuaddr2 {%d}\n",ret);
 		if (ret)
 			goto out_put_keys;
 
@@ -1074,12 +1110,23 @@ retry_private:
 		put_futex_key(&key1);
 		goto retry;
 	}
-
+printk(KERN_ALERT "futex_wake_op: comes b4 loop \n");
+printk(KERN_ALERT "futex_wake_op: hb1 {%p} key: word {%lx} offset{%d} ptr{%p} mm{%p}\n ",
+			    		hb1,key1.both.word,key1.both.offset,key1.both.ptr,key1.private.mm);
 	head = &hb1->chain;
 
 	plist_for_each_entry_safe(this, next, head, list) {
-		if (match_futex (&this->key, &key1)) {
-			wake_futex(this);
+	//	if (match_futex (&this->key, &key1)) {
+			//wake_futex(this);
+printk(KERN_ALERT "futex_wake_op:key1 pid{%d} comm{%s} rem{%d}\n",current->pid,current->comm,this->rem_pid);
+	        if (match_futex (&this->key, &key1)) {
+			if(this->rem_pid == -1)
+				wake_futex(this);
+			else
+			{   u32 bitset=1;
+			ret = remote_futex_wakeup(uaddr1, flags & FLAGS_SHARED,nr_wake, bitset,&key1,this->rem_pid);}
+
+
 			if (++ret >= nr_wake)
 				break;
 		}
@@ -1090,8 +1137,17 @@ retry_private:
 
 		op_ret = 0;
 		plist_for_each_entry_safe(this, next, head, list) {
+		//	if (match_futex (&this->key, &key2)) {
+				//wake_futex(this);
+printk(KERN_ALERT "futex_wake_op:key2 pid{%d} comm{%s} rem{%d}\n",current->pid,current->comm,this->rem_pid);
 			if (match_futex (&this->key, &key2)) {
-				wake_futex(this);
+				if(this->rem_pid == -1)
+					wake_futex(this);
+				else
+				{   u32 bitset=1;
+				ret = remote_futex_wakeup(uaddr2, flags & FLAGS_SHARED,nr_wake, bitset,&key2,this->rem_pid);}
+
+
 				if (++op_ret >= nr_wake2)
 					break;
 			}
@@ -1101,8 +1157,10 @@ retry_private:
 
 	double_unlock_hb(hb1, hb2);
 out_put_keys:
+	printk(KERN_ALERT "out_put_keys\n");
 	put_futex_key(&key2);
 out_put_key1:
+	printk(KERN_ALERT "out_put_key1\n");
 	put_futex_key(&key1);
 out:
 	return ret;
@@ -1257,7 +1315,7 @@ static int futex_requeue(u32 __user *uaddr1, unsigned int flags,
 	struct plist_head *head1;
 	struct futex_q *this, *next;
 	u32 curval2;
-
+printk(KERN_ALERT " futex_requeue: pid{%d} comm{%s} uaddr1{%u} uaddr2{%u}\n",current->pid,current->comm,uaddr1,uaddr2);
 	if (requeue_pi) {
 		/*
 		 * requeue_pi requires a pi_state, try to allocate it now
@@ -1529,7 +1587,7 @@ static int unqueue_me(struct futex_q *q)
 {
 	spinlock_t *lock_ptr;
 	int ret = 0;
-	printk(KERN_ALERT "unqueue_me task{%s} pid{%d} ",q->task->comm,q->task->pid);
+//	printk(KERN_ALERT "unqueue_me task{%s} pid{%d} ",q->task->comm,q->task->pid);
 
 	/* In the common case we don't take the spinlock, which is nice. */
 retry:
@@ -1959,6 +2017,7 @@ retry:
 	/* If we were woken (and unqueued), we succeeded, whatever. */
 	ret = 0;
 	//printk("2:task {%d} rep_rem {%d}  {%s} state{%d}\n",t->pid,t->tgroup_distributed,t->comm,t->state);
+	printk(KERN_ALERT "futex_wait: before unque task {%d}  comm{%s} uaddr{%lx}\n",t->pid,t->comm,uaddr);
 	/* unqueue_me() drops q.key ref */
 	if (!unqueue_me(&q))
 		goto out;

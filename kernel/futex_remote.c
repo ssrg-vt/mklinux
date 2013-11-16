@@ -390,7 +390,10 @@ int remote_futex_wakeup(unsigned long uaddr,unsigned int flags, int nr_wake, u32
 			}
 
 			else if(rflag)
+			{
+				printk(KERN_ALERT "remote_futex_wakeup: remote node {%d}\n", ORIG_NODE(rflag));
 			    res = pcn_kmsg_send(ORIG_NODE(rflag), (struct pcn_kmsg_message*) (request));
+			}
 
 	return res;
 
@@ -420,6 +423,13 @@ int global_futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
     printk(KERN_ALERT "global_futex_wait pid origin {%d} _cpu{%d} uaddr{%lx}\n ",origin,smp_processor_id(),uaddr);
 
 
+    tsk=pid_task(find_vpid(origin), PIDTYPE_PID);
+    if(tsk)
+       	q->key.private.mm=tsk->mm;
+
+    printk(KERN_ALERT "global_futex_wait b4: both ptr {%p} key: word {%lx} offset{%d} uaddr{%lx} mm{%p}\n ",
+		 		        		q->key.both.ptr,q->key.both.word,q->key.both.offset,uaddr,q->key.private.mm);
+
     hb = hash_futex(&q->key);
     q->lock_ptr = &hb->lock;
 //this should be the real code
@@ -429,15 +439,17 @@ int global_futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
     	prio = 100 ;//min(current->normal_prio, MAX_RT_PRIO);
     	q->task = NULL;
     	q->rem_pid = rem;
-    	tsk=pid_task(find_vpid(origin), PIDTYPE_PID);
+    /*	tsk=pid_task(find_vpid(origin), PIDTYPE_PID);
         if(tsk)
         	q->key.private.mm=tsk->mm;
-
-    	q->key.private.offset=156;
+*/
+    //	q->key.private.offset=156;
     	plist_node_init(&q->list, prio);
     	plist_add(&q->list, &hb->chain);
     spin_unlock(&hb->lock);
 out:
+    printk(KERN_ALERT "global_futex_wait: hb {%p} key: word {%lx} offset{%d} ptr{%p} mm{%p}\n ",
+		        		hb,q->key.both.word,q->key.both.offset,q->key.both.ptr,q->key.private.mm);
     	printk(KERN_ALERT "exit glabal_futex_wait \n");
 	return ret;
 }
