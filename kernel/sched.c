@@ -5606,7 +5606,7 @@ if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
 	   
             // If we reach here, then I no longer understand
             // this world.
-            return task_pt_regs(current)->orig_ax;
+            //return task_pt_regs(current)->orig_ax;
             return 0;
         }
     }

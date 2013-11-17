@@ -40,14 +40,14 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
 #define PSPRINTK(...) ;
 #endif
 
-#define PROCESS_SERVER_INSTRUMENT_LOCK 1
+#define PROCESS_SERVER_INSTRUMENT_LOCK 0
 #if PROCESS_SERVER_VERBOSE && PROCESS_SERVER_INSTRUMENT_LOCK
 #define PS_SPIN_LOCK(x) PSPRINTK("Acquiring spin lock in %s at line %d\n",__func__,__LINE__); \
                        spin_lock(x); \
@@ -2127,9 +2127,6 @@ void process_mapping_response(struct work_struct* work) {
         PSPRINTK("received positive search result from cpu %d\n",
                 w->from_cpu);
         
-        // Account for this cpu's response
-        data->responses++;
-       
         // Enforce precedence rules.  Responses from saved mm's
         // are always ignored when a response from a live thread
         // can satisfy the mapping request.  The purpose of this
@@ -2180,10 +2177,10 @@ void process_mapping_response(struct work_struct* work) {
     } else {
         PSPRINTK("received negative search result from cpu %d\n",
                 w->from_cpu);
-      
-        // Account for this cpu's response.
-        data->responses++;
     }
+
+    // Account for this cpu's response.
+    data->responses++;
 
 out:
     kfree(work);
@@ -2506,8 +2503,8 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
     }
 
     // Register this response.
-    data->responses++;
     data->count += msg->count;
+    data->responses++;
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -4019,21 +4016,14 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         goto not_handled_no_perf;
     }
 
-    // Check to see if this is a user mode fault.  We should never
-    // try to handle a kernel mode fault.
-    //if(!(error_code & 4/*PF_USER*/)) {
-    //    PSPRINTK("%s: ERROR, kernel-mode fault\n",__func__);
-    //    goto not_handled_no_perf;
-    //}
-
     PERF_MEASURE_START(&perf_process_server_try_handle_mm_fault);
 
     PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
             address,
-            tgroup_home_cpu,
-            tgroup_home_id,
-            pid,
-            tgid,
+            current->tgroup_home_cpu,
+            current->tgroup_home_id,
+            current->pid,
+            current->tgid,
             error_code);
 
     if(is_vaddr_mapped(mm,address)) {
