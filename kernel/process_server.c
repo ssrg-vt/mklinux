@@ -4140,6 +4140,13 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
         prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
 
+        // If this is a cow page, break it.
+        if( vma && 
+            vma->vm_start <= address && 
+            vma->vm_end > address) {
+
+            break_cow(current->mm,vma,address & PAGE_MASK);
+        }
 
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
