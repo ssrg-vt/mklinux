@@ -4211,6 +4211,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             } else {
                 PSPRINTK("mapping successful\n");
             }
+        } else {
+            PSPRINTK("vma is present, using existing\n");
         }
 
         // We should have a vma now, so map physical memory into it.
@@ -4246,7 +4248,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     }
                 }
             }
-
+            
+            err = 0;
             if(domapping) {
                 err = remap_pfn_range(vma,
                     data->vaddr_mapping,
@@ -4266,7 +4269,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
             // Check remap_pfn_range success
             if(err) {
-                PSPRINTK("ERROR: Failed to remap_pfn_range\n");
+                PSPRINTK("ERROR: Failed to remap_pfn_range %d\n",err);
             } else {
                 PSPRINTK("remap_pfn_range succeeded\n");
                 ret = 1;
