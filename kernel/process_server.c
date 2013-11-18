@@ -106,6 +106,10 @@
 #define PERF_MEASURE_STOP(x,y)  perf_measure_stop(x,y)
 
 pcn_perf_context_t perf_process_mapping_request;
+pcn_perf_context_t perf_process_mapping_request_search_active_mm;
+pcn_perf_context_t perf_process_mapping_request_search_saved_mm;
+pcn_perf_context_t perf_process_mapping_request_do_lookup;
+pcn_perf_context_t perf_process_mapping_request_transmit;
 pcn_perf_context_t perf_process_mapping_response;
 pcn_perf_context_t perf_process_tgroup_closed_item;
 pcn_perf_context_t perf_process_exec_item;
@@ -140,7 +144,15 @@ pcn_perf_context_t perf_handle_mprotect_request;
  */
 static void perf_init(void) {
    perf_init_context(&perf_process_mapping_request,
-           "process_mapping_request"); 
+           "process_mapping_request");
+   perf_init_context(&perf_process_mapping_request_search_active_mm,
+           "process_mapping_request_search_active_mm");
+   perf_init_context(&perf_process_mapping_request_search_saved_mm,
+           "process_mapping_request_search_saved_mm");
+   perf_init_context(&perf_process_mapping_request_do_lookup,
+           "process_mapping_request_do_lookup");
+   perf_init_context(&perf_process_mapping_request_transmit,
+           "process_mapping_request_transmit");
    perf_init_context(&perf_process_mapping_response,
            "process_mapping_response");
    perf_init_context(&perf_process_tgroup_closed_item,
@@ -326,8 +338,8 @@ typedef struct _mapping_request_data {
     int from_saved_mm;
     int responses;
     int expected_responses;
-    char path[512];
     unsigned long pgoff;
+    char path[512];
 } mapping_request_data_t;
 
 /**
@@ -517,19 +529,39 @@ struct _mapping_response {
     int tgroup_home_cpu;        
     int tgroup_home_id; 
     int requester_pid;
+    unsigned long present;      
     int from_saved_mm;
     unsigned long address;      
-    unsigned long present;      
     unsigned long vaddr_mapping;
     unsigned long vaddr_start;
     unsigned long vaddr_size;
     unsigned long paddr_mapping;
     pgprot_t prot;              
     unsigned long vm_flags;     
-    char path[512];
     unsigned long pgoff;
+    char path[512]; // save to last so we can cut
+                    // off data when possible.
 };
 typedef struct _mapping_response mapping_response_t;
+
+/**
+ * This is a hack to eliminate the overhead of sending
+ * an entire mapping_response_t when there is no mapping.
+ * The overhead is due to the size of the message, which
+ * requires the _long pcn_kmsg variant to be used.
+ */
+struct _nonpresent_mapping_response {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+    int requester_pid;            // 4
+    unsigned long address;      // 8
+                                // ---
+                                // 20 -> 40 bytes of padding needed
+    char pad[40];
+
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _nonpresent_mapping_response nonpresent_mapping_response_t;
 
 /**
  *
@@ -695,6 +727,17 @@ typedef struct {
     unsigned long pgoff;
     int from_cpu;
 } mapping_response_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int requester_pid;
+    unsigned long address;
+} nonpresent_mapping_response_work_t;
 
 /**
  *
@@ -1672,6 +1715,10 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, i
                     	   		printk("POP: represents_remote:%d, executing_for_remote:%d,next_pid:%d\n",task->represents_remote,task-> executing_for_remote,task->next_pid);
                     	   		printk("POP: prev_pid:%d, prev_cpu:%d,next_cpu:%d,tgroup_home_cpu:%d\n",task->prev_pid,task->prev_cpu,task->next_cpu,task->tgroup_home_cpu);
 
+            if(include_shadow_threads || (!include_shadow_threads && !task->represents_remote)) {
+                //PSPRINTK("%s: found local thread\n",__func__);
+                count++;
+            }
         }
     } while_each_thread(g,task);
     PSPRINTK("%s: exited\n",__func__);
@@ -1886,6 +1933,7 @@ void process_mapping_request(struct work_struct* work) {
             w->tgroup_home_id);
 
     // First, search through existing processes
+    //PERF_MEASURE_START(&perf_process_mapping_request_search_active_mm);
     do_each_thread(g,task) {
         if((task->tgroup_home_cpu == w->tgroup_home_cpu) &&
            (task->tgroup_home_id  == w->tgroup_home_id )) {
@@ -1893,9 +1941,12 @@ void process_mapping_request(struct work_struct* work) {
             mm = task->mm;
         }
     } while_each_thread(g,task);
+    //PERF_MEASURE_STOP(&perf_process_mapping_request_search_active_mm,
+    //                  " ");
 
     // Failing the process search, look through saved mm's.
     if(!mm) {
+        //PERF_MEASURE_START(&perf_process_mapping_request_search_saved_mm);
         PS_SPIN_LOCK(&_saved_mm_head_lock);
         data_curr = _saved_mm_head;
         while(data_curr) {
@@ -1915,11 +1966,16 @@ void process_mapping_request(struct work_struct* work) {
         } // while
 
         PS_SPIN_UNLOCK(&_saved_mm_head_lock);
+        //PERF_MEASURE_STOP(&perf_process_mapping_request_search_saved_mm,
+        //                  " ");
     }
 
 
     // OK, if mm was found, look up the mapping.
     if(mm) {
+
+        //PERF_MEASURE_START(&perf_process_mapping_request_do_lookup);
+
 retry:
         try_count++;
         vma = find_vma(mm, address & PAGE_MASK);
@@ -1976,6 +2032,9 @@ retry:
             PSPRINTK("mapping prot = %lx, vm_flags = %lx\n",
                     response.prot,response.vm_flags);
         }
+        
+        //PERF_MEASURE_STOP(&perf_process_mapping_request_do_lookup,
+        //                  " ");
     }
 
     // Not found, respond accordingly
@@ -2013,13 +2072,32 @@ retry:
                  response.pgoff = vma->vm_pgoff;
              }
         }
-       
     }
 
     // Send response
-    pcn_kmsg_send_long(w->from_cpu,
-             (struct pcn_kmsg_long_message*)(&response),
-             sizeof(mapping_response_t) - sizeof(struct pcn_kmsg_hdr));
+    if(response.present) {
+        //PERF_MEASURE_START(&perf_process_mapping_request_transmit);
+        pcn_kmsg_send_long(w->from_cpu,
+                 (struct pcn_kmsg_long_message*)(&response),
+                    sizeof(mapping_response_t) - 
+                    sizeof(struct pcn_kmsg_hdr) -   //
+                    sizeof(response.path) +         // Chop off the end of the path
+                    strlen(response.path) + 1);     // variable to save bandwidth.
+        //PERF_MEASURE_STOP(&perf_process_mapping_request_transmit,
+        //                  " ");
+    } else {
+        // This is an optimization to get rid of the _long send 
+        // which is a time sink.
+        nonpresent_mapping_response_t nonpresent_response;
+        nonpresent_response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_NONPRESENT;
+        nonpresent_response.header.prio = PCN_KMSG_PRIO_NORMAL;
+        nonpresent_response.tgroup_home_cpu = w->tgroup_home_cpu;
+        nonpresent_response.tgroup_home_id  = w->tgroup_home_id;
+        nonpresent_response.requester_pid = w->requester_pid;
+        nonpresent_response.address = w->address;
+        pcn_kmsg_send(w->from_cpu,(struct pcn_kmsg_message*)(&nonpresent_response));
+
+    }
 
     kfree(work);
 
@@ -2047,6 +2125,27 @@ retry:
     }
 
     return;
+}
+
+void process_nonpresent_mapping_response(struct work_struct* work) {
+
+    mapping_request_data_t* data;
+    nonpresent_mapping_response_work_t* w = (nonpresent_mapping_response_work_t*) work;
+
+    data = find_mapping_request_data(
+                                     w->tgroup_home_cpu,
+                                     w->tgroup_home_id,
+                                     w->requester_pid,
+                                     w->address);
+
+    if(data == NULL) {
+        kfree(work);
+        return;
+    }
+
+    data->responses++;
+
+    kfree(work);
 }
 
 /**
@@ -2080,9 +2179,6 @@ void process_mapping_response(struct work_struct* work) {
         PSPRINTK("received positive search result from cpu %d\n",
                 w->from_cpu);
         
-        // Account for this cpu's response
-        data->responses++;
-       
         // Enforce precedence rules.  Responses from saved mm's
         // are always ignored when a response from a live thread
         // can satisfy the mapping request.  The purpose of this
@@ -2133,10 +2229,10 @@ void process_mapping_response(struct work_struct* work) {
     } else {
         PSPRINTK("received negative search result from cpu %d\n",
                 w->from_cpu);
-      
-        // Account for this cpu's response.
-        data->responses++;
     }
+
+    // Account for this cpu's response.
+    data->responses++;
 
 out:
     kfree(work);
@@ -2461,9 +2557,8 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
     }
 
     // Register this response.
-    data->responses++;
     data->count += msg->count;
- //   wake_up_interruptible(&countq);
+    data->responses++;
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -2653,6 +2748,27 @@ static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
     pcn_kmsg_free_msg(inc_msg);
 
     PERF_MEASURE_STOP(&perf_handle_mprotect_request," ");
+
+    return 0;
+}
+
+/**
+ *
+ */
+static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) {
+    nonpresent_mapping_response_t* msg = (nonpresent_mapping_response_t*)inc_msg;
+    nonpresent_mapping_response_work_t* work;
+
+    work = kmalloc(sizeof(nonpresent_mapping_response_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_nonpresent_mapping_response);
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id  = msg->tgroup_home_id;
+        work->requester_pid = msg->requester_pid;
+        work->address = msg->address;
+        queue_work(mapping_wq, (struct work_struct*)work);
+    }
+    pcn_kmsg_free_msg(inc_msg);
 
     return 0;
 }
@@ -3986,24 +4102,16 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         goto not_handled_no_perf;
     }
 
-    // Check to see if this is a user mode fault.  We should never
-    // try to handle a kernel mode fault.
-    //if(!(error_code & 4/*PF_USER*/)) {
-    //    PSPRINTK("%s: ERROR, kernel-mode fault\n",__func__);
-    //    goto not_handled_no_perf;
-    //}
-
-
     PERF_MEASURE_START(&perf_process_server_try_handle_mm_fault);
 
-   /* PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
+    PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
             address,
-            tgroup_home_cpu,
-            tgroup_home_id,
-            pid,
-            tgid,
+            current->tgroup_home_cpu,
+            current->tgroup_home_id,
+            current->pid,
+            current->tgid,
             error_code);
-*/
+
     if(is_vaddr_mapped(mm,address)) {
         PSPRINTK("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
                 address,current->tgroup_home_cpu,current->tgroup_home_id);
@@ -4118,7 +4226,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
         prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
 
-
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
             PSPRINTK("vma not present\n");
@@ -4189,6 +4296,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             } else {
                 PSPRINTK("mapping successful\n");
             }
+        } else {
+            PSPRINTK("vma is present, using existing\n");
         }
 
         // We should have a vma now, so map physical memory into it.
@@ -4208,6 +4317,10 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     data->paddr_mapping, 
                     vma->vm_flags, 
                     vma->vm_page_prot);
+            // This grabs the lock
+            if(break_cow(current->mm,vma,address)) {
+                vma = find_vma(current->mm,address&PAGE_MASK);
+            }
 
             PS_DOWN_WRITE(&current->mm->mmap_sem);
             remap_pgd = pgd_offset(current->mm, address);
@@ -4224,7 +4337,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     }
                 }
             }
-
+            
+            err = 0;
             if(domapping) {
                 err = remap_pfn_range(vma,
                     data->vaddr_mapping,
@@ -4244,7 +4358,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
             // Check remap_pfn_range success
             if(err) {
-                PSPRINTK("ERROR: Failed to remap_pfn_range\n");
+                PSPRINTK("ERROR: Failed to remap_pfn_range %d\n",err);
             } else {
                 PSPRINTK("remap_pfn_range succeeded\n");
                 ret = 1;
@@ -4724,6 +4838,8 @@ static int __init process_server_init(void) {
             handle_mapping_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE,
             handle_mapping_response);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_NONPRESENT,
+            handle_nonpresent_mapping_response);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MUNMAP_REQUEST,
             handle_munmap_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE,

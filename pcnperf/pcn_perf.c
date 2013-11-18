@@ -77,7 +77,9 @@ perf_end_response_data_t response_data;
 
 /**
  *PCN_KMSG_TYPE_PCN_PERF_CONTEXT_MESSAGE,
-     PCN_KMSG_TYPE_PCN_PERF_ENTRY_MESSAGE,
+ *    PCN_KMSG_TYPE_PCN_PERF_ENTRY_MESSAGE,
+ *    
+ * ctxt->lock should be held during this call
  */
 static void send_context(pcn_perf_context_t* ctxt, int cpu) {
     perf_context_message_t cxt_message;
@@ -317,11 +319,12 @@ void perf_init_context( pcn_perf_context_t * cxt, char * name ) {
     spin_lock(&_context_id_lock);
     cxt->context_id = _context_id++;
     spin_unlock(&_context_id_lock);
-    cxt->home_cpu = _cpu;
+    cxt->home_cpu = smp_processor_id();
     strcpy(cxt->name,name);
     cxt->entry_list = NULL;
     cxt->is_active = 0;
     cxt->next = NULL;
+    spin_lock_init(&cxt->lock);
     link_context(cxt);
 
 }
@@ -332,23 +335,30 @@ void perf_init_context( pcn_perf_context_t * cxt, char * name ) {
 void perf_measure_start(pcn_perf_context_t *cxt) {
     pcn_perf_entry_t* entry;
 
+    spin_lock(&cxt->lock);
+
     // Don't continue if we are not currently interested in taking any
     // measurements
-    if(!cxt->is_active) return;
+    if(!cxt->is_active) {
+        spin_unlock(&cxt->lock);
+        return;
+    }
 
     // We should not allow a measurement to start if another is already in
     // progress for this context
     if(cxt->entry_list && 
-            (cxt->entry_list->in_progress || cxt->entry_list->end == 0)) 
+            (cxt->entry_list->in_progress || cxt->entry_list->end == 0)) {
+        spin_unlock(&cxt->lock);
         return;
+    }
     
     
     entry = kmalloc(sizeof(pcn_perf_entry_t),GFP_ATOMIC);
-    entry->next = NULL;
-    entry->context_id = cxt->context_id;
-    entry->start = 0;
-    entry->end = 0;
     if(entry) {
+        entry->next = NULL;
+        entry->context_id = cxt->context_id;
+        entry->start = 0;
+        entry->end = 0;
         // add to front of context's entry list
         if(cxt->entry_list) {
             cxt->entry_list->prev = entry;
@@ -362,6 +372,7 @@ void perf_measure_start(pcn_perf_context_t *cxt) {
         cxt->entry_list->in_progress = 1;
         cxt->entry_list->start = native_read_tsc();
     }
+    spin_unlock(&cxt->lock);
 }
 
 /**
@@ -369,12 +380,13 @@ void perf_measure_start(pcn_perf_context_t *cxt) {
  */
 void perf_measure_stop(pcn_perf_context_t *cxt, char* note) {
     unsigned long long time = native_read_tsc();
-
+    spin_lock(&cxt->lock);
     if(cxt->entry_list && cxt->entry_list->in_progress) {
         cxt->entry_list->end = time;
         cxt->entry_list->in_progress = 0;
         strcpy(cxt->entry_list->note,note);
     }
+    spin_unlock(&cxt->lock);
 }
 
 /**
@@ -382,8 +394,8 @@ void perf_measure_stop(pcn_perf_context_t *cxt, char* note) {
  */
 static int handle_start_message(struct pcn_kmsg_message* inc_msg) {
     do_popcorn_perf_start_impl();
-   pcn_kmsg_free_msg(inc_msg); 
-   return 0;
+    pcn_kmsg_free_msg(inc_msg); 
+    return 0;
 }
 
 /**
@@ -394,8 +406,10 @@ static int handle_end_message(struct pcn_kmsg_message* inc_msg) {
     perf_end_ack_message_t ack;
     int cpu = inc_msg->hdr.from_cpu;
     while(curr) {
+        spin_lock(&curr->lock);
         curr->is_active = 0;
         send_context(curr,cpu);
+        spin_unlock(&curr->lock);
         curr = curr->next;
     }
     do_popcorn_perf_end_impl();
