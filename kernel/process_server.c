@@ -2179,10 +2179,11 @@ void process_mapping_response(struct work_struct* work) {
                 w->from_cpu);
     }
 
+
+out:
     // Account for this cpu's response.
     data->responses++;
 
-out:
     kfree(work);
     
     PERF_MEASURE_STOP(&perf_process_mapping_response," ");
