@@ -40,7 +40,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -4140,14 +4140,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
         prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
 
-        // If this is a cow page, break it.
-        if( vma && 
-            vma->vm_start <= address && 
-            vma->vm_end > address) {
-
-            break_cow(current->mm,vma,address & PAGE_MASK);
-        }
-
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
             PSPRINTK("vma not present\n");
@@ -4239,6 +4231,10 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     data->paddr_mapping, 
                     vma->vm_flags, 
                     vma->vm_page_prot);
+            // This grabs the lock
+            if(break_cow(current->mm,vma,address)) {
+                vma = find_vma(current->mm,address&PAGE_MASK);
+            }
 
             PS_DOWN_WRITE(&current->mm->mmap_sem);
             remap_pgd = pgd_offset(current->mm, address);

@@ -2268,7 +2268,7 @@ int remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
 	if (addr == vma->vm_start && end == vma->vm_end) {
 		vma->vm_pgoff = pfn;
 		vma->vm_flags |= VM_PFN_AT_MMAP;
-	} else if (is_cow_mapping(vma->vm_flags) && !current->executing_for_remote) 
+	} else if (is_cow_mapping(vma->vm_flags) && !current->executing_for_remote  && ! current->tgroup_distributed) 
 		return -EINVAL;
     
 
