@@ -2080,7 +2080,7 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
 
     mapping_request_data_t* data;
     nonpresent_mapping_response_work_t* w = (nonpresent_mapping_response_work_t*) work;
-
+    
     data = find_mapping_request_data(
                                      w->tgroup_home_cpu,
                                      w->tgroup_home_id,
@@ -2092,9 +2092,11 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
         return;
     }
 
-    spin_lock(&data->lock);
+    PSPRINTK("Nonpresent mapping response received for %lx from cpu %d\n",w->address,w->from_cpu);
+
+    PS_SPIN_LOCK(&data->lock);
     data->responses++;
-    spin_unlock(&data->lock);
+    PS_SPIN_UNLOCK(&data->lock);
 
     kfree(work);
 }
@@ -2126,7 +2128,7 @@ void process_mapping_response(struct work_struct* work) {
         return;
     }
 
-    spin_lock(&data->lock);
+    PS_SPIN_LOCK(&data->lock);
     if(w->present) {
         PSPRINTK("received positive search result from cpu %d\n",
                 w->from_cpu);
@@ -2189,7 +2191,7 @@ out:
     // Account for this cpu's response.
     data->responses++;
 
-    spin_unlock(&data->lock);
+    PS_SPIN_UNLOCK(&data->lock);
     
     kfree(work);
     
