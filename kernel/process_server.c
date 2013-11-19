@@ -323,6 +323,7 @@ typedef struct _mapping_request_data {
     int responses;
     int expected_responses;
     unsigned long pgoff;
+    spinlock_t lock;
     char path[512];
 } mapping_request_data_t;
 
@@ -2091,7 +2092,9 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
         return;
     }
 
+    spin_lock(&data->lock);
     data->responses++;
+    spin_unlock(&data->lock);
 
     kfree(work);
 }
@@ -2123,6 +2126,7 @@ void process_mapping_response(struct work_struct* work) {
         return;
     }
 
+    spin_lock(&data->lock);
     if(w->present) {
         PSPRINTK("received positive search result from cpu %d\n",
                 w->from_cpu);
@@ -2180,10 +2184,13 @@ void process_mapping_response(struct work_struct* work) {
     }
 
 
+
 out:
     // Account for this cpu's response.
     data->responses++;
 
+    spin_unlock(&data->lock);
+    
     kfree(work);
     
     PERF_MEASURE_STOP(&perf_process_mapping_response," ");
@@ -4081,6 +4088,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     data->header.data_type = PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE;
     data->address = address;
     data->present = 0;
+    spin_lock_init(&data->lock);
     data->responses = 0;
     data->expected_responses = 0;
     data->paddr_mapping = 0;
