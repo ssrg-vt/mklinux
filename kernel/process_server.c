@@ -2088,6 +2088,7 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
                                      w->address);
 
     if(data == NULL) {
+        printk("%s: ERROR null mapping request data\n",__func__);
         kfree(work);
         return;
     }
@@ -2121,7 +2122,7 @@ void process_mapping_response(struct work_struct* work) {
     PSPRINTK("received mapping response\n");
 
     if(data == NULL) {
-        PSPRINTK("data not found\n");
+        printk("%s: ERROR data not found\n",__func__);
         kfree(work);
         PERF_MEASURE_STOP(&perf_process_mapping_response,
                 "early exit");
