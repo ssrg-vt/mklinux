@@ -718,6 +718,7 @@ typedef struct {
     int tgroup_home_id;
     int requester_pid;
     unsigned long address;
+    int from_cpu;
 } nonpresent_mapping_response_work_t;
 
 /**
@@ -2084,7 +2085,9 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
 
     mapping_request_data_t* data;
     nonpresent_mapping_response_work_t* w = (nonpresent_mapping_response_work_t*) work;
-    
+   
+    PSPRINTK("%s: entered\n",__func__);
+
     data = find_mapping_request_data(
                                      w->tgroup_home_cpu,
                                      w->tgroup_home_id,
@@ -2114,6 +2117,8 @@ void process_mapping_response(struct work_struct* work) {
     mapping_response_work_t* w = (mapping_response_work_t*)work; 
 
     PERF_MEASURE_START(&perf_process_mapping_response);
+
+    PSPRINTK("%s: entered\n",__func__);
 
     data = find_mapping_request_data(
                                      w->tgroup_home_cpu,
@@ -2733,7 +2738,10 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->requester_pid = msg->requester_pid;
         work->address = msg->address;
+        work->from_cpu = msg->header.from_cpu;
         queue_work(mapping_wq, (struct work_struct*)work);
+    } else {
+        printk("%s: ERROR: Unable to malloc work\n",__func__);
     }
     pcn_kmsg_free_msg(inc_msg);
 
