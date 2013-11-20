@@ -339,6 +339,7 @@ typedef struct _munmap_request_data {
     unsigned long vaddr_size;
     int responses;
     int expected_responses;
+    spinlock_t lock;
 } munmap_request_data_t;
 
 /**
@@ -351,6 +352,7 @@ typedef struct _remote_thread_count_request_data {
     int responses;
     int expected_responses;
     int count;
+    spinlock_t lock;
 } remote_thread_count_request_data_t;
 
 /**
@@ -371,6 +373,7 @@ typedef struct _mprotect_data {
     unsigned long start;
     int responses;
     int expected_responses;
+    spinlock_t lock;
 } mprotect_data_t;
 
 /**
@@ -1601,6 +1604,7 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     data->tgroup_home_cpu = tgroup_home_cpu;
     data->tgroup_home_id = tgroup_home_id;
     data->count = 0;
+    spin_lock_init(&data->lock);
 
     add_data_entry_to(data,
                       &_count_remote_tmembers_data_head_lock,
@@ -2398,7 +2402,9 @@ void process_munmap_response(struct work_struct* work) {
     }
 
     // Register this response.
+    PS_SPIN_LOCK(&data->lock);
     data->responses++;
+    PS_SPIN_UNLOCK(&data->lock);
 
     kfree(work);
 
@@ -2514,8 +2520,10 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
     }
 
     // Register this response.
+    PS_SPIN_LOCK(&data->lock);
     data->count += msg->count;
     data->responses++;
+    PS_SPIN_UNLOCK(&data->lock);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -2664,7 +2672,9 @@ static int handle_mprotect_response(struct pcn_kmsg_message* inc_msg) {
     }
 
     // Register this response.
+    PS_SPIN_LOCK(&data->lock);
     data->responses++;
+    PS_SPIN_UNLOCK(&data->lock);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -3857,6 +3867,7 @@ int process_server_do_munmap(struct mm_struct* mm,
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
     data->requester_pid = current->pid;
+    spin_lock_init(&data->lock);
 
     add_data_entry_to(data,
                       &_munmap_data_head_lock,
@@ -3935,6 +3946,7 @@ void process_server_do_mprotect(struct task_struct* task,
     data->tgroup_home_id = task->tgroup_home_id;
     data->requester_pid = task->pid;
     data->start = start;
+    spin_lock_init(&data->lock);
 
     add_data_entry_to(data,
                       &_mprotect_data_head_lock,
