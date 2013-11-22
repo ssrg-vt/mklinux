@@ -12,11 +12,13 @@
 
 /* LOCKING / SYNCHRONIZATION */
 #define pcn_cpu_relax() __asm__ ("pause":::"memory")
-#define pcn_barrier() __asm__ __volatile__("":::"memory")
+//#define pcn_barrier() __asm__ __volatile__("":::"memory")
+#define pcn_barrier() mb()
 
 /* BOOKKEEPING */
 
 #define POPCORN_MAX_MCAST_CHANNELS 32
+#define LG_SEQNUM_SIZE 7
 
 struct pcn_kmsg_mcast_wininfo {
 	volatile unsigned char lock;
@@ -61,23 +63,29 @@ enum pcn_kmsg_type {
     PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST,
     PCN_KMSG_TYPE_PROC_SRV_CREATE_PROCESS_PAIRING,
     PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS,
+    PCN_KMSG_TYPE_PROC_SRV_EXIT_SHADOW,
     PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER,
     PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER,
     PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST,
     PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE,
-    PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_NONPRESENT,
-    PCN_KMSG_TYPE_PROC_SRV_MUNMAP_REQUEST,
-    PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE,
+    PCN_KMSG_TYPE_PROC_SRV_INVALID_DATA,
+    PCN_KMSG_TYPE_PROC_SRV_ACK_DATA,
     PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_REQUEST,
     PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE,
-    PCN_KMSG_TYPE_PROC_SRV_MPROTECT_REQUEST,
-    PCN_KMSG_TYPE_PROC_SRV_MPROTECT_RESPONSE,
     PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION,
-    PCN_KMSG_TYPE_PCN_PERF_START_MESSAGE,
-    PCN_KMSG_TYPE_PCN_PERF_END_MESSAGE,
-    PCN_KMSG_TYPE_PCN_PERF_CONTEXT_MESSAGE,
-    PCN_KMSG_TYPE_PCN_PERF_ENTRY_MESSAGE,
-    PCN_KMSG_TYPE_PCN_PERF_END_ACK_MESSAGE,
+	PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_NONPRESENT,
+	PCN_KMSG_TYPE_PROC_SRV_MPROTECT_RESPONSE,
+	PCN_KMSG_TYPE_PROC_SRV_MPROTECT_REQUEST,
+	PCN_KMSG_TYPE_PROC_SRV_MUNMAP_REQUEST,
+	PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE,
+	PCN_KMSG_TYPE_PCN_PERF_START_MESSAGE,
+	PCN_KMSG_TYPE_PCN_PERF_END_MESSAGE,
+	PCN_KMSG_TYPE_PCN_PERF_CONTEXT_MESSAGE,
+	PCN_KMSG_TYPE_PCN_PERF_ENTRY_MESSAGE,
+	PCN_KMSG_TYPE_PCN_PERF_END_ACK_MESSAGE,
+    PCN_KMSG_TYPE_START_TEST,
+    PCN_KMSG_TYPE_REQUEST_TEST,
+    PCN_KMSG_TYPE_ANSWER_TEST,
 	PCN_KMSG_TYPE_MCAST_CLOSE,
 	PCN_KMSG_TYPE_SHMTUN,
 	PCN_KMSG_TYPE_MAX
@@ -99,12 +107,14 @@ struct pcn_kmsg_hdr {
 	unsigned int is_lg_msg  :1;
 	unsigned int lg_start   :1;
 	unsigned int lg_end     :1;
+	unsigned long long_number;
 
-	unsigned int lg_seqnum 	:7; // b3
-	unsigned int ready	:1; 
+	unsigned int lg_seqnum 	:LG_SEQNUM_SIZE;// b3
+	volatile unsigned int ready	:1;
 }__attribute__((packed));
 
-#define PCN_KMSG_PAYLOAD_SIZE 60
+//#define PCN_KMSG_PAYLOAD_SIZE 60
+#define PCN_KMSG_PAYLOAD_SIZE (64-sizeof(struct pcn_kmsg_hdr))
 
 /* The actual messages.  The expectation is that developers will create their
    own message structs with the payload replaced with their own fields, and then
@@ -159,6 +169,7 @@ struct pcn_kmsg_window {
 	volatile unsigned long tail;
 	volatile unsigned char int_enabled;
 	volatile struct pcn_kmsg_reverse_message buffer[PCN_KMSG_RBUF_SIZE];
+	volatile int second_buffer[PCN_KMSG_RBUF_SIZE];
 }__attribute__((packed));
 
 /* Typedef for function pointer to callback functions */
