@@ -100,6 +100,11 @@
 #define PERF_MEASURE_START(x) perf_measure_start(x)
 #define PERF_MEASURE_STOP(x,y)  perf_measure_stop(x,y)
 
+/**
+ * Useful macros
+ */
+#define DO_UNTIL_SUCCESS(x) while(x != 0){}
+
 pcn_perf_context_t perf_process_mapping_request;
 pcn_perf_context_t perf_process_mapping_request_search_active_mm;
 pcn_perf_context_t perf_process_mapping_request_search_saved_mm;
@@ -2031,12 +2036,12 @@ retry:
     // Send response
     if(response.present) {
         //PERF_MEASURE_START(&perf_process_mapping_request_transmit);
-        pcn_kmsg_send_long(w->from_cpu,
-                 (struct pcn_kmsg_long_message*)(&response),
-                    sizeof(mapping_response_t) - 
-                    sizeof(struct pcn_kmsg_hdr) -   //
-                    sizeof(response.path) +         // Chop off the end of the path
-                    strlen(response.path) + 1);     // variable to save bandwidth.
+        DO_UNTIL_SUCCESS(pcn_kmsg_send_long(w->from_cpu,
+                            (struct pcn_kmsg_long_message*)(&response),
+                            sizeof(mapping_response_t) - 
+                            sizeof(struct pcn_kmsg_hdr) -   //
+                            sizeof(response.path) +         // Chop off the end of the path
+                            strlen(response.path) + 1));    // variable to save bandwidth.
         //PERF_MEASURE_STOP(&perf_process_mapping_request_transmit,
         //                  " ");
     } else {
@@ -2049,7 +2054,7 @@ retry:
         nonpresent_response.tgroup_home_id  = w->tgroup_home_id;
         nonpresent_response.requester_pid = w->requester_pid;
         nonpresent_response.address = w->address;
-        pcn_kmsg_send(w->from_cpu,(struct pcn_kmsg_message*)(&nonpresent_response));
+        DO_UNTIL_SUCCESS(pcn_kmsg_send(w->from_cpu,(struct pcn_kmsg_message*)(&nonpresent_response)));
 
     }
 
@@ -2377,8 +2382,8 @@ done:
     response.vaddr_size = w->vaddr_size;
     
     // Send response
-    pcn_kmsg_send(w->from_cpu,
-             (struct pcn_kmsg_message*)(&response));
+    DO_UNTIL_SUCCESS(pcn_kmsg_send(w->from_cpu,
+                        (struct pcn_kmsg_message*)(&response)));
 
     kfree(work);
     
@@ -2459,8 +2464,8 @@ done:
     response.start = start;
     
     // Send response
-    pcn_kmsg_send(w->from_cpu,
-             (struct pcn_kmsg_message*)(&response));
+    DO_UNTIL_SUCCESS(pcn_kmsg_send(w->from_cpu,
+                        (struct pcn_kmsg_message*)(&response)));
 
     kfree(work);
 
@@ -2586,8 +2591,8 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
             response.count);
 
     // Send response
-    pcn_kmsg_send(msg->header.from_cpu,
-             (struct pcn_kmsg_message*)(&response));
+    DO_UNTIL_SUCCESS(pcn_kmsg_send(msg->header.from_cpu,
+                            (struct pcn_kmsg_message*)(&response)));
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -3731,9 +3736,9 @@ finished_membership_search:
         //                a familiar place (a place you've been before), but unfortunately, 
         //                your life is over.
         //                Note: comments like this must == I am tired.
-        tx_ret = pcn_kmsg_send_long(current->prev_cpu, 
-                    (struct pcn_kmsg_long_message*)&msg,
-                    sizeof(exiting_process_t) - sizeof(struct pcn_kmsg_hdr));
+        DO_UNTIL_SUCCESS(pcn_kmsg_send_long(current->prev_cpu, 
+                            (struct pcn_kmsg_long_message*)&msg,
+                            sizeof(exiting_process_t) - sizeof(struct pcn_kmsg_hdr)));
     } 
 
 
@@ -3803,7 +3808,7 @@ finished_membership_search:
 
     PERF_MEASURE_STOP(&perf_process_server_do_exit," ");
 
-    return tx_ret;
+    return 0;
 }
 
 /**
@@ -3828,14 +3833,14 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
     msg.your_pid = remote_pid; 
     msg.my_pid = pid;
     
-    tx_ret = pcn_kmsg_send_long(remote_cpu, 
-                (struct pcn_kmsg_long_message*)&msg, 
-                sizeof(msg) - sizeof(msg.header));
+    DO_UNTIL_SUCCESS(pcn_kmsg_send_long(remote_cpu, 
+                        (struct pcn_kmsg_long_message*)&msg, 
+                        sizeof(msg) - sizeof(msg.header)));
 
     PERF_MEASURE_STOP(&perf_process_server_notify_delegated_subprocess_starting,
             " ");
 
-    return tx_ret;
+    return 0;
 
 }
 
@@ -4394,7 +4399,7 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
     pte_xfer.clone_request_id = clone_request_id;
     pte_xfer.pfn = pte_pfn(*pte);
     PSPRINTK("Sending PTE\n"); 
-    pcn_kmsg_send(dst_cpu, (struct pcn_kmsg_message *)&pte_xfer);
+    DO_UNTIL_SUCCESS(pcn_kmsg_send(dst_cpu, (struct pcn_kmsg_message *)&pte_xfer));
 
     return 0;
 }
@@ -4466,7 +4471,6 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     unsigned long clone_flags = task->clone_flags;
     unsigned long stack_start = task->mm->start_stack;
     clone_request_t* request = kmalloc(sizeof(clone_request_t),GFP_KERNEL);
-    int tx_ret = -1;
     struct task_struct* tgroup_iterator = NULL;
     struct task_struct* g;
     int dst_cpu = cpu;
@@ -4559,12 +4563,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
         vma_xfer->clone_request_id = lclone_request_id;
         vma_xfer->flags = curr->vm_flags;
         vma_xfer->pgoff = curr->vm_pgoff;
-        tx_ret = pcn_kmsg_send_long(dst_cpu, 
-                    (struct pcn_kmsg_long_message*)vma_xfer, 
-                    sizeof(vma_transfer_t) - sizeof(vma_xfer->header));
-        if (tx_ret) {
-            PSPRINTK("Unable to send vma transfer message, rc = %d\n", tx_ret);
-        }
+        DO_UNTIL_SUCCESS(pcn_kmsg_send_long(dst_cpu, 
+                            (struct pcn_kmsg_long_message*)vma_xfer, 
+                            sizeof(vma_transfer_t) - sizeof(vma_xfer->header)));
 
         PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}\n",
                 curr->vm_start, 
@@ -4669,11 +4670,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     }
 
     // Send request
-    tx_ret = pcn_kmsg_send_long(dst_cpu, 
-                (struct pcn_kmsg_long_message*)request, 
-                sizeof(clone_request_t) - sizeof(request->header));
-
-    PSPRINTK("kmkprocsrv: transmitted %d\n",tx_ret);
+    DO_UNTIL_SUCCESS(pcn_kmsg_send_long(dst_cpu, 
+                        (struct pcn_kmsg_long_message*)request, 
+                        sizeof(clone_request_t) - sizeof(request->header)));
 
     kfree(request);
     kfree(vma_xfer);
