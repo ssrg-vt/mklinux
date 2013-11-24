@@ -354,6 +354,7 @@ typedef struct _remote_thread_count_request_data {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int count_remote_id;
     int responses;
     int expected_responses;
     int count;
@@ -588,10 +589,11 @@ struct _remote_thread_count_request {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int count_remote_id;        // 4
     int include_shadow_threads; // 4
                                 // ---
-                                // 12 -> 48 bytes of padding needed
-    char pad[48];
+                                // 16 -> 44 bytes of padding needed
+    char pad[44];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _remote_thread_count_request remote_thread_count_request_t;
 
@@ -602,10 +604,11 @@ struct _remote_thread_count_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int count_remote_id;        // 4
     int count;                  // 4
                                 // ---
-                                // 12 -> 48 bytes of padding needed
-    char pad[48];
+                                // 16 -> 44 bytes of padding needed
+    char pad[44];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _remote_thread_count_response remote_thread_count_response_t;
 
@@ -826,6 +829,9 @@ DEFINE_SPINLOCK(_vma_id_lock);                    // Lock for _vma_id
 DEFINE_SPINLOCK(_clone_request_id_lock);          // Lock for _clone_request_id
 struct rw_semaphore _import_sem;
 DEFINE_SPINLOCK(_remap_lock);
+int _count_remote_id;
+DEFINE_SPINLOCK(_count_remote_id_lock);
+
 
 // Work Queues
 static struct workqueue_struct *clone_wq;
@@ -1109,7 +1115,7 @@ static void dump_clone_data(clone_data_t* r) {
 /**
  *
  */
-static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu, int id) {
+static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu, int id, int count_remote_id) {
     data_header_t* curr = NULL;
     remote_thread_count_request_data_t* request = NULL;
     remote_thread_count_request_data_t* ret = NULL;
@@ -1120,7 +1126,8 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
     while(curr) {
         request = (remote_thread_count_request_data_t*)curr;
         if(request->tgroup_home_cpu == cpu &&
-           request->tgroup_home_id == id) {
+           request->tgroup_home_id == id &&
+           request->count_remote_id == count_remote_id) {
             ret = request;
             break;
         }
@@ -1609,6 +1616,10 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     data->expected_responses = 0;
     data->tgroup_home_cpu = tgroup_home_cpu;
     data->tgroup_home_id = tgroup_home_id;
+    spin_lock(&_count_remote_id_lock);
+    data->count_remote_id = _count_remote_id;
+    _count_remote_id++;
+    spin_unlock(&_count_remote_id_lock);
     data->count = 0;
     spin_lock_init(&data->lock);
 
@@ -1620,6 +1631,7 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
+    request.count_remote_id = data->count_remote_id;
     request.include_shadow_threads = include_shadow_threads;
     for(i = 0; i < NR_CPUS; i++) {
 
@@ -2515,7 +2527,8 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
     PERF_MEASURE_START(&perf_handle_remote_thread_count_response);
 
     data = find_remote_thread_count_data(msg->tgroup_home_cpu,
-                                         msg->tgroup_home_id);
+                                         msg->tgroup_home_id,
+                                         msg->count_remote_id);
 
     PSPRINTK("%s: entered - cpu{%d}, id{%d}, count{%d}\n",
             __func__,
@@ -2586,6 +2599,7 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
     response.header.prio = PCN_KMSG_PRIO_NORMAL;
     response.tgroup_home_cpu = msg->tgroup_home_cpu;
     response.tgroup_home_id = msg->tgroup_home_id;
+    response.count_remote_id = msg->count_remote_id;
 
     PSPRINTK("%s: responding to thread count request with %d\n",__func__,
             response.count);
