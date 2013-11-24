@@ -354,7 +354,7 @@ typedef struct _remote_thread_count_request_data {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
-    int count_remote_id;
+    int requester_pid;
     int responses;
     int expected_responses;
     int count;
@@ -589,7 +589,7 @@ struct _remote_thread_count_request {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
-    int count_remote_id;        // 4
+    int requester_pid;          // 4
     int include_shadow_threads; // 4
                                 // ---
                                 // 16 -> 44 bytes of padding needed
@@ -604,7 +604,7 @@ struct _remote_thread_count_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
-    int count_remote_id;        // 4
+    int requester_pid;        // 4
     int count;                  // 4
                                 // ---
                                 // 16 -> 44 bytes of padding needed
@@ -777,7 +777,28 @@ typedef struct {
     int from_cpu;
 } mprotect_work_t;
 
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int requester_pid;
+    int count;
+} remote_thread_count_response_work_t;
 
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int requester_pid;
+    int include_shadow_threads;
+    int from_cpu;
+} remote_thread_count_request_work_t;
 
 /**
  * Prototypes
@@ -829,8 +850,6 @@ DEFINE_SPINLOCK(_vma_id_lock);                    // Lock for _vma_id
 DEFINE_SPINLOCK(_clone_request_id_lock);          // Lock for _clone_request_id
 struct rw_semaphore _import_sem;
 DEFINE_SPINLOCK(_remap_lock);
-int _count_remote_id;
-DEFINE_SPINLOCK(_count_remote_id_lock);
 
 
 // Work Queues
@@ -1115,7 +1134,7 @@ static void dump_clone_data(clone_data_t* r) {
 /**
  *
  */
-static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu, int id, int count_remote_id) {
+static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu, int id, int requester_pid) {
     data_header_t* curr = NULL;
     remote_thread_count_request_data_t* request = NULL;
     remote_thread_count_request_data_t* ret = NULL;
@@ -1127,7 +1146,7 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
         request = (remote_thread_count_request_data_t*)curr;
         if(request->tgroup_home_cpu == cpu &&
            request->tgroup_home_id == id &&
-           request->count_remote_id == count_remote_id) {
+           request->requester_pid == requester_pid) {
             ret = request;
             break;
         }
@@ -1598,8 +1617,9 @@ static void dump_data_list(void) {
 /**
  *
  */
-static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, int include_shadow_threads) {
-
+static int count_remote_thread_members(int include_shadow_threads) {
+    int tgroup_home_cpu = current->tgroup_home_cpu;
+    int tgroup_home_id  = current->tgroup_home_id;
     remote_thread_count_request_data_t* data;
     remote_thread_count_request_t request;
     int i;
@@ -1616,10 +1636,7 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     data->expected_responses = 0;
     data->tgroup_home_cpu = tgroup_home_cpu;
     data->tgroup_home_id = tgroup_home_id;
-    spin_lock(&_count_remote_id_lock);
-    data->count_remote_id = _count_remote_id;
-    _count_remote_id++;
-    spin_unlock(&_count_remote_id_lock);
+    data->requester_pid = current->pid;
     data->count = 0;
     spin_lock_init(&data->lock);
 
@@ -1631,7 +1648,7 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
-    request.count_remote_id = data->count_remote_id;
+    request.requester_pid = data->requester_pid;
     request.include_shadow_threads = include_shadow_threads;
     for(i = 0; i < NR_CPUS; i++) {
 
@@ -1701,14 +1718,13 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, i
 /**
  *
  */
-static int count_thread_members(int tgroup_home_cpu, int tgroup_home_id, 
-        int include_remote_shadow_threads, 
-        int include_local_shadow_threads) {
+static int count_thread_members(int include_remote_shadow_threads, 
+                                int include_local_shadow_threads) {
      
     int count = 0;
     PSPRINTK("%s: entered\n",__func__);
-    count += count_local_thread_members(tgroup_home_cpu, tgroup_home_id,include_local_shadow_threads);
-    count += count_remote_thread_members(tgroup_home_cpu, tgroup_home_id, include_remote_shadow_threads);
+    count += count_local_thread_members(current->tgroup_home_cpu, current->tgroup_home_id,include_local_shadow_threads);
+    count += count_remote_thread_members(include_remote_shadow_threads);
     PSPRINTK("%s: exited\n",__func__);
     return count;
 }
@@ -2484,6 +2500,87 @@ done:
     PERF_MEASURE_STOP(&perf_process_mprotect_item," ");
 }
 
+void process_remote_thread_count_response(struct work_struct* work) {
+    remote_thread_count_response_work_t* w = (remote_thread_count_response_work_t*) work;
+    remote_thread_count_request_data_t* data;
+    
+    data = find_remote_thread_count_data(w->tgroup_home_cpu,
+                                         w->tgroup_home_id,
+                                         w->requester_pid);
+
+    PSPRINTK("%s: entered - cpu{%d}, id{%d}, count{%d}\n",
+            __func__,
+            w->tgroup_home_cpu,
+            w->tgroup_home_id,
+            w->count);
+
+    if(data == NULL) {
+        PSPRINTK("unable to find remote thread count data\n");
+        return;
+    }
+
+    // Register this response.
+    PS_SPIN_LOCK(&data->lock);
+    data->count += w->count;
+    data->responses++;
+    PS_SPIN_UNLOCK(&data->lock);
+
+    kfree(work);
+}
+
+void process_remote_thread_count_request(struct work_struct* work) {
+    remote_thread_count_request_work_t* w = (remote_thread_count_request_work_t*)work;
+    remote_thread_count_response_t response;
+    struct task_struct *task, *g;
+
+    PSPRINTK("%s: entered - cpu{%d}, id{%d}\n",
+            __func__,
+            msg->tgroup_home_cpu,
+            msg->tgroup_home_id);
+
+    response.count = 0;
+
+    // Count thread group members
+    do_each_thread(g,task) {
+        if(task->tgroup_home_cpu == w->tgroup_home_cpu &&
+           task->tgroup_home_id  == w->tgroup_home_id &&
+           task->exit_state != EXIT_ZOMBIE &&
+           task->exit_state != EXIT_DEAD &&
+           !(task->flags & PF_EXITING)) {
+
+            if(w->include_shadow_threads || 
+                    (!w->include_shadow_threads && !task->represents_remote)) {
+                response.count++;
+                PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
+                        task->pid,
+                        task->tgid,
+                        task->state,
+                        task->exit_state,
+                        task->flags);
+            }
+
+        }
+    } while_each_thread(g,task);
+
+    // Finish constructing response
+    response.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE;
+    response.header.prio = PCN_KMSG_PRIO_NORMAL;
+    response.tgroup_home_cpu = w->tgroup_home_cpu;
+    response.tgroup_home_id = w->tgroup_home_id;
+    response.requester_pid = w->requester_pid;
+
+    PSPRINTK("%s: responding to thread count request with %d\n",__func__,
+            response.count);
+
+    // Send response
+    DO_UNTIL_SUCCESS(pcn_kmsg_send(w->from_cpu,
+                            (struct pcn_kmsg_message*)(&response)));
+
+    kfree(work);
+
+    return;
+}
+
 /**
  * Request implementations
  */
@@ -2522,31 +2619,19 @@ static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_
 static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg) {
     remote_thread_count_response_t* msg = (remote_thread_count_response_t*) inc_msg;
 
-    remote_thread_count_request_data_t* data;
+    remote_thread_count_response_work_t* work;
 
     PERF_MEASURE_START(&perf_handle_remote_thread_count_response);
 
-    data = find_remote_thread_count_data(msg->tgroup_home_cpu,
-                                         msg->tgroup_home_id,
-                                         msg->count_remote_id);
-
-    PSPRINTK("%s: entered - cpu{%d}, id{%d}, count{%d}\n",
-            __func__,
-            msg->tgroup_home_cpu,
-            msg->tgroup_home_id,
-            msg->count);
-
-    if(data == NULL) {
-        PSPRINTK("unable to find remote thread count data\n");
-        pcn_kmsg_free_msg(inc_msg);
-        return -1;
+    work = kmalloc( sizeof(remote_thread_count_response_work_t), GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_remote_thread_count_response);
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id  = msg->tgroup_home_id;
+        work->requester_pid   = msg->requester_pid;
+        work->count           = msg->count;
+        queue_work(mapping_wq, (struct work_struct*)work);
     }
-
-    // Register this response.
-    PS_SPIN_LOCK(&data->lock);
-    data->count += msg->count;
-    data->responses++;
-    PS_SPIN_UNLOCK(&data->lock);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -2560,58 +2645,25 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
  */
 static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) {
     remote_thread_count_request_t* msg = (remote_thread_count_request_t*)inc_msg;
-    remote_thread_count_response_t response;
-    struct task_struct *task, *g;
+    remote_thread_count_request_work_t* work;
 
     PERF_MEASURE_START(&perf_handle_remote_thread_count_request);
-
-    PSPRINTK("%s: entered - cpu{%d}, id{%d}\n",
-            __func__,
-            msg->tgroup_home_cpu,
-            msg->tgroup_home_id);
-
-    response.count = 0;
-
-    // Count thread group members
-    do_each_thread(g,task) {
-        if(task->tgroup_home_cpu == msg->tgroup_home_cpu &&
-           task->tgroup_home_id  == msg->tgroup_home_id &&
-           task->exit_state != EXIT_ZOMBIE &&
-           task->exit_state != EXIT_DEAD &&
-           !(task->flags & PF_EXITING)) {
-
-            if(msg->include_shadow_threads || 
-                    (!msg->include_shadow_threads && !task->represents_remote)) {
-                response.count++;
-                PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
-                        task->pid,
-                        task->tgid,
-                        task->state,
-                        task->exit_state,
-                        task->flags);
-            }
-
-        }
-    } while_each_thread(g,task);
-
-    // Finish constructing response
-    response.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE;
-    response.header.prio = PCN_KMSG_PRIO_NORMAL;
-    response.tgroup_home_cpu = msg->tgroup_home_cpu;
-    response.tgroup_home_id = msg->tgroup_home_id;
-    response.count_remote_id = msg->count_remote_id;
-
-    PSPRINTK("%s: responding to thread count request with %d\n",__func__,
-            response.count);
-
-    // Send response
-    DO_UNTIL_SUCCESS(pcn_kmsg_send(msg->header.from_cpu,
-                            (struct pcn_kmsg_message*)(&response)));
-
-    pcn_kmsg_free_msg(inc_msg);
+    
+    work = kmalloc(sizeof(remote_thread_count_request_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_remote_thread_count_request );
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id  = msg->tgroup_home_id;
+        work->requester_pid = msg->requester_pid;
+        work->include_shadow_threads = msg->include_shadow_threads;
+        work->from_cpu = msg->header.from_cpu;
+        queue_work(mapping_wq, (struct work_struct*)work);
+    }
 
     PERF_MEASURE_STOP(&perf_handle_remote_thread_count_request," ");
 
+    pcn_kmsg_free_msg(inc_msg);
+    
     return 0;
 }
 
@@ -3719,7 +3771,7 @@ finished_membership_search:
     } else {
         // Last local thread, which means we MIGHT be the last
         // in the distributed thread group, but we have to check.
-        int count = count_thread_members(current->tgroup_home_cpu,current->tgroup_home_id,1,1);
+        int count = count_thread_members(1,1);
         if (count == 0) {
             // Distributed thread count yielded no thread group members
             // so the current <exiting> task is the last group member.
