@@ -479,6 +479,61 @@ out:
 	return error;
 }
 
+
+ int saif_alloc_fd(unsigned start, unsigned flags,unsigned int fd)
+ {
+         struct files_struct *files = current->files;
+ //      unsigned int fd;
+         int error;
+         struct fdtable *fdt;
+
+         spin_lock(&files->file_lock);
+ repeat:
+         fdt = files_fdtable(files);
+ //      fd = start;
+ /*
+494         if (fd < files->next_fd)
+495                 fd = files->next_fd;
+496
+497         if (fd < fdt->max_fds)
+498                 fd = find_next_zero_bit(fdt->open_fds->fds_bits,
+499                                            fdt->max_fds, fd);
+500 */
+
+         error = expand_files(files, fd);
+         if (error < 0)
+                 goto out;
+
+         /*
+507          * If we needed to expand the fs array we
+508          * might have blocked - try again.
+509          */
+         if (error)
+                 goto repeat;
+
+         if (start <= files->next_fd)
+                 files->next_fd = fd + 1;
+
+         FD_SET(fd, fdt->open_fds);
+         if (flags & O_CLOEXEC)
+                 FD_SET(fd, fdt->close_on_exec);
+         else
+                 FD_CLR(fd, fdt->close_on_exec);
+         error = fd;
+ #if 1
+         /* Sanity check */
+         if (rcu_dereference_raw(fdt->fd[fd]) != NULL) {
+                 printk(KERN_WARNING "alloc_fd: slot %d not NULL!\n", fd);
+                 rcu_assign_pointer(fdt->fd[fd], NULL);
+         }
+ #endif
+
+ out:
+         spin_unlock(&files->file_lock);
+         return error;
+ }
+
+
 int get_unused_fd(void)
 {
 	return alloc_fd(0, 0);

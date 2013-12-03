@@ -992,6 +992,7 @@ struct file {
 	struct file_ra_state	f_ra;
 
 	u64			f_version;
+	int         f_omode;
 #ifdef CONFIG_SECURITY
 	void			*f_security;
 #endif

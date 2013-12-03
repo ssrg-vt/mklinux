@@ -41,7 +41,9 @@
 #define  NSIG 32
 
 #include<linux/signal.h>
+#include <linux/fcntl.h>
 
+extern sys_topen(const char __user * filename, int flags, int mode, int fd);
 /**
  * Use the preprocessor to turn off printk.
  */
@@ -339,6 +341,7 @@ typedef struct _mapping_request_data {
     int responses;
     int expected_responses;
     unsigned long pgoff;
+    spinlock_t lock;
     char path[512];
 } mapping_request_data_t;
 
@@ -2143,7 +2146,9 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
         return;
     }
 
+    spin_lock(&data->lock);
     data->responses++;
+    spin_unlock(&data->lock);
 
     kfree(work);
 }
@@ -2174,7 +2179,7 @@ void process_mapping_response(struct work_struct* work) {
                 "early exit");
         return;
     }
-
+    spin_lock(&data->lock);
     if(w->present) {
         PSPRINTK("received positive search result from cpu %d\n",
                 w->from_cpu);
@@ -2231,10 +2236,12 @@ void process_mapping_response(struct work_struct* work) {
                 w->from_cpu);
     }
 
+out:
     // Account for this cpu's response.
     data->responses++;
 
-out:
+    spin_unlock(&data->lock);
+
     kfree(work);
     
     PERF_MEASURE_STOP(&perf_process_mapping_response," ");
@@ -3274,6 +3281,10 @@ int process_server_import_address_space(unsigned long* ip,
     struct task_struct* thread_task = NULL;
     mm_data_t* used_saved_mm = NULL;
 
+    /*temp code*/
+    struct file* tf;
+    long tfd;
+
     perf_a = native_read_tsc();
     
     PSPRINTK("import address space\n");
@@ -3678,6 +3689,21 @@ __func__,
     PS_UP_WRITE(&_import_sem);
 
     dump_task(current,NULL,0);
+
+    /*temporary code*/
+    printk(KERN_ALERT " opening console in remote kernel \n");
+
+   // tfd = sys_topen("/dev/kmsg", O_RDONLY, 644);
+
+   // printk(KERN_ALERT " tfd in{%d} \n",tfd);
+
+    tfd = sys_topen("/dev/kmsg", O_WRONLY, 644,1);
+
+    printk(KERN_ALERT " tfd out{%d} \n",tfd);
+
+   /* tfd = sys_topen("/dev/kmsg", O_RDWR, 644);
+
+    printk(KERN_ALERT " tfd err{%d} \n",tfd);*/
 
     PERF_MEASURE_STOP(&perf_process_server_import_address_space, " ");
 
@@ -4166,6 +4192,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     data->header.data_type = PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE;
     data->address = address;
     data->present = 0;
+    spin_lock_init(&data->lock);
     data->responses = 0;
     data->expected_responses = 0;
     data->paddr_mapping = 0;

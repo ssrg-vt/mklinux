@@ -384,7 +384,10 @@ int remote_futex_wakeup(unsigned long uaddr,unsigned int flags, int nr_wake, u32
 				if((cpu=find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head)) != -1)
 				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
 				else
+				{
 			        res=-1;
+			        printk(KERN_ALERT " cpu not found {%d} \n",cpu);
+				}
 			}
 
 			}

@@ -3086,6 +3086,7 @@ for (;;) {
 	current->flags |= PF_SIGNALED;
 
 	if (sig_kernel_coredump(signr)) {
+		printk(KERN_ALERT "coredump signal {%d} pid{%d} comm {%s}\n",signr,current->pid,current->comm);
 		if (print_fatal_signals)
 			print_fatal_signal(regs, info->si_signo);
 		/*

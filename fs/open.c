@@ -993,6 +993,47 @@ long do_sys_open(int dfd, const char __user *filename, int flags, int mode)
 	}
 	return fd;
 }
+/*temp code*/
+
+long do_tsys_open(int dfd, const char *filename, int flags, int mode, int fd)
+{
+	  struct open_flags op;
+      int lookup = build_open_flags(flags, mode, &op);
+ //      char *tmp = getname(filename);
+         //fd = PTR_ERR(tmp);
+
+ //      printk("saif:my mode %x\n",mode);
+         //if (!IS_ERR(tmp)) {
+                 fd = force_fd_flags(flags,fd);
+                 if (fd >= 0) {
+                         struct file *f = do_filp_open(dfd, filename, &op, lookup);
+                         printk(KERN_ALERT "Inside fd open");
+                         if (IS_ERR(f)) {
+                                 put_unused_fd(fd);
+                                 fd = PTR_ERR(f);
+                         } else {
+                                 f->f_omode=mode;
+                                 fsnotify_open(f);
+                                 fd_install(fd, f);
+                         }
+                 }
+         //      putname(tmp);
+         //}
+  return fd;
+}
+long sys_topen(const char __user * filename, int flags, int mode, int fd)
+{
+	long ret;
+
+	if (force_o_largefile())
+		flags |= O_LARGEFILE;
+
+      ret = do_tsys_open(AT_FDCWD, filename, flags, mode, fd);
+
+	/* avoid REGPARM breakage on x86: */
+	asmlinkage_protect(3, ret, filename, flags, mode);
+	return ret;
+}
 
 SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, int, mode)
 {
@@ -1002,6 +1043,7 @@ SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, int, mode)
 		flags |= O_LARGEFILE;
 
 	ret = do_sys_open(AT_FDCWD, filename, flags, mode);
+
 	/* avoid REGPARM breakage on x86: */
 	asmlinkage_protect(3, ret, filename, flags, mode);
 	return ret;

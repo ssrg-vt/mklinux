@@ -34,8 +34,10 @@ extern struct file *fget_raw_light(unsigned int fd, int *fput_needed);
 extern void set_close_on_exec(unsigned int fd, int flag);
 extern void put_filp(struct file *);
 extern int alloc_fd(unsigned start, unsigned flags);
+extern int saif_alloc_fd(unsigned start, unsigned flags,unsigned int fd); //saif
 extern int get_unused_fd(void);
 #define get_unused_fd_flags(flags) alloc_fd(0, (flags))
+#define force_fd_flags(flags,fd) saif_alloc_fd(0, (flags),fd)
 extern void put_unused_fd(unsigned int fd);
 
 extern void fd_install(unsigned int fd, struct file *file);
