@@ -3761,6 +3761,10 @@ finished_membership_search:
         // Not the last local thread, which means we're not the
         // last in the distributed thread group either.
         is_last_thread_in_group = 0;
+    } else if (task->prev_cpu != -1) {
+        // OPTIMIZATION: We know that there must be more than 0 shadow threads, since this
+        // task is going to migrate back.
+        is_last_thread_in_group = 0;
     } else {
         // Last local thread, which means we MIGHT be the last
         // in the distributed thread group, but we have to check.
