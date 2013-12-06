@@ -40,7 +40,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -220,6 +220,12 @@ static void perf_init(void) {
 #endif
 
 /**
+ * Constants
+ */
+#define RETURN_DISPOSITION_EXIT 0
+#define RETURN_DISPOSITION_MIGRATE 1
+
+/**
  * Library
  */
 
@@ -301,9 +307,12 @@ typedef struct _clone_data {
     unsigned short thread_gsindex;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int t_home_cpu;
+    int t_home_id;
     int prio, static_prio, normal_prio; //from sched.c
 	unsigned int rt_priority; //from sched.c
 	int sched_class; //from sched.c but here we are using SCHED_NORMAL, SCHED_FIFO, etc.
+    unsigned long previous_cpus;
     vma_data_t* vma_list;
     vma_data_t* pending_vma_list;
 } clone_data_t;
@@ -417,9 +426,12 @@ typedef struct _clone_request {
     unsigned short thread_gsindex;
     int tgroup_home_cpu;
     int tgroup_home_id;
+    int t_home_cpu;
+    int t_home_id;
     int prio, static_prio, normal_prio; //from sched.c
 	unsigned int rt_priority; //from sched.c
 	int sched_class; //from sched.c but here we are using SCHED_NORMAL, SCHED_FIFO, etc.
+    unsigned long previous_cpus;
 } clone_request_t;
 
 /**
@@ -439,11 +451,17 @@ typedef struct _create_process_pairing {
  * process death.  This occurs whether the process
  * is a placeholder or a delegate locally.
  */
-typedef struct _exiting_process {
+struct _exiting_process {
     struct pcn_kmsg_hdr header;
-    int my_pid;                 
-    int is_last_tgroup_member;  
-}  exiting_process_t;
+    int t_home_cpu;             // 4
+    int t_home_id;              // 4
+    int my_pid;                 // 4
+    int is_last_tgroup_member;  // 4+
+                                // ---
+                                // 16 -> 44 bytes of padding needed
+    char pad[44];
+} __attribute__((packed)) __attribute__((aligned(64)));  
+typedef struct _exiting_process exiting_process_t;
 
 /**
  * Inform remote cpu of a vma to process mapping.
@@ -589,11 +607,13 @@ struct _remote_thread_count_request {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
+    int exclude_t_home_cpu;     // 4
+    int exclude_t_home_id;      // 4
     int requester_pid;          // 4
     int include_shadow_threads; // 4
                                 // ---
-                                // 16 -> 44 bytes of padding needed
-    char pad[44];
+                                // 24 -> 36 bytes of padding needed
+    char pad[36];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _remote_thread_count_request remote_thread_count_request_t;
 
@@ -644,7 +664,25 @@ struct _mprotect_response {
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _mprotect_response mprotect_response_t;
 
-
+/**
+ *
+ */
+typedef struct _back_migration {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int t_home_cpu;
+    int t_home_id;
+    unsigned long previous_cpus;
+    struct pt_regs regs;
+    unsigned long thread_fs;
+    unsigned long thread_gs;
+    unsigned long thread_usersp;
+    unsigned short thread_es;
+    unsigned short thread_ds;
+    unsigned short thread_fsindex;
+    unsigned short thread_gsindex;
+} back_migration_t;
 
 /**
  *
@@ -670,6 +708,8 @@ typedef struct {
     struct work_struct work;
     struct task_struct *task;
     pid_t pid;
+    int t_home_cpu;
+    int t_home_id;
     int is_last_tgroup_member;
     struct pt_regs regs;
     unsigned long thread_fs;
@@ -797,8 +837,30 @@ typedef struct {
     int tgroup_home_id;
     int requester_pid;
     int include_shadow_threads;
+    int exclude_t_home_cpu;
+    int exclude_t_home_id;
     int from_cpu;
 } remote_thread_count_request_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+    int t_home_cpu;
+    int t_home_id;
+    unsigned long previous_cpus;
+    struct pt_regs regs;
+    unsigned long thread_fs;
+    unsigned long thread_gs;
+    unsigned long thread_usersp;
+    unsigned short thread_es;
+    unsigned short thread_ds;
+    unsigned short thread_fsindex;
+    unsigned short thread_gsindex;
+} back_migration_work_t;
 
 /**
  * Prototypes
@@ -1617,7 +1679,9 @@ static void dump_data_list(void) {
 /**
  *
  */
-static int count_remote_thread_members(int include_shadow_threads) {
+static int count_remote_thread_members(int include_shadow_threads,
+                                       int exclude_t_home_cpu,
+                                       int exclude_t_home_id) {
     int tgroup_home_cpu = current->tgroup_home_cpu;
     int tgroup_home_id  = current->tgroup_home_id;
     remote_thread_count_request_data_t* data;
@@ -1648,6 +1712,8 @@ static int count_remote_thread_members(int include_shadow_threads) {
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
+    request.exclude_t_home_cpu = exclude_t_home_cpu;
+    request.exclude_t_home_id  = exclude_t_home_id;
     request.requester_pid = data->requester_pid;
     request.include_shadow_threads = include_shadow_threads;
     for(i = 0; i < NR_CPUS; i++) {
@@ -1698,7 +1764,7 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, i
     do_each_thread(g,task) {
         if(task->tgroup_home_id == tgroup_home_id &&
            task->tgroup_home_cpu == tgroup_home_cpu &&
-           !task->represents_remote &&
+           //!task->represents_remote &&
            task->exit_state != EXIT_ZOMBIE &&
            task->exit_state != EXIT_DEAD &&
            !(task->flags & PF_EXITING)) {
@@ -1719,12 +1785,16 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, i
  *
  */
 static int count_thread_members(int include_remote_shadow_threads, 
-                                int include_local_shadow_threads) {
+                                int include_local_shadow_threads,
+                                int exclude_remote_t_home_cpu,
+                                int exclude_remote_t_home_id) {
      
     int count = 0;
     PSPRINTK("%s: entered\n",__func__);
     count += count_local_thread_members(current->tgroup_home_cpu, current->tgroup_home_id,include_local_shadow_threads);
-    count += count_remote_thread_members(include_remote_shadow_threads);
+    count += count_remote_thread_members(include_remote_shadow_threads,
+                                         exclude_remote_t_home_cpu,
+                                         exclude_remote_t_home_id);
     PSPRINTK("%s: exited\n",__func__);
     return count;
 }
@@ -2272,6 +2342,9 @@ void process_exit_item(struct work_struct* work) {
     // Now we're executing locally, so update our records
     task->represents_remote = 0;
 
+    // Set the return disposition
+    task->return_disposition = RETURN_DISPOSITION_EXIT;
+
     wake_up_process(task);
 
     kfree(work);
@@ -2529,8 +2602,8 @@ void process_remote_thread_count_request(struct work_struct* work) {
 
     PSPRINTK("%s: entered - cpu{%d}, id{%d}\n",
             __func__,
-            msg->tgroup_home_cpu,
-            msg->tgroup_home_id);
+            w->tgroup_home_cpu,
+            w->tgroup_home_id);
 
     response.count = 0;
 
@@ -2544,13 +2617,17 @@ void process_remote_thread_count_request(struct work_struct* work) {
 
             if(w->include_shadow_threads || 
                     (!w->include_shadow_threads && !task->represents_remote)) {
-                response.count++;
-                PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
-                        task->pid,
-                        task->tgid,
-                        task->state,
-                        task->exit_state,
-                        task->flags);
+                // account for exclusion request
+                if(!(task->t_home_cpu == w->exclude_t_home_cpu &&
+                     task->t_home_id  == w->exclude_t_home_id)) {
+                    response.count++;
+                    PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
+                            task->pid,
+                            task->tgid,
+                            task->state,
+                            task->exit_state,
+                            task->flags);
+                }
             }
 
         }
@@ -2573,6 +2650,59 @@ void process_remote_thread_count_request(struct work_struct* work) {
     kfree(work);
 
     return;
+}
+
+/**
+ *
+ */
+void process_back_migration(struct work_struct* work) {
+    back_migration_work_t* w = (back_migration_work_t*)work;
+    struct task_struct* task, *g;
+    int found = 0;
+
+    PSPRINTK("%s\n",__func__);
+
+    // Find the task
+    do_each_thread(g,task) {
+        if(task->tgroup_home_id  == w->tgroup_home_id &&
+           task->tgroup_home_cpu == w->tgroup_home_cpu &&
+           task->t_home_id       == w->t_home_id &&
+           task->t_home_cpu      == w->t_home_cpu) {
+            found = 1;
+            goto search_exit;
+        }
+    } while_each_thread(g,task);
+search_exit:
+    if(!found) {
+        goto exit;
+    }
+
+    struct pt_regs* regs = task_pt_regs(task);
+
+    // Now, transplant the state into the shadow process
+    memcpy(regs, &w->regs, sizeof(struct pt_regs));
+    task->previous_cpus = w->previous_cpus;
+    task->thread.fs = w->thread_fs;
+    task->thread.gs = w->thread_gs;
+    task->thread.usersp = w->thread_usersp;
+    task->thread.es = w->thread_es;
+    task->thread.ds = w->thread_ds;
+    task->thread.fsindex = w->thread_fsindex;
+    task->thread.gsindex = w->thread_gsindex;
+
+    // Update local state
+    task->represents_remote = 0;
+    task->executing_for_remote = 1;
+    task->t_distributed = 1;
+
+    // Set the return disposition
+    task->return_disposition = RETURN_DISPOSITION_MIGRATE;
+
+    // Release the task
+    wake_up_process(task);
+    
+exit:
+    kfree(work);
 }
 
 /**
@@ -2644,6 +2774,8 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
         INIT_WORK( (struct work_struct*)work, process_remote_thread_count_request );
         work->tgroup_home_cpu = msg->tgroup_home_cpu;
         work->tgroup_home_id  = msg->tgroup_home_id;
+        work->exclude_t_home_cpu = msg->exclude_t_home_cpu;
+        work->exclude_t_home_id  = msg->exclude_t_home_id;
         work->requester_pid = msg->requester_pid;
         work->include_shadow_threads = msg->include_shadow_threads;
         work->from_cpu = msg->header.from_cpu;
@@ -3010,9 +3142,8 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
 	   __func__, smp_processor_id(), msg->my_pid,  inc_msg->hdr.from_cpu, source_cpu);
     
     do_each_thread(g,task) {
-        if(task->next_pid == msg->my_pid &&
-           task->next_cpu == source_cpu &&
-           task->represents_remote) {
+        if(task->t_home_id == msg->t_home_id &&
+           task->t_home_cpu == msg->t_home_cpu) {
 
             PSPRINTK("kmkprocsrv: killing local task pid{%d}\n",task->pid);
 
@@ -3026,6 +3157,8 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
                 INIT_WORK( (struct work_struct*)exit_work, process_exit_item);
                 exit_work->task = task;
                 exit_work->pid = task->pid;
+                exit_work->t_home_id = task->t_home_id;
+                exit_work->t_home_cpu = task->t_home_cpu;
                 exit_work->is_last_tgroup_member = msg->is_last_tgroup_member;
                 queue_work(exit_wq, (struct work_struct*)exit_work);
             }
@@ -3153,6 +3286,9 @@ perf_cc = native_read_tsc();
     clone_data->vma_list = NULL;
     clone_data->tgroup_home_cpu = request->tgroup_home_cpu;
     clone_data->tgroup_home_id = request->tgroup_home_id;
+    clone_data->t_home_cpu = request->t_home_cpu;
+    clone_data->t_home_id = request->t_home_id;
+    clone_data->previous_cpus = request->previous_cpus;
     clone_data->prio = request->prio;
     clone_data->static_prio = request->static_prio;
     clone_data->normal_prio = request->normal_prio;
@@ -3206,6 +3342,37 @@ perf_dd = native_read_tsc();
     pcn_kmsg_free_msg(inc_msg);
 perf_ee = native_read_tsc();
     PERF_MEASURE_STOP(&perf_handle_clone_request," ",perf);
+    return 0;
+}
+
+/**
+ *
+ */
+static int handle_back_migration(struct pcn_kmsg_message* inc_msg) {
+    back_migration_t* msg = (back_migration_t*)inc_msg;
+    back_migration_work_t* work;
+
+    work = kmalloc(sizeof(back_migration_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_back_migration);
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        work->tgroup_home_id  = msg->tgroup_home_id;
+        work->t_home_cpu      = msg->t_home_cpu;
+        work->t_home_id       = msg->t_home_id;
+        work->previous_cpus   = msg->previous_cpus;
+        work->thread_fs       = msg->thread_fs;
+        work->thread_gs       = msg->thread_gs;
+        work->thread_usersp   = msg->thread_usersp;
+        work->thread_es       = msg->thread_es;
+        work->thread_ds       = msg->thread_ds;
+        work->thread_fsindex  = msg->thread_fsindex;
+        work->thread_gsindex  = msg->thread_gsindex;
+        memcpy(&work->regs, &msg->regs, sizeof(struct pt_regs));
+        queue_work(clone_wq, (struct work_struct*)work);
+    }
+
+    pcn_kmsg_free_msg(inc_msg);
+
     return 0;
 }
 
@@ -3336,7 +3503,18 @@ int process_server_import_address_space(unsigned long* ip,
     current->prev_pid = clone_data->placeholder_pid;
     current->tgroup_home_cpu = clone_data->tgroup_home_cpu;
     current->tgroup_home_id = clone_data->tgroup_home_id;
+    current->t_home_cpu = clone_data->t_home_cpu;
+    current->t_home_id = clone_data->t_home_id;
+    current->previous_cpus = clone_data->previous_cpus; // This has already
+                                                        // been updated by the
+                                                        // sending cpu.
+                                                        //
     current->tgroup_distributed = 1;
+    current->t_distributed = 1;
+
+    PSPRINTK("%s: previous_cpus{%lx}\n",__func__,current->previous_cpus);
+    PSPRINTK("%s: t_home_cpu{%d}\n",__func__,current->t_home_cpu);
+    PSPRINTK("%s: t_home_id{%d}\n",__func__,current->t_home_id);
   
     if(!thread_mm) {
         
@@ -3682,7 +3860,14 @@ __func__,
     
     }
        
-    // Save off clone data
+    // Save off clone data, replacing any that may
+    // already exist.
+    if(current->clone_data) {
+        PS_SPIN_LOCK(&_data_head_lock);
+        remove_data_entry(current->clone_data);
+        PS_SPIN_UNLOCK(&_data_head_lock);
+        destroy_clone_data(current->clone_data);
+    }
     current->clone_data = clone_data;
 
     PS_UP_WRITE(&_import_sem);
@@ -3723,7 +3908,8 @@ int process_server_do_exit(void) {
     int perf = -1;
 
     // Select only relevant tasks to operate on
-    if(!(current->executing_for_remote || current->tgroup_distributed)) {
+    if(!(current->t_distributed || current->tgroup_distributed)/* || 
+            !current->enable_distributed_exit*/) {
         return -1;
     }
 
@@ -3761,14 +3947,14 @@ finished_membership_search:
         // Not the last local thread, which means we're not the
         // last in the distributed thread group either.
         is_last_thread_in_group = 0;
-    } else if (task->prev_cpu != -1) {
-        // OPTIMIZATION: We know that there must be more than 0 shadow threads, since this
-        // task is going to migrate back.
+    } else if (!(task->t_home_cpu == _cpu && task->t_home_id == task->pid)) {
+        // OPTIMIZATION: only bother to count threads if we are not home base for
+        // this thread.
         is_last_thread_in_group = 0;
     } else {
         // Last local thread, which means we MIGHT be the last
         // in the distributed thread group, but we have to check.
-        int count = count_thread_members(1,1);
+        int count = count_thread_members(0,1,task->t_home_cpu,task->t_home_id);
         if (count == 0) {
             // Distributed thread count yielded no thread group members
             // so the current <exiting> task is the last group member.
@@ -3787,10 +3973,12 @@ finished_membership_search:
     msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
     msg.header.prio = PCN_KMSG_PRIO_NORMAL;
     msg.my_pid = current->pid;
+    msg.t_home_id = current->t_home_id;
+    msg.t_home_cpu = current->t_home_cpu;
     msg.is_last_tgroup_member = is_last_thread_in_group;
 
     if(current->executing_for_remote) {
-
+        int i;
         // this task is dying. If this is a migrated task, the shadow will soon
         // take over, so do not mark this as executing for remote
         current->executing_for_remote = 0;
@@ -3799,9 +3987,12 @@ finished_membership_search:
         //                a familiar place (a place you've been before), but unfortunately, 
         //                your life is over.
         //                Note: comments like this must == I am tired.
-        DO_UNTIL_SUCCESS(pcn_kmsg_send_long(current->prev_cpu, 
-                            (struct pcn_kmsg_long_message*)&msg,
-                            sizeof(exiting_process_t) - sizeof(struct pcn_kmsg_hdr)));
+        for(i = 0; i < NR_CPUS; i++) {
+            if(i != _cpu) {
+                pcn_kmsg_send(i, 
+                            (struct pcn_kmsg_message*)&msg);
+            }
+        }
     } 
 
 
@@ -4505,6 +4696,13 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     task->next_cpu = -1;
     task->prev_pid = -1;
     task->next_pid = -1;
+    task->clone_data = NULL;
+
+    task->t_home_cpu = _cpu;
+    task->t_home_id  = task->pid;
+    task->t_distributed = 0;
+    task->previous_cpus = 0;
+    task->return_disposition = RETURN_DISPOSITION_EXIT;
 
     // If this is pid 1 or 2, the parent cannot have been migrated
     // so it is safe to take on all local thread info.
@@ -4549,7 +4747,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
  * <MEASURE perf_process_server_do_migration>
  *
  */
-int process_server_do_migration(struct task_struct* task, int cpu) {
+static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     struct pt_regs *regs = task_pt_regs(task);
     // TODO: THIS IS WRONG, task flags is not what I want here.
     unsigned long clone_flags = task->clone_flags;
@@ -4588,8 +4786,12 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     // Block its execution.
     __set_task_state(task,TASK_UNINTERRUPTIBLE);
 
+    // Book keeping for previous cpu bitmask.
+    set_bit(smp_processor_id(),&task->previous_cpus);
+
     // Book keeping for placeholder process.
     task->represents_remote = 1;
+    task->t_distributed = 1;
 
     // Book keeping for distributed threads.
     task->tgroup_distributed = 1;
@@ -4692,6 +4894,9 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     request->placeholder_tgid = task->tgid;
     request->tgroup_home_cpu = task->tgroup_home_cpu;
     request->tgroup_home_id = task->tgroup_home_id;
+    request->t_home_cpu = task->t_home_cpu;
+    request->t_home_id = task->t_home_id;
+    request->previous_cpus = task->previous_cpus;
     request->prio = task->prio;
     request->static_prio = task->static_prio;
     request->normal_prio = task->normal_prio;
@@ -4771,6 +4976,106 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 }
 
 /**
+ *
+ */
+static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) {
+    back_migration_t mig;
+    struct pt_regs* regs = task_pt_regs(task);
+
+    // Set up response header
+    mig.header.type = PCN_KMSG_TYPE_PROC_SRV_BACK_MIGRATION;
+    mig.header.prio = PCN_KMSG_PRIO_NORMAL;
+
+    // Make mark on the list of previous cpus
+    set_bit(smp_processor_id(),&task->previous_cpus);
+
+    // Knock this task out.
+    __set_task_state(task,TASK_UNINTERRUPTIBLE);
+    
+    // Update local state
+    task->executing_for_remote = 0;
+    task->represents_remote = 1;
+    task->t_distributed = 1; // This should already be the case
+    task->return_disposition = RETURN_DISPOSITION_EXIT;
+    
+    // Build message
+    mig.tgroup_home_cpu = task->tgroup_home_cpu;
+    mig.tgroup_home_id  = task->tgroup_home_id;
+    mig.t_home_cpu      = task->t_home_cpu;
+    mig.t_home_id       = task->t_home_id;
+    mig.previous_cpus   = task->previous_cpus;
+    mig.thread_fs       = task->thread.fs;
+    mig.thread_gs       = task->thread.gs;
+    mig.thread_usersp   = task->thread.usersp;
+    mig.thread_es       = task->thread.es;
+    mig.thread_ds       = task->thread.ds;
+    mig.thread_fsindex  = task->thread.fsindex;
+    mig.thread_gsindex  = task->thread.gsindex;
+    memcpy(&mig.regs, regs, sizeof(struct pt_regs));
+
+    // Send migration request to destination.
+    pcn_kmsg_send_long(cpu,
+                       (struct pcn_kmsg_long_message*)&mig,
+                       sizeof(back_migration_t) - sizeof(struct pcn_kmsg_hdr));
+
+    return PROCESS_SERVER_CLONE_SUCCESS;
+}
+
+/**
+ * Migrate the specified task <task> to cpu <cpu>
+ * This function will put the specified task to 
+ * sleep, and push its info over to the remote cpu.  The
+ * remote cpu will then create a new process and import that
+ * info into its new context.  
+ *
+ * Note: There are now two different migration implementations.
+ *       One is for the case where we are migrating to a cpu that
+ *       has never before hosted this thread.  The other is where
+ *       we are migrating to a cpu that has hosted this thread
+ *       before.  There's a lot of stuff that we do not need
+ *       to do when the thread has been there before, and the
+ *       messaging data requirements are much less for that case.
+ *
+ */
+int process_server_do_migration(struct task_struct* task, int cpu) {
+   
+    int ret = 0;
+
+    if(test_bit(cpu,&task->previous_cpus)) {
+        ret = do_migration_back_to_previous_cpu(task,cpu);
+    } else {
+        ret = do_migration_to_new_cpu(task,cpu);
+    }
+
+    return ret;
+}
+
+/**
+ *
+ */
+void process_server_do_return_disposition(void) {
+
+    PSPRINTK("%s\n",__func__);
+
+    switch(current->return_disposition) {
+    case RETURN_DISPOSITION_MIGRATE:
+        // Nothing to do, already back-imported the
+        // state in process_back_migration.  This will
+        // remain a stub until something needs to occur
+        // here.
+        PSPRINTK("%s: return disposition migrate\n",__func__);
+        break;
+    case RETURN_DISPOSITION_EXIT:
+        PSPRINTK("%s: return disposition exit\n",__func__);
+    default:
+        do_exit(0);
+        break;
+    }
+
+    return;
+}
+
+/**
  * process_server_init
  * Start the process loop in a new kthread.
  */
@@ -4828,6 +5133,8 @@ static int __init process_server_init(void) {
             handle_mprotect_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MPROTECT_RESPONSE,
             handle_mprotect_response);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_BACK_MIGRATION,
+            handle_back_migration);
     PERF_INIT(); 
     return 0;
 }

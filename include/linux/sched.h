@@ -1581,6 +1581,8 @@ struct task_struct {
     int prev_pid;
     int prev_cpu;             /* What is the remote cpu? */
     int next_cpu;
+    unsigned long previous_cpus;
+    int return_disposition;
     int clone_request_id;       /* Number of the clone request id, to match up with
                                  * address space and other information for this task.
                                  */
@@ -1590,10 +1592,12 @@ struct task_struct {
 
     int tgroup_home_cpu;     /* cpu where the thread group was first migrated */
     int tgroup_home_id;         /* home thread group id */
+    int t_home_cpu;   /* the cpu where this task was originally created before any migrations */
+    int t_home_id;    /* the id of this task where it was originally created */
     int tgroup_distributed;
+    int t_distributed; /* Has this thread been migrated before? */
     int enable_distributed_munmap; /* Start a thread without distributed munmap enabled, 
                                       then enable when address space is fully formed. */
-
 
 };
 

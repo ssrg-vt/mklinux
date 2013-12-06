@@ -5599,14 +5599,13 @@ if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
 
             schedule(); // this will save us from death
 
-            // OK, right now, the only reason we would ever get here
-            // is because the migrated task has exited, and control
-            // has returned to this core.  Exit!
-            do_exit(0);
+            // We are here because of either the task is exiting,
+            // or because the task is migrating back.  Let's handle
+            // that now.  If we're migrating back, this function
+            // will return.  If we're exiting, we now die an honorable
+            // death and this function will not return.
+            process_server_do_return_disposition();
 	   
-            // If we reach here, then I no longer understand
-            // this world.
-            //return task_pt_regs(current)->orig_ax;
             return 0;
         }
     }
