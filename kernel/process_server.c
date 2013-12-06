@@ -3690,7 +3690,7 @@ __func__,
 
     dump_task(current,NULL,0);
 
-    /*temporary code*/
+    /*temporary code
     printk(KERN_ALERT " opening console in remote kernel \n");
 
    // tfd = sys_topen("/dev/kmsg", O_RDONLY, 644);

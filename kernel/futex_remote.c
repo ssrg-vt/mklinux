@@ -518,6 +518,7 @@ get_set_remote_key(unsigned long uaddr, unsigned int val, int fshared, union fut
 {
 
 	int res = 0;
+	int cpu=0;
 	_remote_key_request_t *request = kmalloc(sizeof(_remote_key_request_t),
 			GFP_KERNEL);
 
@@ -549,9 +550,15 @@ get_set_remote_key(unsigned long uaddr, unsigned int val, int fshared, union fut
 		printk(KERN_ALERT" pfn {%lx} shift {%lx} \n ",vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT);
 
 		// Send response
-		res = pcn_kmsg_send(find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head), (struct pcn_kmsg_message*) (request));
+		if((cpu=find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head)) != -1)
+		res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
+		else
+		{
+		res=-1;
+		printk(KERN_ALERT " cpu not found {%d} \n",cpu);
+		}
 	}
-	return 0;
+	return res;
 }
 
 int

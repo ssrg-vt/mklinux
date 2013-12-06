@@ -12,11 +12,13 @@
 
 /* LOCKING / SYNCHRONIZATION */
 #define pcn_cpu_relax() __asm__ ("pause":::"memory")
-#define pcn_barrier() __asm__ __volatile__("":::"memory")
+//#define pcn_barrier() __asm__ __volatile__("":::"memory")
+#define pcn_barrier() mb()
 
 /* BOOKKEEPING */
 
 #define POPCORN_MAX_MCAST_CHANNELS 32
+#define LG_SEQNUM_SIZE 7
 
 struct pcn_kmsg_mcast_wininfo {
 	volatile unsigned char lock;
@@ -50,6 +52,7 @@ typedef struct {
 } pcn_kmsg_work_t;
 
 /* MESSAGING */
+
 
 /* Enum for message types.  Modules should add types after
    PCN_KMSG_END. */
@@ -131,12 +134,14 @@ struct pcn_kmsg_hdr {
 	unsigned int is_lg_msg  :1;
 	unsigned int lg_start   :1;
 	unsigned int lg_end     :1;
+	unsigned long long_number;
 
-	unsigned int lg_seqnum 	:7; // b3
-	unsigned int ready	:1; 
+	unsigned int lg_seqnum 	:LG_SEQNUM_SIZE;// b3
+	//volatile unsigned int ready	:1;
 }__attribute__((packed));
 
-#define PCN_KMSG_PAYLOAD_SIZE 60
+//#define PCN_KMSG_PAYLOAD_SIZE 60
+#define PCN_KMSG_PAYLOAD_SIZE (64-sizeof(struct pcn_kmsg_hdr))
 
 /* The actual messages.  The expectation is that developers will create their
    own message structs with the payload replaced with their own fields, and then
@@ -167,6 +172,8 @@ struct pcn_kmsg_container {
 struct pcn_kmsg_reverse_message {
 	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
 	struct pcn_kmsg_hdr hdr;
+	volatile unsigned char ready;
+	volatile unsigned long last_ticket;
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 
@@ -191,6 +198,7 @@ struct pcn_kmsg_window {
 	volatile unsigned long tail;
 	volatile unsigned char int_enabled;
 	volatile struct pcn_kmsg_reverse_message buffer[PCN_KMSG_RBUF_SIZE];
+	volatile int second_buffer[PCN_KMSG_RBUF_SIZE];
 }__attribute__((packed));
 
 /* Typedef for function pointer to callback functions */
@@ -202,7 +210,7 @@ typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);
 
 /* Register a callback function to handle a new message type.  Intended to
    be called when a kernel module is loaded. */
-int pcn_kmsg_register_callback(enum pcn_kmsg_type type, 
+int pcn_kmsg_register_callback(enum pcn_kmsg_type type,
 			       pcn_kmsg_cbftn callback);
 
 /* Unregister a callback function for a message type.  Intended to
@@ -215,8 +223,8 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type);
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg);
 
 /* Send a long message to the specified destination CPU. */
-int pcn_kmsg_send_long(unsigned int dest_cpu, 
-		       struct pcn_kmsg_long_message *lmsg, 
+int pcn_kmsg_send_long(unsigned int dest_cpu,
+		       struct pcn_kmsg_long_message *lmsg,
 		       unsigned int payload_size);
 
 /* Free a received message (called at the end of the callback function) */
@@ -236,8 +244,8 @@ enum pcn_kmsg_mcast_type {
 /* Message struct for guest kernels to check in with each other. */
 struct pcn_kmsg_mcast_message {
 	struct pcn_kmsg_hdr hdr;
-	enum pcn_kmsg_mcast_type type :32; 
-	pcn_kmsg_mcast_id id;	
+	enum pcn_kmsg_mcast_type type :32;
+	pcn_kmsg_mcast_id id;
 	unsigned long mask;
 	unsigned int num_members;
 	unsigned long window_phys_addr;
@@ -272,7 +280,7 @@ int pcn_kmsg_mcast_close(pcn_kmsg_mcast_id id);
 int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg);
 
 /* Send a long message to the specified multicast group. */
-int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id, 
+int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id,
 			     struct pcn_kmsg_long_message *msg,
 			     unsigned int payload_size);
 
