@@ -71,8 +71,10 @@ typedef struct _perf_end_response_data {
 pcn_perf_context_t* _context_head;
 int _cpu = -1;
 int _context_id;
+int _entry_tok = 0;
 DEFINE_SPINLOCK(_context_id_lock);
 DEFINE_SPINLOCK(_do_popcorn_perf_end_lock);
+DEFINE_SPINLOCK(_entry_tok_lock);
 perf_end_response_data_t response_data;
 
 /**
@@ -332,8 +334,9 @@ void perf_init_context( pcn_perf_context_t * cxt, char * name ) {
 /**
  *
  */
-void perf_measure_start(pcn_perf_context_t *cxt) {
+int perf_measure_start(pcn_perf_context_t *cxt) {
     pcn_perf_entry_t* entry;
+    int tok;
 
     spin_lock(&cxt->lock);
 
@@ -341,7 +344,7 @@ void perf_measure_start(pcn_perf_context_t *cxt) {
     // measurements
     if(!cxt->is_active) {
         spin_unlock(&cxt->lock);
-        return;
+        return -1;
     }
 
     // We should not allow a measurement to start if another is already in
@@ -349,16 +352,24 @@ void perf_measure_start(pcn_perf_context_t *cxt) {
     if(cxt->entry_list && 
             (cxt->entry_list->in_progress || cxt->entry_list->end == 0)) {
         spin_unlock(&cxt->lock);
-        return;
+        return -1;
     }
     
-    
+    spin_lock(&_entry_tok_lock);
+    _entry_tok++;
+    if(_entry_tok < 0) {
+        _entry_tok = 0;
+    } 
+    tok = _entry_tok;
+    spin_unlock(&_entry_tok_lock);
+
     entry = kmalloc(sizeof(pcn_perf_entry_t),GFP_ATOMIC);
     if(entry) {
         entry->next = NULL;
         entry->context_id = cxt->context_id;
         entry->start = 0;
         entry->end = 0;
+        entry->tok = tok;
         // add to front of context's entry list
         if(cxt->entry_list) {
             cxt->entry_list->prev = entry;
@@ -373,15 +384,18 @@ void perf_measure_start(pcn_perf_context_t *cxt) {
         cxt->entry_list->start = native_read_tsc();
     }
     spin_unlock(&cxt->lock);
+
+    return tok;
 }
 
 /**
  *
  */
-void perf_measure_stop(pcn_perf_context_t *cxt, char* note) {
+void perf_measure_stop(pcn_perf_context_t *cxt, char* note, int tok) {
     unsigned long long time = native_read_tsc();
+    if(tok < 0) return;
     spin_lock(&cxt->lock);
-    if(cxt->entry_list && cxt->entry_list->in_progress) {
+    if(cxt->entry_list && cxt->entry_list->in_progress && (tok == cxt->entry_list->tok)) {
         cxt->entry_list->end = time;
         cxt->entry_list->in_progress = 0;
         strcpy(cxt->entry_list->note,note);
