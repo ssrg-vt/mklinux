@@ -333,6 +333,7 @@ typedef struct _mapping_request_data {
     pgprot_t prot;
     unsigned long vm_flags;
     int present;
+    int complete;
     int from_saved_mm;
     int responses;
     int expected_responses;
@@ -2237,6 +2238,16 @@ void process_mapping_response(struct work_struct* work) {
     }
 
     PS_SPIN_LOCK(&data->lock);
+
+    // If this data entry is completely filled out,
+    // there is no reason to go through any more of
+    // this logic.  We do still need to account for
+    // the response though, which is done after the
+    // out label.
+    if(data->complete) {
+        goto out;
+    }
+
     if(w->present) {
         PSPRINTK("received positive search result from cpu %d\n",
                 w->from_cpu);
@@ -2287,6 +2298,11 @@ void process_mapping_response(struct work_struct* work) {
         data->present = 1;
         strcpy(data->path,w->path);
         data->pgoff = w->pgoff;
+
+        // Determine if we can stop looking for a mapping
+        if(data->paddr_mapping) {
+            data->complete = 1;
+        }
 
     } else {
         PSPRINTK("received negative search result from cpu %d\n",
@@ -4376,6 +4392,7 @@ retry:
     data->header.data_type = PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE;
     data->address = address;
     data->present = 0;
+    data->complete = 0;
     spin_lock_init(&data->lock);
     data->responses = 0;
     data->expected_responses = 0;
@@ -4412,8 +4429,17 @@ retry:
         }
     }
 
-    // Wait for all cpus to respond.
-    while(data->expected_responses != data->responses) {
+    // Wait for all cpus to respond, or a mapping that is complete
+    // with a physical mapping.  Mapping results that do not include
+    // a physical mapping cause this to wait until all mapping responses
+    // have arrived from remote cpus.
+    while(1) {
+        int done = 0;
+        PS_SPIN_LOCK(&data->lock);
+        if(data->expected_responses == data->responses || data->complete)
+            done = 1;
+        PS_SPIN_UNLOCK(&data->lock);
+        if (done) break;
         schedule();
     }
 
@@ -4589,6 +4615,23 @@ retry:
     }
 
 exit_remove_data:
+
+    // Wait for all cpus to respond.
+    // We waited previously for this, but let's do it again.
+    // The above wait is optimized to exit once a response is
+    // received that has a physical mapping.  If we get such
+    // a response, we know we can go ahead with the rest of the
+    // mapping process, but we have to now finish taking
+    // in responses and clean up.
+    while(1) {
+        int done = 0;
+        PS_SPIN_LOCK(&data->lock);
+        if (data->expected_responses == data->responses) 
+            done = 1;
+        PS_SPIN_UNLOCK(&data->lock);
+        if(done) break;
+        schedule();
+    }
 
     PSPRINTK("removing data entry\n");
 
