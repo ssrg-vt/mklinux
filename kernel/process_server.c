@@ -40,7 +40,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -2327,6 +2327,7 @@ out:
   
     // Free the data if it's safe to do so
     if(do_data_free_here) {
+        PSPRINTK("%s: doing data free\n",__func__);
         PS_SPIN_LOCK(&_mapping_request_data_head_lock);
         remove_data_entry_from(data,
                           &_mapping_request_data_head);
@@ -4651,10 +4652,9 @@ exit_remove_data:
     }
     PS_SPIN_UNLOCK(&data->lock);
 
-    PSPRINTK("removing data entry\n");
-
     // Clean up data.
     if(do_data_free_here) {
+        PSPRINTK("%s: doing data free\n",__func__);
         PS_SPIN_LOCK(&_mapping_request_data_head_lock);
         remove_data_entry_from(data,
                           &_mapping_request_data_head);
