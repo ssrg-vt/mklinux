@@ -23,6 +23,7 @@
 #include <asm/bootparam.h>
 #include <asm/errno.h>
 #include <asm/atomic.h>
+#include <linux/delay.h>
 
 #define KMSG_VERBOSE 0
 
@@ -71,12 +72,14 @@ struct list_head msglist_hiprio, msglist_normprio;
 //struct pcn_kmsg_container * lg_buf[POPCORN_MAX_CPUS];
 struct list_head lg_buf[POPCORN_MAX_CPUS];
 volatile unsigned long long_id;
+int who_is_writing=-1;
 
 /* action for bottom half */
-static void pcn_kmsg_action(struct softirq_action *h);
+static void pcn_kmsg_action(/*struct softirq_action *h*/struct work_struct* work);
 
 /* workqueue for operations that can sleep */
 struct workqueue_struct *kmsg_wq;
+struct workqueue_struct *messaging_wq;
 
 /* RING BUFFER */
 
@@ -135,14 +138,19 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	KMSG_PRINTK("%s: ticket = %lu, head = %lu, tail = %lu\n",
 			 __func__, ticket, win->head, win->tail);
 
+	who_is_writing= ticket;
 	/* spin until there's a spot free for me */
 	//while (win_inuse(win) >= RB_SIZE) {}
-	while(win->buffer[ticket%PCN_KMSG_RBUF_SIZE].hdr.ready!=0 ||
-			(win->buffer[ticket%PCN_KMSG_RBUF_SIZE].hdr.ready==0 &&
-					(ticket- (unsigned long volatile)(win->tail))>=PCN_KMSG_RBUF_SIZE-1)){
-		pcn_cpu_relax();
-	}
-
+	//if(ticket>=PCN_KMSG_RBUF_SIZE){
+		while((win->buffer[ticket%PCN_KMSG_RBUF_SIZE].last_ticket!=ticket-PCN_KMSG_RBUF_SIZE)) {
+			//pcn_cpu_relax();
+					msleep(1);
+		}
+		while(	win->buffer[ticket%PCN_KMSG_RBUF_SIZE].ready!=0){
+			//pcn_cpu_relax();
+			msleep(1);
+		}
+	//}
 	/* insert item */
 	memcpy(&win->buffer[ticket%PCN_KMSG_RBUF_SIZE].payload,
 	       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
@@ -150,7 +158,6 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	memcpy(&win->buffer[ticket%PCN_KMSG_RBUF_SIZE].hdr,
 	       &msg->hdr, sizeof(struct pcn_kmsg_hdr));
 
-	pcn_barrier();
 
 	//log_send[log_s_index%16]= win->buffer[ticket & RB_MASK].hdr;
 	memcpy(&(log_send[log_s_index%16]),&(win->buffer[ticket%PCN_KMSG_RBUF_SIZE].hdr),sizeof(struct pcn_kmsg_hdr));
@@ -159,7 +166,11 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	win->second_buffer[ticket%PCN_KMSG_RBUF_SIZE]++;
 
 	/* set completed flag */
-	win->buffer[ticket%PCN_KMSG_RBUF_SIZE].hdr.ready = 1;
+	win->buffer[ticket%PCN_KMSG_RBUF_SIZE].ready = 1;
+	wmb();
+	win->buffer[ticket%PCN_KMSG_RBUF_SIZE].last_ticket = ticket;
+
+	who_is_writing=-1;
 
 msg_put++;
 
@@ -187,12 +198,15 @@ static inline int win_get(struct pcn_kmsg_window *win,
 	rcvd = &(win->buffer[win->tail % PCN_KMSG_RBUF_SIZE]);
 	//KMSG_PRINTK("%s: Ready bit: %u\n", __func__, rcvd->hdr.ready);
 
-	//muah muah this should not be done!!
-	preempt_enable();
-	while (!rcvd->hdr.ready) {
-		pcn_cpu_relax();
+
+
+	while (!rcvd->ready) {
+
+		//pcn_cpu_relax();
+		msleep(1);
+
 	}
-	preempt_disable();
+
 
 	// barrier here?
 	pcn_barrier();
@@ -300,7 +314,7 @@ static inline int mcastwin_put(pcn_kmsg_mcast_id id,
 	pcn_barrier();
 
 	/* set completed flag */
-	MCASTWIN(id)->buffer[ticket & RB_MASK].hdr.ready = 1;
+	MCASTWIN(id)->buffer[ticket & RB_MASK].ready = 1;
 
 	return 0;
 }
@@ -330,7 +344,7 @@ retry:
 
 	/* spin until entry.ready at end of cache line is set */
 	rcvd = &(MCASTWIN(id)->buffer[LOCAL_TAIL(id) & RB_MASK]);
-	while (!rcvd->hdr.ready) {
+	while (!rcvd->ready) {
 		pcn_cpu_relax();
 	}
 
@@ -391,7 +405,7 @@ static inline void mcastwin_advance_tail(pcn_kmsg_mcast_id id)
 
 	if (atomic_dec_and_test_sync(&MCASTWIN(id)->read_counter[slot])) {
 		MCAST_PRINTK("we're the last reader to go; ++ global tail\n");
-		MCASTWIN(id)->buffer[slot].hdr.ready = 0;
+		MCASTWIN(id)->buffer[slot].ready = 0;
 		atomic64_inc((atomic64_t *) &MCASTWIN(id)->tail);
 	}
 
@@ -530,8 +544,12 @@ static inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 	window->head = 0;
 	window->tail = 0;
 	window->int_enabled = 1;
-	memset(&window->buffer, 0, 
-	       PCN_KMSG_RBUF_SIZE * sizeof(struct pcn_kmsg_message));
+	//memset(&window->buffer, 0,
+	     //  PCN_KMSG_RBUF_SIZE * sizeof(struct pcn_kmsg_reverse_message));
+	int i;
+	for(i=0;i<PCN_KMSG_RBUF_SIZE;i++){
+		window->buffer[i].last_ticket=i-PCN_KMSG_RBUF_SIZE;
+	}
 	memset(&window->second_buffer, 0,
 		       PCN_KMSG_RBUF_SIZE * sizeof(int));
 	return 0;
@@ -692,7 +710,8 @@ static int __init pcn_kmsg_init(void)
 
 	/* Register softirq handler */
 	KMSG_INIT("Registering softirq handler...\n");
-	open_softirq(PCN_KMSG_SOFTIRQ, pcn_kmsg_action);
+	//open_softirq(PCN_KMSG_SOFTIRQ, pcn_kmsg_action);
+	messaging_wq= create_workqueue("messaging_wq");
 
 	/* Initialize work queue */
 	KMSG_INIT("Initializing workqueue...\n");
@@ -850,8 +869,6 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 
 	/* set source CPU */
 	msg->hdr.from_cpu = my_cpu;
-	msg->hdr.ready = 0;
-
 
 	rc = win_put(dest_window, msg, no_block);
 
@@ -1010,11 +1027,18 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 	win_disable_int(rkvirt[my_cpu]);
 
 	//if (!isr_ts_2) {
-		rdtscll(isr_ts_2);
+	rdtscll(isr_ts_2);
 	//}
 
 	/* schedule bottom half */
-	__raise_softirq_irqoff(PCN_KMSG_SOFTIRQ);
+	//__raise_softirq_irqoff(PCN_KMSG_SOFTIRQ);
+	struct work_struct* kmsg_work = kmalloc(sizeof(struct work_struct), GFP_ATOMIC);
+	if (kmsg_work) {
+		INIT_WORK(kmsg_work,pcn_kmsg_action);
+		queue_work(messaging_wq, kmsg_work);
+	} else {
+		KMSG_ERR("Failed to kmalloc work structure!\n");
+	}
 	//tasklet_schedule(&pcn_kmsg_tasklet);
 
 	irq_exit();
@@ -1233,7 +1257,7 @@ pull_msg:
 			work_done += process_small_message(msg);
 		}
 		pcn_barrier();
-		msg->hdr.ready = 0;
+		msg->ready = 0;
 		//win_advance_tail(win);
 		fetch_and_add(&win->tail, 1);
 	}
@@ -1250,7 +1274,7 @@ pull_msg:
 unsigned volatile long bh_ts = 0, bh_ts_2 = 0;
 
 /* bottom half */
-static void pcn_kmsg_action(struct softirq_action *h)
+static void pcn_kmsg_action(/*struct softirq_action *h*/struct work_struct* work)
 {
 	int rc;
 	int i;
@@ -1287,6 +1311,8 @@ static void pcn_kmsg_action(struct softirq_action *h)
 
 	/* Then process normal-priority queue */
 	rc = process_message_list(&msglist_normprio);
+
+	kfree(work);
 
 	return;
 }

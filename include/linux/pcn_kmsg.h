@@ -111,7 +111,7 @@ struct pcn_kmsg_hdr {
 	unsigned long long_number;
 
 	unsigned int lg_seqnum 	:LG_SEQNUM_SIZE;// b3
-	volatile unsigned int ready	:1;
+	//volatile unsigned int ready	:1;
 }__attribute__((packed));
 
 //#define PCN_KMSG_PAYLOAD_SIZE 60
@@ -146,6 +146,8 @@ struct pcn_kmsg_container {
 struct pcn_kmsg_reverse_message {
 	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
 	struct pcn_kmsg_hdr hdr;
+	volatile unsigned char ready;
+	volatile unsigned long last_ticket;
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 
