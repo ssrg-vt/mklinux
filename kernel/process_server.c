@@ -334,6 +334,7 @@ typedef struct _mapping_request_data {
     unsigned long vm_flags;
     int present;
     int complete;
+    int delegate_free;
     int from_saved_mm;
     int responses;
     int expected_responses;
@@ -2213,6 +2214,7 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
 void process_mapping_response(struct work_struct* work) {
     mapping_request_data_t* data;
     mapping_response_work_t* w = (mapping_response_work_t*)work; 
+    int do_data_free_here = 0;
 
     int perf = PERF_MEASURE_START(&perf_process_mapping_response);
 
@@ -2315,8 +2317,24 @@ out:
     // Account for this cpu's response.
     data->responses++;
 
+    // Check to see if it's safe to free up the data.  If the requester
+    // is finished with the data, it will mark to "delegate free".
+    if(data->expected_responses == data->responses && data->delegate_free) {
+        do_data_free_here = 1;
+    }
+
     PS_SPIN_UNLOCK(&data->lock);
-    
+  
+    // Free the data if it's safe to do so
+    if(do_data_free_here) {
+        PS_SPIN_LOCK(&_mapping_request_data_head_lock);
+        remove_data_entry_from(data,
+                          &_mapping_request_data_head);
+        PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
+
+        kfree(data);
+    }
+
     kfree(work);
     
     PERF_MEASURE_STOP(&perf_process_mapping_response," ",perf);
@@ -4312,6 +4330,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     int started_outside_vma = 0;
     char path[512];
     char* ppath;
+    int do_data_free_here = 0;
 
     // for perf
     int pte_provided = 0;
@@ -4393,6 +4412,7 @@ retry:
     data->address = address;
     data->present = 0;
     data->complete = 0;
+    data->delegate_free = 0;
     spin_lock_init(&data->lock);
     data->responses = 0;
     data->expected_responses = 0;
@@ -4623,25 +4643,25 @@ exit_remove_data:
     // a response, we know we can go ahead with the rest of the
     // mapping process, but we have to now finish taking
     // in responses and clean up.
-    while(1) {
-        int done = 0;
-        PS_SPIN_LOCK(&data->lock);
-        if (data->expected_responses == data->responses) 
-            done = 1;
-        PS_SPIN_UNLOCK(&data->lock);
-        if(done) break;
-        schedule();
+    PS_SPIN_LOCK(&data->lock);
+    if(data->expected_responses == data->responses) {
+        do_data_free_here = 1;
+    } else {
+        data->delegate_free = 1;
     }
+    PS_SPIN_UNLOCK(&data->lock);
 
     PSPRINTK("removing data entry\n");
 
     // Clean up data.
-    PS_SPIN_LOCK(&_mapping_request_data_head_lock);
-    remove_data_entry_from(data,
-                      &_mapping_request_data_head);
-    PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
+    if(do_data_free_here) {
+        PS_SPIN_LOCK(&_mapping_request_data_head_lock);
+        remove_data_entry_from(data,
+                          &_mapping_request_data_head);
+        PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
 
-    kfree(data);
+        kfree(data);
+    }
 
     PSPRINTK("exiting fault handler\n");
 
