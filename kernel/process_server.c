@@ -47,7 +47,7 @@ extern sys_topen(const char __user * filename, int flags, int mode, int fd);
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -350,6 +350,7 @@ typedef struct _mapping_request_data {
     pgprot_t prot;
     unsigned long vm_flags;
     int present;
+    int complete;
     int from_saved_mm;
     int responses;
     int expected_responses;
@@ -631,13 +632,10 @@ struct _remote_thread_count_request {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;        // 4
     int tgroup_home_id;         // 4
-    int exclude_t_home_cpu;     // 4
-    int exclude_t_home_id;      // 4
     int requester_pid;          // 4
-    int include_shadow_threads; // 4
                                 // ---
-                                // 24 -> 36 bytes of padding needed
-    char pad[36];
+                                // 12 -> 48 bytes of padding needed
+    char pad[48];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _remote_thread_count_request remote_thread_count_request_t;
 
@@ -860,9 +858,6 @@ typedef struct {
     int tgroup_home_cpu;
     int tgroup_home_id;
     int requester_pid;
-    int include_shadow_threads;
-    int exclude_t_home_cpu;
-    int exclude_t_home_id;
     int from_cpu;
 } remote_thread_count_request_work_t;
 
@@ -1703,8 +1698,7 @@ static void dump_data_list(void) {
 /**
  *
  */
-static int count_remote_thread_members(int include_shadow_threads,
-                                       int exclude_t_home_cpu,
+static int count_remote_thread_members(int exclude_t_home_cpu,
                                        int exclude_t_home_id) {
     int tgroup_home_cpu = current->tgroup_home_cpu;
     int tgroup_home_id  = current->tgroup_home_id;
@@ -1736,10 +1730,7 @@ static int count_remote_thread_members(int include_shadow_threads,
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
-    request.exclude_t_home_cpu = exclude_t_home_cpu;
-    request.exclude_t_home_id  = exclude_t_home_id;
     request.requester_pid = data->requester_pid;
-    request.include_shadow_threads = include_shadow_threads;
     for(i = 0; i < NR_CPUS; i++) {
 
         // Skip the current cpu
@@ -1782,14 +1773,15 @@ exit:
 /**
  *
  */
-static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, int include_shadow_threads) {
+static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, int exclude_pid) {
     struct task_struct *task, *g;
     int count = 0;
     PSPRINTK("%s: entered\n",__func__);
     do_each_thread(g,task) {
         if(task->tgroup_home_id == tgroup_home_id &&
            task->tgroup_home_cpu == tgroup_home_cpu &&
-           //!task->represents_remote &&
+           task->t_home_cpu == _cpu &&
+           task->pid != exclude_pid &&
            task->exit_state != EXIT_ZOMBIE &&
            task->exit_state != EXIT_DEAD &&
            !(task->flags & PF_EXITING)) {
@@ -1822,10 +1814,8 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, i
                     	   		printk("POP: represents_remote:%d, executing_for_remote:%d,next_pid:%d\n",task->represents_remote,task-> executing_for_remote,task->next_pid);
                     	   		printk("POP: prev_pid:%d, prev_cpu:%d,next_cpu:%d,tgroup_home_cpu:%d\n",task->prev_pid,task->prev_cpu,task->next_cpu,task->tgroup_home_cpu);
 
-            if(include_shadow_threads || (!include_shadow_threads && !task->represents_remote)) {
-                //PSPRINTK("%s: found local thread\n",__func__);
                 count++;
-            }
+            
         }
     } while_each_thread(g,task);
     PSPRINTK("%s: exited\n",__func__);
@@ -1837,17 +1827,12 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, i
 /**
  *
  */
-static int count_thread_members(int include_remote_shadow_threads, 
-                                int include_local_shadow_threads,
-                                int exclude_remote_t_home_cpu,
-                                int exclude_remote_t_home_id) {
+static int count_thread_members() {
      
     int count = 0;
     PSPRINTK("%s: entered\n",__func__);
-    count += count_local_thread_members(current->tgroup_home_cpu, current->tgroup_home_id,include_local_shadow_threads);
-    count += count_remote_thread_members(include_remote_shadow_threads,
-                                         exclude_remote_t_home_cpu,
-                                         exclude_remote_t_home_id);
+    count += count_local_thread_members(current->tgroup_home_cpu, current->tgroup_home_id,current->pid);
+    count += count_remote_thread_members(current->tgroup_home_cpu, current->tgroup_home_id);
     PSPRINTK("%s: exited\n",__func__);
     return count;
 }
@@ -2265,6 +2250,7 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
 void process_mapping_response(struct work_struct* work) {
     mapping_request_data_t* data;
     mapping_response_work_t* w = (mapping_response_work_t*)work; 
+    int do_data_free_here = 0;
 
     int perf = PERF_MEASURE_START(&perf_process_mapping_response);
 
@@ -2290,6 +2276,16 @@ void process_mapping_response(struct work_struct* work) {
     }
 
     PS_SPIN_LOCK(&data->lock);
+
+    // If this data entry is completely filled out,
+    // there is no reason to go through any more of
+    // this logic.  We do still need to account for
+    // the response though, which is done after the
+    // out label.
+    if(data->complete) {
+        goto out;
+    }
+
     if(w->present) {
         PSPRINTK("received positive search result from cpu %d\n",
                 w->from_cpu);
@@ -2341,6 +2337,11 @@ void process_mapping_response(struct work_struct* work) {
         strcpy(data->path,w->path);
         data->pgoff = w->pgoff;
 
+        // Determine if we can stop looking for a mapping
+        if(data->paddr_mapping) {
+            data->complete = 1;
+        }
+
     } else {
         PSPRINTK("received negative search result from cpu %d\n",
                 w->from_cpu);
@@ -2353,7 +2354,7 @@ out:
     data->responses++;
 
     PS_SPIN_UNLOCK(&data->lock);
-    
+
     kfree(work);
     
     PERF_MEASURE_STOP(&perf_process_mapping_response," ",perf);
@@ -2393,7 +2394,8 @@ void process_exit_item(struct work_struct* work) {
             w->is_last_tgroup_member);
 
     // Now we're executing locally, so update our records
-    task->represents_remote = 0;
+    //if(task->t_home_cpu == _cpu && task->t_home_id == task->pid)
+    //    task->represents_remote = 0;
 
     // Set the return disposition
     task->return_disposition = RETURN_DISPOSITION_EXIT;
@@ -2660,33 +2662,6 @@ void process_remote_thread_count_request(struct work_struct* work) {
             w->tgroup_home_cpu,
             w->tgroup_home_id);
 
-    response.count = 0;
-
-    // Count thread group members
-    do_each_thread(g,task) {
-        if(task->tgroup_home_cpu == w->tgroup_home_cpu &&
-           task->tgroup_home_id  == w->tgroup_home_id &&
-           task->exit_state != EXIT_ZOMBIE &&
-           task->exit_state != EXIT_DEAD &&
-           !(task->flags & PF_EXITING)) {
-
-            if(w->include_shadow_threads || 
-                    (!w->include_shadow_threads && !task->represents_remote)) {
-                // account for exclusion request
-                if(!(task->t_home_cpu == w->exclude_t_home_cpu &&
-                     task->t_home_id  == w->exclude_t_home_id)) {
-                    response.count++;
-                    PSPRINTK("task in tgroup found: pid{%d}, tgid{%d}, state{%lx}, exit_state{%lx}, flags{%lx}\n",
-                            task->pid,
-                            task->tgid,
-                            task->state,
-                            task->exit_state,
-                            task->flags);
-                }
-            }
-
-        }
-    } while_each_thread(g,task);
 
     // Finish constructing response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE;
@@ -2694,6 +2669,7 @@ void process_remote_thread_count_request(struct work_struct* work) {
     response.tgroup_home_cpu = w->tgroup_home_cpu;
     response.tgroup_home_id = w->tgroup_home_id;
     response.requester_pid = w->requester_pid;
+    response.count = count_local_thread_members(w->tgroup_home_cpu,w->tgroup_home_id,-1);
 
     PSPRINTK("%s: responding to thread count request with %d\n",__func__,
             response.count);
@@ -2829,10 +2805,7 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
         INIT_WORK( (struct work_struct*)work, process_remote_thread_count_request );
         work->tgroup_home_cpu = msg->tgroup_home_cpu;
         work->tgroup_home_id  = msg->tgroup_home_id;
-        work->exclude_t_home_cpu = msg->exclude_t_home_cpu;
-        work->exclude_t_home_id  = msg->exclude_t_home_id;
         work->requester_pid = msg->requester_pid;
-        work->include_shadow_threads = msg->include_shadow_threads;
         work->from_cpu = msg->header.from_cpu;
         queue_work(mapping_wq, (struct work_struct*)work);
     }
@@ -4037,7 +4010,7 @@ finished_membership_search:
     } else {
         // Last local thread, which means we MIGHT be the last
         // in the distributed thread group, but we have to check.
-        int count = count_thread_members(0,1,task->t_home_cpu,task->t_home_id);
+        int count = count_thread_members();
         if (count == 0) {
             // Distributed thread count yielded no thread group members
             // so the current <exiting> task is the last group member.
@@ -4382,6 +4355,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     int started_outside_vma = 0;
     char path[512];
     char* ppath;
+    int do_data_free_here = 0;
 
     // for perf
     int pte_provided = 0;
@@ -4462,6 +4436,7 @@ retry:
     data->header.data_type = PROCESS_SERVER_MAPPING_REQUEST_DATA_TYPE;
     data->address = address;
     data->present = 0;
+    data->complete = 0;
     spin_lock_init(&data->lock);
     data->responses = 0;
     data->expected_responses = 0;
@@ -4498,8 +4473,17 @@ retry:
         }
     }
 
-    // Wait for all cpus to respond.
-    while(data->expected_responses != data->responses) {
+    // Wait for all cpus to respond, or a mapping that is complete
+    // with a physical mapping.  Mapping results that do not include
+    // a physical mapping cause this to wait until all mapping responses
+    // have arrived from remote cpus.
+    while(1) {
+        int done = 0;
+        PS_SPIN_LOCK(&data->lock);
+        if(data->expected_responses == data->responses || data->complete)
+            done = 1;
+        PS_SPIN_UNLOCK(&data->lock);
+        if (done) break;
         schedule();
     }
 
@@ -4676,12 +4660,27 @@ retry:
 
 exit_remove_data:
 
-    PSPRINTK("removing data entry\n");
+    // Wait for all cpus to respond.
+    // We waited previously for this, but let's do it again.
+    // The above wait is optimized to exit once a response is
+    // received that has a physical mapping.  If we get such
+    // a response, we know we can go ahead with the rest of the
+    // mapping process, but we have to now finish taking
+    // in responses and clean up.
+    while(1) {
+        int done = 0;
+        PS_SPIN_LOCK(&data->lock);
+        if(data->expected_responses == data->responses)
+            done = 1;
+        PS_SPIN_UNLOCK(&data->lock);
+        if (done) break;
+        schedule();
+    }
 
-    // Clean up data.
+    PSPRINTK("%s: doing data free\n",__func__);
     PS_SPIN_LOCK(&_mapping_request_data_head_lock);
     remove_data_entry_from(data,
-                      &_mapping_request_data_head);
+                          &_mapping_request_data_head);
     PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
 
     kfree(data);
