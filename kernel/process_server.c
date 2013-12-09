@@ -3961,7 +3961,7 @@ finished_membership_search:
         //                your life is over.
         //                Note: comments like this must == I am tired.
         for(i = 0; i < NR_CPUS; i++) {
-            if(i != _cpu) {
+            if(i != _cpu && test_bit(i,&current->previous_cpus)) {
                 pcn_kmsg_send(i, 
                             (struct pcn_kmsg_message*)&msg);
             }
