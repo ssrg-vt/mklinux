@@ -92,6 +92,11 @@
 #define PROCESS_SERVER_MPROTECT_DATA_TYPE 8
 
 /**
+ * Useful macros
+ */
+#define DO_UNTIL_SUCCESS(x) while(x != 0){}
+
+/**
  * Perf
  */
 #define MEASURE_PERF 1
@@ -100,11 +105,8 @@
 #define PERF_MEASURE_START(x) perf_measure_start(x)
 #define PERF_MEASURE_STOP(x,y,z)  perf_measure_stop(x,y,z)
 
-/**
- * Useful macros
- */
-#define DO_UNTIL_SUCCESS(x) while(x != 0){}
-
+pcn_perf_context_t perf_count_remote_thread_members;
+pcn_perf_context_t perf_process_back_migration;
 pcn_perf_context_t perf_process_mapping_request;
 pcn_perf_context_t perf_process_mapping_request_search_active_mm;
 pcn_perf_context_t perf_process_mapping_request_search_saved_mm;
@@ -143,6 +145,10 @@ pcn_perf_context_t perf_handle_mprotect_request;
  *
  */
 static void perf_init(void) {
+   perf_init_context(&perf_count_remote_thread_members,
+           "count_remote_thread_members");
+   perf_init_context(&perf_process_back_migration,
+           "process_back_migration");
    perf_init_context(&perf_process_mapping_request,
            "process_mapping_request");
    perf_init_context(&perf_process_mapping_request_search_active_mm,
@@ -1672,7 +1678,7 @@ static void dump_data_list(void) {
 }
 
 /**
- *
+ * <MEASURE perf_count_remote_thread_members>
  */
 static int count_remote_thread_members(int exclude_t_home_cpu,
                                        int exclude_t_home_id) {
@@ -1683,6 +1689,9 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
     int i;
     int s;
     int ret = -1;
+    int perf = -1;
+
+    perf = PERF_MEASURE_START(&perf_count_remote_thread_members);
 
     PSPRINTK("%s: entered\n",__func__);
 
@@ -1742,6 +1751,7 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
     kfree(data);
 
 exit:
+    PERF_MEASURE_STOP(&perf_count_remote_thread_members," ",perf);
     return ret;
 }
 
@@ -2163,10 +2173,16 @@ retry:
     return;
 }
 
+/**
+ * <MEASURE perf_process_mapping_response>
+ */
 void process_nonpresent_mapping_response(struct work_struct* work) {
 
     mapping_request_data_t* data;
     nonpresent_mapping_response_work_t* w = (nonpresent_mapping_response_work_t*) work;
+    int perf = -1;
+
+    perf = PERF_MEASURE_START(&perf_process_mapping_response);
    
     PSPRINTK("%s: entered\n",__func__);
 
@@ -2178,8 +2194,7 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
 
     if(data == NULL) {
         printk("%s: ERROR null mapping request data\n",__func__);
-        kfree(work);
-        return;
+        goto exit;
     }
 
     PSPRINTK("Nonpresent mapping response received for %lx from cpu %d\n",w->address,w->from_cpu);
@@ -2187,7 +2202,8 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
     PS_SPIN_LOCK(&data->lock);
     data->responses++;
     PS_SPIN_UNLOCK(&data->lock);
-
+exit:
+    PERF_MEASURE_STOP(&perf_process_mapping_response,"no remote mapping for cpu",perf);
     kfree(work);
 }
 
@@ -2210,7 +2226,6 @@ void process_mapping_response(struct work_struct* work) {
                                      w->address);
 
 
-    PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("received mapping response\n");
 
     if(data == NULL) {
@@ -2600,7 +2615,6 @@ void process_remote_thread_count_response(struct work_struct* work) {
 void process_remote_thread_count_request(struct work_struct* work) {
     remote_thread_count_request_work_t* w = (remote_thread_count_request_work_t*)work;
     remote_thread_count_response_t response;
-    struct task_struct *task, *g;
 
     PSPRINTK("%s: entered - cpu{%d}, id{%d}\n",
             __func__,
@@ -2629,12 +2643,15 @@ void process_remote_thread_count_request(struct work_struct* work) {
 }
 
 /**
- *
+ * <MEASURE perf_process_back_migration>
  */
 void process_back_migration(struct work_struct* work) {
     back_migration_work_t* w = (back_migration_work_t*)work;
     struct task_struct* task, *g;
     int found = 0;
+    int perf = -1;
+
+    perf = PERF_MEASURE_START(&perf_process_back_migration);
 
     PSPRINTK("%s\n",__func__);
 
@@ -2679,6 +2696,8 @@ search_exit:
     
 exit:
     kfree(work);
+
+    PERF_MEASURE_STOP(&perf_process_back_migration," ",perf);
 }
 
 /**
@@ -2764,9 +2783,6 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
 
 /**
  * <MEASURE perf_handle_munmap_response>
- * TODO: START HERE WHEN YOU START WORKING AGAIN!!!!!!!!!!
- * Need to place this logic in a bottom-side handler.
- * Already created the new work type: munmap_response_work_t
  */
 static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
     munmap_response_t* msg = (munmap_response_t*)inc_msg;
@@ -4968,18 +4984,22 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
 
     //dump_task(task,regs,request->stack_ptr);
     
-    PERF_MEASURE_STOP(&perf_process_server_do_migration," ",perf);
+    PERF_MEASURE_STOP(&perf_process_server_do_migration,"migration to new cpu",perf);
 
     return PROCESS_SERVER_CLONE_SUCCESS;
 
 }
 
 /**
- *
+ * <MEASURE perf_process_server_do_migration>
  */
 static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) {
     back_migration_t mig;
     struct pt_regs* regs = task_pt_regs(task);
+
+    int perf = -1;
+
+    perf = PERF_MEASURE_START(&perf_process_server_do_migration);
 
     // Set up response header
     mig.header.type = PCN_KMSG_TYPE_PROC_SRV_BACK_MIGRATION;
@@ -5016,6 +5036,8 @@ static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) 
     pcn_kmsg_send_long(cpu,
                        (struct pcn_kmsg_long_message*)&mig,
                        sizeof(back_migration_t) - sizeof(struct pcn_kmsg_hdr));
+
+    PERF_MEASURE_STOP(&perf_process_server_do_migration,"back migration",perf);
 
     return PROCESS_SERVER_CLONE_SUCCESS;
 }
