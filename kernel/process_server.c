@@ -40,7 +40,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -2226,7 +2226,10 @@ void process_mapping_response(struct work_struct* work) {
                                      w->address);
 
 
-    PSPRINTK("received mapping response\n");
+    PSPRINTK("received mapping response: addr{%lx},requester{%d},sender{%d}\n",
+             w->address,
+             w->requester_pid,
+             w->from_cpu);
 
     if(data == NULL) {
         printk("%s: ERROR data not found\n",__func__);
