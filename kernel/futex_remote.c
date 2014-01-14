@@ -22,9 +22,17 @@
 #include <linux/delay.h>
 #include <popcorn/remote_pfn.h>
 #include <popcorn/pid.h>
+#include <asm/page_types.h>
 
 
 #include "futex_remote.h"
+#define ENOTINKRN 999
+
+ #ifdef CONFIG_PPC_BOOK3E_64
+ #define is_kernel_addr(x)       ((x) >= 0x8000000000000000ul)
+ #else
+ #define is_kernel_addr(x)       ((x) >= PAGE_OFFSET)
+ #endif
 
 extern struct list_head pfn_list_head;
 
@@ -49,8 +57,8 @@ int find_kernel_for_pfn(unsigned long addr, struct list_head *head)
     return -1;
 }
 struct _inc_remote_vm_pool {
-	unsigned long start;
-	unsigned long end;
+	/*unsigned long start;
+	unsigned long end;*/
 	unsigned long rflag;
 	int pid;
 	int origin_pid;
@@ -63,9 +71,9 @@ _inc_remote_vm_pool_t * add_inc(int pid,int start,int end, int rflag,int origin_
 	_inc_remote_vm_pool_t *Ptr = (_inc_remote_vm_pool_t *) kmalloc(
 			sizeof(_inc_remote_vm_pool_t), GFP_ATOMIC);
 
-	Ptr->start = start;
+	//Ptr->start = start;
 	Ptr->pid = pid;
-	Ptr->end = end;
+	//Ptr->end = end;
 	Ptr->rflag = rflag;
 	Ptr->origin_pid=origin_pid;
 	INIT_LIST_HEAD(&Ptr->list_member);
@@ -88,7 +96,7 @@ int find_and_delete_inc(int pid, struct list_head *head) {
 		}
 	}
 }
-
+/*
 _inc_remote_vm_pool_t * find_inc(int start,int end, struct list_head *head) {
 	struct list_head *iter;
 	_inc_remote_vm_pool_t *objPtr;
@@ -102,7 +110,7 @@ _inc_remote_vm_pool_t * find_inc(int start,int end, struct list_head *head) {
 	}
 	return NULL;
 }
-
+*/
 struct pid_list
 {
 	int pid;
@@ -173,8 +181,8 @@ struct _remote_wakeup_request {
 	unsigned int flags;
 	int nr_wake;
 	u32 bitset;
-	unsigned long start;
-	unsigned long end;
+	int tgid;
+	int tghid;
 	int rflag;
 	int pid;
 	int origin_pid;
@@ -227,7 +235,7 @@ struct futex_q * query_q_pid(struct task_struct *t) {
 	int i = 0;
 	struct futex_hash_bucket *hb;
 	struct plist_head *head;
-	struct futex_q *this, *next;
+	struct futex_q *this, *next, *res=NULL;
 	int end = 1 << _FUTEX_HASHBITS;
 	struct task_struct *temp;
 	for (i = 0; i < end; i++) {
@@ -237,14 +245,22 @@ struct futex_q * query_q_pid(struct task_struct *t) {
 			plist_for_each_entry_safe(this, next, head, list)
 			{
 				temp=this->task;
+				if(temp /*&& is_kernel_addr(temp)*/){
+				get_task_struct(temp);
 				if(temp->tgroup_distributed == 1 && temp->tgroup_home_id == t->tgroup_home_id && temp->pid == t->pid){
 					//spin_unlock(&hb->lock);
-					return this;
+					res=this;
+					put_task_struct(temp);
+					goto q_exit;
+				}
+			    put_task_struct(temp);
 				}
 			}
 		}
 	}
-	return NULL;
+q_exit:
+    return res;
+
 }
 
 
@@ -255,21 +271,69 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bi
 	struct plist_head *head;
 	struct task_struct *tsk;
 	union futex_key key = FUTEX_KEY_INIT;
+	struct mm_struct  *cmm = NULL;
+	struct task_struct *temp;
 	int ret;
-	printk(KERN_ALERT "%s: response {%d} uaddr{%lx} \n","global_futex_wake",pid,uaddr);
+	printk(KERN_ALERT "%s: response {%d} uaddr{%lx} comm{%s} \n","global_futex_wake",pid,uaddr,current->comm);
 	if (!bitset)
 		return -EINVAL;
 
+	tsk=pid_task(find_vpid(pid), PIDTYPE_PID);
+//	printk(KERN_ALERT" task exists {%d}  tsk mm{%p} cmm{%p} \n",(tsk!=NULL)?1:0,tsk->mm,current->mm);
+	if(tsk)
+	{
+		cmm = current->mm;
+		current->mm=tsk->mm;
+	}
+
 	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &key, VERIFY_READ);
+
+	if(cmm==NULL)
+	{
+		printk(KERN_ALERT" cmm NULL\n");
+		current->mm= cmm;
+	}
+	else
+	{
+		printk(KERN_ALERT" current {%s}\n",current->comm);
+				current->mm= NULL;
+	}
 
 	hb = hash_futex(&key);
 	spin_lock(&hb->lock);
 	head = &hb->chain;
-	tsk=pid_task(find_vpid(pid), PIDTYPE_PID);
-	if(tsk){
+
+/*	if(tsk){
 	this = query_q_pid(tsk);
-	spin_unlock(&this->lock_ptr);
+    if(this)
+		printk(KERN_ALERT" task found in futex q \n");
+	else
+	  goto out;
+     	
+	if(this->lock_ptr != NULL && spin_is_locked(this->lock_ptr))
+	{
+	   printk(KERN_ALERT"Unlocking spinlock \n");
+	   spin_unlock(&this->lock_ptr);
+	}
+	printk(KERN_ALERT" call wake futex \n");
 	wake_futex(this);
+	}*/
+
+	plist_for_each_entry_safe(this, next, head, list)
+	{
+		temp=this->task;
+		if(temp /*&& is_kernel_addr(temp)*/){
+			if(temp->tgroup_distributed == 1 && temp->tgroup_home_id == tsk->tgroup_home_id && temp->pid == tsk->pid){
+
+				if(this->lock_ptr != NULL && spin_is_locked(this->lock_ptr))
+				{
+				   printk(KERN_ALERT"Unlocking spinlock \n");
+				   spin_unlock(&this->lock_ptr);
+				}
+				printk(KERN_ALERT" call wake futex \n");
+				wake_futex(this);
+			}
+		}
 	}
 
 	spin_unlock(&hb->lock);
@@ -295,11 +359,13 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 	_remote_wakeup_request_t* msg = (_remote_wakeup_request_t*) inc_msg;
 	_remote_wakeup_response_t response;
 	struct task_struct *tsk=current;
-	struct mm_struct *cmm = NULL;
+	struct task_struct *task, *g;
+	struct mm_struct  *cmm = NULL;
+	int null_flag=0;
 
 	printk(KERN_ALERT"%s: request -- entered task comm{%s} pid{%d}\n", "handle_remote_futex_wake_request",tsk->comm,tsk->pid);
-	printk(KERN_ALERT"%s: msg: uaddr {%lx} flags {%x} nr_wake{%d} bitset {%u} rflag{%d} pid{%d} origin_pid {%d} \n",
-			"handle_remote_futex_wake_request",msg->uaddr,msg->flags,msg->nr_wake,msg->bitset,msg->rflag,msg->pid,msg->origin_pid);
+	printk(KERN_ALERT"%s: msg: uaddr {%lx} tgid {%d} tghid{%d} bitset {%u} rflag{%d} pid{%d} origin_pid {%d} \n",
+			"handle_remote_futex_wake_request",msg->uaddr,msg->tgid,msg->tghid,msg->bitset,msg->rflag,msg->pid,msg->origin_pid);
 
 	// Finish constructing response
 	response.header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_RESPONSE;
@@ -309,18 +375,49 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 
 	if(msg->rflag == 0)
 	{
-	  tsk = pid_task(find_vpid(msg->origin_pid), PIDTYPE_PID);
-	  if(tsk && current->mm!=NULL)
-	  {
-	       cmm = current->mm;
-	       current->mm = tsk->mm;
-	  }
-	  else if(current->mm==NULL)
-	       printk(KERN_ALERT "mm struct doesntexist\n");
+		if(current->mm!=NULL)
+		{
+			null_flag=1;
+			cmm = (current->mm);
+			//printk(KERN_ALERT "current mm not null comm{%s} cmm{%p}\n",current->comm,current->mm);
+		}
+		tsk = pid_task(find_vpid(msg->tghid), PIDTYPE_PID);
+		if(tsk)
+		{
+			current->mm = tsk->mm;
+			//printk(KERN_ALERT "tghid exist cmm{%d}  cmm{%p} comm{%s} mm{%p}\n",(cmm!=NULL)?1:0,cmm,current->comm,current->mm);
+		}
+		else //if(current->mm==NULL)
+		{
+			//printk(KERN_ALERT "mm struct doesnt exist\n");
+			do_each_thread(g,task) {
+				if(task->pid == msg->tghid)
+				{
+					current->mm = task->mm;
+					//printk(KERN_ALERT "mm struct found comm{%s} cmm{%d} mm{%d} \n",task->comm,(cmm!=NULL)?1:0, (current->mm!=NULL)?1:0);
+					goto mm_exit;
+				}
+			} while_each_thread(g,task);
+		}
+mm_exit:
+	printk(KERN_ALERT "before wake cmm{%d}  mm{%d} cmm{%p}  mm{%p}\n",(cmm!=NULL)?1:0,(current->mm!=NULL)?1:0,cmm,current->mm);
 
 	  futex_wake(msg->uaddr,msg->flags,msg->nr_wake,msg->bitset);
-	  if(cmm !=NULL)
+	  if(cmm !=NULL && null_flag)
+	  {
+		 printk(KERN_ALERT "assign the original mm struct back for task {%d}\n",current->pid);
 	     current->mm = cmm;
+	  }
+	  else if(cmm == NULL && !null_flag)
+	  {
+	  		 printk(KERN_ALERT "assign the null mm struct back {%d} \n",current->pid);
+	  	     current->mm = NULL;
+	  }
+	  else
+	  {
+		  printk(KERN_ALERT "whatever {%d} \n",current->pid);
+		  current->mm = NULL;
+	  }
 	}
 	else
 	 global_futex_wake(msg->uaddr,msg->flags,msg->nr_wake,msg->bitset, msg->rflag);
@@ -337,7 +434,7 @@ int remote_futex_wakeup(unsigned long uaddr,unsigned int flags, int nr_wake, u32
 
 	int res = 0;
 	int cpu=0;
-
+	struct page *page, *page_head;
 	_remote_wakeup_request_t *request = kmalloc(sizeof(_remote_wakeup_request_t),
 	GFP_KERNEL);
 
@@ -362,32 +459,76 @@ int remote_futex_wakeup(unsigned long uaddr,unsigned int flags, int nr_wake, u32
 	struct vm_area_struct* curr = NULL;
 	curr  = current->mm->mmap;
 	vma = find_extend_vma( current->mm, address);
-	request->start = curr->vm_start;
-	request->end = curr->vm_end;
+
+	request->tgid = current->tgid;
+	request->tghid = current->tgroup_home_id;
 	request->rflag = rflag;
 	request->pid = current->pid;
 	request->origin_pid = current->origin_pid;
 
-	printk(KERN_ALERT" remote_futex_wakeup pfn {%lx} shift {%lx} pid{%d} origin_pid{%d} cpu{%d} rflag{%d} uaddr{%lx}\n ",
-								vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,current->pid,current->origin_pid,smp_processor_id(),rflag,uaddr);
+	printk(KERN_ALERT" remote_futex_wakeup pfn {%lx} shift {%lx} pid{%d} origin_pid{%d} cpu{%d} rflag{%d} uaddr{%lx} vma start (%lx} vma end (%lx}\n ",
+								vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,current->pid,current->origin_pid,smp_processor_id(),rflag,uaddr,	vma->vm_start, vma->vm_end);
 
 
 			if(vma->vm_flags & VM_PFNMAP)	{
 
-//			printk(KERN_ALERT" remote_futex_wakeup pfn {%lx} shift {%lx} pid{%d} origin_pid{%d} cpu{%d} rflag{%d} uaddr{%lx} \n ",
-//					vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,current->pid,current->origin_pid,smp_processor_id(),rflag,uaddr);
-
-				// Send response
+		    // Send response
 			if(!rflag)
 			{
+				/*get_user_pages_fast_mm(current->mm,address, 1, 1, &page);
 
-				if((cpu=find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head)) != -1)
+				if(!page)
+				{
+				unsigned long pfn=page_to_pfn(page);
+				printk(KERN_ALERT"futex pfn : 0x{%lx}\n",PFN_PHYS(pfn));*/
+
+			/*	if((cpu=find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head)) != -1)//vma->vm_pgoff << PAGE_SHIFT
 				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
 				else
-				{
-			        res=-1;
-			        printk(KERN_ALERT " cpu not found {%d} \n",cpu);
-				}
+				{*/
+					res=-ENOTINKRN;
+					unsigned long pfn;
+					res=-ENOTINKRN;
+
+					pgd_t *pgd = NULL;
+					pud_t *pud = NULL;
+					pmd_t *pmd = NULL;
+					pte_t *ptep = NULL;
+					pte_t pte;
+
+					pgd = pgd_offset(current->mm, address);
+					if(!pgd_present(*pgd)) {
+						goto exit;
+					}
+
+					pud = pud_offset(pgd,address);
+					if(!pud_present(*pud)) {
+						goto exit;
+					}
+
+					pmd = pmd_offset(pud,address);
+					if(!pmd_present(*pmd)) {
+						goto exit;
+					}
+
+					ptep = pte_offset_map(pmd,address);
+					if(!ptep || !pte_present(*ptep)) {
+						goto exit;
+					}
+					pte = *ptep;
+
+					pfn=pte_pfn(pte);
+					printk(KERN_ALERT"pte pfn : 0x{%lx}\n",pfn);
+
+exit:
+
+					if((cpu=find_kernel_for_pfn(pfn,&pfn_list_head)) != -1)//vma->vm_pgoff << PAGE_SHIFT
+					{	printk(KERN_ALERT"futex pfn cpu: 0x{%d}\n",cpu);
+					   res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
+					}
+				//}
+
+
 			}
 
 			}
@@ -430,8 +571,8 @@ int global_futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
     if(tsk)
        	q->key.private.mm=tsk->mm;
 
-    printk(KERN_ALERT "global_futex_wait b4: both ptr {%p} key: word {%lx} offset{%d} uaddr{%lx} mm{%p}\n ",
-		 		        		q->key.both.ptr,q->key.both.word,q->key.both.offset,uaddr,q->key.private.mm);
+ //   printk(KERN_ALERT "global_futex_wait b4: both ptr {%p} key: word {%lx} offset{%d} uaddr{%lx} mm{%p}\n ",
+//		 		        		q->key.both.ptr,q->key.both.word,q->key.both.offset,uaddr,q->key.private.mm);
 
     hb = hash_futex(&q->key);
     q->lock_ptr = &hb->lock;
@@ -519,6 +660,7 @@ get_set_remote_key(unsigned long uaddr, unsigned int val, int fshared, union fut
 
 	int res = 0;
 	int cpu=0;
+	struct page *page, *page_head;
 	_remote_key_request_t *request = kmalloc(sizeof(_remote_key_request_t),
 			GFP_KERNEL);
 
@@ -547,16 +689,54 @@ get_set_remote_key(unsigned long uaddr, unsigned int val, int fshared, union fut
 		request->pid = current->pid;
 		request->origin_pid = current->origin_pid;
 		request->val =val;
-		printk(KERN_ALERT" pfn {%lx} shift {%lx} \n ",vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT);
+		printk(KERN_ALERT" pfn {%lx} shift {%lx} vm_start {%lx} vm_end {%lx}\n ",vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,vma->vm_start,vma->vm_end);
 
-		// Send response
-		if((cpu=find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head)) != -1)
+/*
+		if((cpu=find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head)) != -1)//vma->vm_pgoff << PAGE_SHIFT
 		res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
 		else
-		{
-		res=-1;
-		printk(KERN_ALERT " cpu not found {%d} \n",cpu);
-		}
+		{*/
+			unsigned long pfn;
+			res=-ENOTINKRN;
+
+			pgd_t *pgd = NULL;
+			pud_t *pud = NULL;
+			pmd_t *pmd = NULL;
+			pte_t *ptep = NULL;
+			pte_t pte;
+
+			pgd = pgd_offset(current->mm, address);
+			if(!pgd_present(*pgd)) {
+				goto exit;
+			}
+
+			pud = pud_offset(pgd,address);
+			if(!pud_present(*pud)) {
+				goto exit;
+			}
+
+			pmd = pmd_offset(pud,address);
+			if(!pmd_present(*pmd)) {
+				goto exit;
+			}
+
+			ptep = pte_offset_map(pmd,address);
+			if(!ptep || !pte_present(*ptep)) {
+				goto exit;
+			}
+			pte = *ptep;
+
+			pfn=pte_pfn(pte);
+			printk(KERN_ALERT"pte pfn : 0x{%lx}\n",pfn);
+
+exit:
+			if((cpu=find_kernel_for_pfn(pfn,&pfn_list_head)) != -1)//vma->vm_pgoff << PAGE_SHIFT
+			{	printk(KERN_ALERT"futex pfn cpu: 0x{%d}\n",cpu);
+			  res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
+			}
+
+
+		//}
 	}
 	return res;
 }
@@ -745,15 +925,18 @@ static int __init futex_remote_init(void)
 
 
 
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST,
+			handle_remote_futex_key_request);
+
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE,
+			handle_remote_futex_key_response);
+
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_REQUEST,
 			handle_remote_futex_wake_request);
+
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_RESPONSE,
 			handle_remote_futex_wake_response);
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST,
-			handle_remote_futex_key_request);
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE,
-			handle_remote_futex_key_response);
 	INIT_LIST_HEAD(&vm_head);
 	INIT_LIST_HEAD(&fq_head);
 

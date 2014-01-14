@@ -195,7 +195,7 @@ int remote_proc_tgid_stat(struct seq_file *m, struct proc_remote_pid_info *task,
 
 int remote_proc_cpuset(struct seq_file *m, struct proc_remote_pid_info *task,
 		char *buf, size_t count) {
-	return do_remote_task_stat(m, task, buf, count);
+	return do_remote_task_cpuset(m, task, buf, count);
 }
 
 static int remote_proc_single_show(struct seq_file *m, void *v) {
@@ -341,7 +341,7 @@ static struct remote_pid_entry remote_tgid_base_stuff[] = {
 		/*      REG("latency",  S_IRUGO, proc_lstats_operations), */
 		/* #endif */
 		/* #ifdef CONFIG_PROC_PID_CPUSET */
-		REG("cpuset", S_IRUGO, remote_proc_cpuset),
+		ONE("cpuset", S_IRUGO, remote_proc_cpuset),
 		/* #endif */
 		/* #ifdef CONFIG_CGROUPS */
 		/*      REG("cgroup",  S_IRUGO, proc_cgroup_operations), */

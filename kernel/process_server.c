@@ -4832,7 +4832,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
         task->tgroup_home_id = orig->tgid;
         task->tgroup_distributed = 0;
     }
-
+//printk(KERN_ALERT"TGID {%d} \n",task->tgid);
     return 1;
 
 }
@@ -5040,7 +5040,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     for(cnt=0;cnt<_NSIG;cnt++)
     	request->action[cnt] = task->sighand->action[cnt];
 
-    printk(KERN_ALERT "origin pid {%d}- pid{%d} \n",request->origin_pid,task->pid);
+    printk(KERN_ALERT "origin pid {%d}- tgid{%d} \n",request->origin_pid,task->tgid);
 // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h

@@ -57,6 +57,11 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 #ifdef CONFIG_SMP
 	else {
 		percpu_write(cpu_tlbstate.state, TLBSTATE_OK);
+		if(percpu_read(cpu_tlbstate.active_mm) != next)
+		{
+			printk(KERN_ALERT "cpu{%d} tskcomm{%s} tskpid{%d} curr{%s} currpid{%d} cmm{%p} next{%p} \n",
+					cpu,tsk->comm,tsk->pid,current->comm,current->pid,current->mm,next);
+		}
 		BUG_ON(percpu_read(cpu_tlbstate.active_mm) != next);
 
 		if (!cpumask_test_and_set_cpu(cpu, mm_cpumask(next))) {

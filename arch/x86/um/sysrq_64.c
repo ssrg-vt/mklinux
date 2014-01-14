@@ -16,8 +16,8 @@ void __show_regs(struct pt_regs *regs)
 {
 	printk("\n");
 	print_modules();
-	printk(KERN_INFO "Pid: %d, comm: %.20s %s %s\n", task_pid_nr(current),
-		current->comm, print_tainted(), init_utsname()->release);
+	printk(KERN_INFO "Pid: %d, comm: %.20s mm: {%p} %s %s\n", task_pid_nr(current),
+		current->comm, current->mm ,print_tainted(), init_utsname()->release);
 	printk(KERN_INFO "RIP: %04lx:[<%016lx>]\n", PT_REGS_CS(regs) & 0xffff,
 	       PT_REGS_RIP(regs));
 	printk(KERN_INFO "RSP: %016lx  EFLAGS: %08lx\n", PT_REGS_SP(regs),

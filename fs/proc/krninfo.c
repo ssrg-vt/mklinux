@@ -2,14 +2,18 @@
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-
+#include <popcorn/init.h>
+#include <linux/bootmem.h>
 
 static int krninfo_proc_show(struct seq_file *m, void *v)
 {
 
 	seq_printf(m,
-		"Popcorn Kernel info:       %8lu kB\n",
-		0);
+		"POPCORN KERNEL INFO:   \n"
+		"Kernel Id    %8lu \n"
+		"Start PFN    %8lu \n"
+		"End   PFN    %8lu \n",
+		Kernel_Id,kernel_start_addr,PFN_PHYS(max_low_pfn));
 
 	return 0;
 }

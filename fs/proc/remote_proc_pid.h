@@ -17,6 +17,8 @@
 //function borrowed from remote_proc_pid_file.c
 extern int do_remote_task_stat(struct seq_file *m,
 		struct proc_remote_pid_info *task, char *buf,size_t count);
+extern int do_remote_task_cpuset(struct seq_file *m,
+		struct proc_remote_pid_info *task, char *buf,size_t count);
 
 
 //functions borrowed from base.c

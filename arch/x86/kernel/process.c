@@ -105,8 +105,8 @@ void show_regs_common(void)
 	board = dmi_get_system_info(DMI_BOARD_NAME);
 
 	printk(KERN_CONT "\n");
-	printk(KERN_DEFAULT "Pid: %d, comm: %.20s %s %s %.*s",
-		current->pid, current->comm, print_tainted(),
+	printk(KERN_DEFAULT "Pid: %d, comm: %.20s mm: {%p} %s %s %.*s",
+		current->pid, current->comm,current->mm,print_tainted(),
 		init_utsname()->release,
 		(int)strcspn(init_utsname()->version, " "),
 		init_utsname()->version);

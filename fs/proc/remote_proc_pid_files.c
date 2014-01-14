@@ -22,6 +22,10 @@
 
 #include "internal.h"
 #include "remote_proc_pid_files.h"
+#include <popcorn/pid.h>
+
+#include <linux/cgroup.h>
+#include <linux/cpumask.h>
 
 #define PRINT_MESSAGES 0
 #if PRINT_MESSAGES
@@ -35,6 +39,7 @@
  */
 static int statwait=-1;
 static int _cpu=-1;
+static int cpusetwait=-1;
 
 
 static DECLARE_WAIT_QUEUE_HEAD(wq);
@@ -312,11 +317,8 @@ int send_stat_request(struct proc_remote_pid_info *task)
 		request->header.type = PCN_KMSG_TYPE_REMOTE_PID_STAT_REQUEST;
 		request->header.prio = PCN_KMSG_PRIO_NORMAL;
 		request->_pid = task->pid;
-		// Send response
-		if(task->Kernel_Num==0)
-				res=pcn_kmsg_send(0, (struct pcn_kmsg_message*) (request));
-		else
-				res=pcn_kmsg_send(3, (struct pcn_kmsg_message*) (request));
+
+		res=pcn_kmsg_send(ORIG_NODE(task->pid), (struct pcn_kmsg_message*) (request));
 		return res;
 }
 
@@ -392,6 +394,160 @@ int do_remote_task_stat(struct seq_file *m,
 
 
 
+/*
+ * ****************************** Message structures for obtaining cpuset ********************************
+ */
+struct _remote_pid_cpuset_request {
+    struct pcn_kmsg_hdr header;
+    pid_t _pid;
+    char pad_string[56];
+} __attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _remote_pid_cpuset_request _remote_pid_cpuset_request_t;
+
+struct _remote_pid_cpuset_response {
+    struct pcn_kmsg_hdr header;
+    char buf[PAGE_SIZE];
+   } __attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _remote_pid_cpuset_response _remote_pid_cpuset_response_t;
+
+/*
+ * ******************************* Define variables holding Result *******************************************
+ */
+static _remote_pid_cpuset_response_t *cpuset_result;
+
+
+int flush_cpuset_var()
+{
+	cpuset_result=NULL;
+	cpusetwait=-1;
+	return 0;
+}
+
+
+
+/*
+ * ********************************** Message handling functions for /pid/cpuset*************************************
+ */
+
+int fill_cpuset_response(struct pid *pidp, _remote_pid_cpuset_response_t *res)
+{
+
+	    struct pid *pid;
+		struct task_struct *tsk;
+		char buf[PAGE_SIZE];
+		struct cgroup_subsys_state *css;
+		int retval;
+		retval = -ENOMEM;
+		retval = -ESRCH;
+
+		pid = pidp;
+		tsk = get_pid_task(pid, PIDTYPE_PID);
+		if (!tsk)
+			goto out_free;
+
+		retval = -EINVAL;
+		cgroup_lock();
+		css = task_subsys_state(tsk, cpuset_subsys_id);
+		retval = cgroup_path(css->cgroup, buf, PAGE_SIZE);
+		if (retval < 0)
+			goto out_unlock;
+		memcpy(&res->buf, &buf, sizeof buf);
+	out_unlock:
+		cgroup_unlock();
+		put_task_struct(tsk);
+	out_free:
+	out:
+		return retval;
+
+}
+
+static int handle_remote_pid_cpuset_response(struct pcn_kmsg_message* inc_msg) {
+	_remote_pid_cpuset_response_t* msg = (_remote_pid_cpuset_response_t*) inc_msg;
+
+	PRINTK("%s: Entered remote pid stat response \n",__func__);
+
+	cpusetwait = 1;
+	if(msg !=NULL)
+		cpuset_result=msg;
+	wake_up_interruptible(&wq);
+	PRINTK("%s: response ---- wait{%d} \n",
+			__func__, cpusetwait);
+
+	pcn_kmsg_free_msg(inc_msg);
+
+	return 0;
+}
+
+
+static int handle_remote_pid_cpuset_request(struct pcn_kmsg_message* inc_msg) {
+
+	_remote_pid_cpuset_request_t* msg = (_remote_pid_cpuset_request_t*) inc_msg;
+	_remote_pid_cpuset_response_t response;
+
+
+	PRINTK("%s: Entered remote pid cpuset request \n", __func__);
+
+	// Finish constructing response
+	response.header.type = PCN_KMSG_TYPE_REMOTE_PID_CPUSET_RESPONSE;
+	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+
+	struct pid * pidp = find_vpid(msg->_pid);
+
+	if(pidp!=NULL)
+		fill_cpuset_response(pidp,&response);
+
+	// Send response
+	pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response),
+			sizeof(_remote_pid_cpuset_response_t) - sizeof(struct pcn_kmsg_hdr));
+
+	pcn_kmsg_free_msg(inc_msg);
+
+	return 0;
+}
+cpuset_request(struct proc_remote_pid_info *task)
+{
+
+		int res=0;
+		_remote_pid_cpuset_request_t* request = kmalloc(sizeof(_remote_pid_cpuset_request_t),
+		GFP_KERNEL);
+		// Build request
+		request->header.type = PCN_KMSG_TYPE_REMOTE_PID_CPUSET_REQUEST;
+		request->header.prio = PCN_KMSG_PRIO_NORMAL;
+		request->_pid = task->pid;
+
+		res=pcn_kmsg_send(ORIG_NODE(task->pid), (struct pcn_kmsg_message*) (request));
+		return res;
+}
+
+/*
+ * ************************************* Function (hook) to be called from other file ********************
+ */
+int do_remote_task_cpuset(struct seq_file *m,
+		struct proc_remote_pid_info *task, char *buf,size_t count)
+{
+	flush_cpuset_var();
+	int res=0;
+
+	res = cpuset_request(task);
+	wait_event_interruptible(wq, cpusetwait != -1);
+
+	if(cpuset_result!=NULL)
+	{
+		seq_puts(m, cpuset_result->buf);
+		seq_putc(m, '\n');
+	}
+	else
+	{
+		seq_printf(m, "(%s) \n",
+				"This PID is out of sync with remote kernel");
+	}
+
+	return 0;
+}
+
+
 
 
 static int __init pid_files_handler_init(void)
@@ -405,6 +561,11 @@ static int __init pid_files_handler_init(void)
 				    		handle_remote_pid_stat_request);
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PID_STAT_RESPONSE,
 				    		handle_remote_pid_stat_response);
+
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PID_CPUSET_REQUEST,
+					    		handle_remote_pid_cpuset_request);
+		pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PID_CPUSET_RESPONSE,
+					    		handle_remote_pid_cpuset_response);
 
 	return 0;
 }
