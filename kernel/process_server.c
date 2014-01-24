@@ -38,9 +38,14 @@
 #include <asm/mmu_context.h>
 
 /**
+ * General purpose configuration
+ */
+#define COPY_WHOLE_VM_WITH_MIGRATION 0
+
+/**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -1037,6 +1042,44 @@ static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
     }
     return 0;
 
+}
+
+unsigned long do_mmap_remaining(struct file *file, unsigned long addr,
+                                unsigned long len, unsigned long prot,
+                                unsigned long flags, unsigned long pgoff,
+                                struct vm_area_struct* existing_vma) {
+    unsigned long target_start = addr;
+    unsigned long target_end = addr + len;
+    unsigned long adjustment_necessary = 0;
+    unsigned long ret = target_start;
+
+    // no vma, map whole thing
+    if(!existing_vma) {
+        // Map whole thing
+        ret = do_mmap(file, addr, len, prot, flags, pgoff); 
+    } else {
+        // Adjust the start and end if necessary
+
+        // Check if we need to adjust the start
+        if (existing_vma->vm_start > target_start) {
+            unsigned long diff_len = existing_vma->vm_start - target_start;
+            // mmap the difference, which starts at target_start and
+            // extends "diff_len"
+            ret = do_mmap(file, target_start, diff_len, prot, flags, pgoff);
+        }
+
+        // Check if we need to adjust the end
+        if (existing_vma->vm_end < target_end) {
+            unsigned long diff_len = target_end - existing_vma->vm_end;
+            // mmap the difference, which starts at the existing end,
+            // and extends diff_len
+            do_mmap(file, existing_vma->vm_end, diff_len, prot, flags, pgoff);
+        }
+    }
+
+    return ret;
+
+    
 }
 
 /**
@@ -4456,14 +4499,17 @@ retry:
                 is_anonymous = 1;
                 PS_DOWN_WRITE(&current->mm->mmap_sem);
                 current->enable_distributed_munmap = 0;
-                err = do_mmap(NULL,
+                // mmap parts that are missing, while leaving the existing
+                // parts untouched.
+                err = do_mmap_remaining(NULL,
                         data->vaddr_start,
                         data->vaddr_size,
                         prot,
                         MAP_FIXED|
                         MAP_ANONYMOUS|
                         ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
-                        0);
+                        0,
+                        vma);
                 current->enable_distributed_munmap = 1;
                 PS_UP_WRITE(&current->mm->mmap_sem);
             } else {
@@ -4488,7 +4534,9 @@ retry:
                             (unsigned long)f);
                     PS_DOWN_WRITE(&current->mm->mmap_sem);
                     current->enable_distributed_munmap = 0;
-                    err = do_mmap(f,
+                    // mmap parts that are missing, while leaving the existing
+                    // parts untouched.
+                    err = do_mmap_remaining(f,
                             data->vaddr_start,
                             data->vaddr_size,
                             prot,
@@ -4496,7 +4544,8 @@ retry:
                             ((data->vm_flags & VM_DENYWRITE)?MAP_DENYWRITE:0) |
                             ((data->vm_flags & VM_EXECUTABLE)?MAP_EXECUTABLE:0) |
                             ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
-                            data->pgoff << PAGE_SHIFT);
+                            data->pgoff << PAGE_SHIFT,
+                            vma);
                     current->enable_distributed_munmap = 1;
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
@@ -4840,10 +4889,12 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
         unsigned long start_stack = task->mm->start_stack;
 
         // Transfer the stack only
+#if !(COPY_WHOLE_VM_WITH_MIGRATION)
         if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start))) {
             curr = curr->vm_next;
             continue;
         }
+#endif
 
         //
         // re-initialize path.
