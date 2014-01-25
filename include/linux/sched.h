@@ -1596,6 +1596,7 @@ struct task_struct {
     int t_home_id;    /* the id of this task where it was originally created */
     int tgroup_distributed;
     int t_distributed; /* Has this thread been migrated before? */
+    int enable_do_mmap_pgoff_hook;
     int enable_distributed_munmap; /* Start a thread without distributed munmap enabled, 
                                       then enable when address space is fully formed. */
 

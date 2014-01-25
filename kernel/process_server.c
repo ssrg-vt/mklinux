@@ -868,6 +868,7 @@ typedef struct {
     unsigned short thread_gsindex;
 } back_migration_work_t;
 
+
 /**
  * Prototypes
  */
@@ -1044,42 +1045,117 @@ static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
 
 }
 
+
+/**
+ * Map, but only in areas that do not currently have mappings.
+ * This should extend vmas that ara adjacent as necessary.
+ * NOTE: current->enable_do_mmap_pgoff_hook must be disabled
+ *       by client code before calling this.
+ * NOTE: mm->mmap_sem must already be held by client code.
+ * NOTE: entries in the per-mm list of vm_area_structs are
+ *       ordered by starting address.  This is helpful, because
+ *       I can exit my check early sometimes.
+ */
 unsigned long do_mmap_remaining(struct file *file, unsigned long addr,
                                 unsigned long len, unsigned long prot,
-                                unsigned long flags, unsigned long pgoff,
-                                struct vm_area_struct* existing_vma) {
-    unsigned long target_start = addr;
-    unsigned long target_end = addr + len;
-    unsigned long adjustment_necessary = 0;
-    unsigned long ret = target_start;
+                                unsigned long flags, unsigned long pgoff) {
+    unsigned long ret = addr;
+    unsigned long start = addr;
+    unsigned long local_end = start;
+    unsigned long end = addr + len;
+    struct vm_area_struct* curr;
 
-    // no vma, map whole thing
-    if(!existing_vma) {
-        // Map whole thing
-        ret = do_mmap(file, addr, len, prot, flags, pgoff); 
-    } else {
-        // Adjust the start and end if necessary
+    // go through ALL vma's, looking for interference with this space.
+    curr = current->mm->mmap;
 
-        // Check if we need to adjust the start
-        if (existing_vma->vm_start > target_start) {
-            unsigned long diff_len = existing_vma->vm_start - target_start;
-            // mmap the difference, which starts at target_start and
-            // extends "diff_len"
-            ret = do_mmap(file, target_start, diff_len, prot, flags, pgoff);
+    PSPRINTK("%s: processing {%lx,%lx}\n",__func__,addr,len);
+
+    while(1) {
+
+        if(start >= end) goto done;
+
+        // We've reached the end of the list
+        else if(curr == NULL) {
+            // map through the end
+            PSPRINTK("%s: curr == NULL - mapping {%lx,%lx}\n",
+                    __func__,start,end-start);
+            do_mmap(file, start, end - start, prot, flags, pgoff); 
+            goto done;
         }
 
-        // Check if we need to adjust the end
-        if (existing_vma->vm_end < target_end) {
-            unsigned long diff_len = target_end - existing_vma->vm_end;
-            // mmap the difference, which starts at the existing end,
-            // and extends diff_len
-            do_mmap(file, existing_vma->vm_end, diff_len, prot, flags, pgoff);
+        // the VMA is fully above the region of interest
+        else if(end <= curr->vm_start) {
+                // mmap through local_end
+            PSPRINTK("%s: VMA is fully above the region of interest - mapping {%lx,%lx}\n",
+                    __func__,start,end-start);
+            do_mmap(file, start, end - start, prot, flags, pgoff);
+            goto done;
         }
+
+        // the VMA fully encompases the region of interest
+        else if(start >= curr->vm_start && end <= curr->vm_end) {
+            // nothing to do
+            PSPRINTK("%s: VMA fully encompases the region of interest\n",__func__);
+            goto done;
+        }
+
+        // the VMA is fully below the region of interest
+        else if(curr->vm_end <= start) {
+            // move on to the next one
+            PSPRINTK("%s: VMA is fully below region of interest\n",__func__);
+        }
+
+        // the VMA includes the start of the region of interest 
+        // but not the end
+        else if (start >= curr->vm_start && 
+                 start < curr->vm_end &&
+                 end > curr->vm_end) {
+            // advance start (no mapping to do) 
+            start = curr->vm_end;
+            local_end = start;
+            PSPRINTK("%s: VMA includes start but not end\n",__func__);
+        }
+
+        // the VMA includes the end of the region of interest
+        // but not the start
+        else if(start < curr->vm_start && 
+                end <= curr->vm_end &&
+                end > curr->vm_start) {
+            local_end = curr->vm_start;
+            
+            // mmap through local_end
+            PSPRINTK("%s: VMA includes end but not start - mapping {%lx,%lx}\n",
+                    __func__,start, local_end - start);
+            do_mmap(file, start, local_end - start, prot, flags, pgoff);
+
+            // Then we're done
+            goto done;
+        }
+
+        // the VMA is fully within the region of interest
+        else if(start <= curr->vm_start && end >= curr->vm_end) {
+            // advance local end
+            local_end = curr->vm_start;
+
+            // map the difference
+            PSPRINTK("%s: VMS is fully within the region of interest - mapping {%lx,%lx}\n",
+                    __func__,start, local_end - start);
+            do_mmap(file, start, local_end - start, prot, flags, pgoff);
+
+            // Then advance to the end of this vma
+            start = curr->vm_end;
+            local_end = start;
+        }
+
+        curr = curr->vm_next;
+
     }
 
-    return ret;
-
+done:
     
+exit:
+    PSPRINTK("%s: exiting\n",__func__);
+    return ret;
 }
 
 /**
@@ -3593,6 +3669,7 @@ int process_server_import_address_space(unsigned long* ip,
                 if(f) {
                     PS_DOWN_WRITE(&current->mm->mmap_sem);
                     vma_curr->mmapping_in_progress = 1;
+                    current->enable_do_mmap_pgoff_hook = 0;
                     err = do_mmap(f, 
                             vma_curr->start, 
                             vma_curr->end - vma_curr->start,
@@ -3601,6 +3678,7 @@ int process_server_import_address_space(unsigned long* ip,
                             vma_curr->pgoff << PAGE_SHIFT);
                     vmas_installed++;
                     vma_curr->mmapping_in_progress = 0;
+                    current->enable_do_mmap_pgoff_hook = 1;
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                     if(err != vma_curr->start) {
@@ -3611,12 +3689,14 @@ int process_server_import_address_space(unsigned long* ip,
             } else {
                 mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
                 PS_DOWN_WRITE(&current->mm->mmap_sem);
+                current->enable_do_mmap_pgoff_hook = 0;
                 err = do_mmap(NULL, 
                     vma_curr->start, 
                     vma_curr->end - vma_curr->start,
                     PROT_READ|PROT_WRITE/*|PROT_EXEC*/, 
                     mmap_flags, 
                     0);
+                current->enable_do_mmap_pgoff_hook = 1;
                 vmas_installed++;
                 //PSPRINTK("mmap error for %lx = %lx\n",vma_curr->start,err);
                 PS_UP_WRITE(&current->mm->mmap_sem);
@@ -4307,6 +4387,37 @@ exit:
 }
 
 /**
+ *
+ */
+unsigned long process_server_do_mmap_pgoff(struct file *file, unsigned long addr,
+                                           unsigned long len, unsigned long prot,
+                                           unsigned long flags, unsigned long pgoff) {
+
+    int aggregate_start, aggregate_end;
+
+    // Nothing to do for a thread group that's not distributed.
+    // Also, skip if the mmap hook is turned off.  This should
+    // only happen when memory mapping within process_server
+    // fault handler and import address space.
+    if(!current->tgroup_distributed || !current->enable_do_mmap_pgoff_hook) {
+        goto not_handled_no_perf;
+    }
+
+    // Do a distributed munmap on the entire range of addresses that
+    // are about to be remapped.  This will ensure that the range
+    // is cleared out remotely, as well as locally (handled by the
+    // do_mmap_pgoff implementation) to keep from having differing
+    // vm address spaces on different cpus.
+    process_server_do_munmap(current->mm,
+                             /*struct vm_area_struct *vma*/NULL,
+                             addr,
+                             len);
+
+not_handled_no_perf:
+    return 0;
+}
+
+/**
  * Fault hook
  * 0 = not handled
  * 1 = handled
@@ -4499,6 +4610,7 @@ retry:
                 is_anonymous = 1;
                 PS_DOWN_WRITE(&current->mm->mmap_sem);
                 current->enable_distributed_munmap = 0;
+                current->enable_do_mmap_pgoff_hook = 0;
                 // mmap parts that are missing, while leaving the existing
                 // parts untouched.
                 err = do_mmap_remaining(NULL,
@@ -4508,9 +4620,9 @@ retry:
                         MAP_FIXED|
                         MAP_ANONYMOUS|
                         ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
-                        0,
-                        vma);
+                        0);
                 current->enable_distributed_munmap = 1;
+                current->enable_do_mmap_pgoff_hook = 1;
                 PS_UP_WRITE(&current->mm->mmap_sem);
             } else {
                 PSPRINTK("opening file to map\n");
@@ -4534,6 +4646,7 @@ retry:
                             (unsigned long)f);
                     PS_DOWN_WRITE(&current->mm->mmap_sem);
                     current->enable_distributed_munmap = 0;
+                    current->enable_do_mmap_pgoff_hook = 0;
                     // mmap parts that are missing, while leaving the existing
                     // parts untouched.
                     err = do_mmap_remaining(f,
@@ -4544,9 +4657,9 @@ retry:
                             ((data->vm_flags & VM_DENYWRITE)?MAP_DENYWRITE:0) |
                             ((data->vm_flags & VM_EXECUTABLE)?MAP_EXECUTABLE:0) |
                             ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
-                            data->pgoff << PAGE_SHIFT,
-                            vma);
+                            data->pgoff << PAGE_SHIFT);
                     current->enable_distributed_munmap = 1;
+                    current->enable_do_mmap_pgoff_hook = 1;
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                 }
@@ -4759,6 +4872,7 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
 int process_server_dup_task(struct task_struct* orig, struct task_struct* task) {
     task->executing_for_remote = 0;
     task->represents_remote = 0;
+    task->enable_do_mmap_pgoff_hook = 1;
     task->prev_cpu = -1;
     task->next_cpu = -1;
     task->prev_pid = -1;

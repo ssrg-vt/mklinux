@@ -43,4 +43,7 @@ void process_server_do_mprotect(struct task_struct* task,
                                 size_t len,
                                 unsigned long prot);
 int process_server_dup_task(struct task_struct* orig, struct task_struct* task);
+unsigned long process_server_do_mmap_pgoff(struct file *file, unsigned long addr,
+                                           unsigned long len, unsigned long prot,
+                                           unsigned long flags, unsigned long pgoff);
 #endif // _PROCESS_SERVER_H
