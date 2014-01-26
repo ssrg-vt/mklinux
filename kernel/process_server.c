@@ -4991,9 +4991,27 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     lclone_request_id = _clone_request_id++;
     PS_SPIN_UNLOCK(&_clone_request_id_lock);
 
+#if COPY_WHOLE_VM_WITH_MIGRATION
+    // We have to break every cow page before migrating if we're
+    // about to move the whole thing.
+restart_break_cow_all:
+    curr = task->mm->mmap;
+    while(curr) {
+        unsigned long addr;
+        int broken = 0;
+        for(addr = curr->vm_start; addr < curr->vm_end; addr += PAGE_SIZE) {
+            if(break_cow(task->mm,curr,addr)) 
+                broken = 1;
+        }
+        if(broken) 
+            goto restart_break_cow_all;
+        curr = curr->vm_next;
+    }
+#endif
+
     PS_DOWN_READ(&task->mm->mmap_sem);
     
-    // VM Entries
+    // Transfer VM Entries
     curr = task->mm->mmap;
 
     vma_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER;
