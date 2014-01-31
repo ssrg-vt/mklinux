@@ -145,6 +145,7 @@ pcn_perf_context_t perf_handle_process_pairing_request;
 pcn_perf_context_t perf_handle_clone_request;
 pcn_perf_context_t perf_handle_mprotect_response;
 pcn_perf_context_t perf_handle_mprotect_request;
+pcn_perf_context_t perf_pcn_kmsg_send;
 
 /**
  *
@@ -220,7 +221,8 @@ static void perf_init(void) {
            "handle_mprotect_request");
    perf_init_context(&perf_handle_mprotect_response,
            "handle_mprotect_resonse");
-   
+   perf_init_context(&perf_pcn_kmsg_send,
+           "pcn_kmsg_send");
 
 }
 
@@ -2096,6 +2098,7 @@ void process_mapping_request(struct work_struct* work) {
     int found_pte = 1;
     
     // Perf start
+    int perf_send = -1;
     int perf = PERF_MEASURE_START(&perf_process_mapping_request);
 
     PSPRINTK("%s: entered\n",__func__);
@@ -2238,12 +2241,14 @@ retry:
 
     // Send response
     if(response.present) {
+        perf_send = PERF_MEASURE_START(&perf_pcn_kmsg_send);
         DO_UNTIL_SUCCESS(pcn_kmsg_send_long(w->from_cpu,
                             (struct pcn_kmsg_long_message*)(&response),
                             sizeof(mapping_response_t) - 
                             sizeof(struct pcn_kmsg_hdr) -   //
                             sizeof(response.path) +         // Chop off the end of the path
                             strlen(response.path) + 1));    // variable to save bandwidth.
+        PERF_MEASURE_STOP(&perf_pcn_kmsg_send,"handle mapping request",perf_send);
     } else {
         // This is an optimization to get rid of the _long send 
         // which is a time sink.
@@ -4148,7 +4153,7 @@ finished_membership_search:
             atomic_inc(&current->mm->mm_users);
 
             // Remember the mm
-            mm_data = kmalloc(sizeof(mm_data_t),GFP_ATOMIC);
+            mm_data = kmalloc(sizeof(mm_data_t),GFP_KERNEL);
             mm_data->header.data_type = PROCESS_SERVER_MM_DATA_TYPE;
             mm_data->mm = current->mm;
             mm_data->tgroup_home_cpu = current->tgroup_home_cpu;
@@ -4451,6 +4456,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     int adjusted_permissions = 0;
     int is_new_vma = 0;
     int perf = -1;
+    int perf_send = -1;
 
     // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
@@ -4552,7 +4558,9 @@ retry:
         if(i == _cpu) continue; 
     
         // Send the request to this cpu.
+        perf_send = PERF_MEASURE_START(&perf_pcn_kmsg_send);
         s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
+        PERF_MEASURE_STOP(&perf_pcn_kmsg_send,"fault handler",perf_send);
         if(!s) {
             // A successful send operation, increase the number
             // of expected responses.
