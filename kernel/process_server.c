@@ -145,7 +145,6 @@ pcn_perf_context_t perf_handle_process_pairing_request;
 pcn_perf_context_t perf_handle_clone_request;
 pcn_perf_context_t perf_handle_mprotect_response;
 pcn_perf_context_t perf_handle_mprotect_request;
-pcn_perf_context_t perf_pcn_kmsg_send;
 
 /**
  *
@@ -221,8 +220,6 @@ static void perf_init(void) {
            "handle_mprotect_request");
    perf_init_context(&perf_handle_mprotect_response,
            "handle_mprotect_resonse");
-   perf_init_context(&perf_pcn_kmsg_send,
-           "pcn_kmsg_send");
 
 }
 
@@ -353,7 +350,6 @@ typedef struct _mapping_request_data {
     int expected_responses;
     unsigned long pgoff;
     spinlock_t lock;
-    struct rw_semaphore release_sem;
     char path[512];
 } mapping_request_data_t;
 
@@ -931,6 +927,9 @@ DEFINE_SPINLOCK(_remap_lock);
 static struct workqueue_struct *clone_wq;
 static struct workqueue_struct *exit_wq;
 static struct workqueue_struct *mapping_wq;
+
+// Wait Queues
+DECLARE_WAIT_QUEUE_HEAD(_mapping_request_wait);
 
 /**
  * General helper functions and debugging tools
@@ -1558,7 +1557,8 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pi
     data_header_t* curr = NULL;
     mapping_request_data_t* request = NULL;
     mapping_request_data_t* ret = NULL;
-    PS_SPIN_LOCK(&_mapping_request_data_head_lock);
+    unsigned long lockflags;
+    spin_lock_irqsave(&_mapping_request_data_head_lock,lockflags);
     
     curr = _mapping_request_data_head;
     while(curr) {
@@ -1573,7 +1573,7 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pi
         curr = curr->next;
     }
 
-    PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
+    spin_unlock_irqrestore(&_mapping_request_data_head_lock,lockflags);
 
     return ret;
 }
@@ -2411,14 +2411,12 @@ retry:
 
     // Send response
     if(response.present) {
-        perf_send = PERF_MEASURE_START(&perf_pcn_kmsg_send);
         DO_UNTIL_SUCCESS(pcn_kmsg_send_long(w->from_cpu,
                             (struct pcn_kmsg_long_message*)(&response),
                             sizeof(mapping_response_t) - 
                             sizeof(struct pcn_kmsg_hdr) -   //
                             sizeof(response.path) +         // Chop off the end of the path
                             strlen(response.path) + 1));    // variable to save bandwidth.
-        PERF_MEASURE_STOP(&perf_pcn_kmsg_send,"handle mapping request",perf_send);
     } else {
         // This is an optimization to get rid of the _long send 
         // which is a time sink.
@@ -2474,6 +2472,7 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
 
     mapping_request_data_t* data;
     nonpresent_mapping_response_work_t* w = (nonpresent_mapping_response_work_t*) work;
+    unsigned long lockflags;
     int perf = -1;
 
     perf = PERF_MEASURE_START(&perf_process_mapping_response);
@@ -2493,14 +2492,13 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
 
     PSPRINTK("Nonpresent mapping response received for %lx from cpu %d\n",w->address,w->from_cpu);
 
-    PS_SPIN_LOCK(&data->lock);
+    spin_lock_irqsave(&data->lock,lockflags);
     data->responses++;
-    PS_SPIN_UNLOCK(&data->lock);
-
-    if(data->responses == data->expected_responses) {
-        PS_UP_READ(&data->release_sem);
-    }
+    spin_unlock_irqrestore(&data->lock,lockflags);
 exit:
+
+    wake_up(&_mapping_request_wait);
+
     PERF_MEASURE_STOP(&perf_process_mapping_response,"no remote mapping for cpu",perf);
     kfree(work);
 }
@@ -2512,7 +2510,7 @@ void process_mapping_response(struct work_struct* work) {
     mapping_request_data_t* data;
     mapping_response_work_t* w = (mapping_response_work_t*)work; 
     int do_data_free_here = 0;
-    int set_complete_here = 0;
+
     int perf = PERF_MEASURE_START(&perf_process_mapping_response);
 
     PSPRINTK("%s: entered\n",__func__);
@@ -2604,7 +2602,6 @@ void process_mapping_response(struct work_struct* work) {
         // Determine if we can stop looking for a mapping
         if(data->paddr_mapping) {
             data->complete = 1;
-            set_complete_here = 1;
         }
 
     } else {
@@ -2612,17 +2609,15 @@ void process_mapping_response(struct work_struct* work) {
                 w->from_cpu);
     }
 
-    
+
 
 out:
     // Account for this cpu's response.
     data->responses++;
 
     PS_SPIN_UNLOCK(&data->lock);
-    
-    if(set_complete_here || data->responses == data->expected_responses) {
-        PS_UP_READ(&data->release_sem);
-    }
+
+    wake_up(&_mapping_request_wait);
 
     kfree(work);
     
@@ -3218,7 +3213,37 @@ static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
  */
 static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) {
     nonpresent_mapping_response_t* msg = (nonpresent_mapping_response_t*)inc_msg;
-    nonpresent_mapping_response_work_t* work;
+    mapping_request_data_t* data;
+    unsigned long lockflags;
+    //int perf = -1;
+
+    //perf = PERF_MEASURE_START(&perf_process_mapping_response);
+   
+    PSPRINTK("%s: entered\n",__func__);
+
+    data = find_mapping_request_data(
+                                     msg->tgroup_home_cpu,
+                                     msg->tgroup_home_id,
+                                     msg->requester_pid,
+                                     msg->address);
+
+    if(data == NULL) {
+        printk("%s: ERROR null mapping request data\n",__func__);
+        goto exit;
+    }
+
+    PSPRINTK("Nonpresent mapping response received for %lx\n",msg->address);
+
+    spin_lock_irqsave(&data->lock,lockflags);
+    data->responses++;
+    spin_unlock_irqrestore(&data->lock,lockflags);
+exit:
+
+    wake_up(&_mapping_request_wait);
+
+    //PERF_MEASURE_STOP(&perf_process_mapping_response,"no remote mapping for cpu",perf);
+
+/*    nonpresent_mapping_response_work_t* work;
 
     work = kmalloc(sizeof(nonpresent_mapping_response_work_t),GFP_ATOMIC);
     if(work) {
@@ -3232,6 +3257,7 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
     } else {
         printk("%s: ERROR: Unable to malloc work\n",__func__);
     }
+    */
     pcn_kmsg_free_msg(inc_msg);
 
     return 0;
@@ -3242,7 +3268,120 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
  */
 static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     mapping_response_t* msg = (mapping_response_t*)inc_msg;
-    mapping_response_work_t* work;
+    mapping_request_data_t* data;
+    int do_data_free_here = 0;
+    unsigned long lockflags;
+
+    //int perf = PERF_MEASURE_START(&perf_process_mapping_response);
+
+    PSPRINTK("%s: entered\n",__func__);
+
+    data = find_mapping_request_data(
+                                     msg->tgroup_home_cpu,
+                                     msg->tgroup_home_id,
+                                     msg->requester_pid,
+                                     msg->address);
+
+
+    PSPRINTK("received mapping response: addr{%lx},requester{%d},sender{%d}\n",
+             msg->address,
+             msg->requester_pid,
+             msg->header.from_cpu);
+
+    if(data == NULL) {
+        printk("%s: ERROR data not found\n",__func__);
+        //kfree(work);
+        //PERF_MEASURE_STOP(&perf_process_mapping_response,
+        //        "early exit",
+        //        perf);
+        return;
+    }
+
+    spin_lock_irqsave(&data->lock,lockflags);
+
+    // If this data entry is completely filled out,
+    // there is no reason to go through any more of
+    // this logic.  We do still need to account for
+    // the response though, which is done after the
+    // out label.
+    if(data->complete) {
+        goto out;
+    }
+
+    if(msg->present) {
+        PSPRINTK("received positive search result from cpu %d\n",
+                msg->header.from_cpu);
+        
+        // Enforce precedence rules.  Responses from saved mm's
+        // are always ignored when a response from a live thread
+        // can satisfy the mapping request.  The purpose of this
+        // is to ensure that the mapping is not stale, since
+        // mmap() operations will not effect saved mm's.  Saved
+        // mm's are only useful for cases where a thread mmap()ed
+        // some space then died before any other thread was able
+        // to acquire the new mapping.
+        //
+        // A note on a case where multiple cpu's have mappings, but
+        // of different sizes.  It is possible that two cpu's have
+        // partially overlapping mappings.  This is possible because
+        // new mapping's are merged when their regions are contiguous.  
+        // This is not a problem here because if part of a mapping is 
+        // accessed that is not part of an existig mapping, that new 
+        // part will be merged in the resulting mapping request.
+        //
+        // Also, prefer responses that provide values for paddr.
+        if(data->present == 1) {
+
+            // another cpu already responded.
+            if(!data->from_saved_mm && msg->from_saved_mm
+                    // but we need to add an exception in case a physical address
+                    // is mapped into the saved mm, but not in the unsaved mm...
+                    && !(msg->paddr_mapping && !data->paddr_mapping)) {
+                PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
+                goto out;
+            }
+
+            // Ensure that we keep physical mappings around.
+            if(data->paddr_mapping && !msg->paddr_mapping) {
+                PSPRINTK("%s: prevented mapping resolver from downgrading from mapping with paddr to one without\n",__func__);
+                goto out;
+            }
+        }
+       
+        data->from_saved_mm = msg->from_saved_mm;
+        data->vaddr_mapping = msg->vaddr_mapping;
+        data->vaddr_start = msg->vaddr_start;
+        data->vaddr_size = msg->vaddr_size;
+        data->paddr_mapping = msg->paddr_mapping;
+        data->paddr_mapping_sz = msg->paddr_mapping_sz;
+        data->prot = msg->prot;
+        data->vm_flags = msg->vm_flags;
+        data->present = 1;
+        strcpy(data->path,msg->path);
+        data->pgoff = msg->pgoff;
+
+        // Determine if we can stop looking for a mapping
+        if(data->paddr_mapping) {
+            data->complete = 1;
+        }
+
+    } else {
+        PSPRINTK("received negative search result\n");
+    }
+
+
+
+out:
+    // Account for this cpu's response.
+    data->responses++;
+
+    spin_unlock_irqrestore(&data->lock,lockflags);
+
+    wake_up(&_mapping_request_wait);
+    
+    //PERF_MEASURE_STOP(&perf_process_mapping_response," ",perf);
+
+    /*mapping_response_work_t* work;
 
     int perf = PERF_MEASURE_START(&perf_handle_mapping_response);
 
@@ -3267,10 +3406,10 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         work->from_cpu = msg->header.from_cpu;
         queue_work(mapping_wq, (struct work_struct*)work);
     }
-
+*/
     pcn_kmsg_free_msg(inc_msg);
     
-    PERF_MEASURE_STOP(&perf_handle_mapping_response," ",perf);
+    //PERF_MEASURE_STOP(&perf_handle_mapping_response," ",perf);
 
     return 0;
 }
@@ -4738,9 +4877,7 @@ retry:
         if(i == _cpu) continue; 
     
         // Send the request to this cpu.
-        perf_send = PERF_MEASURE_START(&perf_pcn_kmsg_send);
         s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
-        PERF_MEASURE_STOP(&perf_pcn_kmsg_send,"fault handler",perf_send);
         if(!s) {
             // A successful send operation, increase the number
             // of expected responses.
@@ -4752,18 +4889,24 @@ retry:
     // with a physical mapping.  Mapping results that do not include
     // a physical mapping cause this to wait until all mapping responses
     // have arrived from remote cpus.
-    init_rwsem(&data->release_sem);
-    PS_DOWN_READ(&data->release_sem);
-    while(1) {
+    while(data->expected_responses != data->responses && !data->complete) {
+        DEFINE_WAIT(wait);
+        prepare_to_wait(&_mapping_request_wait,&wait,TASK_UNINTERRUPTIBLE);
+        if(data->expected_responses != data->responses && !data->complete) {
+            schedule();
+        }
+        finish_wait(&_mapping_request_wait,&wait);
+    }
+    /*while(1) {
         int done = 0;
         PS_SPIN_LOCK(&data->lock);
         if(data->expected_responses == data->responses || data->complete)
             done = 1;
         PS_SPIN_UNLOCK(&data->lock);
         if (done) break;
-        PS_DOWN_READ(&data->release_sem);
-        //schedule();
+        schedule();
     }
+    */
 
     // All cpus have now responded.
     // TODO Do another query here to check to see if we need
@@ -4931,7 +5074,15 @@ exit_remove_data:
     // a response, we know we can go ahead with the rest of the
     // mapping process, but we have to now finish taking
     // in responses and clean up.
-    while(1) {
+    while(data->expected_responses != data->responses) {
+        DEFINE_WAIT(wait);
+        prepare_to_wait(&_mapping_request_wait,&wait,TASK_UNINTERRUPTIBLE);
+        if(data->expected_responses != data->responses) {
+            schedule();
+        }
+        finish_wait(&_mapping_request_wait,&wait);
+    }
+    /*while(1) {
         int done = 0;
         PS_SPIN_LOCK(&data->lock);
         if(data->expected_responses == data->responses)
@@ -4940,6 +5091,7 @@ exit_remove_data:
         if (done) break;
         schedule();
     }
+    */
 
     PSPRINTK("%s: doing data free\n",__func__);
     PS_SPIN_LOCK(&_mapping_request_data_head_lock);
