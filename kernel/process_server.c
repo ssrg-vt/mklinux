@@ -45,7 +45,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -353,6 +353,7 @@ typedef struct _mapping_request_data {
     int expected_responses;
     unsigned long pgoff;
     spinlock_t lock;
+    struct rw_semaphore release_sem;
     char path[512];
 } mapping_request_data_t;
 
@@ -1173,14 +1174,16 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
                                   pgprot_t prot) {
     unsigned long vaddr_curr;
     unsigned long paddr_curr = paddr_start;
-    unsigned long sz_curr = 0;
     int ret = 0;
     int err;
 
+    PSPRINTK("%s: entered\n",__func__);
+
     for(vaddr_curr = vaddr_start; 
         vaddr_curr < vaddr_start + sz; 
-        vaddr_curr+= PAGE_SIZE) {
+        vaddr_curr += PAGE_SIZE) {
         if( !is_vaddr_mapped(mm,vaddr_curr) ) {
+            PSPRINTK("%s: mapping vaddr{%lx} paddr{%lx}\n",__func__,vaddr_curr,paddr_curr);
             // not mapped - map it
             err = remap_pfn_range(vma,
                                   vaddr_curr,
@@ -1191,6 +1194,8 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
         }
         paddr_curr += PAGE_SIZE;
     }
+
+    PSPRINTK("%s: exiting\n",__func__);
 
     return ret;
 }
@@ -2491,6 +2496,10 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
     PS_SPIN_LOCK(&data->lock);
     data->responses++;
     PS_SPIN_UNLOCK(&data->lock);
+
+    if(data->responses == data->expected_responses) {
+        PS_UP_READ(&data->release_sem);
+    }
 exit:
     PERF_MEASURE_STOP(&perf_process_mapping_response,"no remote mapping for cpu",perf);
     kfree(work);
@@ -2503,7 +2512,7 @@ void process_mapping_response(struct work_struct* work) {
     mapping_request_data_t* data;
     mapping_response_work_t* w = (mapping_response_work_t*)work; 
     int do_data_free_here = 0;
-
+    int set_complete_here = 0;
     int perf = PERF_MEASURE_START(&perf_process_mapping_response);
 
     PSPRINTK("%s: entered\n",__func__);
@@ -2595,6 +2604,7 @@ void process_mapping_response(struct work_struct* work) {
         // Determine if we can stop looking for a mapping
         if(data->paddr_mapping) {
             data->complete = 1;
+            set_complete_here = 1;
         }
 
     } else {
@@ -2602,13 +2612,17 @@ void process_mapping_response(struct work_struct* work) {
                 w->from_cpu);
     }
 
-
+    
 
 out:
     // Account for this cpu's response.
     data->responses++;
 
     PS_SPIN_UNLOCK(&data->lock);
+    
+    if(set_complete_here || data->responses == data->expected_responses) {
+        PS_UP_READ(&data->release_sem);
+    }
 
     kfree(work);
     
@@ -4565,8 +4579,6 @@ unsigned long process_server_do_mmap_pgoff(struct file *file, unsigned long addr
                                            unsigned long len, unsigned long prot,
                                            unsigned long flags, unsigned long pgoff) {
 
-    int aggregate_start, aggregate_end;
-
     // Nothing to do for a thread group that's not distributed.
     // Also, skip if the mmap hook is turned off.  This should
     // only happen when memory mapping within process_server
@@ -4740,6 +4752,8 @@ retry:
     // with a physical mapping.  Mapping results that do not include
     // a physical mapping cause this to wait until all mapping responses
     // have arrived from remote cpus.
+    init_rwsem(&data->release_sem);
+    PS_DOWN_READ(&data->release_sem);
     while(1) {
         int done = 0;
         PS_SPIN_LOCK(&data->lock);
@@ -4747,7 +4761,8 @@ retry:
             done = 1;
         PS_SPIN_UNLOCK(&data->lock);
         if (done) break;
-        schedule();
+        PS_DOWN_READ(&data->release_sem);
+        //schedule();
     }
 
     // All cpus have now responded.
