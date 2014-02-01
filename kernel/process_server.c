@@ -929,7 +929,7 @@ static struct workqueue_struct *exit_wq;
 static struct workqueue_struct *mapping_wq;
 
 // Wait Queues
-DECLARE_WAIT_QUEUE_HEAD(_mapping_request_wait);
+//DECLARE_WAIT_QUEUE_HEAD(_mapping_request_wait);
 
 /**
  * General helper functions and debugging tools
@@ -2497,7 +2497,7 @@ void process_nonpresent_mapping_response(struct work_struct* work) {
     spin_unlock_irqrestore(&data->lock,lockflags);
 exit:
 
-    wake_up(&_mapping_request_wait);
+    //wake_up(&_mapping_request_wait);
 
     PERF_MEASURE_STOP(&perf_process_mapping_response,"no remote mapping for cpu",perf);
     kfree(work);
@@ -2617,7 +2617,7 @@ out:
 
     PS_SPIN_UNLOCK(&data->lock);
 
-    wake_up(&_mapping_request_wait);
+    //wake_up(&_mapping_request_wait);
 
     kfree(work);
     
@@ -3239,7 +3239,7 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
     spin_unlock_irqrestore(&data->lock,lockflags);
 exit:
 
-    wake_up(&_mapping_request_wait);
+    //wake_up(&_mapping_request_wait);
 
     //PERF_MEASURE_STOP(&perf_process_mapping_response,"no remote mapping for cpu",perf);
 
@@ -3377,7 +3377,7 @@ out:
 
     spin_unlock_irqrestore(&data->lock,lockflags);
 
-    wake_up(&_mapping_request_wait);
+    //wake_up(&_mapping_request_wait);
     
     //PERF_MEASURE_STOP(&perf_process_mapping_response," ",perf);
 
@@ -4889,24 +4889,25 @@ retry:
     // with a physical mapping.  Mapping results that do not include
     // a physical mapping cause this to wait until all mapping responses
     // have arrived from remote cpus.
-    while(data->expected_responses != data->responses && !data->complete) {
-        DEFINE_WAIT(wait);
-        prepare_to_wait(&_mapping_request_wait,&wait,TASK_UNINTERRUPTIBLE);
-        if(data->expected_responses != data->responses && !data->complete) {
-            schedule();
-        }
-        finish_wait(&_mapping_request_wait,&wait);
-    }
-    /*while(1) {
+    //while(data->expected_responses != data->responses && !data->complete) {
+        //DEFINE_WAIT(wait);
+        //prepare_to_wait(&_mapping_request_wait,&wait,TASK_UNINTERRUPTIBLE);
+        //if(data->expected_responses != data->responses && !data->complete) {
+      //      schedule();
+        //}
+        //finish_wait(&_mapping_request_wait,&wait);
+    //}
+    while(1) {
         int done = 0;
-        PS_SPIN_LOCK(&data->lock);
+        unsigned long lockflags;
+        spin_lock_irqsave(&data->lock,lockflags);
         if(data->expected_responses == data->responses || data->complete)
             done = 1;
-        PS_SPIN_UNLOCK(&data->lock);
+        spin_unlock_irqrestore(&data->lock,lockflags);
         if (done) break;
         schedule();
     }
-    */
+    
 
     // All cpus have now responded.
     // TODO Do another query here to check to see if we need
@@ -5074,24 +5075,25 @@ exit_remove_data:
     // a response, we know we can go ahead with the rest of the
     // mapping process, but we have to now finish taking
     // in responses and clean up.
-    while(data->expected_responses != data->responses) {
+    /*while(data->expected_responses != data->responses) {
         DEFINE_WAIT(wait);
         prepare_to_wait(&_mapping_request_wait,&wait,TASK_UNINTERRUPTIBLE);
         if(data->expected_responses != data->responses) {
             schedule();
         }
         finish_wait(&_mapping_request_wait,&wait);
-    }
-    /*while(1) {
+    }*/
+    while(1) {
         int done = 0;
-        PS_SPIN_LOCK(&data->lock);
+        unsigned long lockflags;
+        spin_lock_irqsave(&data->lock,lockflags);
         if(data->expected_responses == data->responses)
             done = 1;
-        PS_SPIN_UNLOCK(&data->lock);
+        spin_unlock_irqrestore(&data->lock,lockflags);
         if (done) break;
         schedule();
     }
-    */
+    
 
     PSPRINTK("%s: doing data free\n",__func__);
     PS_SPIN_LOCK(&_mapping_request_data_head_lock);
