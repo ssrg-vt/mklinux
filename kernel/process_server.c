@@ -343,6 +343,7 @@ typedef struct _mapping_request_data {
     unsigned long vaddr_start;
     unsigned long vaddr_size;
     unsigned long paddr_mapping;
+    size_t paddr_mapping_sz;
     pgprot_t prot;
     unsigned long vm_flags;
     int present;
@@ -555,6 +556,7 @@ struct _mapping_response {
     unsigned long vaddr_start;
     unsigned long vaddr_size;
     unsigned long paddr_mapping;
+    size_t paddr_mapping_sz;
     pgprot_t prot;              
     unsigned long vm_flags;     
     unsigned long pgoff;
@@ -761,6 +763,7 @@ typedef struct {
     unsigned long vaddr_start;
     unsigned long vaddr_size;
     unsigned long paddr_mapping;
+    size_t paddr_mapping_sz;
     pgprot_t prot;              
     unsigned long vm_flags;     
     char path[512];
@@ -1024,6 +1027,26 @@ static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long star
     return 0;
 }
 
+static int get_physical_address(struct mm_struct* mm, 
+                                unsigned long vaddr,
+                                unsigned long* paddr) {
+    unsigned long resolved = 0;
+    struct mm_walk walk = {
+        .pte_entry = vm_search_page_walk_pte_entry_callback,
+        .private = &(resolved),
+        .mm = mm
+    };
+
+    walk_page_range(vaddr & PAGE_MASK, (vaddr & PAGE_MASK) + PAGE_SIZE, &walk);
+    if(resolved == 0) {
+        return -1;
+    }
+
+    *paddr = resolved;
+
+    return 0;
+}
+
 /**
  *
  */
@@ -1045,6 +1068,131 @@ static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
     }
     return 0;
 
+}
+
+/**
+ *
+ */
+int find_consecutive_physically_mapped_region(struct mm_struct* mm,
+                                              struct vm_area_struct* vma,
+                                              unsigned long vaddr,
+                                              unsigned long* vaddr_mapping_start,
+                                              unsigned long* paddr_mapping_start,
+                                              size_t* paddr_mapping_sz) {
+    unsigned long paddr_curr;
+    unsigned long vaddr_curr = vaddr;
+    unsigned long vaddr_next = vaddr;
+    unsigned long paddr_next;
+    unsigned long paddr_start;
+    size_t sz = 0;
+
+    
+    // Initializes paddr_curr
+    if(get_physical_address(mm,vaddr_curr,&paddr_curr) < 0) {
+        return -1;
+    }
+    paddr_start = paddr_curr;
+    *vaddr_mapping_start = vaddr_curr;
+    *paddr_mapping_start = paddr_curr;
+    
+    sz = PAGE_SIZE;
+
+    // seek up in memory
+    // This stretches (sz) only while leaving
+    // vaddr and paddr the samed
+    while(1) {
+        vaddr_next += PAGE_SIZE;
+        
+        // dont' go past the end of the vma
+        if(vaddr_next >= vma->vm_end) {
+            break;
+        }
+
+        if(get_physical_address(mm,vaddr_next,&paddr_next) < 0) {
+            break;
+        }
+
+        if(paddr_next == paddr_curr + PAGE_SIZE) {
+            sz += PAGE_SIZE;
+            paddr_curr = paddr_next;
+        } else {
+            break;
+        }
+    }
+
+    // seed down in memory
+    // // This stretches sz, and the paddr and vaddr's
+    vaddr_curr = vaddr;
+    paddr_curr = paddr_start; 
+    vaddr_next = vaddr_curr;
+    while(1) {
+        vaddr_next -= PAGE_SIZE;
+
+        // don't go past the start of the vma
+        if(vaddr_next < vma->vm_start) {
+            break;
+        }
+
+        if(get_physical_address(mm,vaddr_next,&paddr_next) < 0) {
+            break;
+        }
+
+        if(paddr_next == paddr_curr - PAGE_SIZE) {
+            vaddr_curr = vaddr_next;
+            paddr_curr = paddr_next;
+            sz += PAGE_SIZE;
+        } else {
+            break;
+        }
+    }
+   
+    *vaddr_mapping_start = vaddr_curr;
+    *paddr_mapping_start = paddr_curr;
+    *paddr_mapping_sz = sz;
+
+    PSPRINTK("%s: found consecutive area- vaddr{%lx}, paddr{%lx}, sz{%lx}\n",
+                __func__,
+                *vaddr_mapping_start,
+                *paddr_mapping_start,
+                *paddr_mapping_sz);
+
+    return 0;
+}
+
+/**
+ * Call remap_pfn_range on the parts of the specified virtual-physical
+ * region that are not already mapped.
+ *
+ * Note: mm->mmap_sem must already be held by caller.
+ */
+int remap_pfn_range_remaining(struct mm_struct* mm,
+                                  struct vm_area_struct* vma,
+                                  unsigned long vaddr_start,
+                                  unsigned long paddr_start,
+                                  size_t sz,
+                                  pgprot_t prot) {
+    unsigned long vaddr_curr;
+    unsigned long paddr_curr = paddr_start;
+    unsigned long sz_curr = 0;
+    int ret = 0;
+    int err;
+
+    for(vaddr_curr = vaddr_start; 
+        vaddr_curr < vaddr_start + sz; 
+        vaddr_curr+= PAGE_SIZE) {
+        if( !is_vaddr_mapped(mm,vaddr_curr) ) {
+            // not mapped - map it
+            err = remap_pfn_range(vma,
+                                  vaddr_curr,
+                                  paddr_curr >> PAGE_SHIFT,
+                                  PAGE_SIZE,
+                                  prot);
+            if( err != 0 ) ret = err;
+        }
+        paddr_curr += PAGE_SIZE;
+    }
+
+    return ret;
 }
 
 
@@ -2113,8 +2261,10 @@ void process_mapping_request(struct work_struct* work) {
            (task->tgroup_home_id  == w->tgroup_home_id )) {
             PSPRINTK("mapping request found common thread group here\n");
             mm = task->mm;
+            goto task_mm_search_exit;
         }
     } while_each_thread(g,task);
+task_mm_search_exit:
 
     // Failing the process search, look through saved mm's.
     if(!mm) {
@@ -2164,6 +2314,9 @@ retry:
                 (address & PAGE_MASK) + PAGE_SIZE, &walk);
 
         if(vma && resolved != 0) {
+            unsigned long vaddr_mapping_boundary_start;
+            unsigned long paddr_mapping_boundary_start;
+            size_t paddr_mapping_boundary_sz;
 
             PSPRINTK("mapping found! %lx for vaddr %lx\n",resolved,
                     address & PAGE_MASK);
@@ -2176,6 +2329,17 @@ retry:
                 goto retry;
             }
 
+            /*
+             * Find the region of consecutive physical memory
+             * in which the address resides within this vma.
+             */
+            find_consecutive_physically_mapped_region(mm,
+                                                    vma,
+                                                    address&PAGE_MASK,
+                                                    &vaddr_mapping_boundary_start,
+                                                    &paddr_mapping_boundary_start,
+                                                    &paddr_mapping_boundary_sz);
+
             response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
             response.header.prio = PCN_KMSG_PRIO_NORMAL;
             response.tgroup_home_cpu = w->tgroup_home_cpu;
@@ -2183,10 +2347,11 @@ retry:
             response.requester_pid = w->requester_pid;
             response.address = address;
             response.present = 1;
-            response.vaddr_mapping = address & PAGE_MASK;
+            response.vaddr_mapping = vaddr_mapping_boundary_start;
             response.vaddr_start = vma->vm_start;
             response.vaddr_size = vma->vm_end - vma->vm_start;
-            response.paddr_mapping = resolved;
+            response.paddr_mapping = paddr_mapping_boundary_start;
+            response.paddr_mapping_sz = paddr_mapping_boundary_sz;
             response.prot = vma->vm_page_prot;
             response.vm_flags = vma->vm_flags;
             if(vma->vm_file == NULL) {
@@ -2420,6 +2585,7 @@ void process_mapping_response(struct work_struct* work) {
         data->vaddr_start = w->vaddr_start;
         data->vaddr_size = w->vaddr_size;
         data->paddr_mapping = w->paddr_mapping;
+        data->paddr_mapping_sz = w->paddr_mapping_sz;
         data->prot = w->prot;
         data->vm_flags = w->vm_flags;
         data->present = 1;
@@ -3079,6 +3245,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         work->vaddr_start = msg->vaddr_start;
         work->vaddr_size = msg->vaddr_size;
         work->paddr_mapping = msg->paddr_mapping;
+        work->paddr_mapping_sz = msg->paddr_mapping_sz;
         work->prot = msg->prot;
         work->vm_flags = msg->vm_flags;
         memcpy(&work->path,&msg->path,sizeof(work->path));
@@ -4534,6 +4701,7 @@ retry:
     data->responses = 0;
     data->expected_responses = 0;
     data->paddr_mapping = 0;
+    data->paddr_mapping_sz = 0;
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
     data->requester_pid = current->pid;
@@ -4693,11 +4861,6 @@ retry:
 
         // We should have a vma now, so map physical memory into it.
         if(vma && data->paddr_mapping) { 
-            int domapping = 1;
-            pte_t* remap_pte = NULL;
-            pmd_t* remap_pmd = NULL;
-            pud_t* remap_pud = NULL;
-            pgd_t* remap_pgd = NULL;
             pte_provided = 1;
 
             // PCD - Page Cache Disable
@@ -4714,29 +4877,12 @@ retry:
             }
 
             PS_DOWN_WRITE(&current->mm->mmap_sem);
-            remap_pgd = pgd_offset(current->mm, address);
-            if(pgd_present(*remap_pgd)) {
-                remap_pud = pud_offset(remap_pgd,address); 
-                if(pud_present(*remap_pud)) {
-                    remap_pmd = pmd_offset(remap_pud,address);
-                    if(pmd_present(*remap_pmd)) {
-                        remap_pte = pte_offset_map(remap_pmd,address);
-                        if(remap_pte && !pte_none(*remap_pte)) {
-                            // skip the mapping, it already exists!
-                            domapping = 0;
-                        }
-                    }
-                }
-            }
-            
-            err = 0;
-            if(domapping) {
-                err = remap_pfn_range(vma,
-                    data->vaddr_mapping,
-                    data->paddr_mapping >> PAGE_SHIFT,
-                    PAGE_SIZE,
-                    vm_get_page_prot(vma->vm_flags));
-            }
+            err = remap_pfn_range_remaining(current->mm,
+                                            vma,
+                                            data->vaddr_mapping,
+                                            data->paddr_mapping,
+                                            data->paddr_mapping_sz,
+                                            vm_get_page_prot(vma->vm_flags));
             PS_UP_WRITE(&current->mm->mmap_sem);
 
             // If this VMA specifies VM_WRITE, make the mapping writable.
