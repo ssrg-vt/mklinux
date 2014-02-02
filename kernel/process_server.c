@@ -4807,9 +4807,6 @@ retry:
         if(vma && paddr_present) { 
             pte_provided = 1;
 
-            // PCD - Page Cache Disable
-            // PWT - Page Write-Through (as opposed to Page Write-Back)
-
             // This grabs the lock
             if(break_cow(current->mm,vma,address)) {
                 vma = find_vma(current->mm,address&PAGE_MASK);
@@ -4826,17 +4823,18 @@ retry:
                                                        data->mappings[i].sz,
                                                        vm_get_page_prot(vma->vm_flags));
                     PS_UP_WRITE(&current->mm->mmap_sem);
-                    // If this VMA specifies VM_WRITE, make the mapping writable.
-                    // This function does not check the flag.  This is safe
-                    // since COW mappings should be broken by the time this
-                    // code is invoked.
-                    if(vma->vm_flags & VM_WRITE) {
-                        mk_page_writable(mm, vma, data->mappings[i].vaddr);
-                    }
+                    
                     if(tmp_err) err = tmp_err;
                 }
             }
 
+            // If this VMA specifies VM_WRITE, make the mapping writable.
+            // This function does not check the flag.  This is safe
+            // since COW mappings should be broken by the time this
+            // code is invoked.
+            //if(vma->vm_flags & VM_WRITE) {
+            //     mk_page_writable(mm, vma, address & PAGE_SIZE);
+            //}
             // Check remap_pfn_range success
             if(err) {
                 PSPRINTK("ERROR: Failed to remap_pfn_range %d\n",err);
