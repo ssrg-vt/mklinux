@@ -45,7 +45,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -279,6 +279,13 @@ typedef struct _vma_data {
     char path[256];
 } vma_data_t;
 
+typedef struct _contiguous_physical_mapping {
+    int present;
+    unsigned long vaddr;
+    unsigned long paddr;
+    size_t sz;
+} contiguous_physical_mapping_t;
+
 /**
  *
  */
@@ -327,17 +334,16 @@ typedef struct _clone_data {
 /**
  * 
  */
+#define MAX_MAPPINGS 5
 typedef struct _mapping_request_data {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
     int requester_pid;
     unsigned long address;
-    unsigned long vaddr_mapping;
     unsigned long vaddr_start;
     unsigned long vaddr_size;
-    unsigned long paddr_mapping;
-    size_t paddr_mapping_sz;
+    contiguous_physical_mapping_t mappings[MAX_MAPPINGS];
     pgprot_t prot;
     unsigned long vm_flags;
     int present;
@@ -546,11 +552,9 @@ struct _mapping_response {
     unsigned long present;      
     int from_saved_mm;
     unsigned long address;      
-    unsigned long vaddr_mapping;
     unsigned long vaddr_start;
     unsigned long vaddr_size;
-    unsigned long paddr_mapping;
-    size_t paddr_mapping_sz;
+    contiguous_physical_mapping_t mappings[MAX_MAPPINGS];
     pgprot_t prot;              
     unsigned long vm_flags;     
     unsigned long pgoff;
@@ -2220,6 +2224,7 @@ void process_mapping_request(struct work_struct* work) {
     char* plpath;
     char lpath[512];
     int try_count = 0;
+    int i;
     
     // for perf
     int used_saved_mm = 0;
@@ -2314,12 +2319,21 @@ retry:
              * Find the region of consecutive physical memory
              * in which the address resides within this vma.
              */
-            find_consecutive_physically_mapped_region(mm,
-                                                    vma,
-                                                    address&PAGE_MASK,
-                                                    &vaddr_mapping_boundary_start,
-                                                    &paddr_mapping_boundary_start,
-                                                    &paddr_mapping_boundary_sz);
+            {
+            unsigned long next_vaddr = address & PAGE_MASK;
+            for(i = 0; i < MAX_MAPPINGS; i++) response.mappings[i].present = 0;
+            for(i = 0; i < MAX_MAPPINGS && next_vaddr < vma->vm_end; i++) {
+                find_consecutive_physically_mapped_region(mm,
+                                                          vma,
+                                                          next_vaddr,
+                                                          &response.mappings[i].vaddr,
+                                                          &response.mappings[i].paddr,
+                                                          &response.mappings[i].sz);
+                response.mappings[i].present = 1;
+                next_vaddr = response.mappings[i].vaddr + response.mappings[i].sz;
+                                                          
+            }
+            }
 
             response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
             response.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -2328,11 +2342,8 @@ retry:
             response.requester_pid = w->requester_pid;
             response.address = address;
             response.present = 1;
-            response.vaddr_mapping = vaddr_mapping_boundary_start;
             response.vaddr_start = vma->vm_start;
             response.vaddr_size = vma->vm_end - vma->vm_start;
-            response.paddr_mapping = paddr_mapping_boundary_start;
-            response.paddr_mapping_sz = paddr_mapping_boundary_sz;
             response.prot = vma->vm_page_prot;
             response.vm_flags = vma->vm_flags;
             if(vma->vm_file == NULL) {
@@ -2359,18 +2370,17 @@ retry:
         response.tgroup_home_id = w->tgroup_home_id;
         response.requester_pid = w->requester_pid;
         response.address = address;
-        response.paddr_mapping = 0;
         response.present = 0;
         response.vaddr_start = 0;
         response.vaddr_size = 0;
         response.path[0] = '\0';
+        for(i = 0; i < MAX_MAPPINGS; i++) response.mappings[i].present = 0;
 
         // Handle case where vma was present but no pte.
         if(vma) {
             PSPRINTK("But vma present\n");
             found_vma = 1;
             response.present = 1;
-            response.vaddr_mapping = address & PAGE_MASK;
             response.vaddr_start = vma->vm_start;
             response.vaddr_size = vma->vm_end - vma->vm_start;
             response.prot = vma->vm_page_prot;
@@ -2439,166 +2449,6 @@ retry:
     }
 
     return;
-}
-
-/**
- * <MEASURE perf_process_mapping_response>
- */
-void process_nonpresent_mapping_response(struct work_struct* work) {
-
-    mapping_request_data_t* data;
-    nonpresent_mapping_response_work_t* w = (nonpresent_mapping_response_work_t*) work;
-    unsigned long lockflags;
-    int perf = -1;
-
-    perf = PERF_MEASURE_START(&perf_process_mapping_response);
-   
-    PSPRINTK("%s: entered\n",__func__);
-
-    data = find_mapping_request_data(
-                                     w->tgroup_home_cpu,
-                                     w->tgroup_home_id,
-                                     w->requester_pid,
-                                     w->address);
-
-    if(data == NULL) {
-        printk("%s: ERROR null mapping request data\n",__func__);
-        goto exit;
-    }
-
-    PSPRINTK("Nonpresent mapping response received for %lx from cpu %d\n",w->address,w->from_cpu);
-
-    spin_lock_irqsave(&data->lock,lockflags);
-    data->responses++;
-    spin_unlock_irqrestore(&data->lock,lockflags);
-exit:
-
-    //wake_up(&_mapping_request_wait);
-
-    PERF_MEASURE_STOP(&perf_process_mapping_response,"no remote mapping for cpu",perf);
-    kfree(work);
-}
-
-/**
- * <MEASURE perf_process_mapping_response>
- */
-void process_mapping_response(struct work_struct* work) {
-    mapping_request_data_t* data;
-    mapping_response_work_t* w = (mapping_response_work_t*)work; 
-    int do_data_free_here = 0;
-
-    int perf = PERF_MEASURE_START(&perf_process_mapping_response);
-
-    PSPRINTK("%s: entered\n",__func__);
-
-    data = find_mapping_request_data(
-                                     w->tgroup_home_cpu,
-                                     w->tgroup_home_id,
-                                     w->requester_pid,
-                                     w->address);
-
-
-    PSPRINTK("received mapping response: addr{%lx},requester{%d},sender{%d}\n",
-             w->address,
-             w->requester_pid,
-             w->from_cpu);
-
-    if(data == NULL) {
-        printk("%s: ERROR data not found\n",__func__);
-        kfree(work);
-        PERF_MEASURE_STOP(&perf_process_mapping_response,
-                "early exit",
-                perf);
-        return;
-    }
-
-    PS_SPIN_LOCK(&data->lock);
-
-    // If this data entry is completely filled out,
-    // there is no reason to go through any more of
-    // this logic.  We do still need to account for
-    // the response though, which is done after the
-    // out label.
-    if(data->complete) {
-        goto out;
-    }
-
-    if(w->present) {
-        PSPRINTK("received positive search result from cpu %d\n",
-                w->from_cpu);
-        
-        // Enforce precedence rules.  Responses from saved mm's
-        // are always ignored when a response from a live thread
-        // can satisfy the mapping request.  The purpose of this
-        // is to ensure that the mapping is not stale, since
-        // mmap() operations will not effect saved mm's.  Saved
-        // mm's are only useful for cases where a thread mmap()ed
-        // some space then died before any other thread was able
-        // to acquire the new mapping.
-        //
-        // A note on a case where multiple cpu's have mappings, but
-        // of different sizes.  It is possible that two cpu's have
-        // partially overlapping mappings.  This is possible because
-        // new mapping's are merged when their regions are contiguous.  
-        // This is not a problem here because if part of a mapping is 
-        // accessed that is not part of an existig mapping, that new 
-        // part will be merged in the resulting mapping request.
-        //
-        // Also, prefer responses that provide values for paddr.
-        if(data->present == 1) {
-
-            // another cpu already responded.
-            if(!data->from_saved_mm && w->from_saved_mm
-                    // but we need to add an exception in case a physical address
-                    // is mapped into the saved mm, but not in the unsaved mm...
-                    && !(w->paddr_mapping && !data->paddr_mapping)) {
-                PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
-                goto out;
-            }
-
-            // Ensure that we keep physical mappings around.
-            if(data->paddr_mapping && !w->paddr_mapping) {
-                PSPRINTK("%s: prevented mapping resolver from downgrading from mapping with paddr to one without\n",__func__);
-                goto out;
-            }
-        }
-       
-        data->from_saved_mm = w->from_saved_mm;
-        data->vaddr_mapping = w->vaddr_mapping;
-        data->vaddr_start = w->vaddr_start;
-        data->vaddr_size = w->vaddr_size;
-        data->paddr_mapping = w->paddr_mapping;
-        data->paddr_mapping_sz = w->paddr_mapping_sz;
-        data->prot = w->prot;
-        data->vm_flags = w->vm_flags;
-        data->present = 1;
-        strcpy(data->path,w->path);
-        data->pgoff = w->pgoff;
-
-        // Determine if we can stop looking for a mapping
-        if(data->paddr_mapping) {
-            data->complete = 1;
-        }
-
-    } else {
-        PSPRINTK("received negative search result from cpu %d\n",
-                w->from_cpu);
-    }
-
-
-
-out:
-    // Account for this cpu's response.
-    data->responses++;
-
-    PS_SPIN_UNLOCK(&data->lock);
-
-    //wake_up(&_mapping_request_wait);
-
-    kfree(work);
-    
-    PERF_MEASURE_STOP(&perf_process_mapping_response," ",perf);
-
 }
 
 unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
@@ -3150,6 +3000,9 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     mapping_request_data_t* data;
     int do_data_free_here = 0;
     unsigned long lockflags, lockflags2;
+    int data_paddr_present;
+    int response_paddr_present;
+    int i;
 
     PSPRINTK("%s: entered\n",__func__);
 
@@ -3168,7 +3021,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
              msg->header.from_cpu);
 
     if(data == NULL) {
-        printk("%s: ERROR data not found\n",__func__);
+        //printk("%s: ERROR data not found\n",__func__);
         //kfree(work);
         //PERF_MEASURE_STOP(&perf_process_mapping_response,
         //        "early exit",
@@ -3190,6 +3043,22 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     if(msg->present) {
         PSPRINTK("received positive search result from cpu %d\n",
                 msg->header.from_cpu);
+
+        // figure out if the current data has a paddr in it
+        for(i = 0; i < MAX_MAPPINGS; i++) {
+            if(data->mappings[i].present) {
+                data_paddr_present = 1;
+                break;
+            }
+        }
+
+        // figure out of the response has a paddr in it
+        for(i = 0; i < MAX_MAPPINGS; i++) {
+            if(msg->mappings[i].present) {
+                response_paddr_present = 1;
+                break;
+            }
+        }
         
         // Enforce precedence rules.  Responses from saved mm's
         // are always ignored when a response from a live thread
@@ -3215,32 +3084,35 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
             if(!data->from_saved_mm && msg->from_saved_mm
                     // but we need to add an exception in case a physical address
                     // is mapped into the saved mm, but not in the unsaved mm...
-                    && !(msg->paddr_mapping && !data->paddr_mapping)) {
+                    && !(response_paddr_present && !data_paddr_present)) {
                 PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
                 goto out;
             }
 
             // Ensure that we keep physical mappings around.
-            if(data->paddr_mapping && !msg->paddr_mapping) {
+            if(data_paddr_present && !response_paddr_present) {
                 PSPRINTK("%s: prevented mapping resolver from downgrading from mapping with paddr to one without\n",__func__);
                 goto out;
             }
         }
        
         data->from_saved_mm = msg->from_saved_mm;
-        data->vaddr_mapping = msg->vaddr_mapping;
         data->vaddr_start = msg->vaddr_start;
         data->vaddr_size = msg->vaddr_size;
-        data->paddr_mapping = msg->paddr_mapping;
-        data->paddr_mapping_sz = msg->paddr_mapping_sz;
         data->prot = msg->prot;
         data->vm_flags = msg->vm_flags;
         data->present = 1;
+        for(i = 0; i < MAX_MAPPINGS; i++) {
+            data->mappings[i].vaddr  = msg->mappings[i].vaddr;
+            data->mappings[i].paddr  = msg->mappings[i].paddr;
+            data->mappings[i].sz     = msg->mappings[i].sz;
+            data->mappings[i].present = msg->mappings[i].present;
+        }
         strcpy(data->path,msg->path);
         data->pgoff = msg->pgoff;
 
         // Determine if we can stop looking for a mapping
-        if(data->paddr_mapping) {
+        if(response_paddr_present) {
             data->complete = 1;
         }
 
@@ -4663,6 +4535,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     mapping_request_t request;
     int i;
     int s;
+    int j;
     struct file* f;
     unsigned long prot = 0;
     int started_outside_vma = 0;
@@ -4670,13 +4543,13 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     char* ppath;
     int do_data_free_here = 0;
     int did_early_removal = 0;
-
     // for perf
     int pte_provided = 0;
     int is_anonymous = 0;
     int vma_not_found = 1;
     int adjusted_permissions = 0;
     int is_new_vma = 0;
+    int paddr_present = 0;
     int perf = -1;
     int perf_send = -1;
 
@@ -4755,11 +4628,15 @@ retry:
     spin_lock_init(&data->lock);
     data->responses = 0;
     data->expected_responses = 0;
-    data->paddr_mapping = 0;
-    data->paddr_mapping_sz = 0;
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
     data->requester_pid = current->pid;
+    for(j = 0; j < MAX_MAPPINGS; j++) {
+        data->mappings[j].present = 0;
+        data->mappings[j].vaddr = 0;
+        data->mappings[j].paddr = 0;
+        data->mappings[j].sz = 0;
+    }
 
     // Make data entry visible to handler.
     add_data_entry_to(data,
@@ -4793,14 +4670,6 @@ retry:
     // with a physical mapping.  Mapping results that do not include
     // a physical mapping cause this to wait until all mapping responses
     // have arrived from remote cpus.
-    //while(data->expected_responses != data->responses && !data->complete) {
-        //DEFINE_WAIT(wait);
-        //prepare_to_wait(&_mapping_request_wait,&wait,TASK_UNINTERRUPTIBLE);
-        //if(data->expected_responses != data->responses && !data->complete) {
-      //      schedule();
-        //}
-        //finish_wait(&_mapping_request_wait,&wait);
-    //}
     while(1) {
         int done = 0;
         unsigned long lockflags;
@@ -4832,11 +4701,8 @@ retry:
 
     // Handle successful response.
     if(data->present) {
-        PSPRINTK("Mapping communicated: vaddr_start{%lx}, vaddr_mapping{%lx},vaddr_size{%lx},paddr{%lx},prot{%lx},vm_flags{%lx},path{%s},pgoff{%lx}\n",
+        PSPRINTK("Mapping communicated: vaddr_start{%lx},prot{%lx},vm_flags{%lx},path{%s},pgoff{%lx}\n",
                 data->vaddr_start,
-                data->vaddr_mapping, 
-                data->vaddr_size,
-                data->paddr_mapping, 
                 data->prot, 
                 data->vm_flags,
                 data->path,
@@ -4916,11 +4782,11 @@ retry:
                 goto exit_remove_data;
             }
             
-            vma = find_vma(current->mm, data->vaddr_mapping);
+            vma = find_vma(current->mm, data->vaddr_start);
 
             // Validate find_vma result
-            if(vma->vm_start > data->vaddr_mapping || 
-               vma->vm_end <= data->vaddr_mapping) {
+            if(vma->vm_start > data->vaddr_start || 
+               vma->vm_end <= data->vaddr_start) {
                 PSPRINTK("invalid find_vma result, invalidating\n");
                 vma = NULL;
             } else {
@@ -4931,37 +4797,44 @@ retry:
         }
 
         // We should have a vma now, so map physical memory into it.
-        if(vma && data->paddr_mapping) { 
+        // Check to see if we have mappings
+        for(i = 0; i < MAX_MAPPINGS; i++) {
+            if(data->mappings[i].present) {
+                paddr_present = 1;
+                break;
+            }
+        }
+        if(vma && paddr_present) { 
             pte_provided = 1;
 
             // PCD - Page Cache Disable
             // PWT - Page Write-Through (as opposed to Page Write-Back)
 
-            PSPRINTK("About to map new physical pages - vaddr{%lx}, paddr{%lx}, vm_flags{%lx}, prot{%lx}\n",
-                    data->vaddr_mapping,
-                    data->paddr_mapping, 
-                    vma->vm_flags, 
-                    vma->vm_page_prot);
             // This grabs the lock
             if(break_cow(current->mm,vma,address)) {
                 vma = find_vma(current->mm,address&PAGE_MASK);
             }
 
-            PS_DOWN_WRITE(&current->mm->mmap_sem);
-            err = remap_pfn_range_remaining(current->mm,
-                                            vma,
-                                            data->vaddr_mapping,
-                                            data->paddr_mapping,
-                                            data->paddr_mapping_sz,
-                                            vm_get_page_prot(vma->vm_flags));
-            PS_UP_WRITE(&current->mm->mmap_sem);
-
-            // If this VMA specifies VM_WRITE, make the mapping writable.
-            // this function does not do the flag check.  This is safe,
-            // since COW mappings should be broken by the time this code
-            // is invoked.
-            if(vma->vm_flags & VM_WRITE) {
-                mk_page_writable(mm, vma, data->vaddr_mapping);
+            for(i = 0; i < MAX_MAPPINGS; i++) {
+                if(data->mappings[i].present) {
+                    int tmp_err;
+                    PS_DOWN_WRITE(&current->mm->mmap_sem);
+                    tmp_err = remap_pfn_range_remaining(current->mm,
+                                                       vma,
+                                                       data->mappings[i].vaddr,
+                                                       data->mappings[i].paddr,
+                                                       data->mappings[i].sz,
+                                                       vm_get_page_prot(vma->vm_flags));
+                    PS_UP_WRITE(&current->mm->mmap_sem);
+                    // If this VMA specifies VM_WRITE, make the mapping writable.
+                    // This function does not check the flag.  This is safe
+                    // since COW mappings should be broken by the time this
+                    // code is invoked.
+                    if(vma->vm_flags & VM_WRITE) {
+                        mk_page_writable(mm, vma, data->mappings[i].vaddr);
+                    }
+                    if(tmp_err) err = tmp_err;
+                }
             }
 
             // Check remap_pfn_range success
@@ -4979,33 +4852,6 @@ retry:
     }
 
 exit_remove_data:
-
-    // Wait for all cpus to respond.
-    // We waited previously for this, but let's do it again.
-    // The above wait is optimized to exit once a response is
-    // received that has a physical mapping.  If we get such
-    // a response, we know we can go ahead with the rest of the
-    // mapping process, but we have to now finish taking
-    // in responses and clean up.
-    /*while(data->expected_responses != data->responses) {
-        DEFINE_WAIT(wait);
-        prepare_to_wait(&_mapping_request_wait,&wait,TASK_UNINTERRUPTIBLE);
-        if(data->expected_responses != data->responses) {
-            schedule();
-        }
-        finish_wait(&_mapping_request_wait,&wait);
-    }*/
-    /*while(1) {
-        int done = 0;
-        unsigned long lockflags;
-        spin_lock_irqsave(&data->lock,lockflags);
-        if(data->expected_responses == data->responses)
-            done = 1;
-        spin_unlock_irqrestore(&data->lock,lockflags);
-        if (done) break;
-        schedule();
-    }*/
-    
 
     if(!did_early_removal) {
         unsigned long lockflags;
