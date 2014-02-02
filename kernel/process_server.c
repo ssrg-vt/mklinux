@@ -1138,6 +1138,47 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
 }
 
 /**
+ *
+ */
+int find_next_consecutive_physically_mapped_region(struct mm_struct* mm,
+                                              struct vm_area_struct* vma,
+                                              unsigned long vaddr,
+                                              unsigned long* vaddr_mapping_start,
+                                              unsigned long* paddr_mapping_start,
+                                              size_t* paddr_mapping_sz) {
+    unsigned long curr_vaddr_mapping_start;
+    unsigned long curr_paddr_mapping_start;
+    unsigned long curr_paddr_mapping_sz;
+    unsigned long curr_vaddr = vaddr;
+    int ret = -1;
+
+    if(curr_vaddr >= vma->vm_end) return -1;
+
+    do {
+        int res = find_consecutive_physically_mapped_region(mm,
+                                                     vma,
+                                                     curr_vaddr,
+                                                     &curr_vaddr_mapping_start,
+                                                     &curr_paddr_mapping_start,
+                                                     &curr_paddr_mapping_sz);
+        if(0 == res) {
+
+            // this is a match, we can store off results and exit
+            ret = 0;
+            *vaddr_mapping_start = curr_vaddr_mapping_start;
+            *paddr_mapping_start = curr_paddr_mapping_start;
+            *paddr_mapping_sz    = curr_paddr_mapping_sz;
+            break;
+        }
+
+        curr_vaddr += PAGE_SIZE;
+    } while (curr_vaddr < vma->vm_end);
+
+    return ret;
+
+}
+
+/**
  * Call remap_pfn_range on the parts of the specified virtual-physical
  * region that are not already mapped.
  *
@@ -2323,7 +2364,7 @@ retry:
             unsigned long next_vaddr = address & PAGE_MASK;
             for(i = 0; i < MAX_MAPPINGS; i++) response.mappings[i].present = 0;
             for(i = 0; i < MAX_MAPPINGS && next_vaddr < vma->vm_end; i++) {
-                int valid_mapping = find_consecutive_physically_mapped_region(mm,
+                int valid_mapping = find_next_consecutive_physically_mapped_region(mm,
                                                 vma,
                                                 next_vaddr,
                                                 &response.mappings[i].vaddr,
