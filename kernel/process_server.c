@@ -119,7 +119,6 @@ pcn_perf_context_t perf_process_mapping_request_do_lookup;
 pcn_perf_context_t perf_process_mapping_request_transmit;
 pcn_perf_context_t perf_process_mapping_response;
 pcn_perf_context_t perf_process_tgroup_closed_item;
-pcn_perf_context_t perf_process_exec_item;
 pcn_perf_context_t perf_process_exit_item;
 pcn_perf_context_t perf_process_mprotect_item;
 pcn_perf_context_t perf_process_munmap_request;
@@ -168,8 +167,6 @@ static void perf_init(void) {
            "process_mapping_response");
    perf_init_context(&perf_process_tgroup_closed_item,
            "process_tgroup_closed_item");
-   perf_init_context(&perf_process_exec_item,
-           "process_exec_item");
    perf_init_context(&perf_process_exit_item,
            "process_exit_item");
    perf_init_context(&perf_process_mprotect_item,
@@ -708,14 +705,6 @@ typedef struct _deconstruction_data {
  */
 typedef struct {
     struct work_struct work;
-    clone_data_t* clone_data;
-} clone_exec_work_t;
-
-/**
- *
- */
-typedef struct {
-    struct work_struct work;
     struct task_struct *task;
     pid_t pid;
     int t_home_cpu;
@@ -836,17 +825,6 @@ typedef struct {
     int tgroup_home_cpu;
     int tgroup_home_id;
     int requester_pid;
-    int count;
-} remote_thread_count_response_work_t;
-
-/**
- *
- */
-typedef struct {
-    struct work_struct work;
-    int tgroup_home_cpu;
-    int tgroup_home_id;
-    int requester_pid;
     int from_cpu;
 } remote_thread_count_request_work_t;
 
@@ -928,13 +906,9 @@ static struct workqueue_struct *clone_wq;
 static struct workqueue_struct *exit_wq;
 static struct workqueue_struct *mapping_wq;
 
-// Wait Queues
-//DECLARE_WAIT_QUEUE_HEAD(_mapping_request_wait);
-
 /**
  * General helper functions and debugging tools
  */
-
 
 // TODO
 static bool __user_addr (unsigned long x ) {
@@ -1474,8 +1448,9 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
     data_header_t* curr = NULL;
     remote_thread_count_request_data_t* request = NULL;
     remote_thread_count_request_data_t* ret = NULL;
+    unsigned long lockflags;
 
-    PS_SPIN_LOCK(&_count_remote_tmembers_data_head_lock);
+    spin_lock_irqsave(&_count_remote_tmembers_data_head_lock,lockflags);
 
     curr = _count_remote_tmembers_data_head;
     while(curr) {
@@ -1489,7 +1464,7 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
         curr = curr->next;
     }
 
-    PS_SPIN_UNLOCK(&_count_remote_tmembers_data_head_lock);
+    spin_unlock_irqrestore(&_count_remote_tmembers_data_head_lock,lockflags);
 
     return ret;
 }
@@ -1558,7 +1533,6 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pi
     mapping_request_data_t* request = NULL;
     mapping_request_data_t* ret = NULL;
     unsigned long lockflags;
-    spin_lock_irqsave(&_mapping_request_data_head_lock,lockflags);
     
     curr = _mapping_request_data_head;
     while(curr) {
@@ -1573,7 +1547,6 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pi
         curr = curr->next;
     }
 
-    spin_unlock_irqrestore(&_mapping_request_data_head_lock,lockflags);
 
     return ret;
 }
@@ -2674,60 +2647,6 @@ void process_exit_item(struct work_struct* work) {
     PERF_MEASURE_STOP(&perf_process_exit_item," ",perf);
 }
 
-/**
- * <MEASURED perf_process_exec_item>
- */
-void process_exec_item(struct work_struct* work) {
-    clone_exec_work_t* w = (clone_exec_work_t*)work;
-    clone_data_t* c = w->clone_data;
-    struct subprocess_info* sub_info;
-    char* argv[] = {c->exe_path,NULL};
-    static char *envp[] = { 
-        "HOME=/",
-        "TERM=linux",
-        "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
-    };
-    int perf = -1;
-perf_aa = native_read_tsc();
-    sub_info = call_usermodehelper_setup( c->exe_path /*argv[0]*/, 
-            argv, envp, 
-            GFP_KERNEL );
-
-    perf = PERF_MEASURE_START(&perf_process_exec_item);
-
-    PSPRINTK("process_exec_item: %s\n",c->exe_path);
-
-    if (sub_info == NULL) return;
-
-    PSPRINTK("sub_info guard passed\n");
-
-    /*
-     * This information is passed into kmod in order to
-     * act as closure information for when the process
-     * is spun up.  Once that occurs, this cpu must
-     * notify the requesting cpu of the local pid of the
-     * delegate process so that it can maintain its records.
-     * That information will be used to maintain the link
-     * between the placeholder process on the requesting cpu
-     * and the delegate process on the executing cpu.
-     */
-    sub_info->delegated = 1;
-    sub_info->remote_pid = c->placeholder_pid;
-    sub_info->remote_cpu = c->requesting_cpu;
-    sub_info->clone_request_id = c->clone_request_id;
-    memcpy(&sub_info->remote_regs, &c->regs, sizeof(struct pt_regs) );
-    
-    dump_regs(&sub_info->remote_regs);
-
-    /*
-     * Spin up the new process.
-     */
-    call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
-perf_bb = native_read_tsc();
-    kfree(work);
-
-    PERF_MEASURE_STOP(&perf_process_exec_item," ",perf);
-}
 
 /**
  * <MEASURE perf_process_munmap_request>
@@ -2810,39 +2729,6 @@ done:
 }
 
 /**
- * <MEASURE perf_process_munmap_response>
- */
-void process_munmap_response(struct work_struct* work) {
-    munmap_response_work_t* w = (munmap_response_work_t*)work;
-    munmap_request_data_t* data;
-   
-    int perf = PERF_MEASURE_START(&perf_process_munmap_response);
-
-    data = find_munmap_request_data(
-                                   w->tgroup_home_cpu,
-                                   w->tgroup_home_id,
-                                   w->requester_pid,
-                                   w->vaddr_start);
-
-    if(data == NULL) {
-        PSPRINTK("unable to find munmap data\n");
-        kfree(work);
-        PERF_MEASURE_STOP(&perf_process_munmap_response,"ERROR",perf);
-        return;
-    }
-
-    // Register this response.
-    PS_SPIN_LOCK(&data->lock);
-    data->responses++;
-    PS_SPIN_UNLOCK(&data->lock);
-
-    kfree(work);
-
-    PERF_MEASURE_STOP(&perf_process_munmap_response," ",perf);
-
-}
-
-/**
  * <MEASRURE perf_process_mprotect_item>
  */
 void process_mprotect_item(struct work_struct* work) {
@@ -2889,34 +2775,9 @@ done:
     PERF_MEASURE_STOP(&perf_process_mprotect_item," ",perf);
 }
 
-void process_remote_thread_count_response(struct work_struct* work) {
-    remote_thread_count_response_work_t* w = (remote_thread_count_response_work_t*) work;
-    remote_thread_count_request_data_t* data;
-    
-    data = find_remote_thread_count_data(w->tgroup_home_cpu,
-                                         w->tgroup_home_id,
-                                         w->requester_pid);
-
-    PSPRINTK("%s: entered - cpu{%d}, id{%d}, count{%d}\n",
-            __func__,
-            w->tgroup_home_cpu,
-            w->tgroup_home_id,
-            w->count);
-
-    if(data == NULL) {
-        PSPRINTK("unable to find remote thread count data\n");
-        return;
-    }
-
-    // Register this response.
-    PS_SPIN_LOCK(&data->lock);
-    data->count += w->count;
-    data->responses++;
-    PS_SPIN_UNLOCK(&data->lock);
-
-    kfree(work);
-}
-
+/**
+ *
+ */
 void process_remote_thread_count_request(struct work_struct* work) {
     remote_thread_count_request_work_t* w = (remote_thread_count_request_work_t*)work;
     remote_thread_count_response_t response;
@@ -3039,10 +2900,10 @@ static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_
  */
 static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg) {
     remote_thread_count_response_t* msg = (remote_thread_count_response_t*) inc_msg;
-    remote_thread_count_response_work_t* work;
+    ///remote_thread_count_response_work_t* work;
 
     int perf = PERF_MEASURE_START(&perf_handle_remote_thread_count_response);
-
+/*
     work = kmalloc( sizeof(remote_thread_count_response_work_t), GFP_ATOMIC);
     if(work) {
         INIT_WORK( (struct work_struct*)work, process_remote_thread_count_response);
@@ -3052,7 +2913,32 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
         work->count           = msg->count;
         queue_work(mapping_wq, (struct work_struct*)work);
     }
+*/
+    remote_thread_count_request_data_t* data;
+    unsigned long lockflags;
+    
+    data = find_remote_thread_count_data(msg->tgroup_home_cpu,
+                                         msg->tgroup_home_id,
+                                         msg->requester_pid);
 
+    PSPRINTK("%s: entered - cpu{%d}, id{%d}, count{%d}\n",
+            __func__,
+            msg->tgroup_home_cpu,
+            msg->tgroup_home_id,
+            msg->count);
+
+    if(data == NULL) {
+        PSPRINTK("unable to find remote thread count data\n");
+        goto error_exit;
+    }
+
+    // Register this response.
+    spin_lock_irqsave(&data->lock,lockflags);
+    data->count += msg->count;
+    data->responses++;
+    spin_unlock_irqrestore(&data->lock,lockflags);
+
+error_exit:
     pcn_kmsg_free_msg(inc_msg);
 
     PERF_MEASURE_STOP(&perf_handle_remote_thread_count_response," ",perf);
@@ -3091,21 +2977,29 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
  */
 static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
     munmap_response_t* msg = (munmap_response_t*)inc_msg;
-    munmap_response_work_t* work;
    
     int perf = PERF_MEASURE_START(&perf_handle_munmap_response);
+    munmap_request_data_t* data;
+    unsigned long lockflags;
+   
+    data = find_munmap_request_data(
+                                   msg->tgroup_home_cpu,
+                                   msg->tgroup_home_id,
+                                   msg->requester_pid,
+                                   msg->vaddr_start);
 
-    work = kmalloc(sizeof(munmap_response_work_t),GFP_ATOMIC);
-    if(work) {
-        INIT_WORK( (struct work_struct*)work, process_munmap_response );
-        work->tgroup_home_cpu = msg->tgroup_home_cpu;
-        work->tgroup_home_id  = msg->tgroup_home_id;
-        work->requester_pid = msg->requester_pid;
-        work->vaddr_start = msg->vaddr_start;
-        work->vaddr_size  = msg->vaddr_size;
-        queue_work(mapping_wq, (struct work_struct*)work);
+    if(data == NULL) {
+        PSPRINTK("unable to find munmap data\n");
+        goto exit_error;;
     }
-  
+
+    // Register this response.
+    spin_lock_irqsave(&data->lock,lockflags);
+    data->responses++;
+    spin_unlock_irqrestore(&data->lock,lockflags);
+
+exit_error:
+
     pcn_kmsg_free_msg(inc_msg);
 
     PERF_MEASURE_STOP(&perf_handle_munmap_response," ",perf);
@@ -3217,12 +3111,11 @@ static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
 static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) {
     nonpresent_mapping_response_t* msg = (nonpresent_mapping_response_t*)inc_msg;
     mapping_request_data_t* data;
-    unsigned long lockflags;
-    //int perf = -1;
+    unsigned long lockflags1,lockflags2;
 
-    //perf = PERF_MEASURE_START(&perf_process_mapping_response);
-   
     PSPRINTK("%s: entered\n",__func__);
+
+    spin_lock_irqsave(&_mapping_request_data_head_lock,lockflags2);
 
     data = find_mapping_request_data(
                                      msg->tgroup_home_cpu,
@@ -3237,30 +3130,13 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
 
     PSPRINTK("Nonpresent mapping response received for %lx\n",msg->address);
 
-    spin_lock_irqsave(&data->lock,lockflags);
+    spin_lock_irqsave(&data->lock,lockflags1);
     data->responses++;
-    spin_unlock_irqrestore(&data->lock,lockflags);
+    spin_unlock_irqrestore(&data->lock,lockflags1);
 exit:
 
-    //wake_up(&_mapping_request_wait);
-
-    //PERF_MEASURE_STOP(&perf_process_mapping_response,"no remote mapping for cpu",perf);
-
-/*    nonpresent_mapping_response_work_t* work;
-
-    work = kmalloc(sizeof(nonpresent_mapping_response_work_t),GFP_ATOMIC);
-    if(work) {
-        INIT_WORK( (struct work_struct*)work, process_nonpresent_mapping_response);
-        work->tgroup_home_cpu = msg->tgroup_home_cpu;
-        work->tgroup_home_id  = msg->tgroup_home_id;
-        work->requester_pid = msg->requester_pid;
-        work->address = msg->address;
-        work->from_cpu = msg->header.from_cpu;
-        queue_work(mapping_wq, (struct work_struct*)work);
-    } else {
-        printk("%s: ERROR: Unable to malloc work\n",__func__);
-    }
-    */
+    spin_unlock_irqrestore(&_mapping_request_data_head_lock,lockflags2);
+    
     pcn_kmsg_free_msg(inc_msg);
 
     return 0;
@@ -3273,12 +3149,12 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     mapping_response_t* msg = (mapping_response_t*)inc_msg;
     mapping_request_data_t* data;
     int do_data_free_here = 0;
-    unsigned long lockflags;
-
-    //int perf = PERF_MEASURE_START(&perf_process_mapping_response);
+    unsigned long lockflags, lockflags2;
 
     PSPRINTK("%s: entered\n",__func__);
 
+    spin_lock_irqsave(&_mapping_request_data_head_lock,lockflags2);
+    
     data = find_mapping_request_data(
                                      msg->tgroup_home_cpu,
                                      msg->tgroup_home_id,
@@ -3297,7 +3173,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         //PERF_MEASURE_STOP(&perf_process_mapping_response,
         //        "early exit",
         //        perf);
-        return;
+        goto out_err;
     }
 
     spin_lock_irqsave(&data->lock,lockflags);
@@ -3380,39 +3256,11 @@ out:
 
     spin_unlock_irqrestore(&data->lock,lockflags);
 
-    //wake_up(&_mapping_request_wait);
+out_err:
+
+    spin_unlock_irqrestore(&_mapping_request_data_head_lock,lockflags2);
     
-    //PERF_MEASURE_STOP(&perf_process_mapping_response," ",perf);
-
-    /*mapping_response_work_t* work;
-
-    int perf = PERF_MEASURE_START(&perf_handle_mapping_response);
-
-    work = kmalloc(sizeof(mapping_response_work_t),GFP_ATOMIC);
-    if(work) {
-        INIT_WORK( (struct work_struct*)work, process_mapping_response );
-        work->tgroup_home_cpu = msg->tgroup_home_cpu;
-        work->tgroup_home_id  = msg->tgroup_home_id;
-        work->requester_pid = msg->requester_pid;
-        work->from_saved_mm = msg->from_saved_mm;
-        work->address = msg->address;
-        work->present = msg->present;
-        work->vaddr_mapping = msg->vaddr_mapping;
-        work->vaddr_start = msg->vaddr_start;
-        work->vaddr_size = msg->vaddr_size;
-        work->paddr_mapping = msg->paddr_mapping;
-        work->paddr_mapping_sz = msg->paddr_mapping_sz;
-        work->prot = msg->prot;
-        work->vm_flags = msg->vm_flags;
-        memcpy(&work->path,&msg->path,sizeof(work->path));
-        work->pgoff = msg->pgoff;
-        work->from_cpu = msg->header.from_cpu;
-        queue_work(mapping_wq, (struct work_struct*)work);
-    }
-*/
     pcn_kmsg_free_msg(inc_msg);
-    
-    //PERF_MEASURE_STOP(&perf_handle_mapping_response," ",perf);
 
     return 0;
 }
@@ -3677,7 +3525,6 @@ done:
  */
 static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     clone_request_t* request = (clone_request_t*)inc_msg;
-    clone_exec_work_t* clone_work = NULL;
     unsigned int source_cpu = request->header.from_cpu;
     clone_data_t* clone_data;
     data_header_t* curr;
@@ -3772,11 +3619,44 @@ perf_cc = native_read_tsc();
     add_data_entry(clone_data);
 
 perf_dd = native_read_tsc();
-    clone_work = kmalloc(sizeof(clone_exec_work_t),GFP_ATOMIC);
-    if(clone_work) {
-        INIT_WORK( (struct work_struct*)clone_work, process_exec_item);
-        clone_work->clone_data = clone_data;
-        queue_work(clone_wq, (struct work_struct*)clone_work);
+
+    {
+    struct subprocess_info* sub_info;
+    char* argv[] = {clone_data->exe_path,NULL};
+    static char *envp[] = { 
+        "HOME=/",
+        "TERM=linux",
+        "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
+    };
+    int perf = -1;
+perf_aa = native_read_tsc();
+    sub_info = call_usermodehelper_setup( clone_data->exe_path /*argv[0]*/, 
+            argv, envp, 
+            GFP_ATOMIC );
+
+    /*
+     * This information is passed into kmod in order to
+     * act as closure information for when the process
+     * is spun up.  Once that occurs, this cpu must
+     * notify the requesting cpu of the local pid of the
+     * delegate process so that it can maintain its records.
+     * That information will be used to maintain the link
+     * between the placeholder process on the requesting cpu
+     * and the delegate process on the executing cpu.
+     */
+    sub_info->delegated = 1;
+    sub_info->remote_pid = clone_data->placeholder_pid;
+    sub_info->remote_cpu = clone_data->requesting_cpu;
+    sub_info->clone_request_id = clone_data->clone_request_id;
+    memcpy(&sub_info->remote_regs, &clone_data->regs, sizeof(struct pt_regs) );
+    
+    //dump_regs(&sub_info->remote_regs);
+
+    /*
+     * Spin up the new process.
+     */
+    call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
+perf_bb = native_read_tsc();
     }
 
     pcn_kmsg_free_msg(inc_msg);
@@ -3878,6 +3758,7 @@ out:
 
 //statistics
 static unsigned long long perf_a, perf_b, perf_c, perf_d, perf_e;
+
 
 /**
  * If this is a delegated process, look up any records that may
@@ -4788,6 +4669,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     char path[512];
     char* ppath;
     int do_data_free_here = 0;
+    int did_early_removal = 0;
 
     // for perf
     int pte_provided = 0;
@@ -4926,7 +4808,15 @@ retry:
         if(data->expected_responses == data->responses || data->complete)
             done = 1;
         spin_unlock_irqrestore(&data->lock,lockflags);
-        if (done) break;
+        if (done) {
+            unsigned long lockflags;
+            spin_lock_irqsave(&_mapping_request_data_head_lock,lockflags);
+            remove_data_entry_from(data,
+                                  &_mapping_request_data_head);
+            spin_unlock_irqrestore(&_mapping_request_data_head_lock,lockflags);
+            did_early_removal = 1;
+            break;
+        }
         schedule();
     }
     
@@ -5105,7 +4995,7 @@ exit_remove_data:
         }
         finish_wait(&_mapping_request_wait,&wait);
     }*/
-    while(1) {
+    /*while(1) {
         int done = 0;
         unsigned long lockflags;
         spin_lock_irqsave(&data->lock,lockflags);
@@ -5114,16 +5004,15 @@ exit_remove_data:
         spin_unlock_irqrestore(&data->lock,lockflags);
         if (done) break;
         schedule();
-    }
+    }*/
     
 
-    PSPRINTK("%s: doing data free\n",__func__);
-    {
-    unsigned long lockflags;
-    spin_lock_irqsave(&_mapping_request_data_head_lock,lockflags);
-    remove_data_entry_from(data,
-                          &_mapping_request_data_head);
-    spin_unlock_irqrestore(&_mapping_request_data_head_lock,lockflags);
+    if(!did_early_removal) {
+        unsigned long lockflags;
+        spin_lock_irqsave(&_mapping_request_data_head_lock,lockflags);
+        remove_data_entry_from(data,
+                              &_mapping_request_data_head);
+        spin_unlock_irqrestore(&_mapping_request_data_head_lock,lockflags);
     }
     kfree(data);
 
