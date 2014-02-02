@@ -45,7 +45,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -104,7 +104,7 @@
 /**
  * Perf
  */
-#define MEASURE_PERF 0
+#define MEASURE_PERF 1
 #if MEASURE_PERF
 #define PERF_INIT() perf_init()
 #define PERF_MEASURE_START(x) perf_measure_start(x)
@@ -2323,14 +2323,18 @@ retry:
             unsigned long next_vaddr = address & PAGE_MASK;
             for(i = 0; i < MAX_MAPPINGS; i++) response.mappings[i].present = 0;
             for(i = 0; i < MAX_MAPPINGS && next_vaddr < vma->vm_end; i++) {
-                find_consecutive_physically_mapped_region(mm,
-                                                          vma,
-                                                          next_vaddr,
-                                                          &response.mappings[i].vaddr,
-                                                          &response.mappings[i].paddr,
-                                                          &response.mappings[i].sz);
-                response.mappings[i].present = 1;
-                next_vaddr = response.mappings[i].vaddr + response.mappings[i].sz;
+                int valid_mapping = find_consecutive_physically_mapped_region(mm,
+                                                vma,
+                                                next_vaddr,
+                                                &response.mappings[i].vaddr,
+                                                &response.mappings[i].paddr,
+                                                &response.mappings[i].sz);
+                if(valid_mapping == 0) {
+                    response.mappings[i].present = 1;
+                    next_vaddr = response.mappings[i].vaddr + response.mappings[i].sz;
+                } else {
+                    break;
+                }
                                                           
             }
             }
@@ -4835,6 +4839,7 @@ retry:
             //if(vma->vm_flags & VM_WRITE) {
             //     mk_page_writable(mm, vma, address & PAGE_SIZE);
             //}
+            
             // Check remap_pfn_range success
             if(err) {
                 PSPRINTK("ERROR: Failed to remap_pfn_range %d\n",err);
