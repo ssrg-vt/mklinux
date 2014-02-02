@@ -45,7 +45,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -104,7 +104,7 @@
 /**
  * Perf
  */
-#define MEASURE_PERF 1
+#define MEASURE_PERF 0
 #if MEASURE_PERF
 #define PERF_INIT() perf_init()
 #define PERF_MEASURE_START(x) perf_measure_start(x)
@@ -1837,6 +1837,7 @@ static void remove_data_entry_from(void* entry, data_header_t** head) {
 static void add_data_entry(void* entry) {
     data_header_t* hdr = (data_header_t*)entry;
     data_header_t* curr = NULL;
+    unsigned long lockflags;
 
     if(!entry) {
         return;
@@ -1846,7 +1847,7 @@ static void add_data_entry(void* entry) {
     hdr->next = NULL;
     hdr->prev = NULL;
 
-    PS_SPIN_LOCK(&_data_head_lock);
+    spin_lock_irqsave(&_data_head_lock,lockflags);
     
     if (!_data_head) {
         _data_head = hdr;
@@ -1867,7 +1868,7 @@ static void add_data_entry(void* entry) {
         hdr->prev = curr;
     }
 
-    PS_SPIN_UNLOCK(&_data_head_lock);
+    spin_unlock_irqrestore(&_data_head_lock,lockflags);
 }
 
 /**
@@ -1964,6 +1965,7 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
     int s;
     int ret = -1;
     int perf = -1;
+    unsigned long lockflags;
 
     perf = PERF_MEASURE_START(&perf_count_remote_thread_members);
 
@@ -2017,10 +2019,10 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
     PSPRINTK("%s: found a total of %d remote threads in group\n",__func__,
             data->count);
 
-    PS_SPIN_LOCK(&_count_remote_tmembers_data_head_lock);
+    spin_lock_irqsave(&_count_remote_tmembers_data_head_lock,lockflags);
     remove_data_entry_from(data,
                            &_count_remote_tmembers_data_head);
-    PS_SPIN_UNLOCK(&_count_remote_tmembers_data_head_lock);
+    spin_unlock_irqrestore(&_count_remote_tmembers_data_head_lock,lockflags);
 
     kfree(data);
 
@@ -2084,6 +2086,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
     int tgroup_closed = 0;
     int pass;
     int perf = -1;
+    unsigned long lockflags;
 
     perf = PERF_MEASURE_START(&perf_process_tgroup_closed_item);
 
@@ -2111,7 +2114,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
         }
     }
 
-    PS_SPIN_LOCK(&_saved_mm_head_lock);
+    spin_lock_irqsave(&_saved_mm_head_lock,lockflags);
     
     // Remove all saved mm's for this thread group.
     curr = _saved_mm_head;
@@ -2139,7 +2142,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
         curr = next;
     }
 
-    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
+    spin_unlock_irqrestore(&_saved_mm_head_lock,lockflags);
 
     kfree(work);
 
@@ -3680,6 +3683,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     data_header_t* curr;
     data_header_t* next;
     vma_data_t* vma;
+    unsigned long lockflags;
 
     int perf = PERF_MEASURE_START(&perf_handle_clone_request);
 
@@ -3735,7 +3739,7 @@ perf_cc = native_read_tsc();
     /*
      * Pull in vma data
      */
-    PS_SPIN_LOCK(&_data_head_lock);
+    spin_lock_irqsave(&_data_head_lock,lockflags);
 
     curr = _data_head;
     while(curr) {
@@ -3763,7 +3767,7 @@ perf_cc = native_read_tsc();
         curr = next;
     }
 
-    PS_SPIN_UNLOCK(&_data_head_lock);
+    spin_unlock_irqrestore(&_data_head_lock,lockflags);
 
     add_data_entry(clone_data);
 
@@ -3982,8 +3986,19 @@ int process_server_import_address_space(unsigned long* ip,
         perf_c = native_read_tsc();    
 
         // Import address space
-        vma_curr = clone_data->vma_list;
+#if !(COPY_WHOLE_VM_WITH_MIGRATION)
+        struct vm_area_struct* vma_out = NULL;
+        // fetch stack
+        process_server_try_handle_mm_fault(current->mm,
+                                           NULL,
+                                           clone_data->stack_start,
+                                           NULL,
+                                           &vma_out,
+                                           NULL);
 
+#else // Copying address space with migration
+        {
+        vma_curr = clone_data->vma_list;
         while(vma_curr) {
             PSPRINTK("do_mmap() at %lx\n",vma_curr->start);
             if(vma_curr->path[0] != '\0') {
@@ -4018,7 +4033,7 @@ int process_server_import_address_space(unsigned long* ip,
                 err = do_mmap(NULL, 
                     vma_curr->start, 
                     vma_curr->end - vma_curr->start,
-                    PROT_READ|PROT_WRITE/*|PROT_EXEC*/, 
+                    PROT_READ|PROT_WRITE, 
                     mmap_flags, 
                     0);
                 current->enable_do_mmap_pgoff_hook = 1;
@@ -4082,6 +4097,8 @@ int process_server_import_address_space(unsigned long* ip,
             }
             vma_curr = (vma_data_t*)vma_curr->header.next;
         }
+        }
+#endif
     } else {
         struct mm_struct* oldmm;
         // use_existing_mm.  Flush cache, to ensure
@@ -4115,9 +4132,10 @@ int process_server_import_address_space(unsigned long* ip,
             // Used a saved MM.  Must delete the saved mm entry.
             // It is safe to do so now, since we have ingested
             // its mm at this point.
-            PS_SPIN_LOCK(&_saved_mm_head_lock);
+            unsigned long lockflags;
+            spin_lock_irqsave(&_saved_mm_head_lock,lockflags);
             remove_data_entry_from(used_saved_mm,&_saved_mm_head);
-            PS_SPIN_UNLOCK(&_saved_mm_head_lock);
+            spin_unlock_irqrestore(&_saved_mm_head_lock,lockflags);
             kfree(used_saved_mm);
         }
 
@@ -4303,9 +4321,10 @@ __func__,
     // Save off clone data, replacing any that may
     // already exist.
     if(current->clone_data) {
-        PS_SPIN_LOCK(&_data_head_lock);
+        unsigned long lockflags;
+        spin_lock_irqsave(&_data_head_lock,lockflags);
         remove_data_entry(current->clone_data);
-        PS_SPIN_UNLOCK(&_data_head_lock);
+        spin_unlock_irqrestore(&_data_head_lock,lockflags);
         destroy_clone_data(current->clone_data);
     }
     current->clone_data = clone_data;
@@ -4494,9 +4513,10 @@ finished_membership_search:
     // with it again, so remove its clone_data from the linked list, and
     // nuke it.
     if(clone_data) {
-        PS_SPIN_LOCK(&_data_head_lock);
+        unsigned long lockflags;
+        spin_lock_irqsave(&_data_head_lock,lockflags);
         remove_data_entry(clone_data);
-        PS_SPIN_UNLOCK(&_data_head_lock);
+        spin_unlock_irqrestore(&_data_head_lock,lockflags);
         destroy_clone_data(clone_data);
     }
 
@@ -4557,6 +4577,7 @@ int process_server_do_munmap(struct mm_struct* mm,
     int i;
     int s;
     int perf = -1;
+    unsigned long lockflags;
 
      // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed || !current->enable_distributed_munmap) {
@@ -4610,10 +4631,10 @@ int process_server_do_munmap(struct mm_struct* mm,
 
     // OK, all responses are in, we can proceed.
 
-    PS_SPIN_LOCK(&_munmap_data_head_lock);
+    spin_lock_irqsave(&_munmap_data_head_lock,lockflags);
     remove_data_entry_from(data,
                            &_munmap_data_head);
-    PS_SPIN_UNLOCK(&_munmap_data_head_lock);
+    spin_unlock_irqrestore(&_munmap_data_head_lock,lockflags);
 
     kfree(data);
 
@@ -4636,6 +4657,7 @@ void process_server_do_mprotect(struct task_struct* task,
     int i;
     int s;
     int perf = -1;
+    unsigned lockflags;
 
      // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
@@ -4698,10 +4720,10 @@ void process_server_do_mprotect(struct task_struct* task,
 
     // OK, all responses are in, we can proceed.
 
-    PS_SPIN_LOCK(&_mprotect_data_head_lock);
+    spin_lock_irqsave(&_mprotect_data_head_lock,lockflags);
     remove_data_entry_from(data,
                            &_mprotect_data_head);
-    PS_SPIN_UNLOCK(&_mprotect_data_head_lock);
+    spin_unlock_irqrestore(&_mprotect_data_head_lock,lockflags);
 
     kfree(data);
 
@@ -5096,11 +5118,13 @@ exit_remove_data:
     
 
     PSPRINTK("%s: doing data free\n",__func__);
-    PS_SPIN_LOCK(&_mapping_request_data_head_lock);
+    {
+    unsigned long lockflags;
+    spin_lock_irqsave(&_mapping_request_data_head_lock,lockflags);
     remove_data_entry_from(data,
                           &_mapping_request_data_head);
-    PS_SPIN_UNLOCK(&_mapping_request_data_head_lock);
-
+    spin_unlock_irqrestore(&_mapping_request_data_head_lock,lockflags);
+    }
     kfree(data);
 
     PSPRINTK("exiting fault handler\n");
@@ -5262,17 +5286,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     int dst_cpu = cpu;
     char path[256] = {0};
     char* rpath = d_path(&task->mm->exe_file->f_path,path,256);
-    char lpath[256];
-    char *plpath;
-    struct vm_area_struct* curr = NULL;
-    struct mm_walk walk = {
-        .pte_entry = deconstruction_page_walk_pte_entry_callback,
-        .mm = task->mm,
-        .private = NULL
-        };
-    vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
     int lclone_request_id;
-    deconstruction_data_t decon_data;
     int perf = -1;
 
     PSPRINTK("process_server_do_migration\n");
@@ -5315,6 +5329,17 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     PS_SPIN_UNLOCK(&_clone_request_id_lock);
 
 #if COPY_WHOLE_VM_WITH_MIGRATION
+    {
+    vma_transfer_t* vma_xfer;
+    deconstruction_data_t decon_data;
+    struct vm_area_struct* curr = NULL;
+    char lpath[256];
+    char *plpath;
+    struct mm_walk walk = {
+        .pte_entry = deconstruction_page_walk_pte_entry_callback,
+        .mm = task->mm,
+        .private = NULL
+        };
     // We have to break every cow page before migrating if we're
     // about to move the whole thing.
 restart_break_cow_all:
@@ -5330,26 +5355,15 @@ restart_break_cow_all:
             goto restart_break_cow_all;
         curr = curr->vm_next;
     }
-#endif
-
-    PS_DOWN_READ(&task->mm->mmap_sem);
     
-    // Transfer VM Entries
-    curr = task->mm->mmap;
-
+    vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
     vma_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER;
     vma_xfer->header.prio = PCN_KMSG_PRIO_NORMAL;
-
+    
+    PS_DOWN_READ(&task->mm->mmap_sem);
+    curr = task->mm->mmap;
     while(curr) {
         unsigned long start_stack = task->mm->start_stack;
-
-        // Transfer the stack only
-#if !(COPY_WHOLE_VM_WITH_MIGRATION)
-        if(!((start_stack <= curr->vm_end && start_stack >= curr->vm_start))) {
-            curr = curr->vm_next;
-            continue;
-        }
-#endif
 
         //
         // re-initialize path.
@@ -5394,6 +5408,10 @@ restart_break_cow_all:
     }
 
     PS_UP_READ(&task->mm->mmap_sem);
+    
+    kfree(vma_xfer);
+    }
+#endif
 
     // Build request
     request->header.type = PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST;
@@ -5489,7 +5507,6 @@ restart_break_cow_all:
                         sizeof(clone_request_t) - sizeof(request->header)));
 
     kfree(request);
-    kfree(vma_xfer);
 
     //dump_task(task,regs,request->stack_ptr);
     
