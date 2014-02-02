@@ -1140,6 +1140,46 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
 /**
  *
  */
+int find_prev_consecutive_physically_mapped_region(struct mm_struct* mm,
+                                              struct vm_area_struct* vma,
+                                              unsigned long vaddr,
+                                              unsigned long* vaddr_mapping_start,
+                                              unsigned long* paddr_mapping_start,
+                                              size_t* paddr_mapping_sz) {
+    unsigned long curr_vaddr_mapping_start;
+    unsigned long curr_paddr_mapping_start;
+    unsigned long curr_paddr_mapping_sz;
+    unsigned long curr_vaddr = vaddr;
+    int ret = -1;
+
+    if(curr_vaddr < vma->vm_start) return -1;
+
+    do {
+        int res = find_consecutive_physically_mapped_region(mm,
+                                                     vma,
+                                                     curr_vaddr,
+                                                     &curr_vaddr_mapping_start,
+                                                     &curr_paddr_mapping_start,
+                                                     &curr_paddr_mapping_sz);
+        if(0 == res) {
+
+            // this is a match, we can store off results and exit
+            ret = 0;
+            *vaddr_mapping_start = curr_vaddr_mapping_start;
+            *paddr_mapping_start = curr_paddr_mapping_start;
+            *paddr_mapping_sz    = curr_paddr_mapping_sz;
+            break;
+        }
+
+        curr_vaddr -= PAGE_SIZE;
+    } while (curr_vaddr >= vma->vm_start);
+
+    return ret;
+
+}
+/**
+ *
+ */
 int find_next_consecutive_physically_mapped_region(struct mm_struct* mm,
                                               struct vm_area_struct* vma,
                                               unsigned long vaddr,
@@ -1176,6 +1216,74 @@ int find_next_consecutive_physically_mapped_region(struct mm_struct* mm,
 
     return ret;
 
+}
+
+/**
+ *
+ */
+int fill_physical_mapping_array(struct mm_struct* mm,
+        struct vm_area_struct* vma,
+        unsigned long address,
+        contiguous_physical_mapping_t* mappings, 
+        int arr_sz) {
+    int i;
+    int valid_mapping;
+    unsigned long next_vaddr = address & PAGE_MASK;
+    int ret = -1;
+    unsigned long smallest_in_first_round = next_vaddr;
+   
+    for(i = 0; i < arr_sz; i++) 
+        mappings[i].present = 0;
+
+    for(i = 0; i < arr_sz && next_vaddr < vma->vm_end; i++) {
+        int valid_mapping = find_next_consecutive_physically_mapped_region(mm,
+                                            vma,
+                                            next_vaddr,
+                                            &mappings[i].vaddr,
+                                            &mappings[i].paddr,
+                                            &mappings[i].sz);
+
+        if(mappings[i].vaddr < smallest_in_first_round)
+            smallest_in_first_round = mappings[i].vaddr;
+
+        if(valid_mapping == 0) {
+
+            if(address >= mappings[i].vaddr && 
+                    address < mappings[i].vaddr + mappings[i].sz)
+                ret = 0;
+
+            mappings[i].present = 1;
+            next_vaddr = mappings[i].vaddr + mappings[i].sz;
+
+        } else {
+            break;
+        }
+    }
+
+    // If we have room left, go in the opposite direction
+    if(i <= arr_sz -1) {
+        next_vaddr = smallest_in_first_round - PAGE_SIZE;
+        for(;i < arr_sz && next_vaddr >= vma->vm_start; i++) {
+            int valid_mapping = find_prev_consecutive_physically_mapped_region(mm,
+                                            vma,
+                                            next_vaddr,
+                                            &mappings[i].vaddr,
+                                            &mappings[i].paddr,
+                                            &mappings[i].sz);
+            if(valid_mapping == 0) {
+                mappings[i].present = 1;
+                next_vaddr = mappings[i].vaddr - PAGE_SIZE;
+            }
+        }
+    }
+
+    // Clear out what we just did
+    if(ret == -1) {
+        for(i = 0; i < arr_sz; i++)
+            mappings[i].present = 0;
+    }
+
+    return ret;
 }
 
 /**
@@ -2364,28 +2472,15 @@ retry:
             {
             // Break all cows in this vma
             unsigned long cow_addr;
-            unsigned long next_vaddr = address & PAGE_MASK;
             for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
                 break_cow(mm, vma, cow_addr);
             }
             // Now grab all the mappings that we can stuff into the response.
-            for(i = 0; i < MAX_MAPPINGS; i++) 
-                response.mappings[i].present = 0;
-            for(i = 0; i < MAX_MAPPINGS && next_vaddr < vma->vm_end; i++) {
-                int valid_mapping = find_next_consecutive_physically_mapped_region(mm,
-                                                vma,
-                                                next_vaddr,
-                                                &response.mappings[i].vaddr,
-                                                &response.mappings[i].paddr,
-                                                &response.mappings[i].sz);
-                if(valid_mapping == 0) {
-                    response.mappings[i].present = 1;
-                    next_vaddr = response.mappings[i].vaddr + response.mappings[i].sz;
-                } else {
-                    break;
-                }
-                                                          
-            }
+            fill_physical_mapping_array(mm, 
+                    vma,
+                    address,
+                    &response.mappings, 
+                    MAX_MAPPINGS);
             }
 
             response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
