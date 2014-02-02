@@ -2349,20 +2349,28 @@ retry:
                     address & PAGE_MASK);
 
             // break the cow if necessary
-            if(try_count < 2 && break_cow(mm, vma, address & PAGE_MASK)) {
-                // cow broken, start over again.
-                resolved = 0;
-                vma = NULL;
-                goto retry;
-            }
+            //if(try_count < 2 && break_cow(mm, vma, address & PAGE_MASK)) {
+            //    // cow broken, start over again.
+            //    resolved = 0;
+            //    vma = NULL;
+            //    goto retry;
+            //}
 
             /*
-             * Find the region of consecutive physical memory
-             * in which the address resides within this vma.
+             * Find regions of consecutive physical memory
+             * in this vma, including the faulting address
+             * if possible.
              */
             {
+            // Break all cows in this vma
+            unsigned long cow_addr;
             unsigned long next_vaddr = address & PAGE_MASK;
-            for(i = 0; i < MAX_MAPPINGS; i++) response.mappings[i].present = 0;
+            for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
+                break_cow(mm, vma, cow_addr);
+            }
+            // Now grab all the mappings that we can stuff into the response.
+            for(i = 0; i < MAX_MAPPINGS; i++) 
+                response.mappings[i].present = 0;
             for(i = 0; i < MAX_MAPPINGS && next_vaddr < vma->vm_end; i++) {
                 int valid_mapping = find_next_consecutive_physically_mapped_region(mm,
                                                 vma,
@@ -4870,6 +4878,11 @@ retry:
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     
                     if(tmp_err) err = tmp_err;
+                    else {
+                        if(vma->vm_flags & VM_WRITE) {
+                            mk_page_writable(mm, vma, data->mappings[i].vaddr);
+                        }
+                    }
                 }
             }
 
