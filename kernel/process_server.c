@@ -334,7 +334,7 @@ typedef struct _clone_data {
 /**
  * 
  */
-#define MAX_MAPPINGS 5
+#define MAX_MAPPINGS 16
 typedef struct _mapping_request_data {
     data_header_t header;
     int tgroup_home_cpu;
@@ -1297,7 +1297,8 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
                                   unsigned long vaddr_start,
                                   unsigned long paddr_start,
                                   size_t sz,
-                                  pgprot_t prot) {
+                                  pgprot_t prot,
+                                  int make_writable) {
     unsigned long vaddr_curr;
     unsigned long paddr_curr = paddr_start;
     int ret = 0;
@@ -1316,6 +1317,12 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
                                   paddr_curr >> PAGE_SHIFT,
                                   PAGE_SIZE,
                                   prot);
+            if(err == 0) {
+                if(make_writable && vma->vm_flags & VM_WRITE) {
+                    mk_page_writable(mm, vma, vaddr_curr);
+                }
+            }
+
             if( err != 0 ) ret = err;
         }
         paddr_curr += PAGE_SIZE;
@@ -2287,7 +2294,7 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     pte_t pte;
     spinlock_t* ptl;
 
-    PSPRINTK("%s: entered\n",__func__);
+    //PSPRINTK("%s: entered\n",__func__);
 
     // if it's not a cow mapping, return.
     if((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) != VM_MAYWRITE) {
@@ -2384,17 +2391,17 @@ void process_mapping_request(struct work_struct* work) {
     int perf_send = -1;
     int perf = PERF_MEASURE_START(&perf_process_mapping_request);
 
-    PSPRINTK("%s: entered\n",__func__);
-    PSPRINTK("received mapping request address{%lx}, cpu{%d}, id{%d}\n",
-            w->address,
-            w->tgroup_home_cpu,
-            w->tgroup_home_id);
+    //PSPRINTK("%s: entered\n",__func__);
+    //PSPRINTK("received mapping request address{%lx}, cpu{%d}, id{%d}\n",
+    //        w->address,
+    //        w->tgroup_home_cpu,
+    //        w->tgroup_home_id);
 
     // First, search through existing processes
     do_each_thread(g,task) {
         if((task->tgroup_home_cpu == w->tgroup_home_cpu) &&
            (task->tgroup_home_id  == w->tgroup_home_id )) {
-            PSPRINTK("mapping request found common thread group here\n");
+            //PSPRINTK("mapping request found common thread group here\n");
             mm = task->mm;
             goto task_mm_search_exit;
         }
@@ -2411,7 +2418,7 @@ task_mm_search_exit:
             
             if((mm_data->tgroup_home_cpu == w->tgroup_home_cpu) &&
                (mm_data->tgroup_home_id  == w->tgroup_home_id)) {
-                PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
+                //PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
                 mm = mm_data->mm;
                 used_saved_mm = 1;
                 break;
@@ -2435,11 +2442,11 @@ retry:
         if( (!vma) || 
             (vma->vm_start > (address & PAGE_MASK)) || 
             (vma->vm_end <= address) ) {
-            PSPRINTK("find_vma turned up an invalid response, invalidating and continuing\n");
+            //PSPRINTK("find_vma turned up an invalid response, invalidating and continuing\n");
             if(!vma) {
-                PSPRINTK("vma == NULL\n");
+                //PSPRINTK("vma == NULL\n");
             } else {
-                PSPRINTK("vma->vm_start=%lx, vma->vm_end=%lx\n",vma->vm_start,vma->vm_end);
+                //PSPRINTK("vma->vm_start=%lx, vma->vm_end=%lx\n",vma->vm_start,vma->vm_end);
             }
             vma = NULL;
         }
@@ -2501,8 +2508,8 @@ retry:
                 strcpy(response.path,plpath);
                 response.pgoff = vma->vm_pgoff;
             }
-            PSPRINTK("mapping prot = %lx, vm_flags = %lx\n",
-                    response.prot,response.vm_flags);
+            //PSPRINTK("mapping prot = %lx, vm_flags = %lx\n",
+            //        response.prot,response.vm_flags);
         }
         
     }
@@ -2511,7 +2518,7 @@ retry:
     if(resolved == 0) {
         found_vma = 0;
         found_pte = 0;
-        PSPRINTK("Mapping not found\n");
+        //PSPRINTK("Mapping not found\n");
         response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
         response.header.prio = PCN_KMSG_PRIO_NORMAL;
         response.tgroup_home_cpu = w->tgroup_home_cpu;
@@ -2526,7 +2533,7 @@ retry:
 
         // Handle case where vma was present but no pte.
         if(vma) {
-            PSPRINTK("But vma present\n");
+            //PSPRINTK("But vma present\n");
             found_vma = 1;
             response.present = 1;
             response.vaddr_start = vma->vm_start;
@@ -3229,13 +3236,13 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         if(data->present == 1) {
 
             // another cpu already responded.
-            if(!data->from_saved_mm && msg->from_saved_mm
+            /*if(!data->from_saved_mm && msg->from_saved_mm
                     // but we need to add an exception in case a physical address
                     // is mapped into the saved mm, but not in the unsaved mm...
                     && !(response_paddr_present && !data_paddr_present)) {
                 PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
                 goto out;
-            }
+            }*/
 
             // Ensure that we keep physical mappings around.
             if(data_paddr_present && !response_paddr_present) {
@@ -4969,15 +4976,16 @@ retry:
                                                        data->mappings[i].vaddr,
                                                        data->mappings[i].paddr,
                                                        data->mappings[i].sz,
-                                                       vm_get_page_prot(vma->vm_flags));
+                                                       vm_get_page_prot(vma->vm_flags),
+                                                       1);
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     
                     if(tmp_err) err = tmp_err;
-                    else {
-                        if(vma->vm_flags & VM_WRITE) {
-                            mk_page_writable(mm, vma, data->mappings[i].vaddr);
-                        }
-                    }
+                    //else {
+                    //    if(vma->vm_flags & VM_WRITE) {
+                    //        mk_page_writable(mm, vma, data->mappings[i].vaddr);
+                    //    }
+                    //}
                 }
             }
 
