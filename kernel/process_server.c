@@ -2289,6 +2289,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
 }
 
 /**
+ * Caller must grab mm->mmap_sem
  * 1 = handled
  * 0 = not handled
  */
@@ -2311,9 +2312,6 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     if(!(vma->vm_flags & VM_WRITE)) {
         goto not_handled;
     }
-
-    PS_DOWN_WRITE(&mm->mmap_sem);
-
 
     pgd = pgd_offset(mm, address);
     if(!pgd_present(*pgd)) {
@@ -2356,11 +2354,9 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     goto handled;
 
 not_handled_unlock:
-    PS_UP_WRITE(&mm->mmap_sem);
 not_handled:
     return 0;
 handled:
-    PS_UP_WRITE(&mm->mmap_sem);
     return 1;
 }
 
@@ -2440,7 +2436,7 @@ task_mm_search_exit:
 
     // OK, if mm was found, look up the mapping.
     if(mm) {
-
+        PS_DOWN_WRITE(&mm->mmap_sem);
 retry:
         try_count++;
         vma = find_vma(mm, address & PAGE_MASK);
@@ -2468,14 +2464,6 @@ retry:
 
             PSPRINTK("mapping found! %lx for vaddr %lx\n",resolved,
                     address & PAGE_MASK);
-
-            // break the cow if necessary
-            //if(try_count < 2 && break_cow(mm, vma, address & PAGE_MASK)) {
-            //    // cow broken, start over again.
-            //    resolved = 0;
-            //    vma = NULL;
-            //    goto retry;
-            //}
 
             /*
              * Find regions of consecutive physical memory
@@ -2518,6 +2506,8 @@ retry:
             //        response.prot,response.vm_flags);
         }
         
+        PS_UP_WRITE(&mm->mmap_sem);
+
     }
 
     // Not found, respond accordingly
@@ -4875,6 +4865,8 @@ retry:
         prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
         prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
 
+        PS_DOWN_WRITE(&current->mm->mmap_sem);
+
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
             PSPRINTK("vma not present\n");
@@ -4882,7 +4874,7 @@ retry:
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
                 is_anonymous = 1;
-                PS_DOWN_WRITE(&current->mm->mmap_sem);
+                //PS_DOWN_WRITE(&current->mm->mmap_sem);
                 current->enable_distributed_munmap = 0;
                 current->enable_do_mmap_pgoff_hook = 0;
                 // mmap parts that are missing, while leaving the existing
@@ -4897,7 +4889,7 @@ retry:
                         0);
                 current->enable_distributed_munmap = 1;
                 current->enable_do_mmap_pgoff_hook = 1;
-                PS_UP_WRITE(&current->mm->mmap_sem);
+                //PS_UP_WRITE(&current->mm->mmap_sem);
             } else {
                 PSPRINTK("opening file to map\n");
                 is_anonymous = 0;
@@ -4918,7 +4910,7 @@ retry:
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
-                    PS_DOWN_WRITE(&current->mm->mmap_sem);
+                    //PS_DOWN_WRITE(&current->mm->mmap_sem);
                     current->enable_distributed_munmap = 0;
                     current->enable_do_mmap_pgoff_hook = 0;
                     // mmap parts that are missing, while leaving the existing
@@ -4934,12 +4926,13 @@ retry:
                             data->pgoff << PAGE_SHIFT);
                     current->enable_distributed_munmap = 1;
                     current->enable_do_mmap_pgoff_hook = 1;
-                    PS_UP_WRITE(&current->mm->mmap_sem);
+                    //PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                 }
             }
             if(err != data->vaddr_start) {
                 PSPRINTK("ERROR: Failed to do_mmap %lx\n",err);
+                PS_UP_WRITE(&current->mm->mmap_sem);
                 goto exit_remove_data;
             }
             
@@ -4969,7 +4962,6 @@ retry:
             int remap_pfn_range_err = 0;
             pte_provided = 1;
 
-            // This grabs the lock
             if(break_cow(current->mm,vma,address)) {
                 vma = find_vma(current->mm,address&PAGE_MASK);
             }
@@ -4977,7 +4969,7 @@ retry:
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 if(data->mappings[i].present) {
                     int tmp_err;
-                    PS_DOWN_WRITE(&current->mm->mmap_sem);
+                    //PS_DOWN_WRITE(&current->mm->mmap_sem);
                     tmp_err = remap_pfn_range_remaining(current->mm,
                                                        vma,
                                                        data->mappings[i].vaddr,
@@ -4985,7 +4977,7 @@ retry:
                                                        data->mappings[i].sz,
                                                        vm_get_page_prot(vma->vm_flags),
                                                        1);
-                    PS_UP_WRITE(&current->mm->mmap_sem);
+                    //PS_UP_WRITE(&current->mm->mmap_sem);
                     
                     if(tmp_err) remap_pfn_range_err = tmp_err;
                     //else {
@@ -5012,6 +5004,8 @@ retry:
                 ret = 1;
             }
         } 
+
+        PS_UP_WRITE(&current->mm->mmap_sem);
 
         if(vma) {
             *vma_out = vma;
@@ -5249,10 +5243,12 @@ restart_break_cow_all:
     while(curr) {
         unsigned long addr;
         int broken = 0;
+        PS_DOWN_WRITE(&task->mm->mmap_sem);
         for(addr = curr->vm_start; addr < curr->vm_end; addr += PAGE_SIZE) {
             if(break_cow(task->mm,curr,addr)) 
                 broken = 1;
         }
+        PS_UP_WRITE(&task->mm->mmap_sem);
         if(broken) 
             goto restart_break_cow_all;
         curr = curr->vm_next;
