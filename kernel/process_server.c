@@ -1321,6 +1321,12 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
                 if(make_writable && vma->vm_flags & VM_WRITE) {
                     mk_page_writable(mm, vma, vaddr_curr);
                 }
+            } else {
+                PSPRINTK("%s: ERROR mapping %lx to %lx with err{%d}\n",
+                            __func__,
+                            vaddr_curr,
+                            paddr_curr,
+                            err);
             }
 
             if( err != 0 ) ret = err;
