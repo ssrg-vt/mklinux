@@ -4966,6 +4966,7 @@ retry:
             }
         }
         if(vma && paddr_present) { 
+            int remap_pfn_range_err = 0;
             pte_provided = 1;
 
             // This grabs the lock
@@ -4986,7 +4987,7 @@ retry:
                                                        1);
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     
-                    if(tmp_err) err = tmp_err;
+                    if(tmp_err) remap_pfn_range_err = tmp_err;
                     //else {
                     //    if(vma->vm_flags & VM_WRITE) {
                     //        mk_page_writable(mm, vma, data->mappings[i].vaddr);
@@ -5004,7 +5005,7 @@ retry:
             //}
             
             // Check remap_pfn_range success
-            if(err) {
+            if(remap_pfn_range_err) {
                 PSPRINTK("ERROR: Failed to remap_pfn_range %d\n",err);
             } else {
                 PSPRINTK("remap_pfn_range succeeded\n");
