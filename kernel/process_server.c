@@ -45,7 +45,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -1460,6 +1460,21 @@ exit:
     return ret;
 }
 
+static void dump_mapping_request_data(mapping_request_data_t* data) {
+    int i;
+    PSPRINTK("mapping request data dump:\n");
+    PSPRINTK("address{%lx}, vaddr_start{%lx}, vaddr_sz{%lx}\n",
+                    data->address, data->vaddr_start, data->vaddr_size);
+    for(i = 0; i < MAX_MAPPINGS; i++) {
+        PSPRINTK("mapping %d - vaddr{%lx}, paddr{%lx}, sz{%lx}\n",
+                data->mappings[i].vaddr,data->mappings[i].paddr,data->mappings[i].sz);
+    }
+    PSPRINTK("present{%d}, complete{%d}, from_saved_mm{%d}\n",
+            data->present, data->complete, data->from_saved_mm);
+    PSPRINTK("responses{%d}, expected_responses{%d}\n",
+            data->responses, data->expected_responses);
+}
+
 /**
  *
  */
@@ -2403,7 +2418,7 @@ void process_mapping_request(struct work_struct* work) {
 
     //PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("received mapping request from {%d} address{%lx}, cpu{%d}, id{%d}\n",
-            w->header.from_cpu,
+            w->from_cpu,
             w->address,
             w->tgroup_home_cpu,
             w->tgroup_home_id);
@@ -3177,13 +3192,14 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
                                      msg->address);
 
 
-    PSPRINTK("received mapping response: addr{%lx},requester{%d},sender{%d}\n",
+    PSPRINTK("%s: received mapping response: addr{%lx},requester{%d},sender{%d}\n",
+             __func__,
              msg->address,
              msg->requester_pid,
              msg->header.from_cpu);
 
     if(data == NULL) {
-        //printk("%s: ERROR data not found\n",__func__);
+        printk("%s: ERROR data not found\n",__func__);
         //kfree(work);
         //PERF_MEASURE_STOP(&perf_process_mapping_response,
         //        "early exit",
@@ -3193,13 +3209,21 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 
     spin_lock_irqsave(&data->lock,lockflags);
 
+    PSPRINTK("Before changing data\n");
+    dump_mapping_request_data(data);
+
     // If this data entry is completely filled out,
     // there is no reason to go through any more of
     // this logic.  We do still need to account for
     // the response though, which is done after the
     // out label.
     if(data->complete) {
+        PSPRINTK("%s: data already complete, exiting\n",__func__);
         goto out;
+    }
+
+    if(!msg->present) {
+        PSPRINTK("this is a \"not present\" response\n");
     }
 
     if(msg->present) {
@@ -3302,6 +3326,9 @@ out:
     // Account for this cpu's response.
     data->responses++;
 
+    PSPRINTK("After changing data\n");
+    dump_mapping_request_data(data);
+    
     spin_unlock_irqrestore(&data->lock,lockflags);
 
 out_err:
