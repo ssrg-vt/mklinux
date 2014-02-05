@@ -3123,7 +3123,7 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
     mapping_request_data_t* data;
     unsigned long lockflags1,lockflags2;
 
-    PSPRINTK("%s: entered\n",__func__);
+    //PSPRINTK("%s: entered\n",__func__);
 
     spin_lock_irqsave(&_mapping_request_data_head_lock,lockflags2);
 
@@ -3138,7 +3138,9 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
         goto exit;
     }
 
-    PSPRINTK("Nonpresent mapping response received for %lx\n",msg->address);
+    PSPRINTK("Nonpresent mapping response received for %lx from %d\n",
+            msg->address,
+            msg->header.from_cpu);
 
     spin_lock_irqsave(&data->lock,lockflags1);
     data->responses++;
@@ -3211,7 +3213,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
                 data_paddr_present = 1;
                 break;
             }
-        }
+        } 
 
         // figure out of the response has a paddr in it
         for(i = 0; i < MAX_MAPPINGS; i++) {
@@ -3220,6 +3222,13 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
                 response_paddr_present = 1;
                 break;
             }
+        }
+
+        if(!data_paddr_present) {
+            PSPRINTK("%s: data paddr not present\n",__func__);
+        } 
+        if(!response_paddr_present) {
+            PSPRINTK("%s: response paddr not present\n",__func__);
         }
         
         // Enforce precedence rules.  Responses from saved mm's
@@ -4765,7 +4774,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             path[0] = '\0';
         }
 
-        PSPRINTK("working with provided vma: start{%lx}, end{%lx}, path{%s}\n",vma->vm_start,vma->vm_end,path);
+        //PSPRINTK("working with provided vma: start{%lx}, end{%lx}, path{%s}\n",vma->vm_start,vma->vm_end,path);
     }
 
     // The vma that's passed in might not always be correct.  find_vma fails by returning the wrong
@@ -4775,9 +4784,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         PSPRINTK("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
         vma = NULL;
     } else if (vma) {
-        PSPRINTK("vma found and valid\n");
+        //PSPRINTK("vma found and valid\n");
     } else {
-        PSPRINTK("no vma present\n");
+        //PSPRINTK("no vma present\n");
     }
 
     data = kmalloc(sizeof(mapping_request_data_t),GFP_KERNEL); 
