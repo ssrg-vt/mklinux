@@ -2402,10 +2402,11 @@ void process_mapping_request(struct work_struct* work) {
     int perf = PERF_MEASURE_START(&perf_process_mapping_request);
 
     //PSPRINTK("%s: entered\n",__func__);
-    //PSPRINTK("received mapping request address{%lx}, cpu{%d}, id{%d}\n",
-    //        w->address,
-    //        w->tgroup_home_cpu,
-    //        w->tgroup_home_id);
+    PSPRINTK("received mapping request from {%d} address{%lx}, cpu{%d}, id{%d}\n",
+            w->header.from_cpu,
+            w->address,
+            w->tgroup_home_cpu,
+            w->tgroup_home_id);
 
     // First, search through existing processes
     do_each_thread(g,task) {
