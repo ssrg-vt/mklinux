@@ -1231,7 +1231,9 @@ int fill_physical_mapping_array(struct mm_struct* mm,
     unsigned long next_vaddr = address & PAGE_MASK;
     int ret = -1;
     unsigned long smallest_in_first_round = next_vaddr;
-   
+
+    PSPRINTK("%s: entered\n",__func__);
+
     for(i = 0; i < arr_sz; i++) 
         mappings[i].present = 0;
 
@@ -1247,7 +1249,7 @@ int fill_physical_mapping_array(struct mm_struct* mm,
             smallest_in_first_round = mappings[i].vaddr;
 
         if(valid_mapping == 0) {
-
+            PSPRINTK("%s: supplying a mapping in slot %d\n",__func__,i);
             if(address >= mappings[i].vaddr && 
                     address < mappings[i].vaddr + mappings[i].sz)
                 ret = 0;
@@ -1256,6 +1258,8 @@ int fill_physical_mapping_array(struct mm_struct* mm,
             next_vaddr = mappings[i].vaddr + mappings[i].sz;
 
         } else {
+            PSPRINTK("%s: up search ended in failure, resuming down search\n",
+                    __func__);
             break;
         }
     }
@@ -1271,6 +1275,7 @@ int fill_physical_mapping_array(struct mm_struct* mm,
                                             &mappings[i].paddr,
                                             &mappings[i].sz);
             if(valid_mapping == 0) {
+                PSPRINTK("%s: supplying a mapping in slot %d\n",__func__,i);
                 mappings[i].present = 1;
                 next_vaddr = mappings[i].vaddr - PAGE_SIZE;
             }
@@ -1279,9 +1284,12 @@ int fill_physical_mapping_array(struct mm_struct* mm,
 
     // Clear out what we just did
     if(ret == -1) {
+        PSPRINTK("%s: zeroing out responses, due to an error\n",__func__);
         for(i = 0; i < arr_sz; i++)
             mappings[i].present = 0;
     }
+
+    PSPRINTK("%s: exiting\n",__func__);
 
     return ret;
 }
@@ -3198,6 +3206,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         // figure out if the current data has a paddr in it
         for(i = 0; i < MAX_MAPPINGS; i++) {
             if(data->mappings[i].present) {
+                PSPRINTK("%s: data paddr present\n",__func__);
                 data_paddr_present = 1;
                 break;
             }
@@ -3206,6 +3215,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         // figure out of the response has a paddr in it
         for(i = 0; i < MAX_MAPPINGS; i++) {
             if(msg->mappings[i].present) {
+                PSPRINTK("%s: response paddr present\n",__func__);
                 response_paddr_present = 1;
                 break;
             }
@@ -3254,6 +3264,9 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         data->vm_flags = msg->vm_flags;
         data->present = 1;
         for(i = 0; i < MAX_MAPPINGS; i++) {
+            if(data->mappings[i].present) {
+                PSPRINTK("%s: Found valid mapping in slot %d\n",__func__,i);
+            }
             data->mappings[i].vaddr  = msg->mappings[i].vaddr;
             data->mappings[i].paddr  = msg->mappings[i].paddr;
             data->mappings[i].sz     = msg->mappings[i].sz;
@@ -3264,6 +3277,8 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 
         // Determine if we can stop looking for a mapping
         if(response_paddr_present) {
+            PSPRINTK("%s: mapping query for %lx now fulfilled\n",__func__,
+                    data->address);
             data->complete = 1;
         }
 
@@ -4235,7 +4250,7 @@ __func__,
 
     PS_UP_WRITE(&_import_sem);
 
-    dump_task(current,NULL,0);
+    //dump_task(current,NULL,0);
 
     PERF_MEASURE_STOP(&perf_process_server_import_address_space, " ",perf);
 
@@ -4723,7 +4738,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         PSPRINTK("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
                 address,current->tgroup_home_cpu,current->tgroup_home_id);
 
-        dump_regs(task_pt_regs(current)); 
+        //dump_regs(task_pt_regs(current)); 
 
         // should this thing be writable?  if so, set it and exit
         // This is a security hole, and is VERY bad.
@@ -5186,7 +5201,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     int perf = -1;
 
     PSPRINTK("process_server_do_migration\n");
-    dump_regs(regs);
+    //dump_regs(regs);
 
     // Nothing to do if we're migrating to the current cpu
     if(dst_cpu == _cpu) {
