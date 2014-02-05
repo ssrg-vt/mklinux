@@ -1467,7 +1467,7 @@ static void dump_mapping_request_data(mapping_request_data_t* data) {
                     data->address, data->vaddr_start, data->vaddr_size);
     for(i = 0; i < MAX_MAPPINGS; i++) {
         PSPRINTK("mapping %d - vaddr{%lx}, paddr{%lx}, sz{%lx}\n",
-                data->mappings[i].vaddr,data->mappings[i].paddr,data->mappings[i].sz);
+                i,data->mappings[i].vaddr,data->mappings[i].paddr,data->mappings[i].sz);
     }
     PSPRINTK("present{%d}, complete{%d}, from_saved_mm{%d}\n",
             data->present, data->complete, data->from_saved_mm);
@@ -2528,6 +2528,14 @@ retry:
             }
             //PSPRINTK("mapping prot = %lx, vm_flags = %lx\n",
             //        response.prot,response.vm_flags);
+        } else {
+            // Zero out mappings
+            for(i = 0; i < MAX_MAPPINGS; i++) {
+                response.mappings[i].present = 0;
+                response.mappings[i].vaddr = 0;
+                response.mappings[i].paddr = 0;
+                response.mappings[i].sz = 0;
+            }
         }
         
         PS_UP_WRITE(&mm->mmap_sem);
@@ -2549,7 +2557,6 @@ retry:
         response.vaddr_start = 0;
         response.vaddr_size = 0;
         response.path[0] = '\0';
-        for(i = 0; i < MAX_MAPPINGS; i++) response.mappings[i].present = 0;
 
         // Handle case where vma was present but no pte.
         if(vma) {
@@ -3300,6 +3307,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         for(i = 0; i < MAX_MAPPINGS; i++) {
             if(data->mappings[i].present) {
                 PSPRINTK("%s: Found valid mapping in slot %d\n",__func__,i);
+                data->complete = 1;
             }
             data->mappings[i].vaddr  = msg->mappings[i].vaddr;
             data->mappings[i].paddr  = msg->mappings[i].paddr;
@@ -3308,13 +3316,6 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         }
         strcpy(data->path,msg->path);
         data->pgoff = msg->pgoff;
-
-        // Determine if we can stop looking for a mapping
-        if(response_paddr_present) {
-            PSPRINTK("%s: mapping query for %lx now fulfilled\n",__func__,
-                    data->address);
-            data->complete = 1;
-        }
 
     } else {
         PSPRINTK("received negative search result\n");
