@@ -1245,14 +1245,15 @@ int fill_physical_mapping_array(struct mm_struct* mm,
                                             &mappings[i].paddr,
                                             &mappings[i].sz);
 
-        if(mappings[i].vaddr < smallest_in_first_round)
-            smallest_in_first_round = mappings[i].vaddr;
 
         if(valid_mapping == 0) {
             PSPRINTK("%s: supplying a mapping in slot %d\n",__func__,i);
             if(address >= mappings[i].vaddr && 
                     address < mappings[i].vaddr + mappings[i].sz)
                 ret = 0;
+
+            if(mappings[i].vaddr < smallest_in_first_round)
+                smallest_in_first_round = mappings[i].vaddr;
 
             mappings[i].present = 1;
             next_vaddr = mappings[i].vaddr + mappings[i].sz;
