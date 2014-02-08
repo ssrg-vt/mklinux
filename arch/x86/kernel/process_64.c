@@ -588,8 +588,8 @@ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
 		} else {
 */			
 // the "optimization" do not allow my code to work!!! Antonio
-if (addr <= 0xffffffff)
-  printk("%s: prctl OPTIMIZATION\n", __func__);
+//if (addr <= 0xffffffff)
+//  printk("%s: prctl OPTIMIZATION\n", __func__);
 //else
 //  printk("prctl plain \n");
 

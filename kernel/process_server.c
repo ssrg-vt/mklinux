@@ -3269,7 +3269,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
              msg->header.from_cpu);
 
     if(data == NULL) {
-        printk("%s: ERROR data not found\n",__func__);
+        //printk("%s: ERROR data not found\n",__func__);
         //kfree(work);
         //PERF_MEASURE_STOP(&perf_process_mapping_response,
         //        "early exit",
