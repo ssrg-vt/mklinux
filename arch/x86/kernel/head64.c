@@ -113,7 +113,8 @@ void __init x86_64_start_reservations(char *real_mode_data)
 #ifdef CONFIG_BLK_DEV_INITRD
 #define RAMDISK_MAGIC 0xdf
 	/* Reserve INITRD */
-	if (boot_params.hdr.type_of_loader && boot_params.hdr.ramdisk_image) {
+    if (boot_params.hdr.type_of_loader &&
+            (boot_params.hdr.ramdisk_image || boot_params.hdr.ramdisk_shift)) {
 		/* Assume only end is not page aligned */
 		unsigned long ramdisk_shift = boot_params.hdr.ramdisk_shift;
 		unsigned long ramdisk_image;

@@ -933,6 +933,8 @@ static void mk_page_writable(struct mm_struct* mm,
     if (!ptep)
         goto out;
 
+    arch_enter_lazy_mmu_mode();
+
     pte = *ptep;
 
     entry = pte_mkwrite(pte_mkdirty(pte));
