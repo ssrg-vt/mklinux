@@ -1101,6 +1101,8 @@ do_group_exit(int exit_code)
 		spin_unlock_irq(&sighand->siglock);
 	}
 
+    process_server_do_group_exit();
+
 	do_exit(exit_code);
 	/* NOTREACHED */
 }

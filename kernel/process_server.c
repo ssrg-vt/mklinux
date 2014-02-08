@@ -45,7 +45,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -334,7 +334,7 @@ typedef struct _clone_data {
 /**
  * 
  */
-#define MAX_MAPPINGS 16
+#define MAX_MAPPINGS 2
 typedef struct _mapping_request_data {
     data_header_t header;
     int tgroup_home_cpu;
@@ -477,6 +477,19 @@ struct _exiting_process {
     char pad[44];
 } __attribute__((packed)) __attribute__((aligned(64)));  
 typedef struct _exiting_process exiting_process_t;
+
+/**
+ *
+ */
+struct _exiting_group {
+    struct pcn_kmsg_hdr header;
+    int tgroup_home_cpu;        // 4
+    int tgroup_home_id;         // 4
+                                // ---
+                                // 8 -> 52 bytes of padding needed
+    char pad[52];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _exiting_group exiting_group_t;
 
 /**
  * Inform remote cpu of a vma to process mapping.
@@ -725,6 +738,15 @@ typedef struct {
     unsigned short thread_fsindex;
     unsigned short thread_gsindex;
 } exit_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
+    int tgroup_home_cpu;
+    int tgroup_home_id;
+} group_exit_work_t;
 
 /**
  *
@@ -2682,6 +2704,44 @@ void process_exit_item(struct work_struct* work) {
     PERF_MEASURE_STOP(&perf_process_exit_item," ",perf);
 }
 
+/**
+ *
+ */
+process_group_exit_item(struct work_struct* work) {
+    group_exit_work_t* w = (group_exit_work_t*) work;
+    struct task_struct *task = NULL;
+    struct task_struct *g;
+    int found = 0;
+
+    //int perf = PERF_MEASURE_START(&perf_process_group_exit_item);
+    PSPRINTK("%s: entered\n",__func__);
+    PSPRINTK("exit group target id{%d}, cpu{%d}\n",
+            w->tgroup_home_id, w->tgroup_home_cpu);
+
+    do_each_thread(g,task) {
+        if(task->tgroup_home_id == w->tgroup_home_id &&
+           task->tgroup_home_cpu == w->tgroup_home_cpu) {
+            
+            if(!task->represents_remote) {
+                // active, send sigkill
+                PSPRINTK("Issuing SIGKILL to pid %d\n",task->pid);
+                kill_pid(task_pid(task), SIGKILL, 1);
+            }
+
+            // If it is a shadow task, it will eventually
+            // get killed when its corresponding active task
+            // is killed.
+
+        }
+    } while_each_thread(g,task);
+    
+    kfree(work);
+
+    PSPRINTK("%s: exiting\n",__func__);
+    //PERF_MEASURE_STOP(&perf_process_group_exit_item," ",perf);
+
+}
+
 
 /**
  * <MEASURE perf_process_munmap_request>
@@ -3544,6 +3604,27 @@ done:
 }
 
 /**
+ *
+ */
+static int handle_exit_group(struct pcn_kmsg_message* inc_msg) {
+    exiting_group_t* msg = (exiting_group_t*)inc_msg;
+    group_exit_work_t* work;
+
+    work = kmalloc(sizeof(group_exit_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_group_exit_item);
+        work->tgroup_home_id = msg->tgroup_home_id;
+        work->tgroup_home_cpu = msg->tgroup_home_cpu;
+        queue_work(exit_wq, (struct work_struct*)work);
+    }
+done:
+
+    pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
+}
+
+/**
  * Handler function for when another processor informs the current cpu
  * of a pid pairing.
  *
@@ -3790,8 +3871,10 @@ static struct mm_struct* find_thread_mm(
     struct mm_struct * mm = NULL;
     data_header_t* data_curr;
     mm_data_t* mm_data;
+    unsigned long lockflags;
 
     *used_saved_mm = NULL;
+    *task_out = NULL;
 
     // First, look through all active processes.
     do_each_thread(g,task) {
@@ -3799,13 +3882,13 @@ static struct mm_struct* find_thread_mm(
            task->tgroup_home_id  == tgroup_home_id) {
             mm = task->mm;
             *task_out = task;
-            *used_saved_mm = 0;
+            *used_saved_mm = NULL;
             goto out;
         }
     } while_each_thread(g,task);
 
     // Failing that, look through saved mm's.
-    PS_SPIN_LOCK(&_saved_mm_head_lock);
+    spin_lock_irqsave(&_saved_mm_head_lock,lockflags);
     data_curr = _saved_mm_head;
     while(data_curr) {
 
@@ -3822,7 +3905,7 @@ static struct mm_struct* find_thread_mm(
 
     } // while
 
-    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
+    spin_unlock_irqrestore(&_saved_mm_head_lock,lockflags);
 
 
 out:
@@ -4305,6 +4388,39 @@ __func__,
     return 0;
 }
 
+/**
+ *
+ */
+int process_server_do_group_exit(void) {
+    exiting_group_t msg;
+    int i;
+
+     // Select only relevant tasks to operate on
+    if(!(current->t_distributed || current->tgroup_distributed)/* || 
+            !current->enable_distributed_exit*/) {
+        return -1;
+    }
+
+    PSPRINTK("%s: doing distributed group exit\n",__func__);
+
+    // Build message
+    msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_GROUP;
+    msg.header.prio = PCN_KMSG_PRIO_NORMAL;
+    msg.tgroup_home_id = current->tgroup_home_id;
+    msg.tgroup_home_cpu = current->tgroup_home_cpu;
+
+    // Send message to everybody
+    for(i = 0; i < NR_CPUS; i++) {
+
+        if (i == _cpu) continue;
+
+        // Send
+        pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&msg));
+    }
+
+
+    return 0;
+}
 
 /**
  * Notify of the fact that either a delegate or placeholder has died locally.  
@@ -4338,6 +4454,11 @@ int process_server_do_exit(void) {
                  current->policy, rt_prio (current->prio));
 */
     perf = PERF_MEASURE_START(&perf_process_server_do_exit);
+
+    // Let's not do an exit while we're importing a new task.
+    // This could cause bad things to happen when looking
+    // for mm's.
+    PS_DOWN_WRITE(&_import_sem);
 
     PSPRINTK("%s - pid{%d}, prev_cpu{%d}, prev_pid{%d}\n",__func__,
             current->pid,
@@ -4480,6 +4601,8 @@ finished_membership_search:
         destroy_clone_data(clone_data);
     }
 
+    PS_UP_WRITE(&_import_sem);
+    
     PERF_MEASURE_STOP(&perf_process_server_do_exit," ",perf);
 
     return 0;
@@ -5610,6 +5733,8 @@ static int __init process_server_init(void) {
             handle_vma_transfer);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS, 
             handle_exiting_process_notification);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_EXIT_GROUP,
+            handle_exit_group);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CREATE_PROCESS_PAIRING, 
             handle_process_pairing_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST, 
