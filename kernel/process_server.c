@@ -1122,8 +1122,8 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
         }
     }
 
-    // seed down in memory
-    // // This stretches sz, and the paddr and vaddr's
+    // seek down in memory
+    // This stretches sz, and the paddr and vaddr's
     vaddr_curr = vaddr;
     paddr_curr = paddr_start; 
     vaddr_next = vaddr_curr;
@@ -1139,7 +1139,7 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
             break;
         }
 
-        if(paddr_next == paddr_curr - PAGE_SIZE) {
+        if(paddr_next == (paddr_curr - PAGE_SIZE)) {
             vaddr_curr = vaddr_next;
             paddr_curr = paddr_next;
             sz += PAGE_SIZE;
@@ -2507,9 +2507,6 @@ retry:
                 (address & PAGE_MASK) + PAGE_SIZE, &walk);
 
         if(vma && resolved != 0) {
-            unsigned long vaddr_mapping_boundary_start;
-            unsigned long paddr_mapping_boundary_start;
-            size_t paddr_mapping_boundary_sz;
 
             PSPRINTK("mapping found! %lx for vaddr %lx\n",resolved,
                     address & PAGE_MASK);
@@ -3257,12 +3254,12 @@ exit:
  */
 static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     mapping_response_t* msg = (mapping_response_t*)inc_msg;
-    mapping_request_data_t* data;
-    int do_data_free_here = 0;
+    mapping_request_data_t* data = NULL;
     unsigned long lockflags, lockflags2;
-    int data_paddr_present;
-    int response_paddr_present;
-    int i;
+    unsigned char data_paddr_present = 0;
+    unsigned char response_paddr_present = 0;
+    unsigned char fault_mapping_found = 0;
+    int i = 0;
 
     PSPRINTK("%s: entered\n",__func__);
 
@@ -3322,9 +3319,12 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
             }
         } 
 
-        // figure out of the response has a paddr in it
+        // figure out of the response has a paddr in it that is
+        // relevant to this specific fault address
         for(i = 0; i < MAX_MAPPINGS; i++) {
-            if(msg->mappings[i].present) {
+            if(msg->mappings[i].present &&
+               msg->mappings[i].vaddr <= data->address &&
+               msg->mappings[i].vaddr + msg->mappings[i].sz > data->address) {
                 PSPRINTK("%s: response paddr present\n",__func__);
                 response_paddr_present = 1;
                 break;
@@ -3380,15 +3380,17 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         data->prot = msg->prot;
         data->vm_flags = msg->vm_flags;
         data->present = 1;
-        for(i = 0; i < MAX_MAPPINGS; i++) {
-            if(data->mappings[i].present) {
-                PSPRINTK("%s: Found valid mapping in slot %d\n",__func__,i);
-                data->complete = 1;
+        if(response_paddr_present) {
+            for(i = 0; i < MAX_MAPPINGS; i++) {
+                if(msg->mappings[i].present) {
+                    PSPRINTK("%s: Found valid mapping in slot %d\n",__func__,i);
+                    data->complete = 1;
+                }
+                data->mappings[i].vaddr  = msg->mappings[i].vaddr;
+                data->mappings[i].paddr  = msg->mappings[i].paddr;
+                data->mappings[i].sz     = msg->mappings[i].sz;
+                data->mappings[i].present = msg->mappings[i].present;
             }
-            data->mappings[i].vaddr  = msg->mappings[i].vaddr;
-            data->mappings[i].paddr  = msg->mappings[i].paddr;
-            data->mappings[i].sz     = msg->mappings[i].sz;
-            data->mappings[i].present = msg->mappings[i].present;
         }
         strcpy(data->path,msg->path);
         data->pgoff = msg->pgoff;
