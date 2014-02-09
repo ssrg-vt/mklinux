@@ -2526,11 +2526,24 @@ retry:
                 break_cow(mm, vma, cow_addr);
             }
             // Now grab all the mappings that we can stuff into the response.
-            fill_physical_mapping_array(mm, 
-                    vma,
-                    address,
-                    &response.mappings, 
-                    MAX_MAPPINGS);
+            if(0 != fill_physical_mapping_array(mm, 
+                                                vma,
+                                                address,
+                                                &response.mappings, 
+                                                MAX_MAPPINGS)) {
+                // If the fill process fails, clear out all
+                // results.  Otherwise, we might trick the
+                // receiving cpu into thinking the target
+                // mapping was found when it was not.
+                for(i = 0; i < MAX_MAPPINGS; i++) {
+                    response.mappings[i].present = 0;
+                    response.mappings[i].vaddr = 0;
+                    response.mappings[i].paddr = 0;
+                    response.mappings[i].sz = 0;
+                }
+                    
+            }
+
             }
 
             response.header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
