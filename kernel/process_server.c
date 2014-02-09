@@ -1285,6 +1285,10 @@ int fill_physical_mapping_array(struct mm_struct* mm,
         } else {
             PSPRINTK("%s: up search ended in failure, resuming down search\n",
                     __func__);
+            mappings[i].present = 0;
+            mappings[i].vaddr = 0;
+            mappings[i].paddr = 0;
+            mappings[i].sz = 0;
             break;
         }
     }
@@ -1303,6 +1307,44 @@ int fill_physical_mapping_array(struct mm_struct* mm,
                 PSPRINTK("%s: supplying a mapping in slot %d\n",__func__,i);
                 mappings[i].present = 1;
                 next_vaddr = mappings[i].vaddr - PAGE_SIZE;
+            } else {
+                mappings[i].present = 0;
+                mappings[i].vaddr = 0;
+                mappings[i].paddr = 0;
+                mappings[i].sz = 0;
+                break;
+            }
+        }
+    }
+
+    // Trim any entries that extend beyond the boundaries of the vma
+    for(i = 0; i < MAX_MAPPINGS; i++) {
+        if(mappings[i].present) {
+            if(mappings[i].vaddr < vma->vm_start) {
+                unsigned long sz_diff = vma->vm_start - mappings[i].vaddr;
+                if(mappings[i].sz > sz_diff) {
+                    mappings[i].sz -= sz_diff;
+                    mappings[i].vaddr = vma->vm_start;
+                } else {
+                    mappings[i].present = 0;
+                    mappings[i].vaddr = 0;
+                    mappings[i].paddr = 0;
+                    mappings[i].sz = 0;
+                }
+            }
+
+            if(mappings[i].vaddr + mappings[i].sz >= vma->vm_end) {
+                unsigned long sz_diff = mappings[i].vaddr + 
+                                        mappings[i].sz - 
+                                        vma->vm_end;
+                if(mappings[i].sz > sz_diff) {
+                    mappings[i].sz -= sz_diff;
+                } else {
+                    mappings[i].present = 0;
+                    mappings[i].vaddr = 0;
+                    mappings[i].paddr = 0;
+                    mappings[i].sz = 0;
+                }
             }
         }
     }
@@ -3319,7 +3361,31 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
             }
         } 
 
-        // figure out of the response has a paddr in it that is
+        // Sanitize data in mappings in cases where they are not marked as present
+        for(i = 0; i < MAX_MAPPINGS; i++) {
+            if(!msg->mappings[i].present) {
+                msg->mappings[i].vaddr = 0;
+                msg->mappings[i].paddr = 0;
+                msg->mappings[i].sz = 0;
+            }
+        }
+
+        // Santize data in mappings in cases where they exceed the vma boundaries
+        for(i = 0; i < MAX_MAPPINGS; i++) {
+            unsigned long vaddr_start = msg->vaddr_start;
+            unsigned long vaddr_end   = msg->vaddr_start + msg->vaddr_size;
+            if(msg->mappings[i].present) {
+                if(msg->mappings[i].vaddr < vaddr_start ||
+                   msg->mappings[i].vaddr + msg->mappings[i].sz > vaddr_end) {
+                    msg->mappings[i].present = 0;
+                    msg->mappings[i].vaddr = 0;
+                    msg->mappings[i].paddr = 0;
+                    msg->mappings[i].sz = 0;
+                }
+            }
+        }
+
+        // figure out if the response has a paddr in it that is
         // relevant to this specific fault address
         for(i = 0; i < MAX_MAPPINGS; i++) {
             if(msg->mappings[i].present &&
@@ -3328,7 +3394,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
                 PSPRINTK("%s: response paddr present\n",__func__);
                 response_paddr_present = 1;
                 break;
-            }
+            } 
         }
 
         if(!data_paddr_present) {
@@ -3357,15 +3423,6 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
         //
         // Also, prefer responses that provide values for paddr.
         if(data->present == 1) {
-
-            // another cpu already responded.
-            /*if(!data->from_saved_mm && msg->from_saved_mm
-                    // but we need to add an exception in case a physical address
-                    // is mapped into the saved mm, but not in the unsaved mm...
-                    && !(response_paddr_present && !data_paddr_present)) {
-                PSPRINTK("%s: prevented mapping resolver from importing stale mapping\n",__func__);
-                goto out;
-            }*/
 
             // Ensure that we keep physical mappings around.
             if(data_paddr_present && !response_paddr_present) {
