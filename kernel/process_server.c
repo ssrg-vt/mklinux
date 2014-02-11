@@ -37,11 +37,12 @@
 #include <asm/msr.h> // wrmsr_safe
 #include <asm/mmu_context.h>
 
-
+#include <linux/futex.h>
 #define  NSIG 32
 
 #include<linux/signal.h>
 #include <linux/fcntl.h>
+#include "futex_remote.h"
 
 extern sys_topen(const char __user * filename, int flags, int mode, int fd);
 /**
@@ -234,6 +235,7 @@ static DECLARE_WAIT_QUEUE_HEAD( countq);
  */
 #define RETURN_DISPOSITION_EXIT 0
 #define RETURN_DISPOSITION_MIGRATE 1
+#define RETURN_DISPOSITION_FORCE_KILL 2
 
 /**
  * Library
@@ -1859,24 +1861,28 @@ void process_tgroup_closed_item(struct work_struct* work) {
     PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("%s: received group exit notification\n",__func__);
 
-    PSPRINTK("%s: waiting for all members of this distributed thread group to finish\n",__func__);
+   // printk("%s: waiting for all members of this distributed thread group to finish\n",__func__);
     while(!tgroup_closed) {
         pass = 0;
         do_each_thread(g,task) {
             if(task->tgroup_home_cpu == w->tgroup_home_cpu &&
                task->tgroup_home_id  == w->tgroup_home_id) {
-                
+          //      printk("task {%d} comm{%s} homeid{%d} ",task->pid,task->comm,task->tgroup_home_id);
                 // there are still living tasks within this distributed thread group
                 // wait a bit
+	//	exit_robust_list(task);
                 schedule();
-                pass = 1;
+                if(task->return_disposition==RETURN_DISPOSITION_FORCE_KILL)
+                	pass = 0;
+                else
+                	pass = 1;
             }
 
         } while_each_thread(g,task);
         if(!pass) {
             tgroup_closed = 1;
         } else {
-            PSPRINTK("%s: waiting for tgroup close out\n",__func__);
+        //    printk("%s: waiting for tgroup close out\n",__func__);
         }
     }
 
@@ -5195,7 +5201,8 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 void process_server_do_return_disposition(void) {
 
     PSPRINTK("%s\n",__func__);
-
+    printk(KERN_ALERT"%s pid {%d} disp{%d} \n",__func__,current->pid,current->return_disposition);
+   // del_futex(current);
     switch(current->return_disposition) {
     case RETURN_DISPOSITION_MIGRATE:
         // Nothing to do, already back-imported the
@@ -5204,6 +5211,7 @@ void process_server_do_return_disposition(void) {
         // here.
         PSPRINTK("%s: return disposition migrate\n",__func__);
         break;
+    case RETURN_DISPOSITION_FORCE_KILL:
     case RETURN_DISPOSITION_EXIT:
         PSPRINTK("%s: return disposition exit\n",__func__);
     default:

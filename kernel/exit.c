@@ -59,6 +59,8 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#include "futex_remote.h"
+
 static void exit_mm(struct task_struct * tsk);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
@@ -890,6 +892,49 @@ static void check_stack_usage(void)
 static inline void check_stack_usage(void) {}
 #endif
 
+
+/*
+static int latest_pid=0;
+
+void del_futex(struct task_struct *tsk) {
+struct futex_q **queue = NULL;
+int cnt = 0;
+
+if (queue = query_q_pid(tsk, 1)) {
+	while (cnt < 10) {
+		if (queue[cnt]) {
+			if (queue[cnt]->rem_pid == -1)
+				wake_futex(queue);
+			else {
+				if(tsk && latest_pid !=queue[cnt]->rem_pid){
+				printk(KERN_ALERT " del_futex: calling global futex wake uaddr{%lx} rem_id{%d} latest_pid{%d} \n",queue[cnt]->key.both.offset+queue[cnt]->key.private.address,queue[cnt]->rem_pid,latest_pid);
+				remote_futex_wakeup(
+						queue[cnt]->key.both.offset
+								+ queue[cnt]->key.private.address, FLAGS_SHARED,
+						1, 1, &queue[cnt]->key, queue[cnt]->rem_pid);
+
+				latest_pid = queue[cnt]->rem_pid ;
+				queue[cnt]->rem_pid = NULL;
+				if (queue[cnt]->lock_ptr != NULL
+						&& spin_is_locked(queue[cnt]->lock_ptr)) {
+					printk(KERN_ALERT"Unlocking spinlock \n");
+					spin_unlock(&queue[cnt]->lock_ptr);
+				}
+				__unqueue_futex(queue[cnt]);
+				smp_wmb();
+				queue[cnt]->lock_ptr = NULL;
+				}
+			}
+		} else
+			break;
+
+		//printk(KERN_ALERT " del_futex: latest{%d} rem{%d} ",latest_pid,queue[cnt]->rem_pid);
+		cnt++;
+	}
+}
+kfree(queue);
+}*/
+
 NORET_TYPE void do_exit(long code)
 {
 	struct task_struct *tsk = current;
@@ -946,6 +991,10 @@ NORET_TYPE void do_exit(long code)
     /*
      * Multikernel
      */
+	if(tsk->tgroup_distributed==1 && tsk->pid == tsk->tgid)
+	{
+		query_q_and_wake(tsk,1);
+	}
     process_server_do_exit();
 
 

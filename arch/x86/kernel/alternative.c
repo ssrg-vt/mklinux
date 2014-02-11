@@ -43,7 +43,7 @@ static int __init debug_alt(char *str)
 }
 __setup("debug-alternative", debug_alt);
 
-static int noreplace_smp;
+static int noreplace_smp=1;
 
 static int __init setup_noreplace_smp(char *str)
 {
@@ -432,7 +432,10 @@ void alternatives_smp_switch(int smp)
 #endif
 
 	if (noreplace_smp || smp_alt_once || skip_smp_alternatives)
-		return;
+	{
+		printk(KERN_ALERT "SMP alternative: disabled for Popcorn\n");
+			return;
+	}
 	BUG_ON(!smp && (num_online_cpus() > 1));
 
 	mutex_lock(&smp_alt);

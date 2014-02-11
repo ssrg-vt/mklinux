@@ -13,6 +13,7 @@
 #define _FUTEX_HASHBITS (CONFIG_BASE_SMALL ? 4 : 8)
 
 #define FLAGS_SHARED		0x01
+#define FLAGS_DESTROY		0x100
 
 
 /*
@@ -85,12 +86,18 @@ struct futex_hash_bucket {
 	struct plist_head chain;
 };
 
+int query_q_and_wake(struct task_struct *t,int kernel);
+struct futex_q ** query_q_pid(struct task_struct *t,int kernel);
+struct futex_q * query_q(struct task_struct *t);
+
+
+
 int
 get_futex_key_remote(u32 __user *uaddr, int fshared, union futex_key *key, int rw);
 int
-get_set_remote_key(unsigned long uaddr, unsigned int val, int fshared, union futex_key *key, int rw);
-struct futex_q * query_q(struct task_struct *t);
-int remote_futex_wakeup(unsigned long uaddr,unsigned int flags, int nr_wake, u32 bitset,union futex_key *key ,int rflag );
+get_set_remote_key(u32 __user *uaddr, unsigned int val, int fshared, union futex_key *key, int rw);
+
+int remote_futex_wakeup(u32 __user *uaddr,unsigned int flags, int nr_wake, u32 bitset,union futex_key *key ,int rflag );
 
 extern struct futex_hash_bucket futex_queues[1<<_FUTEX_HASHBITS];
 
@@ -108,24 +115,42 @@ get_futex_key(u32 __user *uaddr, int fshared, union futex_key *key, int rw);
 extern int match_futex(union futex_key *key1, union futex_key *key2);
 extern void wake_futex(struct futex_q *q);
 extern void put_futex_key(union futex_key *key);
+extern void __unqueue_futex(struct futex_q *q);
 
 
-
+/*
 struct _global_futex_key {
 	unsigned int address;
 	int pid[10];
 	struct list_head list_member;
 };
 
-typedef struct _global_futex_key _global_futex_key_t;
-_global_futex_key_t * add_key(int pid,int address, struct list_head *head) ;
+//typedef struct _global_futex_key _global_futex_key_t;
+struct kernel_robust_list_head * add_key(int pid,int address, struct list_head *head) ;
 
 _global_futex_key_t * find_key(int address, struct list_head *head);
-int find_and_delete_key(int address, struct list_head *head) ;
+int find_and_delete_key(int address, struct list_head *head) ;*/
 
 int get_futex_value_locked(u32 *dest, u32 __user *from);
 
 extern struct list_head fq_head;
+
+
+
+
+struct kernel_robust_list {
+	struct kernel_robust_list *next;
+};
+
+struct kernel_robust_list_head {
+
+	struct kernel_robust_list list;
+
+	long futex_offset;
+
+	struct kernel_robust_list  *list_op_pending;
+};
+
 
 
 #endif /* FUTEX_REMOTE_H_ */
