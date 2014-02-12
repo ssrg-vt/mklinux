@@ -31,7 +31,7 @@
 
 #define FUTEX_REMOTE_VERBOSE 0
 #if FUTEX_REMOTE_VERBOSE
-#define FRPRINTK(...) FRPRINTK(__VA_ARGS__)
+#define FRPRINTK(...) printk(__VA_ARGS__)
 #else
 #define FRPRINTK(...) ;
 #endif
@@ -322,7 +322,7 @@ int del_futex(struct futex_q * queue) {
 	else {
 		if (latest_pid != queue->rem_pid) {
 			flags=~FLAGS_SHARED | ~FLAGS_DESTROY;
-			FRPRINTK(KERN_ALERT " del_futex: calling global futex wake uaddr{%lx} rem_id{%d} latest_pid{%d} flag{%u}\n",queue->key.both.offset+queue->key.private.address,queue->rem_pid,latest_pid,flags);
+			printk(KERN_ALERT " del_futex: calling global futex wake uaddr{%lx} rem_id{%d} latest_pid{%d} flag{%u}\n",queue->key.both.offset+queue->key.private.address,queue->rem_pid,latest_pid,flags);
 			ret=remote_futex_wakeup(queue->key.both.offset + queue->key.private.address,
 				flags, 1, 1, &queue->key, queue->rem_pid);
 
@@ -628,7 +628,7 @@ int remote_futex_wakeup(u32 __user  *uaddr,unsigned int flags, int nr_wake, u32 
 	get_user(nw,uaddr+10);
 	get_user(bs,uaddr+11);}
 */
-	FRPRINTK(KERN_ALERT" remote_futex_wakeup pfn {%lx} shift {%lx} pid{%d} origin_pid{%d} cpu{%d} rflag{%d} uaddr{%lx} vma start (%lx} vma end (%lx} get_user{%d}\n ",
+	printk(KERN_ALERT" remote_futex_wakeup pfn {%lx} shift {%lx} pid{%d} origin_pid{%d} cpu{%d} rflag{%d} uaddr{%lx} vma start (%lx} vma end (%lx} get_user{%d}\n ",
 								vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,current->pid,current->origin_pid,smp_processor_id(),rflag,uaddr,vma->vm_start, vma->vm_end,x);
 
 //	dump_regs(task_pt_regs(current));
@@ -900,7 +900,7 @@ get_set_remote_key(u32 __user *uaddr, unsigned int val, int fshared, union futex
 		request->val =val;
 		request->tghid = current->tgroup_home_id;
 
-		FRPRINTK(KERN_ALERT" pfn {%lx} shift {%lx} vm_start {%lx} vm_end {%lx}\n ",vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,vma->vm_start,vma->vm_end);
+		printk(KERN_ALERT" pfn {%lx} shift {%lx} vm_start {%lx} vm_end {%lx}\n ",vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,vma->vm_start,vma->vm_end);
 
 /*
 		if((cpu=find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head)) != -1)//vma->vm_pgoff << PAGE_SHIFT

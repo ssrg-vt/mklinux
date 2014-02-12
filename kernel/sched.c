@@ -4429,6 +4429,8 @@ need_resched:
 	switch_count = &prev->nivcsw;
 	if (prev->state && !(preempt_count() & PREEMPT_ACTIVE)) {
 		if (unlikely(signal_pending_state(prev->state, prev))) {
+			if(prev->tgroup_distributed)
+				printk(KERN_ALERT" unlilikely signal pending state \n");
 			prev->state = TASK_RUNNING;
 		} else {
 			deactivate_task(rq, prev, DEQUEUE_SLEEP);
@@ -4448,6 +4450,11 @@ need_resched:
 			}
 		}
 		switch_count = &prev->nvcsw;
+	}
+	else
+	{
+		/*if(prev->tgroup_distributed)
+						printk(KERN_ALERT" state is running\n");*/
 	}
 
 	pre_schedule(rq, prev);
@@ -5560,7 +5567,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	struct task_struct *p;
 	int retval;
     int current_cpu = smp_processor_id();
-    int i;
+    int i,ret;
 
 	get_online_cpus();
 	rcu_read_lock();
@@ -5596,10 +5603,10 @@ if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
             // do the migration
             get_task_struct(p);
             rcu_read_unlock();
-            process_server_do_migration(p,i);
+            ret =process_server_do_migration(p,i);
             put_task_struct(p);
             put_online_cpus();
-
+            printk(KERN_ALERT"sched_setaffinity tsk{%p} state{%d} on run q{%d} RET{%d} current{%s} \n",p,p->state,p->on_rq,ret,current->comm);
             schedule(); // this will save us from death
 
             // We are here because of either the task is exiting,

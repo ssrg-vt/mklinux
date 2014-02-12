@@ -1872,8 +1872,10 @@ void process_tgroup_closed_item(struct work_struct* work) {
                 // wait a bit
 	//	exit_robust_list(task);
                 schedule();
-                if(task->return_disposition==RETURN_DISPOSITION_FORCE_KILL)
+                if(task->return_disposition==RETURN_DISPOSITION_FORCE_KILL){
                 	pass = 0;
+                	printk("task {%d} comm{%s} pass{%d} ",task->pid,task->comm,pass);
+                }
                 else
                 	pass = 1;
             }
@@ -4876,7 +4878,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     deconstruction_data_t decon_data;
     int perf = -1;
 
-    PSPRINTK("process_server_do_migration\n");
+    PSPRINTK("process_server_do_migration tsk{%p}\n",task);
     dump_regs(regs);
 
     // Nothing to do if we're migrating to the current cpu
@@ -4889,7 +4891,9 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     // This will be a placeholder process for the remote
     // process that is subsequently going to be started.
     // Block its execution.
-    __set_task_state(task,TASK_INTERRUPTIBLE); //mklinux_akshay modified to interruptible state
+
+   // set_task_state(task,TASK_UNINTERRUPTIBLE); //mklinux_akshay modified to interruptible state
+
 
     int sig;
     struct task_struct *t=current;
@@ -5046,7 +5050,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     for(cnt=0;cnt<_NSIG;cnt++)
     	request->action[cnt] = task->sighand->action[cnt];
 
-    printk(KERN_ALERT "origin pid {%d}- tgid{%d} \n",request->origin_pid,task->tgid);
+    printk(KERN_ALERT " pid {%d}- tgid{%d} -state{%d}tsk{%p}\n",request->origin_pid,task->tgid,task->state,task);
 // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h
@@ -5114,6 +5118,8 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
 
     //dump_task(task,regs,request->stack_ptr);
     
+   set_task_state(task,TASK_INTERRUPTIBLE);
+
     PERF_MEASURE_STOP(&perf_process_server_do_migration," ",perf);
 
     return PROCESS_SERVER_CLONE_SUCCESS;
@@ -5202,6 +5208,33 @@ void process_server_do_return_disposition(void) {
 
     PSPRINTK("%s\n",__func__);
     printk(KERN_ALERT"%s pid {%d} disp{%d} \n",__func__,current->pid,current->return_disposition);
+    printk(KERN_ALERT"POP: remote : Migrated task struct signal details pid{%d} state{%d} \n",current->pid,current->state);
+
+                       	   	 int sig, cnt;
+                       	   	 printk(KERN_ALERT"POP: blocked signals\n");
+                       	   	    cnt = 0;
+                       	   	    for (sig = 1; sig < NSIG; sig++) {
+                       	   	        if (sigismember(&current->blocked, sig)) {
+                       	   	        	printk(KERN_ALERT"POP: %d \n", sig);
+                       	   	        }
+                       	   	    }
+                       	   	    printk(KERN_ALERT"POP: real blocked signals\n");
+                       	   	   	    cnt = 0;
+                       	   	   	    for (sig = 1; sig < NSIG; sig++) {
+                       	   	   	        if (sigismember(&current->real_blocked, sig)) {
+                       	   	   	        	printk(KERN_ALERT"POP: %d \n", sig);
+                       	   	   	        }
+                       	   	   	    }
+
+                       	   	   	printk(KERN_ALERT"POP: pending signals\n");
+                       	   	   	 	   	    for (sig = 1; sig < NSIG; sig++) {
+                       	   	   	 	   	        if (sigismember(&current->pending.signal, sig)) {
+                       	   	   	 	   	        	printk("POP: %d \n", sig);
+                       	   	   	 	   	        }
+                       	   	   	 	   	    }
+                       	   		printk(KERN_ALERT"POP: represents_remote:%d, executing_for_remote:%d,next_pid:%d\n",current->represents_remote,current-> executing_for_remote,current->next_pid);
+                       	   		printk(KERN_ALERT"POP: prev_pid:%d, prev_cpu:%d,next_cpu:%d,tgroup_home_cpu:%d\n",current->prev_pid,current->prev_cpu,current->next_cpu,current->tgroup_home_cpu);
+
    // del_futex(current);
     switch(current->return_disposition) {
     case RETURN_DISPOSITION_MIGRATE:
