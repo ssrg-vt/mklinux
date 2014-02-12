@@ -1074,6 +1074,11 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	if (error)
 		return error;
 
+    /*
+     * Multikernel do_mmap_pgoff hook
+     */
+    process_server_do_mmap_pgoff(file, addr, len, flags, vm_flags, pgoff);
+
 	return mmap_region(file, addr, len, flags, vm_flags, pgoff);
 }
 EXPORT_SYMBOL(do_mmap_pgoff);

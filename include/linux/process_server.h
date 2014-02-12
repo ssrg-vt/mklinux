@@ -26,6 +26,7 @@ void process_server_do_return_disposition(void);
 int process_server_import_address_space(unsigned long* ip, unsigned long *sp, struct pt_regs* regs);
 int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu);
 int process_server_do_exit(void);
+int process_server_do_group_exit(void);
 int process_server_notify_mmap(struct file *file, unsigned long addr,
                                 unsigned long len, unsigned long prot,
                                 unsigned long flags, unsigned long pgoff);
@@ -43,4 +44,7 @@ void process_server_do_mprotect(struct task_struct* task,
                                 size_t len,
                                 unsigned long prot);
 int process_server_dup_task(struct task_struct* orig, struct task_struct* task);
+unsigned long process_server_do_mmap_pgoff(struct file *file, unsigned long addr,
+                                           unsigned long len, unsigned long prot,
+                                           unsigned long flags, unsigned long pgoff);
 #endif // _PROCESS_SERVER_H
