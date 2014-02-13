@@ -1788,7 +1788,6 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pi
     data_header_t* curr = NULL;
     mapping_request_data_t* request = NULL;
     mapping_request_data_t* ret = NULL;
-    unsigned long lockflags;
     
     curr = _mapping_request_data_head;
     while(curr) {
@@ -2509,7 +2508,7 @@ task_mm_search_exit:
             
             if((mm_data->tgroup_home_cpu == w->tgroup_home_cpu) &&
                (mm_data->tgroup_home_id  == w->tgroup_home_id)) {
-                //PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
+                PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
                 mm = mm_data->mm;
                 used_saved_mm = 1;
                 break;
@@ -2521,7 +2520,7 @@ task_mm_search_exit:
 
         PS_SPIN_UNLOCK(&_saved_mm_head_lock);
     }
-
+    
     // OK, if mm was found, look up the mapping.
     if(mm) {
         PS_DOWN_WRITE(&mm->mmap_sem);
@@ -3254,7 +3253,7 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
                                      msg->address);
 
     if(data == NULL) {
-        printk("%s: ERROR null mapping request data\n",__func__);
+        //printk("%s: ERROR null mapping request data\n",__func__);
         goto exit;
     }
 
@@ -5062,16 +5061,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         schedule();
     }
     
-
-    // All cpus have now responded.
-    // TODO Do another query here to check to see if we need
-    //      to retry.  If another cpu has completed a mapping
-    //      simultaneous with this mapping, we need to catch
-    //      that.  Not implementing right now because if performance
-    //      concerns.
-    // Upon fail,
-    // goto retry;
-
     // Handle successful response.
     if(data->present) {
         PSPRINTK("Mapping communicated: vaddr_start{%lx},prot{%lx},vm_flags{%lx},path{%s},pgoff{%lx}\n",
@@ -5096,7 +5085,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
                 is_anonymous = 1;
-                //PS_DOWN_WRITE(&current->mm->mmap_sem);
                 current->enable_distributed_munmap = 0;
                 current->enable_do_mmap_pgoff_hook = 0;
                 // mmap parts that are missing, while leaving the existing
@@ -5111,7 +5099,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         0);
                 current->enable_distributed_munmap = 1;
                 current->enable_do_mmap_pgoff_hook = 1;
-                //PS_UP_WRITE(&current->mm->mmap_sem);
             } else {
                 PSPRINTK("opening file to map\n");
                 is_anonymous = 0;
@@ -5132,7 +5119,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
-                    //PS_DOWN_WRITE(&current->mm->mmap_sem);
                     current->enable_distributed_munmap = 0;
                     current->enable_do_mmap_pgoff_hook = 0;
                     // mmap parts that are missing, while leaving the existing
@@ -5148,7 +5134,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->pgoff << PAGE_SHIFT);
                     current->enable_distributed_munmap = 1;
                     current->enable_do_mmap_pgoff_hook = 1;
-                    //PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                 }
             }
@@ -5191,7 +5176,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 if(data->mappings[i].present) {
                     int tmp_err;
-                    //PS_DOWN_WRITE(&current->mm->mmap_sem);
                     tmp_err = remap_pfn_range_remaining(current->mm,
                                                        vma,
                                                        data->mappings[i].vaddr,
@@ -5199,25 +5183,11 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                                                        data->mappings[i].sz,
                                                        vm_get_page_prot(vma->vm_flags),
                                                        1);
-                    //PS_UP_WRITE(&current->mm->mmap_sem);
                     
                     if(tmp_err) remap_pfn_range_err = tmp_err;
-                    //else {
-                    //    if(vma->vm_flags & VM_WRITE) {
-                    //        mk_page_writable(mm, vma, data->mappings[i].vaddr);
-                    //    }
-                    //}
                 }
             }
 
-            // If this VMA specifies VM_WRITE, make the mapping writable.
-            // This function does not check the flag.  This is safe
-            // since COW mappings should be broken by the time this
-            // code is invoked.
-            //if(vma->vm_flags & VM_WRITE) {
-            //     mk_page_writable(mm, vma, address & PAGE_SIZE);
-            //}
-            
             // Check remap_pfn_range success
             if(remap_pfn_range_err) {
                 PSPRINTK("ERROR: Failed to remap_pfn_range %d\n",err);
@@ -5371,7 +5341,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     // of which cpu and thread group the new thread is a part of.
     if(orig->executing_for_remote == 1 || orig->tgroup_home_cpu != _cpu) {
         task->tgroup_home_cpu = orig->tgroup_home_cpu;
-        task->tgroup_home_id = orig->tgroup_home_cpu;
+        task->tgroup_home_id = orig->tgroup_home_id;
         task->tgroup_distributed = 1;
     } else {
         task->tgroup_home_cpu = _cpu;
