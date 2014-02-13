@@ -41,7 +41,7 @@
  * General purpose configuration
  */
 #define COPY_WHOLE_VM_WITH_MIGRATION 0
-#define MIGRATE_EXECUTABLE_PAGES_ON_DEMAND 0
+#define MIGRATE_EXECUTABLE_PAGES_ON_DEMAND 1
 
 /**
  * Use the preprocessor to turn off printk.
