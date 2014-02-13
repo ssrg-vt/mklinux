@@ -41,6 +41,7 @@
  * General purpose configuration
  */
 #define COPY_WHOLE_VM_WITH_MIGRATION 0
+#define MIGRATE_EXECUTABLE_PAGES_ON_DEMAND 0
 
 /**
  * Use the preprocessor to turn off printk.
@@ -4327,33 +4328,12 @@ int process_server_import_address_space(unsigned long* ip,
     regs->ax = 0; // Fake success for the "sched_setaffinity" syscall
                   // that this process just "returned from"
 
-/*    printk("%s: usermodehelper prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
-__func__,
-    		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
-		current->policy, rt_prio (current->prio));
-  */  
     current->prio = clone_data->prio;
     current->static_prio = clone_data->static_prio;
     current->normal_prio = clone_data->normal_prio;
     current->rt_priority = clone_data->rt_priority;
     current->policy = clone_data->sched_class;
-/*    switch (clone_data->sched_class) {
-    case SCHED_RR:
-    case SCHED_FIFO:
-    	current->sched_class = &rt_sched_class;
-    	break;
-    case SCHED_NORMAL:
-    	current->sched_class = &fair_sched_class;
-    	break;
-    case SCHED_IDLE:
-    	current->sched_class = &idle_sched_class;
-    	break;
-    }
-*/  /*  printk("%s: clone_data prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
-__func__,
-    		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
-		current->policy, rt_prio (current->prio));
-*/
+
     // We assume that an exec is going on
     // and the current process is the one is executing
     // (a switch will occur if it is not the one that must execute)
@@ -4946,8 +4926,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         PSPRINTK("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
                 address,current->tgroup_home_cpu,current->tgroup_home_id);
 
-        //dump_regs(task_pt_regs(current)); 
-
         // should this thing be writable?  if so, set it and exit
         // This is a security hole, and is VERY bad.
         // It will also probably cause problems for genuine COW mappings..
@@ -4957,12 +4935,28 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             mk_page_writable(mm,vma,address & PAGE_MASK);
             adjusted_permissions = 1;
             ret = 1;
-        } else {
-            //dump_mm(mm);
-        }
+        } 
 
         goto not_handled;
     }
+
+    // Is this an optimization?  Will it work?
+    // The idea is to not bother pulling in physical pages
+    // for mappings that are executable and file backed, since
+    // those pages will never change.  Might as well map
+    // them locally.
+#if !(MIGRATE_EXECUTABLE_PAGES_ON_DEMAND)
+    if(vma && 
+            (vma->vm_start <= address) &&
+            (vma->vm_end > address) &&
+            (vma->vm_flags & VM_EXEC) && 
+            vma->vm_file) {
+        ret = 0;
+        PSPRINTK("Skipping distributed mapping pull because page is executable\n");
+
+        goto not_handled;
+    }
+#endif
     
     if(vma) {
         if(vma->vm_file) {
@@ -4977,7 +4971,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
     // The vma that's passed in might not always be correct.  find_vma fails by returning the wrong
     // vma when the vma is not present.  How ugly...
-    if(vma && (vma->vm_start >= address || vma->vm_end <= address)) {
+    if(vma && (vma->vm_start > address || vma->vm_end <= address)) {
         started_outside_vma = 1;
         PSPRINTK("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
         vma = NULL;
