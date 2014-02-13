@@ -36,6 +36,7 @@
 #include <asm/proto.h> // do_arch_prctl
 #include <asm/msr.h> // wrmsr_safe
 #include <asm/mmu_context.h>
+#include <asm/processor.h> // load_cr3
 
 /**
  * General purpose configuration
@@ -3995,7 +3996,7 @@ int process_server_import_address_space(unsigned long* ip,
     
     PSPRINTK("import address space\n");
     
-    // Verify that we're a delegated task.
+    // Verify that we're a delegated task // deadlock.
     if (!current->executing_for_remote) {
         PSPRINTK("ERROR - not executing for remote\n");
         return -1;
@@ -4157,7 +4158,6 @@ int process_server_import_address_space(unsigned long* ip,
                         pgd_t* remap_pgd = NULL;
 
                         PS_DOWN_WRITE(&current->mm->mmap_sem);
-                        //PS_SPIN_LOCK(&_remap_lock);
                         remap_pgd = pgd_offset(current->mm, pte_curr->vaddr);
                         if(pgd_present(*remap_pgd)) {
                             remap_pud = pud_offset(remap_pgd,pte_curr->vaddr); 
@@ -4182,7 +4182,6 @@ int process_server_import_address_space(unsigned long* ip,
                         }
                         ptes_installed++;
                         PS_UP_WRITE(&current->mm->mmap_sem);
-                        //PS_SPIN_UNLOCK(&_remap_lock);
                         
                         pte_curr = (pte_data_t*)pte_curr->header.next;
                     }
@@ -4193,27 +4192,34 @@ int process_server_import_address_space(unsigned long* ip,
         }
 #endif
     } else {
-        struct mm_struct* oldmm;
-        // use_existing_mm.  Flush cache, to ensure
-        // that the current processes cache entries
-        // are never used.  Then, take ownership of
-        // the mm.
-        oldmm = current->mm;
-        if(oldmm == thread_mm) {
+        struct mm_struct* oldmm = current->mm;
+        
+        PS_DOWN_WRITE(&thread_mm->mmap_sem); // deadlock was here... is it still?
+
+        // Flush the tlb and cache, removing any entries for the
+        // old memory map.
+        if(oldmm && oldmm != thread_mm) {
             PS_DOWN_WRITE(&oldmm->mmap_sem);
-        } else {
-            PS_DOWN_WRITE(&oldmm->mmap_sem);
-            PS_DOWN_WRITE(&thread_mm->mmap_sem);
+            flush_tlb_mm(oldmm);
+            flush_cache_mm(oldmm);
+            PS_UP_WRITE(&oldmm->mmap_sem);
+
+            // Update the owner for the old memory map
+            mm_update_next_owner(oldmm);
+
+            // Exit use of current memory map
+            mmput(oldmm);
         }
 
-        flush_tlb_mm(current->mm);
-        flush_cache_mm(current->mm);
-        mm_update_next_owner(current->mm);
-        mmput(current->mm);
+        // Switch the memory map for this task so we're using
+        // the memory map that was found for this distributed
+        // thread group
         current->mm = thread_mm;
         current->active_mm = current->mm;
         percpu_write(cpu_tlbstate.active_mm, thread_mm);
+        load_cr3(thread_mm->pgd);
 
+        // Do mm accounting
         if(NULL == used_saved_mm) {
             // Did not use a saved MM.  Saved MM's have artificially
             // incremented mm_users fields to keep them from being
@@ -4232,12 +4238,7 @@ int process_server_import_address_space(unsigned long* ip,
             kfree(used_saved_mm);
         }
 
-        if(oldmm == thread_mm) {
-            PS_UP_WRITE(&oldmm->mmap_sem);
-        } else {
-            PS_UP_WRITE(&oldmm->mmap_sem);
-            PS_UP_WRITE(&thread_mm->mmap_sem);
-        }
+        PS_UP_WRITE(&thread_mm->mmap_sem);
 
         // Transplant thread group information
         // if there are other thread group members
