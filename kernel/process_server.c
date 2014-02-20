@@ -36,6 +36,7 @@
 #include <asm/proto.h> // do_arch_prctl
 #include <asm/msr.h> // wrmsr_safe
 #include <asm/mmu_context.h>
+#include <asm/processor.h> // load_cr3
 
 #include <linux/futex.h>
 #define  NSIG 32
@@ -47,6 +48,7 @@
  * General purpose configuration
  */
 #define COPY_WHOLE_VM_WITH_MIGRATION 0
+#define MIGRATE_EXECUTABLE_PAGES_ON_DEMAND 1
 
 extern sys_topen(const char __user * filename, int flags, int mode, int fd);
 /**
@@ -1813,7 +1815,6 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pi
     data_header_t* curr = NULL;
     mapping_request_data_t* request = NULL;
     mapping_request_data_t* ret = NULL;
-    unsigned long lockflags;
     
     curr = _mapping_request_data_head;
     while(curr) {
@@ -2541,7 +2542,7 @@ task_mm_search_exit:
             
             if((mm_data->tgroup_home_cpu == w->tgroup_home_cpu) &&
                (mm_data->tgroup_home_id  == w->tgroup_home_id)) {
-                //PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
+                PSPRINTK("%s: Using saved mm to resolve mapping\n",__func__);
                 mm = mm_data->mm;
                 used_saved_mm = 1;
                 break;
@@ -2553,7 +2554,7 @@ task_mm_search_exit:
 
         PS_SPIN_UNLOCK(&_saved_mm_head_lock);
     }
-
+    
     // OK, if mm was found, look up the mapping.
     if(mm) {
         PS_DOWN_WRITE(&mm->mmap_sem);
@@ -3295,7 +3296,7 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
                                      msg->address);
 
     if(data == NULL) {
-        printk("%s: ERROR null mapping request data\n",__func__);
+        //printk("%s: ERROR null mapping request data\n",__func__);
         goto exit;
     }
 
@@ -4049,7 +4050,7 @@ int process_server_import_address_space(unsigned long* ip,
     
     PSPRINTK("import address space\n");
     
-    // Verify that we're a delegated task.
+    // Verify that we're a delegated task // deadlock.
     if (!current->executing_for_remote) {
         PSPRINTK("ERROR - not executing for remote\n");
         return -1;
@@ -4135,6 +4136,7 @@ int process_server_import_address_space(unsigned long* ip,
                                            NULL,
                                            &vma_out,
                                            NULL);
+
         }
 #else // Copying address space with migration
         {
@@ -4211,7 +4213,6 @@ int process_server_import_address_space(unsigned long* ip,
                         pgd_t* remap_pgd = NULL;
 
                         PS_DOWN_WRITE(&current->mm->mmap_sem);
-                        //PS_SPIN_LOCK(&_remap_lock);
                         remap_pgd = pgd_offset(current->mm, pte_curr->vaddr);
                         if(pgd_present(*remap_pgd)) {
                             remap_pud = pud_offset(remap_pgd,pte_curr->vaddr); 
@@ -4236,7 +4237,6 @@ int process_server_import_address_space(unsigned long* ip,
                         }
                         ptes_installed++;
                         PS_UP_WRITE(&current->mm->mmap_sem);
-                        //PS_SPIN_UNLOCK(&_remap_lock);
                         
                         pte_curr = (pte_data_t*)pte_curr->header.next;
                     }
@@ -4247,27 +4247,34 @@ int process_server_import_address_space(unsigned long* ip,
         }
 #endif
     } else {
-        struct mm_struct* oldmm;
-        // use_existing_mm.  Flush cache, to ensure
-        // that the current processes cache entries
-        // are never used.  Then, take ownership of
-        // the mm.
-        oldmm = current->mm;
-        if(oldmm == thread_mm) {
+        struct mm_struct* oldmm = current->mm;
+        
+        PS_DOWN_WRITE(&thread_mm->mmap_sem); // deadlock was here... is it still?
+
+        // Flush the tlb and cache, removing any entries for the
+        // old memory map.
+        if(oldmm && oldmm != thread_mm) {
             PS_DOWN_WRITE(&oldmm->mmap_sem);
-        } else {
-            PS_DOWN_WRITE(&oldmm->mmap_sem);
-            PS_DOWN_WRITE(&thread_mm->mmap_sem);
+            flush_tlb_mm(oldmm);
+            flush_cache_mm(oldmm);
+            PS_UP_WRITE(&oldmm->mmap_sem);
+
+            // Update the owner for the old memory map
+            mm_update_next_owner(oldmm);
+
+            // Exit use of current memory map
+            mmput(oldmm);
         }
 
-        flush_tlb_mm(current->mm);
-        flush_cache_mm(current->mm);
-        mm_update_next_owner(current->mm);
-        mmput(current->mm);
+        // Switch the memory map for this task so we're using
+        // the memory map that was found for this distributed
+        // thread group
         current->mm = thread_mm;
         current->active_mm = current->mm;
         percpu_write(cpu_tlbstate.active_mm, thread_mm);
+        load_cr3(thread_mm->pgd);
 
+        // Do mm accounting
         if(NULL == used_saved_mm) {
             // Did not use a saved MM.  Saved MM's have artificially
             // incremented mm_users fields to keep them from being
@@ -4286,12 +4293,7 @@ int process_server_import_address_space(unsigned long* ip,
             kfree(used_saved_mm);
         }
 
-        if(oldmm == thread_mm) {
-            PS_UP_WRITE(&oldmm->mmap_sem);
-        } else {
-            PS_UP_WRITE(&oldmm->mmap_sem);
-            PS_UP_WRITE(&thread_mm->mmap_sem);
-        }
+        PS_UP_WRITE(&thread_mm->mmap_sem);
 
         // Transplant thread group information
         // if there are other thread group members
@@ -4397,89 +4399,46 @@ int process_server_import_address_space(unsigned long* ip,
     regs->ax = 0; // Fake success for the "sched_setaffinity" syscall
                   // that this process just "returned from"
 
-/*    printk("%s: usermodehelper prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
-__func__,
-    		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
-		current->policy, rt_prio (current->prio));
-  */  
     current->prio = clone_data->prio;
     current->static_prio = clone_data->static_prio;
     current->normal_prio = clone_data->normal_prio;
     current->rt_priority = clone_data->rt_priority;
     current->policy = clone_data->sched_class;
-/*    switch (clone_data->sched_class) {
-    case SCHED_RR:
-    case SCHED_FIFO:
-    	current->sched_class = &rt_sched_class;
-    	break;
-    case SCHED_NORMAL:
-    	current->sched_class = &fair_sched_class;
-    	break;
-    case SCHED_IDLE:
-    	current->sched_class = &idle_sched_class;
-    	break;
-    }
-*/  /*  printk("%s: clone_data prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
-__func__,
-    		current->prio, current->static_prio, current->normal_prio, current->rt_priority,
-		current->policy, rt_prio (current->prio));
-*/
-    // We assume that an exec is going on
-    // and the current process is the one is executing
+
+    // We assume that an exec is going on and the current process is the one is executing
     // (a switch will occur if it is not the one that must execute)
-    {
+    { // FS/GS update --- start
     unsigned long fs, gs;
     unsigned int fsindex, gsindex;
+                    
     savesegment(fs, fsindex);
-    savesegment(gs, gsindex);
-   
-    rdmsrl(MSR_GS_BASE, gs);
-    rdmsrl(MSR_FS_BASE, fs);
-    
-    if (clone_data->thread_fs && __user_addr(clone_data->thread_fs)) { // we update only if the 
-                                                                       // address of the base fs is different 
-                                                                       // from 0 and not represent a kernel address 
-                                                                       // (we are migrating only the virtual address 
-                                                                       // space of the process)
-        current->thread.fs = clone_data->thread_fs;
-        current->thread.fsindex = clone_data->thread_fsindex;
+    if ( !(clone_data->thread_fs) || !(__user_addr(clone_data->thread_fs)) ) {
+      printk(KERN_ERR "%s: ERROR corrupted fs base address %p\n", __func__, clone_data->thread_fs);
+    }    
+    current->thread.fsindex = clone_data->thread_fsindex;
+    current->thread.fs = clone_data->thread_fs;
+    if (unlikely(fsindex | current->thread.fsindex))
+      loadsegment(fs, current->thread.fsindex);
+    else
+      loadsegment(fs, 0);
+    if (current->thread.fs)
+      checking_wrmsrl(MSR_FS_BASE, current->thread.fs);    
+                             
+    savesegment(gs, gsindex); //read the gs register in gsindex variable
+    if ( !(clone_data->thread_gs) && !(__user_addr(clone_data->thread_gs)) ) {
+      printk(KERN_ERR "%s: ERROR corrupted gs base address %p\n", __func__, clone_data->thread_gs);      
+    }
+    current->thread.gs = clone_data->thread_gs;    
+    current->thread.gsindex = clone_data->thread_gsindex;
+    if (unlikely(gsindex | current->thread.gsindex))
+      loadsegment(gs, current->thread.gsindex);
+    else
+      load_gs_index(0);
+    if (current->thread.gs)
+      checking_wrmsrl(MSR_KERNEL_GS_BASE, current->thread.gs);
+                                                   
+    } // FS/GS update --- end
 
-        if (unlikely(fsindex | current->thread.fsindex)) {
-	        loadsegment(fs, current->thread.fsindex);
-        }
-        else { 
-	        loadsegment(fs, 0);
-        }
-
-        if (current->thread.fs) {
-	        wrmsrl(MSR_FS_BASE, current->thread.fs);  
-        }
-    }
-    else { 
-        loadsegment(fs, 0);
-    }
-       
-    if (clone_data->thread_gs && __user_addr(clone_data->thread_gs)) {
-        current->thread.gs = clone_data->thread_gs;    
-        current->thread.gsindex = clone_data->thread_gsindex;
-      
-        if (unlikely(gsindex | current->thread.gsindex)) {
-	        loadsegment(gs, current->thread.gsindex);
-        }
-        else {
-	        load_gs_index(0);
-        }
-
-        if (current->thread.gs) {
-	        wrmsrl(MSR_GS_BASE, current->thread.gs);
-        }
-    }
-    else {
-        load_gs_index(0);
-    }
-    
-    }
-       
     // Save off clone data, replacing any that may
     // already exist.
     if(current->clone_data) {
@@ -5019,8 +4978,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         PSPRINTK("exiting mk fault handler because vaddr %lx is already mapped- cpu{%d}, id{%d}\n",
                 address,current->tgroup_home_cpu,current->tgroup_home_id);
 
-        //dump_regs(task_pt_regs(current)); 
-
         // should this thing be writable?  if so, set it and exit
         // This is a security hole, and is VERY bad.
         // It will also probably cause problems for genuine COW mappings..
@@ -5030,12 +4987,28 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             mk_page_writable(mm,vma,address & PAGE_MASK);
             adjusted_permissions = 1;
             ret = 1;
-        } else {
-            //dump_mm(mm);
-        }
+        } 
 
         goto not_handled;
     }
+
+    // Is this an optimization?  Will it work?
+    // The idea is to not bother pulling in physical pages
+    // for mappings that are executable and file backed, since
+    // those pages will never change.  Might as well map
+    // them locally.
+#if !(MIGRATE_EXECUTABLE_PAGES_ON_DEMAND)
+    if(vma && 
+            (vma->vm_start <= address) &&
+            (vma->vm_end > address) &&
+            (vma->vm_flags & VM_EXEC) && 
+            vma->vm_file) {
+        ret = 0;
+        PSPRINTK("Skipping distributed mapping pull because page is executable\n");
+
+        goto not_handled;
+    }
+#endif
     
     if(vma) {
         if(vma->vm_file) {
@@ -5050,7 +5023,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
     // The vma that's passed in might not always be correct.  find_vma fails by returning the wrong
     // vma when the vma is not present.  How ugly...
-    if(vma && (vma->vm_start >= address || vma->vm_end <= address)) {
+    if(vma && (vma->vm_start > address || vma->vm_end <= address)) {
         started_outside_vma = 1;
         PSPRINTK("set vma = NULL, since the vma does not hold the faulting address, for whatever reason...\n");
         vma = NULL;
@@ -5134,16 +5107,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         schedule();
     }
     
-
-    // All cpus have now responded.
-    // TODO Do another query here to check to see if we need
-    //      to retry.  If another cpu has completed a mapping
-    //      simultaneous with this mapping, we need to catch
-    //      that.  Not implementing right now because if performance
-    //      concerns.
-    // Upon fail,
-    // goto retry;
-
     // Handle successful response.
     if(data->present) {
         PSPRINTK("Mapping communicated: vaddr_start{%lx},prot{%lx},vm_flags{%lx},path{%s},pgoff{%lx}\n",
@@ -5168,7 +5131,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
                 is_anonymous = 1;
-                //PS_DOWN_WRITE(&current->mm->mmap_sem);
                 current->enable_distributed_munmap = 0;
                 current->enable_do_mmap_pgoff_hook = 0;
                 // mmap parts that are missing, while leaving the existing
@@ -5183,7 +5145,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         0);
                 current->enable_distributed_munmap = 1;
                 current->enable_do_mmap_pgoff_hook = 1;
-                //PS_UP_WRITE(&current->mm->mmap_sem);
             } else {
                 PSPRINTK("opening file to map\n");
                 is_anonymous = 0;
@@ -5204,7 +5165,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
-                    //PS_DOWN_WRITE(&current->mm->mmap_sem);
                     current->enable_distributed_munmap = 0;
                     current->enable_do_mmap_pgoff_hook = 0;
                     // mmap parts that are missing, while leaving the existing
@@ -5220,7 +5180,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->pgoff << PAGE_SHIFT);
                     current->enable_distributed_munmap = 1;
                     current->enable_do_mmap_pgoff_hook = 1;
-                    //PS_UP_WRITE(&current->mm->mmap_sem);
                     filp_close(f,NULL);
                 }
             }
@@ -5263,7 +5222,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 if(data->mappings[i].present) {
                     int tmp_err;
-                    //PS_DOWN_WRITE(&current->mm->mmap_sem);
                     tmp_err = remap_pfn_range_remaining(current->mm,
                                                        vma,
                                                        data->mappings[i].vaddr,
@@ -5271,25 +5229,11 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                                                        data->mappings[i].sz,
                                                        vm_get_page_prot(vma->vm_flags),
                                                        1);
-                    //PS_UP_WRITE(&current->mm->mmap_sem);
                     
                     if(tmp_err) remap_pfn_range_err = tmp_err;
-                    //else {
-                    //    if(vma->vm_flags & VM_WRITE) {
-                    //        mk_page_writable(mm, vma, data->mappings[i].vaddr);
-                    //    }
-                    //}
                 }
             }
 
-            // If this VMA specifies VM_WRITE, make the mapping writable.
-            // This function does not check the flag.  This is safe
-            // since COW mappings should be broken by the time this
-            // code is invoked.
-            //if(vma->vm_flags & VM_WRITE) {
-            //     mk_page_writable(mm, vma, address & PAGE_SIZE);
-            //}
-            
             // Check remap_pfn_range success
             if(remap_pfn_range_err) {
                 PSPRINTK("ERROR: Failed to remap_pfn_range %d\n",err);
@@ -5456,7 +5400,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     // of which cpu and thread group the new thread is a part of.
     if(orig->executing_for_remote == 1 || orig->tgroup_home_cpu != _cpu) {
         task->tgroup_home_cpu = orig->tgroup_home_cpu;
-        task->tgroup_home_id = orig->tgroup_home_cpu;
+        task->tgroup_home_id = orig->tgroup_home_id;
         task->tgroup_distributed = 1;
 
        // task->origin_pid = orig->origin_pid;
@@ -5705,7 +5649,6 @@ restart_break_cow_all:
 
     request->thread_sp0 = task->thread.sp0;
     request->thread_sp = task->thread.sp;
-    
     //printk("%s: usersp percpu %lx thread %lx\n", __func__, percpu_read(old_rsp), task->thread.usersp);
     // if (percpu_read(old_rsp), task->thread.usersp) set to 0 otherwise copy
     request->thread_usersp = task->thread.usersp;
@@ -5714,35 +5657,33 @@ restart_break_cow_all:
     savesegment(es, es);          
     if ((current == task) && (es != request->thread_es))
       PSPRINTK("%s: DAVEK: es %x thread %x\n", __func__, es, request->thread_es);
-      
     request->thread_ds = task->thread.ds;
     savesegment(ds, ds);
     if (ds != request->thread_ds)
       PSPRINTK("%s: DAVEK: ds %x thread %x\n", __func__, ds, request->thread_ds);
-      
+// fs register (TLS in user space)    
     request->thread_fsindex = task->thread.fsindex;
     savesegment(fs, fsindex);
     if (fsindex != request->thread_fsindex)
-      PSPRINTK("%s: DAVEK: fsindex %x thread %x\n", __func__, fsindex, request->thread_fsindex);
-      
-    request->thread_gsindex = task->thread.gsindex;
-    savesegment(gs, gsindex);
-    if (gsindex != request->thread_gsindex)
-      PSPRINTK("%s: DAVEK: gsindex %x thread %x\n", __func__, gsindex, request->thread_gsindex);
-    
+        PSPRINTK("%s: DAVEK: fsindex %x (TLS_SEL:%x) thread %x\n", __func__, fsindex, FS_TLS_SEL, request->thread_fsindex);
     request->thread_fs = task->thread.fs;
     rdmsrl(MSR_FS_BASE, fs);
     if (fs != request->thread_fs) {
-      request->thread_fs = fs;
-      PSPRINTK("%s: DAVEK: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
+        request->thread_fs = fs;
+        PSPRINTK("%s: DAVEK: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
+    }
+// gs register (percpu in kernel space)
+    request->thread_gsindex = task->thread.gsindex;
+    savesegment(gs, gsindex);
+    if (gsindex != request->thread_gsindex)
+        PSPRINTK("%s: DAVEK: gsindex %x (TLS_SEL:%x) thread %x\n", __func__, gsindex, GS_TLS_SEL, request->thread_gsindex);
+    request->thread_gs = task->thread.gs;
+    rdmsrl(MSR_KERNEL_GS_BASE, gs); //NOTE there are two gs base registers in Kernel the used one is MSR_GS_BASE, so MSR_KERNEL_GS_BASE is user space in kernel
+    if (gs != request->thread_gs) {
+        request->thread_gs = gs;
+        PSPRINTK("%s: DAVEK: gs %lx thread %lx\n", __func__, fs, request->thread_gs);
     }
 
-    request->thread_gs = task->thread.gs;
-    rdmsrl(MSR_GS_BASE, gs);
-    if (gs != request->thread_gs) {
-      request->thread_gs = gs;
-      PSPRINTK("%s: DAVEK: gs %lx thread %lx\n", __func__, fs, request->thread_gs);
-    }
     // ptrace, debug, dr7: struct perf_event *ptrace_bps[HBP_NUM]; unsigned long debugreg6; unsigned long ptrace_dr7;
     // Fault info: unsigned long cr2; unsigned long trap_no; unsigned long error_code;
     // floating point: struct fpu fpu; THIS IS NEEDED
