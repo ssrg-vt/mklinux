@@ -4082,6 +4082,7 @@ int process_server_import_address_space(unsigned long* ip,
                                            NULL,
                                            &vma_out,
                                            NULL);
+
         }
 #else // Copying address space with migration
         {
@@ -4335,62 +4336,40 @@ int process_server_import_address_space(unsigned long* ip,
     current->rt_priority = clone_data->rt_priority;
     current->policy = clone_data->sched_class;
 
-    // We assume that an exec is going on
-    // and the current process is the one is executing
+    // We assume that an exec is going on and the current process is the one is executing
     // (a switch will occur if it is not the one that must execute)
-    {
+    { // FS/GS update --- start
     unsigned long fs, gs;
     unsigned int fsindex, gsindex;
+                    
     savesegment(fs, fsindex);
-    savesegment(gs, gsindex);
-   
-    rdmsrl(MSR_GS_BASE, gs);
-    rdmsrl(MSR_FS_BASE, fs);
-    
-    if (clone_data->thread_fs && __user_addr(clone_data->thread_fs)) { // we update only if the 
-                                                                       // address of the base fs is different 
-                                                                       // from 0 and not represent a kernel address 
-                                                                       // (we are migrating only the virtual address 
-                                                                       // space of the process)
-        current->thread.fs = clone_data->thread_fs;
-        current->thread.fsindex = clone_data->thread_fsindex;
+    if ( !(clone_data->thread_fs) || !(__user_addr(clone_data->thread_fs)) ) {
+      printk(KERN_ERR "%s: ERROR corrupted fs base address %p\n", __func__, clone_data->thread_fs);
+    }    
+    current->thread.fsindex = clone_data->thread_fsindex;
+    current->thread.fs = clone_data->thread_fs;
+    if (unlikely(fsindex | current->thread.fsindex))
+      loadsegment(fs, current->thread.fsindex);
+    else
+      loadsegment(fs, 0);
+    if (current->thread.fs)
+      checking_wrmsrl(MSR_FS_BASE, current->thread.fs);    
+                             
+    savesegment(gs, gsindex); //read the gs register in gsindex variable
+    if ( !(clone_data->thread_gs) && !(__user_addr(clone_data->thread_gs)) ) {
+      printk(KERN_ERR "%s: ERROR corrupted gs base address %p\n", __func__, clone_data->thread_gs);      
+    }
+    current->thread.gs = clone_data->thread_gs;    
+    current->thread.gsindex = clone_data->thread_gsindex;
+    if (unlikely(gsindex | current->thread.gsindex))
+      loadsegment(gs, current->thread.gsindex);
+    else
+      load_gs_index(0);
+    if (current->thread.gs)
+      checking_wrmsrl(MSR_KERNEL_GS_BASE, current->thread.gs);
+                                                   
+    } // FS/GS update --- end
 
-        if (unlikely(fsindex | current->thread.fsindex)) {
-	        loadsegment(fs, current->thread.fsindex);
-        }
-        else { 
-	        loadsegment(fs, 0);
-        }
-
-        if (current->thread.fs) {
-	        wrmsrl(MSR_FS_BASE, current->thread.fs);  
-        }
-    }
-    else { 
-        loadsegment(fs, 0);
-    }
-       
-    if (clone_data->thread_gs && __user_addr(clone_data->thread_gs)) {
-        current->thread.gs = clone_data->thread_gs;    
-        current->thread.gsindex = clone_data->thread_gsindex;
-      
-        if (unlikely(gsindex | current->thread.gsindex)) {
-	        loadsegment(gs, current->thread.gsindex);
-        }
-        else {
-	        load_gs_index(0);
-        }
-
-        if (current->thread.gs) {
-	        wrmsrl(MSR_GS_BASE, current->thread.gs);
-        }
-    }
-    else {
-        load_gs_index(0);
-    }
-    
-    }
-       
     // Save off clone data, replacing any that may
     // already exist.
     if(current->clone_data) {
@@ -5542,7 +5521,6 @@ restart_break_cow_all:
 
     request->thread_sp0 = task->thread.sp0;
     request->thread_sp = task->thread.sp;
-    
     //printk("%s: usersp percpu %lx thread %lx\n", __func__, percpu_read(old_rsp), task->thread.usersp);
     // if (percpu_read(old_rsp), task->thread.usersp) set to 0 otherwise copy
     request->thread_usersp = task->thread.usersp;
@@ -5551,35 +5529,33 @@ restart_break_cow_all:
     savesegment(es, es);          
     if ((current == task) && (es != request->thread_es))
       PSPRINTK("%s: DAVEK: es %x thread %x\n", __func__, es, request->thread_es);
-      
     request->thread_ds = task->thread.ds;
     savesegment(ds, ds);
     if (ds != request->thread_ds)
       PSPRINTK("%s: DAVEK: ds %x thread %x\n", __func__, ds, request->thread_ds);
-      
+// fs register (TLS in user space)    
     request->thread_fsindex = task->thread.fsindex;
     savesegment(fs, fsindex);
     if (fsindex != request->thread_fsindex)
-      PSPRINTK("%s: DAVEK: fsindex %x thread %x\n", __func__, fsindex, request->thread_fsindex);
-      
-    request->thread_gsindex = task->thread.gsindex;
-    savesegment(gs, gsindex);
-    if (gsindex != request->thread_gsindex)
-      PSPRINTK("%s: DAVEK: gsindex %x thread %x\n", __func__, gsindex, request->thread_gsindex);
-    
+        PSPRINTK("%s: DAVEK: fsindex %x (TLS_SEL:%x) thread %x\n", __func__, fsindex, FS_TLS_SEL, request->thread_fsindex);
     request->thread_fs = task->thread.fs;
     rdmsrl(MSR_FS_BASE, fs);
     if (fs != request->thread_fs) {
-      request->thread_fs = fs;
-      PSPRINTK("%s: DAVEK: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
+        request->thread_fs = fs;
+        PSPRINTK("%s: DAVEK: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
+    }
+// gs register (percpu in kernel space)
+    request->thread_gsindex = task->thread.gsindex;
+    savesegment(gs, gsindex);
+    if (gsindex != request->thread_gsindex)
+        PSPRINTK("%s: DAVEK: gsindex %x (TLS_SEL:%x) thread %x\n", __func__, gsindex, GS_TLS_SEL, request->thread_gsindex);
+    request->thread_gs = task->thread.gs;
+    rdmsrl(MSR_KERNEL_GS_BASE, gs); //NOTE there are two gs base registers in Kernel the used one is MSR_GS_BASE, so MSR_KERNEL_GS_BASE is user space in kernel
+    if (gs != request->thread_gs) {
+        request->thread_gs = gs;
+        PSPRINTK("%s: DAVEK: gs %lx thread %lx\n", __func__, fs, request->thread_gs);
     }
 
-    request->thread_gs = task->thread.gs;
-    rdmsrl(MSR_GS_BASE, gs);
-    if (gs != request->thread_gs) {
-      request->thread_gs = gs;
-      PSPRINTK("%s: DAVEK: gs %lx thread %lx\n", __func__, fs, request->thread_gs);
-    }
     // ptrace, debug, dr7: struct perf_event *ptrace_bps[HBP_NUM]; unsigned long debugreg6; unsigned long ptrace_dr7;
     // Fault info: unsigned long cr2; unsigned long trap_no; unsigned long error_code;
     // floating point: struct fpu fpu; THIS IS NEEDED
