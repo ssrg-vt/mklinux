@@ -944,6 +944,24 @@ static bool __user_addr (unsigned long x ) {
 }
 
 /**
+ * find_vma does not always return the correct vm_area_struct*.
+ * If it fails to find a vma for the specified address, it instead
+ * returns the closest one in the rb list.  This function looks
+ * for this failure, and returns NULL in this error condition.
+ */
+static struct vm_area_struct* find_vma_checked(struct mm_struct* mm, unsigned long address) {
+    struct vm_area_struct* vma = find_vma(mm,address&PAGE_MASK);
+    if( vma == NULL ||
+        (vma->vm_start > (address & PAGE_MASK)) ||
+        (vma->vm_end <= address) ) {
+        
+        vma = NULL;
+    }
+
+    return vma;
+}
+
+/**
  * A best effort at making a page writable
  */
 static void mk_page_writable(struct mm_struct* mm,
@@ -1061,10 +1079,6 @@ static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
         .private = &(resolved),
         .mm = mm
     };
-    /*struct vm_area_struct* vma = find_vma(mm,vaddr&PAGE_MASK);
-    if(!vma || vma->vm_start > vaddr || vma->vm_end <= vaddr) {
-        return 0;
-    }*/
 
     walk_page_range(vaddr & PAGE_MASK, ( vaddr & PAGE_MASK ) + PAGE_SIZE, &walk);
     if(resolved != 0) {
@@ -2527,19 +2541,7 @@ task_mm_search_exit:
     if(mm) {
         PS_DOWN_WRITE(&mm->mmap_sem);
         try_count++;
-        vma = find_vma(mm, address & PAGE_MASK);
-        // Validate find_vma result
-        if( (!vma) || 
-            (vma->vm_start > (address & PAGE_MASK)) || 
-            (vma->vm_end <= address) ) {
-            //PSPRINTK("find_vma turned up an invalid response, invalidating and continuing\n");
-            if(!vma) {
-                //PSPRINTK("vma == NULL\n");
-            } else {
-                //PSPRINTK("vma->vm_start=%lx, vma->vm_end=%lx\n",vma->vm_start,vma->vm_end);
-            }
-            vma = NULL;
-        }
+        vma = find_vma_checked(mm, address);
 
         walk.mm = mm;
         walk_page_range(address & PAGE_MASK, 
@@ -4143,9 +4145,9 @@ int process_server_import_address_space(unsigned long* ip,
            
             if(err > 0) {
                 // mmap_region succeeded
-                vma = find_vma(current->mm, vma_curr->start);
+                vma = find_vma_checked(current->mm, vma_curr->start);
                 PSPRINTK("vma mmapped, pulling in pte's\n");
-                if(vma && (vma->vm_start <= vma_curr->start) && (vma->vm_end > vma_curr->start)) {
+                if(vma) {
                     pte_curr = vma_curr->pte_list;
                     if(pte_curr == NULL) {
                         PSPRINTK("vma->pte_curr == null\n");
@@ -5117,16 +5119,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 goto exit_remove_data;
             }
             
-            vma = find_vma(current->mm, data->vaddr_start);
-
-            // Validate find_vma result
-            if(vma->vm_start > data->vaddr_start || 
-               vma->vm_end <= data->vaddr_start) {
-                PSPRINTK("invalid find_vma result, invalidating\n");
-                vma = NULL;
-            } else {
-                PSPRINTK("mapping successful\n");
-            }
+            vma = find_vma_checked(current->mm, data->vaddr_start);
+        
         } else {
             PSPRINTK("vma is present, using existing\n");
         }
@@ -5144,7 +5138,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             pte_provided = 1;
 
             if(break_cow(current->mm,vma,address)) {
-                vma = find_vma(current->mm,address&PAGE_MASK);
+                vma = find_vma_checked(current->mm, address);
+                BUG_ON(vma == NULL);
             }
 
             for(i = 0; i < MAX_MAPPINGS; i++) {
