@@ -1,7 +1,8 @@
 /**
- * Serve up processes to a remote client cpu
+ * Implements task migration and maintains coherent 
+ * address spaces across CPU cores.
  *
- * DKatz
+ * David G. Katz
  */
 
 #include <linux/mcomm.h> // IPC
@@ -938,16 +939,20 @@ static struct workqueue_struct *mapping_wq;
  * General helper functions and debugging tools
  */
 
-// TODO
+/**
+ * TODO
+ */
 static bool __user_addr (unsigned long x ) {
     return (x < PAGE_OFFSET);   
 }
 
 /**
- * find_vma does not always return the correct vm_area_struct*.
+ * @brief find_vma does not always return the correct vm_area_struct*.
  * If it fails to find a vma for the specified address, it instead
  * returns the closest one in the rb list.  This function looks
  * for this failure, and returns NULL in this error condition.
+ * Otherwise, it returns a pointer to the struct vm_area_struct
+ * containing the specified address.
  */
 static struct vm_area_struct* find_vma_checked(struct mm_struct* mm, unsigned long address) {
     struct vm_area_struct* vma = find_vma(mm,address&PAGE_MASK);
@@ -962,7 +967,8 @@ static struct vm_area_struct* find_vma_checked(struct mm_struct* mm, unsigned lo
 }
 
 /**
- * A best effort at making a page writable
+ * @brief A best effort at making a page writable
+ * @return void
  */
 static void mk_page_writable(struct mm_struct* mm,
                              struct vm_area_struct* vma,
@@ -970,29 +976,34 @@ static void mk_page_writable(struct mm_struct* mm,
     spinlock_t* ptl;
     pte_t *ptep, pte, entry;
      
-         
+    // Grab the pte, and lock it     
     ptep = get_locked_pte(mm, vaddr, &ptl);
     if (!ptep)
         goto out;
 
     arch_enter_lazy_mmu_mode();
 
+    // grab the contents of the pte pointer
     pte = *ptep;
 
+    // Make the content copy writable and dirty, then
+    // write it back into the page tables.
     entry = pte_mkwrite(pte_mkdirty(pte));
     set_pte_at(mm, vaddr, ptep, entry);
+
     update_mmu_cache(vma, vaddr, ptep);
 
     arch_leave_lazy_mmu_mode();
 
-//out_unlock:
+    // Unlock the pte
     pte_unmap_unlock(pte, ptl);
 out:
     return;
 }
 
 /**
- *
+ * @brief Check to see if a given page is writable.
+ * @return 0 if not writable or error, not zero otherwise
  */
 static int is_page_writable(struct mm_struct* mm,
                             struct vm_area_struct* vma,
@@ -1016,7 +1027,8 @@ out:
 }
 
 /**
- *
+ * @brief Get the clone data associated with the current task.
+ * @return clone_data_t* or NULL if not present
  */
 static clone_data_t* get_current_clone_data(void) {
     clone_data_t* ret = NULL;
@@ -1035,7 +1047,10 @@ static clone_data_t* get_current_clone_data(void) {
 }
 
 /**
- *
+ * @brief Callback used when walking a memory map.  It looks to see
+ * if the page is present.  If present, it resolves the given
+ * address.
+ * @return always returns 0
  */
 static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
  
@@ -1045,10 +1060,18 @@ static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long star
         return 0;
     }
 
+    // Store the resolved address in the address
+    // pointed to by the private field of the walk
+    // structure.  This is checked by the caller
+    // of the walk function when the walk is complete.
     *resolved_addr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));
     return 0;
 }
 
+/**
+ * @brief Retrieve the physical address of the specified virtual address.
+ * @return -1 indicates failure.  Otherwise, 0 is returned.
+ */
 static int get_physical_address(struct mm_struct* mm, 
                                 unsigned long vaddr,
                                 unsigned long* paddr) {
@@ -1059,18 +1082,23 @@ static int get_physical_address(struct mm_struct* mm,
         .mm = mm
     };
 
+    // Walk the page tables.  The walk handler modifies the
+    // resolved variable if it finds the address.
     walk_page_range(vaddr & PAGE_MASK, (vaddr & PAGE_MASK) + PAGE_SIZE, &walk);
     if(resolved == 0) {
         return -1;
     }
 
+    // Set the output
     *paddr = resolved;
 
     return 0;
 }
 
 /**
- *
+ * Check to see if the specified virtual address has a 
+ * corresponding physical address mapped to it.
+ * @return 0 = no mapping, 1 = mapping present
  */
 static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
     unsigned long resolved = 0;
@@ -1080,6 +1108,8 @@ static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
         .mm = mm
     };
 
+    // Walk the page tables.  The walk handler will set the
+    // resolved variable if it finds the mapping.  
     walk_page_range(vaddr & PAGE_MASK, ( vaddr & PAGE_MASK ) + PAGE_SIZE, &walk);
     if(resolved != 0) {
         return 1;
@@ -1089,6 +1119,30 @@ static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
 }
 
 /**
+ *  @brief Find the bounds of a physically consecutive mapped region.
+ *  The region must be contained within the specified VMA.
+ *
+ *  Hypothetical page table mappings for a given VMA:
+ *
+ *  *********************************
+ *  *    Vaddr      *   Paddr       *
+ *  *********************************
+ *  * 0x10000000    * 0x12341000    *
+ *  *********************************
+ *  * 0x10001000    * 0x12342000    *
+ *  *********************************
+ *  * 0x10002000    * 0x12343000    *
+ *  *********************************
+ *  * 0x10003000    * 0x43214000    *
+ *  *********************************
+ *  
+ *  This function, given a vaddr of 12342xxx will return:
+ *  *vaddr_mapping_start = 0x10000000
+ *  *paddr_mapping_start = 0x12341000
+ *  *paddr_mapping_sz    = 0x3000
+ *
+ *  Notice 0x10003000 and above is not included in the returned region, as
+ *  its paddr is not consecutive with the previous mappings.
  *
  */
 int find_consecutive_physically_mapped_region(struct mm_struct* mm,
@@ -1178,7 +1232,9 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
 }
 
 /**
- *
+ * @brief Find the preceeding physically consecutive region.  This is a region
+ * that starts BEFORE the specified vaddr.  The region must be contained 
+ * within the specified VMA.
  */
 int find_prev_consecutive_physically_mapped_region(struct mm_struct* mm,
                                               struct vm_area_struct* vma,
@@ -1218,7 +1274,9 @@ int find_prev_consecutive_physically_mapped_region(struct mm_struct* mm,
 
 }
 /**
- *
+ * @brief Find the next physically consecutive region.  This is a region
+ * that starts AFTER the specified vaddr.  The region must be contained
+ * within the specified VMA.
  */
 int find_next_consecutive_physically_mapped_region(struct mm_struct* mm,
                                               struct vm_area_struct* vma,
@@ -1259,7 +1317,8 @@ int find_next_consecutive_physically_mapped_region(struct mm_struct* mm,
 }
 
 /**
- *
+ *  @brief Fill the array with as many physically consecutive regions
+ *  as are present and will fit (specified by arr_sz).
  */
 int fill_physical_mapping_array(struct mm_struct* mm,
         struct vm_area_struct* vma,
@@ -1379,10 +1438,9 @@ int fill_physical_mapping_array(struct mm_struct* mm,
 }
 
 /**
- * Call remap_pfn_range on the parts of the specified virtual-physical
+ * @brief Call remap_pfn_range on the parts of the specified virtual-physical
  * region that are not already mapped.
- *
- * Note: mm->mmap_sem must already be held by caller.
+ * @precondition mm->mmap_sem must already be held by caller.
  */
 int remap_pfn_range_remaining(struct mm_struct* mm,
                                   struct vm_area_struct* vma,
@@ -1433,7 +1491,7 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
 
 
 /**
- * Map, but only in areas that do not currently have mappings.
+ * @brief Map, but only in areas that do not currently have mappings.
  * This should extend vmas that ara adjacent as necessary.
  * NOTE: current->enable_do_mmap_pgoff_hook must be disabled
  *       by client code before calling this.
@@ -1543,6 +1601,9 @@ done:
     return ret;
 }
 
+/**
+ * @brief Display a mapping request data entry.
+ */
 static void dump_mapping_request_data(mapping_request_data_t* data) {
     int i;
     PSPRINTK("mapping request data dump:\n");
@@ -1559,7 +1620,7 @@ static void dump_mapping_request_data(mapping_request_data_t* data) {
 }
 
 /**
- *
+ * @brief Display relevant task information.
  */
 void dump_task(struct task_struct* task, struct pt_regs* regs, unsigned long stack_ptr) {
 #if PROCESS_SERVER_VERBOSE
@@ -1587,7 +1648,7 @@ void dump_task(struct task_struct* task, struct pt_regs* regs, unsigned long sta
 }
 
 /**
- *
+ * @brief Display a task's stack information.
  */
 static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr) {
     if(!thread) return;
@@ -1605,7 +1666,7 @@ static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr) {
 }
 
 /**
- *
+ * @brief Display a tasks register contents.
  */
 static void dump_regs(struct pt_regs* regs) {
     unsigned long fs, gs;
@@ -1640,7 +1701,7 @@ static void dump_regs(struct pt_regs* regs) {
 }
 
 /**
- *
+ * @brief Display a tasks thread information.
  */
 static void dump_thread(struct thread_struct* thread) {
     PSPRINTK("DUMP THREAD\n");
@@ -1654,6 +1715,9 @@ static void dump_thread(struct thread_struct* thread) {
     PSPRINTK("THREAD DUMP COMPLETE\n");
 }
 
+/**
+ * @brief Display a pte_data_t data structure.
+ */
 static void dump_pte_data(pte_data_t* p) {
     PSPRINTK("PTE_DATA\n");
     PSPRINTK("vma_id{%x}\n",p->vma_id);
@@ -1664,6 +1728,9 @@ static void dump_pte_data(pte_data_t* p) {
     PSPRINTK("pfn{%lx}\n",p->pfn);
 }
 
+/**
+ * @brief Display a vma_data_t data structure.
+ */
 static void dump_vma_data(vma_data_t* v) {
     pte_data_t* p;
     PSPRINTK("VMA_DATA\n");
@@ -1682,6 +1749,9 @@ static void dump_vma_data(vma_data_t* v) {
     }
 }
 
+/**
+ * @brief Display a clone_data_t.
+ */
 static void dump_clone_data(clone_data_t* r) {
     vma_data_t* v;
     PSPRINTK("CLONE REQUEST\n");
@@ -1714,9 +1784,13 @@ static void dump_clone_data(clone_data_t* r) {
 }
 
 /**
- *
+ * @brief Find a thread count data entry.
+ * @return Either a thread count request data entry, or NULL if one does 
+ * not exist that satisfies the parameter requirements.
  */
-static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu, int id, int requester_pid) {
+static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu, 
+        int id, int requester_pid) {
+
     data_header_t* curr = NULL;
     remote_thread_count_request_data_t* request = NULL;
     remote_thread_count_request_data_t* ret = NULL;
@@ -1742,9 +1816,13 @@ static remote_thread_count_request_data_t* find_remote_thread_count_data(int cpu
 }
 
 /**
- *
+ * @brief Finds a munmap request data entry.
+ * @return Either a munmap request data entry, or NULL if one is not
+ * found that satisfies the parameter requirements.
  */
-static munmap_request_data_t* find_munmap_request_data(int cpu, int id, int requester_pid, unsigned long address) {
+static munmap_request_data_t* find_munmap_request_data(int cpu, int id, 
+        int requester_pid, unsigned long address) {
+
     data_header_t* curr = NULL;
     munmap_request_data_t* request = NULL;
     munmap_request_data_t* ret = NULL;
@@ -1770,9 +1848,13 @@ static munmap_request_data_t* find_munmap_request_data(int cpu, int id, int requ
 }
 
 /**
- *
+ * @brief Finds an mprotect request data entry.
+ * @return Either a mprotect request data entry, or NULL if one is
+ * not found that satisfies the parameter requirements.
  */
-static mprotect_data_t* find_mprotect_request_data(int cpu, int id, int requester_pid, unsigned long start) {
+static mprotect_data_t* find_mprotect_request_data(int cpu, int id, 
+        int requester_pid, unsigned long start) {
+
     data_header_t* curr = NULL;
     mprotect_data_t* request = NULL;
     mprotect_data_t* ret = NULL;
@@ -1798,9 +1880,13 @@ static mprotect_data_t* find_mprotect_request_data(int cpu, int id, int requeste
 }
 
 /**
- *
+ * @brief Finds a mapping request data entry.
+ * @return Either a mapping request data entry, or NULL if an entry
+ * is not found that satisfies the parameter requirements.
  */
-static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pid, unsigned long address) {
+static mapping_request_data_t* find_mapping_request_data(int cpu, int id, 
+        int pid, unsigned long address) {
+
     data_header_t* curr = NULL;
     mapping_request_data_t* request = NULL;
     mapping_request_data_t* ret = NULL;
@@ -1823,7 +1909,9 @@ static mapping_request_data_t* find_mapping_request_data(int cpu, int id, int pi
 }
 
 /**
- *
+ * @brief Finds a clone data entry.
+ * @return Either a clone entry or NULL if one is not found
+ * that satisfies the parameter requirements.
  */
 static clone_data_t* find_clone_data(int cpu, int clone_request_id) {
     data_header_t* curr = NULL;
@@ -1848,6 +1936,10 @@ static clone_data_t* find_clone_data(int cpu, int clone_request_id) {
     return ret;
 }
 
+/**
+ * @brief Destroys the specified clone data.  It also destroys lists
+ * that are nested within it.
+ */
 static void destroy_clone_data(clone_data_t* data) {
     vma_data_t* vma_data;
     pte_data_t* pte_data;
@@ -1889,7 +1981,7 @@ static void destroy_clone_data(clone_data_t* data) {
 }
 
 /**
- *
+ * @brief Finds a vma_data_t entry.
  */
 static vma_data_t* find_vma_data(clone_data_t* clone_data, unsigned long addr_start) {
 
@@ -1910,9 +2002,10 @@ static vma_data_t* find_vma_data(clone_data_t* clone_data, unsigned long addr_st
 }
 
 /**
- *
+ * @brief Callback for page walk that displays the contents of the walk.
  */
-static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
+static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, 
+        unsigned long end, struct mm_walk *walk) {
 
     int nx;
     int rw;
@@ -1951,7 +2044,7 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, un
 }
 
 /**
- * Print mm
+ * @brief Displays relevant data within a mm.
  */
 static void dump_mm(struct mm_struct* mm) {
     struct vm_area_struct * curr;
@@ -2008,7 +2101,7 @@ static void dump_mm(struct mm_struct* mm) {
  */
 
 /**
- * Add data entry
+ * @brief Add data entry.
  */
 static void add_data_entry_to(void* entry, spinlock_t* lock, data_header_t** head) {
     data_header_t* hdr = (data_header_t*)entry;
@@ -2047,8 +2140,8 @@ static void add_data_entry_to(void* entry, spinlock_t* lock, data_header_t** hea
 }
 
 /**
- * Remove a data entry
- * Requires user to hold lock
+ * @brief Remove a data entry
+ * @prerequisite Requires user to hold lock
  */
 static void remove_data_entry_from(void* entry, data_header_t** head) {
     data_header_t* hdr = entry;
@@ -2075,8 +2168,7 @@ static void remove_data_entry_from(void* entry, data_header_t** head) {
 }
 
 /**
- * General purpose library
- * Add data entry
+ * @brief Add data entry
  */
 static void add_data_entry(void* entry) {
     data_header_t* hdr = (data_header_t*)entry;
@@ -2116,8 +2208,8 @@ static void add_data_entry(void* entry) {
 }
 
 /**
- * Remove a data entry
- * Requires user to hold _data_head_lock
+ * @brief Remove a data entry.
+ * @prerequisite Requires user to hold _data_head_lock.
  */
 static void remove_data_entry(void* entry) {
     data_header_t* hdr = entry;
@@ -2144,7 +2236,7 @@ static void remove_data_entry(void* entry) {
 }
 
 /**
- * Print information about the list.
+ * @brief Print information about the list.
  */
 static void dump_data_list(void) {
     data_header_t* curr = NULL;
@@ -2197,10 +2289,14 @@ static void dump_data_list(void) {
 }
 
 /**
+ * @brief Counts remote thread group members.
+ * @return The number of remote thread group members in the
+ * specified distributed thread group.
  * <MEASURE perf_count_remote_thread_members>
  */
 static int count_remote_thread_members(int exclude_t_home_cpu,
                                        int exclude_t_home_id) {
+
     int tgroup_home_cpu = current->tgroup_home_cpu;
     int tgroup_home_id  = current->tgroup_home_id;
     remote_thread_count_request_data_t* data;
@@ -2276,9 +2372,12 @@ exit:
 }
 
 /**
- *
+ * @brief Counts the number of local thread group members for the specified
+ * distributed thread group.
  */
-static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, int exclude_pid) {
+static int count_local_thread_members(int tgroup_home_cpu, 
+        int tgroup_home_id, int exclude_pid) {
+
     struct task_struct *task, *g;
     int count = 0;
     PSPRINTK("%s: entered\n",__func__);
@@ -2302,7 +2401,9 @@ static int count_local_thread_members(int tgroup_home_cpu, int tgroup_home_id, i
 }
 
 /**
- *
+ * @brief Counts the number of local and remote thread group members for the
+ * thread group in which the "current" task resides.
+ * @return The number of threads.
  */
 static int count_thread_members() {
      
@@ -2316,7 +2417,10 @@ static int count_thread_members() {
 
 
 /*
- * Work exec
+ * @brief Process notification of a thread group closing.
+ * This function will wait for any locally executing thread group
+ * members to exit.  It will then clean up all local resources
+ * dedicated to the thread group that has exited.
  *
  * <MEASURE perf_process_tgroup_closed_item>
  */
@@ -2393,9 +2497,10 @@ void process_tgroup_closed_item(struct work_struct* work) {
 }
 
 /**
- * Caller must grab mm->mmap_sem
- * 1 = handled
- * 0 = not handled
+ * @brief Break the COW page that contains "address", iff that page
+ * is a COW page.
+ * @return 1 = handled, 0 = not handled.
+ * @prerequisite Caller must grab mm->mmap_sem
  */
 static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned long address) {
     pgd_t *pgd = NULL;
@@ -2465,6 +2570,14 @@ handled:
 }
 
 /**
+ * @brief Process a request made by a remote CPU for a mapping.  This function
+ * will search for mm's for the specified distributed thread group, and if found,
+ * will search that mm for entries that contain the address that was asked for.
+ * Prefetch is implemented in this function, so not only will the page that
+ * is asked for be communicated, but the entire contiguous range of virtual to
+ * physical addresses that the specified address lives in will be communicated.
+ * Other contiguous regions may also be communicated if they exist.  This is
+ * prefetch.
  *
  * <MEASURED perf_process_mapping_request>
  */
@@ -2602,8 +2715,6 @@ task_mm_search_exit:
                 strcpy(response.path,plpath);
                 response.pgoff = vma->vm_pgoff;
             }
-            //PSPRINTK("mapping prot = %lx, vm_flags = %lx\n",
-            //        response.prot,response.vm_flags);
         } else {
             // Zero out mappings
             for(i = 0; i < MAX_MAPPINGS; i++) {
@@ -2712,6 +2823,12 @@ task_mm_search_exit:
 unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
 
 /**
+ * @brief Process notification that a task has exited.  This function
+ * sets the "return disposition" of the task, then wakes the task.
+ * In this case, the "return disposition" specifies that the task
+ * is exiting.  When the task resumes execution, it consults its
+ * return disposition and acts accordingly - and invokes do_exit.
+ *
  * <MEASURE perf_process_exit_item>
  */
 void process_exit_item(struct work_struct* work) {
@@ -2756,7 +2873,15 @@ void process_exit_item(struct work_struct* work) {
 }
 
 /**
- *
+ * @brief Process a group exit request.  This function
+ * issues SIGKILL to all locally executing members of the specified
+ * distributed thread group.  Only tasks that are actively
+ * executing on this CPU will receive the SIGKILL.  Shadow tasks
+ * will not be sent SIGKILL.  Group exit requests are sent to
+ * all CPUs, so for shadow tasks, another CPU will issue the
+ * SIGKILL.  When that occurs, the normal exit process will be
+ * initiated for that task, and eventually, all of its shadow
+ * tasks will be killed.
  */
 void process_group_exit_item(struct work_struct* work) {
     group_exit_work_t* w = (group_exit_work_t*) work;
@@ -2794,6 +2919,10 @@ void process_group_exit_item(struct work_struct* work) {
 
 
 /**
+ * @brief Process request to unmap a region of memory from a distributed
+ * thread group.  Look for local thread group members and carry out the
+ * requested action.
+ *
  * <MEASURE perf_process_munmap_request>
  */
 void process_munmap_request(struct work_struct* work) {
@@ -2874,6 +3003,10 @@ done:
 }
 
 /**
+ * @brief Process request to change protection of a region of memory in
+ * a distributed thread group.  Look for local thread group members and
+ * carry out the requested action.
+ *
  * <MEASRURE perf_process_mprotect_item>
  */
 void process_mprotect_item(struct work_struct* work) {
@@ -2921,7 +3054,8 @@ done:
 }
 
 /**
- *
+ * @brief Process a request from a remote CPU for the number of
+ * thread group members that are executing on this CPU.
  */
 void process_remote_thread_count_request(struct work_struct* work) {
     remote_thread_count_request_work_t* w = (remote_thread_count_request_work_t*)work;
@@ -2954,6 +3088,12 @@ void process_remote_thread_count_request(struct work_struct* work) {
 }
 
 /**
+ * @brief Process a request to migrate a task back to this CPU.
+ * This function imports the task state, then sets the "return disposition"
+ * of that task to specify that it is returning due to a back-migration.
+ * This function then wakes the task back up (changes a shadow task back
+ * into an active task).
+ *
  * <MEASURE perf_process_back_migration>
  */
 void process_back_migration(struct work_struct* work) {
@@ -3017,6 +3157,8 @@ exit:
  */
 
 /**
+ * @brief Message handler for when a distributed thread exits.
+ *
  * <MEASURE perf_handle_thread_group_exit_notification>
  */
 static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_msg) {
@@ -3042,6 +3184,9 @@ static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_
 }
 
 /**
+ * @brief Message handler for when a CPU responds to a request
+ * made by this CPU to count distributed thread group members.
+ *
  * <MEASURE perf_handle_remote_thread_count_response>
  */
 static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg) {
@@ -3081,6 +3226,10 @@ error_exit:
 }
 
 /**
+ * @brief Message handler invoked when a request has been received from
+ * another CUP to count the number of threads in a distributed thread
+ * group.
+ *
  * <MEASURE perf_handle_remote_thread_count_request>
  */
 static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) {
@@ -3107,6 +3256,9 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) 
 }
 
 /**
+ * @brief Message handler invoked when another CPU is acknowledging
+ * a request to unmap a memory region.
+ *
  * <MEASURE perf_handle_munmap_response>
  */
 static int handle_munmap_response(struct pcn_kmsg_message* inc_msg) {
@@ -3141,6 +3293,9 @@ exit_error:
 }
 
 /**
+ * @brief Message handler for when another CPU asks to unmap memory
+ * regions in a distributed thread group.
+ *
  * <MEASURE perf_handle_munmap_request>
  */
 static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
@@ -3169,6 +3324,9 @@ static int handle_munmap_request(struct pcn_kmsg_message* inc_msg) {
 }
 
 /**
+ * @brief Message handler for when another CPU responds acknowledging
+ * that it has handled a distributed mprotect request.
+ *
  * <MEASURE perf_handle_mprotect_response>
  */
 static int handle_mprotect_response(struct pcn_kmsg_message* inc_msg) {
@@ -3203,6 +3361,9 @@ static int handle_mprotect_response(struct pcn_kmsg_message* inc_msg) {
 }
 
 /**
+ * @brief Message handler for when a CPU is requesting that this
+ * CPU changes the protection on a given page.
+ *
  * <MEASURE perf_handle_mprotect_request>
  */
 static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
@@ -3239,7 +3400,10 @@ static int handle_mprotect_request(struct pcn_kmsg_message* inc_msg) {
 }
 
 /**
- *
+ * @brief Message handler for when responses to mapping requests come in.  This
+ * handler is invoked when a CPU wants to say that it found no mapping.  A separate
+ * handler was created for this response as an optimization that keeps us from
+ * having to transport tons of data unnecessarily.
  */
 static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) {
     nonpresent_mapping_response_t* msg = (nonpresent_mapping_response_t*)inc_msg;
@@ -3278,6 +3442,10 @@ exit:
 }
 
 /**
+ * @brief Message handler for responses to mapping requests.  This function
+ * takes in responses and applies precedence rules to arrive at a single
+ * response, though different responses may have been given.
+ *
  *  <MEASURE perf_handle_mapping_response>
  */
 static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
@@ -3459,6 +3627,8 @@ out_err:
 }
 
 /**
+ * @brief Message handler for when a remote CPU is asking for a
+ * page mapping.
  * <MEASRE perf_handle_mapping_request>
  */
 static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
@@ -3487,6 +3657,9 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
 }
 
 /**
+ * @brief Message handler for when pte information arrives.  This message
+ * type is only used when on-demand address space migration is disabled.
+ *
  * <MEASURE perf_handle_pte_transfer>
  */
 static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
@@ -3560,6 +3733,11 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
 }
 
 /**
+ * @brief Message handler for when a vma is transfered.  This message type is
+ * only used when on-demand is not, in other words, when an entire
+ * address space is migrated up-front.  This code still exists for
+ * legacy reasons and should eventually be removed.
+ *
  * <MEASURE perf_handle_vma_transfer>
  */
 static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
@@ -3605,8 +3783,7 @@ static int handle_vma_transfer(struct pcn_kmsg_message* inc_msg) {
 }
 
 /**
- * Handler function for when either a remote placeholder or a remote delegate process dies,
- * and its local counterpart must be killed to reflect that.
+ * @brief Message handler for when a distributed task exits.
  *
  * <MEASURE perf_handle_exiting_process_notification>
  */
@@ -3657,7 +3834,8 @@ done:
 }
 
 /**
- *
+ * @brief Message handler for when exit_group message is received
+ * from a remote CPU.
  */
 static int handle_exit_group(struct pcn_kmsg_message* inc_msg) {
     exiting_group_t* msg = (exiting_group_t*)inc_msg;
@@ -3677,7 +3855,7 @@ static int handle_exit_group(struct pcn_kmsg_message* inc_msg) {
 }
 
 /**
- * Handler function for when another processor informs the current cpu
+ * @brief Handler function for when another processor informs the current cpu
  * of a pid pairing.
  *
  * <MEASURE perf_handle_process_pairing_request>
@@ -3733,7 +3911,8 @@ done:
 }
 
 /**
- * Handle clone requests. 
+ * @brief Message handler for migration requests.
+ * TODO: refactor "clone_request" to "migraton_request".
  */
 static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     clone_request_t* request = (clone_request_t*)inc_msg;
@@ -3877,7 +4056,7 @@ perf_ee = native_read_tsc();
 }
 
 /**
- *
+ * @brief Message handler for back migration message.
  */
 static int handle_back_migration(struct pcn_kmsg_message* inc_msg) {
     back_migration_t* msg = (back_migration_t*)inc_msg;
@@ -3909,8 +4088,8 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg) {
 
 
 /**
- * Find the mm_struct for a given distributed thread.  If one does not exist,
- * then return NULL.
+ * @brief Find the mm_struct for a given distributed thread.  
+ * If one does not exist, then return NULL.
  */
 static struct mm_struct* find_thread_mm(
         int tgroup_home_cpu, 
@@ -3974,11 +4153,8 @@ static unsigned long long perf_a, perf_b, perf_c, perf_d, perf_e;
 
 
 /**
- * If this is a delegated process, look up any records that may
- * exist of the remote placeholder processes page information,
- * and map those pages.
- *
- * Assumes current->mm->mmap_sem is already held.
+ * @brief This function morphs a newly created task into
+ * a migrated task.
  *
  * <MEASURED perf_process_server_import_address_space>
  */
@@ -4400,7 +4576,9 @@ int process_server_import_address_space(unsigned long* ip,
 }
 
 /**
- *
+ * @brief Distributes local calls to do_group_exit.  This function
+ * sends a request to all other CPUs to do a group exit on this
+ * distributed thread group.
  */
 int process_server_do_group_exit(void) {
     exiting_group_t msg;
@@ -4434,7 +4612,7 @@ int process_server_do_group_exit(void) {
 }
 
 /**
- * Notify of the fact that either a delegate or placeholder has died locally.  
+ * @brief Notify of the fact that either a delegate or placeholder has died locally.  
  * In this case, the remote cpu housing its counterpart must be notified, so
  * that it can kill that counterpart.
  *
@@ -4619,17 +4797,19 @@ finished_membership_search:
 }
 
 /**
- * Create a pairing between a newly created delegate process and the
+ * @brief Create a pairing between a newly created delegate process and the
  * remote placeholder process.  This function creates the local
  * pairing first, then sends a message to the originating cpu
  * so that it can do the same.
  */
-int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu) {
+int process_server_notify_delegated_subprocess_starting(pid_t pid, 
+        pid_t remote_pid, int remote_cpu) {
 
     create_process_pairing_t msg;
     int perf = PERF_MEASURE_START(&perf_process_server_notify_delegated_subprocess_starting);
 
-    PSPRINTK("kmkprocsrv: notify_subprocess_starting: pid{%d}, remote_pid{%d}, remote_cpu{%d}\n",pid,remote_pid,remote_cpu);
+    PSPRINTK("kmkprocsrv: notify_subprocess_starting: pid{%d}, remote_pid{%d}, remote_cpu{%d}\n",
+            pid,remote_pid,remote_cpu);
     
     // Notify remote cpu of pairing between current task and remote
     // representative task.
@@ -4651,7 +4831,7 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_
 }
 
 /**
- * If the current process is distributed, we want to make sure that all members
+ * @brief If the current process is distributed, we want to make sure that all members
  * of this distributed thread group carry out the same munmap operation.  Furthermore,
  * we want to make sure they do so _before_ this syscall returns.  So, synchronously
  * command every cpu to carry out the munmap for the specified thread group.
@@ -4737,7 +4917,9 @@ exit:
 }
 
 /**
- * 
+ * @brief Hooks do_mprotect.  Local protection changes must invalidate
+ * the corresponding remote page mappings to force other CPUs to re-acquire
+ * the modified mappings.
  */
 void process_server_do_mprotect(struct task_struct* task,
                                 unsigned long start,
@@ -4825,7 +5007,12 @@ exit:
 }
 
 /**
- *
+ * @brief Hooks do_mmap_pgoff.  This is necessary in order to maintain
+ * address space coherency, since do_mmap_pgoff can modify existing
+ * mappings.  If do_mmap_pgoff were allowed to modify existing mappings
+ * without first unmapping those mappings remotely, multiple different
+ * mappings for the same address would then exist between CPUs.  This
+ * function forces remote munmap prior to doing the local do_mmap_pgoff.
  */
 unsigned long process_server_do_mmap_pgoff(struct file *file, unsigned long addr,
                                            unsigned long len, unsigned long prot,
@@ -4854,9 +5041,10 @@ not_handled_no_perf:
 }
 
 /**
- * Fault hook
- * 0 = not handled
- * 1 = handled
+ * @brief Implements on-demand page migration.  As this CPU faults,
+ * this fault handler is invoked.  Its job is to pull in any mappings
+ * that may exist for the faulting address from other CPUs.
+ * @return 0 = not handled, 1 = handled.
  *
  * <MEASURED perf_process_server_try_handle_mm_fault>
  */
@@ -5234,7 +5422,7 @@ not_handled_no_perf:
 }
 
 /**
- * Page walk has encountered a pte while deconstructing
+ * @brief Page walk has encountered a pte while deconstructing
  * the client side processes address space.  Transfer it.
  */
 static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
@@ -5264,7 +5452,7 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long
 }
 
 /**
- * Propagate origin thread group to children, and initialize other 
+ * @brief Propagate origin thread group to children, and initialize other 
  * task members.  If the parent was member of a remote thread group,
  * store the thread group info.
  *
@@ -5323,14 +5511,10 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 }
 
 /**
- * Migrate the specified task <task> to cpu <cpu>
- * Currently, this function will put the specified task to 
- * sleep, and push its info over to the remote cpu.  The
- * remote cpu will then create a new process and import that
- * info into its new context.  
+ * @brief Migrate the specified task <task> to a CPU on which
+ * it has not yet executed.
  *
  * <MEASURE perf_process_server_do_migration>
- *
  */
 static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     struct pt_regs *regs = task_pt_regs(task);
@@ -5573,6 +5757,9 @@ restart_break_cow_all:
 }
 
 /**
+ * @brief Migrate the specified task to a CPU on which it has previously
+ * executed.
+ *
  * <MEASURE perf_process_server_do_migration>
  */
 static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) {
@@ -5625,7 +5812,7 @@ static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) 
 }
 
 /**
- * Migrate the specified task <task> to cpu <cpu>
+ * @brief Migrate the specified task <task> to cpu <cpu>
  * This function will put the specified task to 
  * sleep, and push its info over to the remote cpu.  The
  * remote cpu will then create a new process and import that
@@ -5654,7 +5841,10 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 }
 
 /**
- *
+ * @brief Handles a task's return disposition.  When a task is re-awoken
+ * when it either migrates back to this CPU, or exits, this function
+ * implements the actions that must be made immediately after
+ * the newly awoken task resumes execution.
  */
 void process_server_do_return_disposition(void) {
 
@@ -5679,8 +5869,7 @@ void process_server_do_return_disposition(void) {
 }
 
 /**
- * process_server_init
- * Start the process loop in a new kthread.
+ * @brief Initialize this module
  */
 static int __init process_server_init(void) {
 
