@@ -912,6 +912,7 @@ int do_mprotect(struct task_struct* task, unsigned long start, size_t len, unsig
 static int _vma_id = 0;
 static int _clone_request_id = 0;
 static int _cpu = -1;
+static unsigned long long perf_a, perf_b, perf_c, perf_d, perf_e;
 data_header_t* _saved_mm_head = NULL;             // Saved MM list
 DEFINE_SPINLOCK(_saved_mm_head_lock);             // Lock for _saved_mm_head
 data_header_t* _mapping_request_data_head = NULL; // Mapping request data head
@@ -964,6 +965,61 @@ static struct vm_area_struct* find_vma_checked(struct mm_struct* mm, unsigned lo
     }
 
     return vma;
+}
+
+/**
+ * @brief Find the mm_struct for a given distributed thread.  
+ * If one does not exist, then return NULL.
+ */
+static struct mm_struct* find_thread_mm(
+        int tgroup_home_cpu, 
+        int tgroup_home_id, 
+        mm_data_t **used_saved_mm,
+        struct task_struct** task_out) {
+
+    struct task_struct *task, *g;
+    struct mm_struct * mm = NULL;
+    data_header_t* data_curr;
+    mm_data_t* mm_data;
+    unsigned long lockflags;
+
+    *used_saved_mm = NULL;
+    *task_out = NULL;
+
+    // First, look through all active processes.
+    do_each_thread(g,task) {
+        if(task->tgroup_home_cpu == tgroup_home_cpu &&
+           task->tgroup_home_id  == tgroup_home_id) {
+            mm = task->mm;
+            *task_out = task;
+            *used_saved_mm = NULL;
+            goto out;
+        }
+    } while_each_thread(g,task);
+
+    // Failing that, look through saved mm's.
+    spin_lock_irqsave(&_saved_mm_head_lock,lockflags);
+    data_curr = _saved_mm_head;
+    while(data_curr) {
+
+        mm_data = (mm_data_t*)data_curr;
+    
+        if((mm_data->tgroup_home_cpu == tgroup_home_cpu) &&
+           (mm_data->tgroup_home_id  == tgroup_home_id)) {
+            mm = mm_data->mm;
+            *used_saved_mm = mm_data;
+            break;
+        }
+
+        data_curr = data_curr->next;
+
+    } // while
+
+    spin_unlock_irqrestore(&_saved_mm_head_lock,lockflags);
+
+
+out:
+    return mm;
 }
 
 /**
@@ -1044,6 +1100,38 @@ static clone_data_t* get_current_clone_data(void) {
     }
 
     return ret;
+}
+
+/**
+ * @brief Page walk has encountered a pte while deconstructing
+ * the client side processes address space.  Transfer it.
+ */
+static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, 
+        unsigned long start, unsigned long end, struct mm_walk *walk) {
+
+    deconstruction_data_t* decon_data = (deconstruction_data_t*)walk->private;
+    int vma_id = decon_data->vma_id;
+    int dst_cpu = decon_data->dst_cpu;
+    int clone_request_id = decon_data->clone_request_id;
+    pte_transfer_t pte_xfer;
+
+    if(NULL == pte || !pte_present(*pte)) {
+        return 0;
+    }
+
+    pte_xfer.header.type = PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER;
+    pte_xfer.header.prio = PCN_KMSG_PRIO_NORMAL;
+    pte_xfer.paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));
+    // NOTE: Found the above pte to paddr conversion here -
+    // http://wbsun.blogspot.com/2010/12/convert-userspace-virtual-address-to.html
+    pte_xfer.vaddr = start;
+    pte_xfer.vma_id = vma_id;
+    pte_xfer.clone_request_id = clone_request_id;
+    pte_xfer.pfn = pte_pfn(*pte);
+    PSPRINTK("Sending PTE\n"); 
+    DO_UNTIL_SUCCESS(pcn_kmsg_send(dst_cpu, (struct pcn_kmsg_message *)&pte_xfer));
+
+    return 0;
 }
 
 /**
@@ -3153,7 +3241,7 @@ exit:
 }
 
 /**
- * Request implementations
+ * Message handlers
  */
 
 /**
@@ -4087,60 +4175,7 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg) {
 }
 
 
-/**
- * @brief Find the mm_struct for a given distributed thread.  
- * If one does not exist, then return NULL.
- */
-static struct mm_struct* find_thread_mm(
-        int tgroup_home_cpu, 
-        int tgroup_home_id, 
-        mm_data_t **used_saved_mm,
-        struct task_struct** task_out) {
 
-    struct task_struct *task, *g;
-    struct mm_struct * mm = NULL;
-    data_header_t* data_curr;
-    mm_data_t* mm_data;
-    unsigned long lockflags;
-
-    *used_saved_mm = NULL;
-    *task_out = NULL;
-
-    // First, look through all active processes.
-    do_each_thread(g,task) {
-        if(task->tgroup_home_cpu == tgroup_home_cpu &&
-           task->tgroup_home_id  == tgroup_home_id) {
-            mm = task->mm;
-            *task_out = task;
-            *used_saved_mm = NULL;
-            goto out;
-        }
-    } while_each_thread(g,task);
-
-    // Failing that, look through saved mm's.
-    spin_lock_irqsave(&_saved_mm_head_lock,lockflags);
-    data_curr = _saved_mm_head;
-    while(data_curr) {
-
-        mm_data = (mm_data_t*)data_curr;
-    
-        if((mm_data->tgroup_home_cpu == tgroup_home_cpu) &&
-           (mm_data->tgroup_home_id  == tgroup_home_id)) {
-            mm = mm_data->mm;
-            *used_saved_mm = mm_data;
-            break;
-        }
-
-        data_curr = data_curr->next;
-
-    } // while
-
-    spin_unlock_irqrestore(&_saved_mm_head_lock,lockflags);
-
-
-out:
-    return mm;
-}
 
 
 /**
@@ -4148,8 +4183,6 @@ out:
  * Public API
  */
 
-//statistics
-static unsigned long long perf_a, perf_b, perf_c, perf_d, perf_e;
 
 
 /**
@@ -5422,36 +5455,6 @@ not_handled_no_perf:
 }
 
 /**
- * @brief Page walk has encountered a pte while deconstructing
- * the client side processes address space.  Transfer it.
- */
-static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, unsigned long start, unsigned long end, struct mm_walk *walk) {
-    deconstruction_data_t* decon_data = (deconstruction_data_t*)walk->private;
-    int vma_id = decon_data->vma_id;
-    int dst_cpu = decon_data->dst_cpu;
-    int clone_request_id = decon_data->clone_request_id;
-    pte_transfer_t pte_xfer;
-
-    if(NULL == pte || !pte_present(*pte)) {
-        return 0;
-    }
-
-    pte_xfer.header.type = PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER;
-    pte_xfer.header.prio = PCN_KMSG_PRIO_NORMAL;
-    pte_xfer.paddr = (pte_val(*pte) & PHYSICAL_PAGE_MASK) | (start & (PAGE_SIZE-1));
-    // NOTE: Found the above pte to paddr conversion here -
-    // http://wbsun.blogspot.com/2010/12/convert-userspace-virtual-address-to.html
-    pte_xfer.vaddr = start;
-    pte_xfer.vma_id = vma_id;
-    pte_xfer.clone_request_id = clone_request_id;
-    pte_xfer.pfn = pte_pfn(*pte);
-    PSPRINTK("Sending PTE\n"); 
-    DO_UNTIL_SUCCESS(pcn_kmsg_send(dst_cpu, (struct pcn_kmsg_message *)&pte_xfer));
-
-    return 0;
-}
-
-/**
  * @brief Propagate origin thread group to children, and initialize other 
  * task members.  If the parent was member of a remote thread group,
  * store the thread group info.
@@ -5531,7 +5534,6 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     int perf = -1;
 
     PSPRINTK("process_server_do_migration\n");
-    //dump_regs(regs);
 
     // Nothing to do if we're migrating to the current cpu
     if(dst_cpu == _cpu) {
@@ -5663,7 +5665,8 @@ restart_break_cow_all:
     request->clone_request_id = lclone_request_id;
     memcpy( &request->regs, regs, sizeof(struct pt_regs) );
     strncpy( request->exe_path, rpath, 512 );
-// struct mm_struct -----------------------------------------------------------
+    
+    // struct mm_struct -----------------------------------------------------------
     request->stack_start = task->mm->start_stack;
     request->heap_start = task->mm->start_brk;
     request->heap_end = task->mm->brk;
@@ -5673,7 +5676,8 @@ restart_break_cow_all:
     request->arg_end = task->mm->arg_end;
     request->data_start = task->mm->start_data;
     request->data_end = task->mm->end_data;
-// struct task_struct ---------------------------------------------------------    
+    
+    // struct task_struct ---------------------------------------------------------    
     request->stack_ptr = stack_start;
     request->placeholder_pid = task->pid;
     request->placeholder_tgid = task->tgid;
@@ -5687,7 +5691,8 @@ restart_break_cow_all:
     request->normal_prio = task->normal_prio;
     request->rt_priority = task->rt_priority;
     request->sched_class = task->policy;
-// struct thread_struct -------------------------------------------------------
+    
+    // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h
     {
@@ -5712,7 +5717,8 @@ restart_break_cow_all:
     savesegment(ds, ds);
     if (ds != request->thread_ds)
       PSPRINTK("%s: DAVEK: ds %x thread %x\n", __func__, ds, request->thread_ds);
-// fs register (TLS in user space)    
+    
+    // fs register (TLS in user space)    
     request->thread_fsindex = task->thread.fsindex;
     savesegment(fs, fsindex);
     if (fsindex != request->thread_fsindex)
@@ -5723,7 +5729,8 @@ restart_break_cow_all:
         request->thread_fs = fs;
         PSPRINTK("%s: DAVEK: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
     }
-// gs register (percpu in kernel space)
+    
+    // gs register (percpu in kernel space)
     request->thread_gsindex = task->thread.gsindex;
     savesegment(gs, gsindex);
     if (gsindex != request->thread_gsindex)
