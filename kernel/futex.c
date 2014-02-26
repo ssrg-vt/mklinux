@@ -226,10 +226,10 @@ get_futex_key(u32 __user *uaddr, int fshared, union futex_key *key, int rw)
 	}
 
 	FPRINTK(KERN_ALERT "its global futex \n");
-	if(mm==NULL)
+	/*if(mm==NULL)
 	{
 			return get_futex_key_remote( uaddr, fshared, key, rw);
-	}
+	}*/
 
 again:
 	err = get_user_pages_fast(address, 1, 1, &page);
@@ -531,6 +531,7 @@ void exit_pi_state_list(struct task_struct *curr)
 		hb = hash_futex(&key);
 		raw_spin_unlock_irq(&curr->pi_lock);
 
+		//printk(KERN_ALERT " b4 exit_pi_state	spin_lock pid {%d} \n",current->pid);
 		spin_lock(&hb->lock);
 
 		raw_spin_lock_irq(&curr->pi_lock);
@@ -812,7 +813,11 @@ void __unqueue_futex(struct futex_q *q)
 	}
 
 	hb = container_of(q->lock_ptr, struct futex_hash_bucket, lock);
-	plist_del(&q->list, &hb->chain);
+	if(&hb->chain!=NULL)
+	{	//printk(KERN_ALERT"HB CHAIN{%p} node{%p} prev{%p} next{%p} \n", &hb->chain,&hb->chain.node_list,&hb->chain.node_list.prev,&hb->chain.node_list.next);
+		plist_del(&q->list, &hb->chain);}
+	else
+		printk(KERN_ALERT"hb-chain {%p}\n",&hb->chain);
 }
 
 /*
@@ -994,6 +999,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 cont:
 	if(current->mm){
 	hb = hash_futex(&key);
+	//printk(KERN_ALERT " b4 futex_wake 	spin_lock pid {%d} uaddr{%lx} ret{%d} \n",current->pid,uaddr,ret);
 	spin_lock(&hb->lock);
 	head = &hb->chain;
 
@@ -1629,7 +1635,7 @@ static inline void queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
  *   1 - if the futex_q was still queued (and we removed unqueued it)
  *   0 - if the futex_q was already removed by the waking thread
  */
-static int unqueue_me(struct futex_q *q)
+int unqueue_me(struct futex_q *q)
 {
 	spinlock_t *lock_ptr;
 	int ret = 0;
@@ -1975,6 +1981,7 @@ retry:
 		return ret;
 
 retry_private:
+	//printk(KERN_ALERT " b4 queue_lock pid {%d} uaddr{%lx} ret{%d} \n",current->pid,uaddr,ret);
 	*hb = queue_lock(q);
 
 	ret = get_futex_value_locked(&uval, uaddr);
@@ -2404,6 +2411,7 @@ retry:
 		goto out;
 
 	hb = hash_futex(&key);
+	//printk(KERN_ALERT " b4 futex_unlock_pi 	spin_lock pid {%d} uaddr{%lx} ret{%d} \n",current->pid,uaddr,ret);
 	spin_lock(&hb->lock);
 
 	/*
@@ -2606,7 +2614,7 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 
 	/* Queue the futex_q, drop the hb lock, wait for wakeup. */
 	futex_wait_queue_me(hb, &q, to);
-
+	//printk(KERN_ALERT " b4 futex_wait_requeu_pi	spin_lock pid {%d} uaddr{%lx} ret{%d} \n",current->pid,uaddr,ret);
 	spin_lock(&hb->lock);
 	ret = handle_early_requeue_pi_wakeup(hb, &q, &key2, to);
 	spin_unlock(&hb->lock);

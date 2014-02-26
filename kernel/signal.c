@@ -1162,8 +1162,8 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 				 * TODO: need to correct the user part of the migrated process. this is a stop gap arrangement.
 				*/
 			/*mklinux_akshay*/
-						user=q;
-						break;
+			user=q;
+			break;
 		}
 		if (q->info.si_signo == sig) {
 			if (first)
@@ -1181,13 +1181,18 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 		__sigqueue_free(first);
 
 	}
-	else if(user)
+	else if(current->tgroup_distributed && user)
 	{
 		list_del_init(&user->list);
 		sigemptyset(&list->signal);
 		if(sig==SIGKILL){
 		//remove_without_sigqueue: list_del_init(&user->list);
-		copy_siginfo(info, &user->info);
+	//	copy_siginfo(info, &user->info);
+	        info->si_signo = sig;
+		info->si_errno = 0;
+		info->si_code = SI_KERNEL;
+		info->si_pid = 0;
+		info->si_uid = 0;
 		sigaddsetmask(&list->signal,sigmask(SIGKILL));}
 	}
 	else {
@@ -1204,10 +1209,11 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 		info->si_uid = 0;
 	}
 }
+extern struct user_struct root_user;
 
-static int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
+int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
 		siginfo_t *info) {
-	struct sigqueue *q,*n,*user=NULL;
+	struct sigqueue *q,*n,*first=NULL;
 
 
 
@@ -1220,15 +1226,29 @@ static int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
 	/*mklinux_akshay*/
 	list_for_each_entry_safe(q,n, &pending->list, list)
 		{
-				if(q->user==NULL  && q->list.next == q->list.prev)
-				{
+				if(current->tgroup_distributed && q->user==NULL  && q->list.next == q->list.prev)
+				{       
+					printk(KERN_ALERT"__dequeu_signal: user null\n");
+					first=q;
+					if(sig !=SIGKILL){
 					sigemptyset(&pending->signal);
 					clear_thread_flag(_TIF_USER_RETURN_NOTIFY);
 					return 0;
+					}
+					else
+						goto collect;
 				}
 		}
 
-
+collect:
+	if(current->tgroup_distributed && first && first->user==NULL && sig == SIGKILL){
+		info->si_signo = sig;
+		info->si_errno = 0;
+		info->si_code = SI_USER;
+		info->si_pid = 0;
+		info->si_uid = 0;
+		return sig;
+	}	
 	if (sig) {
 		if (current->notifier) {
 			if (sigismember(current->notifier_mask, sig)) {
@@ -1720,6 +1740,9 @@ pending = group ? &t->signal->shared_pending : &t->pending;
  * exactly one non-rt signal, so that we can get more
  * detailed information about the cause of the signal.
  */
+if(t->tgroup_distributed)
+	printk(KERN_ALERT"sig{%d} info{%d}i group{%d}\n",sig,(info==SEND_SIG_FORCED)?2:0,group);
+
 if (legacy_queue(pending, sig))
 	return 0;
 /*
@@ -1988,7 +2011,8 @@ if (info != SEND_SIG_NOINFO && info != SEND_SIG_PRIV && info != SEND_SIG_FORCED
 	}
 }
 /*mklinux_akshay*/
-
+if(p->tgroup_distributed)
+	printk(KERN_ALERT"pid{%d} sig{%d} ret{%d}",p->pid,sig,ret);
 if (!ret && sig)
 	ret = do_send_sig_info(sig, info, p, true);
 
@@ -2332,7 +2356,7 @@ spinlock_t *lock = &current->sighand->siglock;
 BUG_ON(!(q->flags & SIGQUEUE_PREALLOC));
 /*
  * We must hold ->siglock while testing q->list
- * to serialize with collect_signal() or with
+  to serialize with collect_signal() or with
  * __exit_signal()->flush_sigqueue().
  */
 spin_lock_irqsave(lock, flags);

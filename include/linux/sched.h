@@ -1601,7 +1601,7 @@ struct task_struct {
                                       then enable when address space is fully formed. */
 
     int origin_pid;/*first thread id created in the originating kernel*/
-    struct kernel_robust_list_head  *kernel_robust_list;
+    //struct kernel_robust_list_head  *kernel_robust_list;
 
 
 };

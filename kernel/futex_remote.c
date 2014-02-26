@@ -45,6 +45,7 @@
 
 extern struct list_head pfn_list_head;
 
+extern int unqueue_me(struct futex_q *q);
 #define  NSIG 32
 
 static struct list_head vm_head;
@@ -322,7 +323,7 @@ int del_futex(struct futex_q * queue) {
 	else {
 		if (latest_pid != queue->rem_pid) {
 			flags=~FLAGS_SHARED | ~FLAGS_DESTROY;
-			printk(KERN_ALERT " del_futex: calling global futex wake uaddr{%lx} rem_id{%d} latest_pid{%d} flag{%u}\n",queue->key.both.offset+queue->key.private.address,queue->rem_pid,latest_pid,flags);
+			FRPRINTK(KERN_ALERT " del_futex: calling global futex wake uaddr{%lx} rem_id{%d} latest_pid{%d} flag{%u}\n",queue->key.both.offset+queue->key.private.address,queue->rem_pid,latest_pid,flags);
 			ret=remote_futex_wakeup(queue->key.both.offset + queue->key.private.address,
 				flags, 1, 1, &queue->key, queue->rem_pid);
 
@@ -385,6 +386,21 @@ q_exit:
 }
 
 
+void wake_futex_global(struct futex_q *q)
+{
+	struct task_struct *p = q->task;
+
+			get_task_struct(p);
+
+					unqueue_me(q);
+
+							smp_wmb();
+									q->lock_ptr = NULL;
+
+											wake_up_state(p, TASK_NORMAL);
+													put_task_struct(p);
+}
+
 int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset, pid_t pid)
 {
 	struct futex_hash_bucket *hb;
@@ -409,16 +425,8 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bi
 
 	ret = get_futex_key(uaddr, ((flags & FLAGS_DESTROY == 256)? (0 & FLAGS_SHARED) : (flags & FLAGS_SHARED)), &key, VERIFY_READ);
 
-	if(cmm==NULL)
-	{
-		FRPRINTK(KERN_ALERT" cmm NULL\n");
-		current->mm= cmm;
-	}
-	else
-	{
-		FRPRINTK(KERN_ALERT" current {%s}\n",current->comm);
-				current->mm= NULL;
-	}
+
+	printk(KERN_ALERT "global_futex_wake ptr {%p} mm{%p} \n",key.both.ptr,current->mm);
 
 	hb = hash_futex(&key);
 	spin_lock(&hb->lock);
@@ -433,8 +441,8 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bi
 					&& temp->pid == tsk->pid) {
 
 				if (this->lock_ptr != NULL && spin_is_locked(this->lock_ptr)) {
-					FRPRINTK(KERN_ALERT"Unlocking spinlock \n");
-					spin_unlock(&this->lock_ptr);
+					FRPRINTK(KERN_ALERT"Hold locking spinlock \n");
+					//spin_unlock(&this->lock_ptr);
 				}
 				FRPRINTK(KERN_ALERT" call wake futex \n");
 				if (flags&FLAGS_DESTROY == 256) {
@@ -445,10 +453,20 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bi
 		}
 
 	}
-
 	spin_unlock(&hb->lock);
 	put_futex_key(&key);
 out:
+
+	if(cmm==NULL)
+	{
+		FRPRINTK(KERN_ALERT" cmm NULL\n");
+		current->mm= cmm;
+	}
+	else
+	{
+		FRPRINTK(KERN_ALERT" current {%s}\n",current->comm);
+				current->mm= NULL;
+	}
 
 	FRPRINTK(KERN_ALERT "exit global_futex_wake \n");
 
@@ -586,7 +604,7 @@ int remote_futex_wakeup(u32 __user  *uaddr,unsigned int flags, int nr_wake, u32 
 	int cpu=0;
 	struct page *page, *page_head;
 	_remote_wakeup_request_t *request = kmalloc(sizeof(_remote_wakeup_request_t),
-	GFP_KERNEL);
+	GFP_ATOMIC);
 
 	// Build request
 
@@ -628,7 +646,7 @@ int remote_futex_wakeup(u32 __user  *uaddr,unsigned int flags, int nr_wake, u32 
 	get_user(nw,uaddr+10);
 	get_user(bs,uaddr+11);}
 */
-	printk(KERN_ALERT" remote_futex_wakeup pfn {%lx} shift {%lx} pid{%d} origin_pid{%d} cpu{%d} rflag{%d} uaddr{%lx} vma start (%lx} vma end (%lx} get_user{%d}\n ",
+	FRPRINTK(KERN_ALERT" remote_futex_wakeup pfn {%lx} shift {%lx} pid{%d} origin_pid{%d} cpu{%d} rflag{%d} uaddr{%lx} vma start (%lx} vma end (%lx} get_user{%d}\n ",
 								vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,current->pid,current->origin_pid,smp_processor_id(),rflag,uaddr,vma->vm_start, vma->vm_end,x);
 
 //	dump_regs(task_pt_regs(current));
@@ -723,7 +741,6 @@ int global_futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 
     hb = hash_futex(&q->key);
     q->lock_ptr = &hb->lock;
-
     spin_lock(&hb->lock);
      	int prio;
     	prio = 100 ;//min(current->normal_prio, MAX_RT_PRIO);
@@ -863,7 +880,7 @@ get_set_remote_key(u32 __user *uaddr, unsigned int val, int fshared, union futex
 	int cpu=0;
 	struct page *page, *page_head;
 	_remote_key_request_t *request = kmalloc(sizeof(_remote_key_request_t),
-			GFP_KERNEL);
+			GFP_ATOMIC);
 
 	// Build request
 	request->header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST;
@@ -900,7 +917,7 @@ get_set_remote_key(u32 __user *uaddr, unsigned int val, int fshared, union futex
 		request->val =val;
 		request->tghid = current->tgroup_home_id;
 
-		printk(KERN_ALERT" pfn {%lx} shift {%lx} vm_start {%lx} vm_end {%lx}\n ",vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,vma->vm_start,vma->vm_end);
+		FRPRINTK(KERN_ALERT" pfn {%lx} shift {%lx} vm_start {%lx} vm_end {%lx}\n ",vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,vma->vm_start,vma->vm_end);
 
 /*
 		if((cpu=find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head)) != -1)//vma->vm_pgoff << PAGE_SHIFT

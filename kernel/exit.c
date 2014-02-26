@@ -807,7 +807,8 @@ static void forget_original_parent(struct task_struct *father)
 static void exit_notify(struct task_struct *tsk, int group_dead)
 {
 	bool autoreap;
-
+        if(tsk->tgroup_distributed)
+		printk(KERN_ALERT"tsk pid{%d} comm{%s}i gpdead{%d}\n",tsk->pid,tsk->comm,group_dead);
 	/*
 	 * This does two things:
 	 *
@@ -847,12 +848,20 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 				thread_group_empty(tsk) &&
 				!ptrace_reparented(tsk) ?
 			tsk->exit_signal : SIGCHLD;
+		if(tsk->tgroup_distributed)
+			printk(KERN_ALERT"exit signal{%d} tsk{%d}\n",tsk->exit_signal,tsk->pid);
 		autoreap = do_notify_parent(tsk, sig);
 	} else if (thread_group_leader(tsk)) {
+		if(tsk->tgroup_distributed)
+			printk(KERN_ALERT"before d n p\n");
 		autoreap = thread_group_empty(tsk) &&
 			do_notify_parent(tsk, tsk->exit_signal);
+                if(tsk->tgroup_distributed)
+			printk(KERN_ALERT"exit signal{%d} tsk{%d}\n",tsk->exit_signal,tsk->pid);
 	} else {
 		autoreap = true;
+		if(tsk->tgroup_distributed)
+			printk(KERN_ALERT"exit signal\n");
 	}
 
 	tsk->exit_state = autoreap ? EXIT_DEAD : EXIT_ZOMBIE;
@@ -993,10 +1002,10 @@ NORET_TYPE void do_exit(long code)
      */
 	if(tsk->tgroup_distributed==1 && tsk->pid == tsk->tgid)
 	{
-		query_q_and_wake(tsk,1);
+	//	query_q_and_wake(tsk,1);
 	}
     process_server_do_exit();
-
+//printk(KERN_ALERT"do_exit: after p s d e\n");
 
 	/*
 	 * tsk->flags are checked in the futex code to protect against
@@ -1152,7 +1161,7 @@ do_group_exit(int exit_code)
 	}
 
     process_server_do_group_exit();
-
+//printk(KERN_ALERT"after do gp exit\n");
 	do_exit(exit_code);
 	/* NOTREACHED */
 }

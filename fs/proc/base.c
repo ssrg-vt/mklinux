@@ -3033,10 +3033,10 @@ int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 	     iter.task;
 
 	     iter.tgid += 1, iter = next_tgid(ns, iter)) {
-		if((iter.task)->origin_pid !=-1 &&
+	/*	if((iter.task)->origin_pid !=-1 &&
 				(iter.task)->origin_pid != (iter.task)->pid)
 			    	 continue;
-		filp->f_pos = iter.tgid + TGID_OFFSET;
+	*/	filp->f_pos = iter.tgid + TGID_OFFSET;
 		if (proc_pid_fill_cache(filp, dirent, filldir, iter) < 0) {
 			put_task_struct(iter.task);
 			goto out;

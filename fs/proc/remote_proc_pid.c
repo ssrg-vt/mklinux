@@ -117,10 +117,10 @@ int iterate_process(unsigned long *pid_arr) {
 
 	for_each_process(p)
 	{
-		if(p->origin_pid !=-1 &&
+/*		if(p->origin_pid !=-1 &&
 						p->origin_pid != p->pid)
 					    	 continue;
-		pid_arr[count] = p->pid;
+*/		pid_arr[count] = p->pid;
 		count++;
 	}
 	return count;

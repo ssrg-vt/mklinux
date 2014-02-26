@@ -2261,7 +2261,7 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
         }
     }
 
-    PSPRINTK("%s: waiting on %d responses\n",__func__,data->expected_responses);
+    printk(KERN_ALERT"%s: waiting on %d responses\n",__func__,data->expected_responses);
 
    // wait_event_interruptible(countq, data->expected_responses != data->responses);
     // Wait for all cpus to respond.
@@ -2342,6 +2342,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
     unsigned char tgroup_closed = 0;
     int perf = -1;
     unsigned long lockflags;
+    int cnt=0;
 
     perf = PERF_MEASURE_START(&perf_process_tgroup_closed_item);
 
@@ -2358,7 +2359,13 @@ void process_tgroup_closed_item(struct work_struct* work) {
                 // there are still living tasks within this distributed thread group
                 // wait a bit
 	//	exit_robust_list(task);
+		
+		if(cnt<3)
+			printk(KERN_ALERT"cntb4 pid{%d} wchan{%pF}\n",task->pid,get_wchan(task));
                 schedule();
+		if(cnt<3){
+		   printk(KERN_ALERT"cnt pid{%d} wchan{%pF}\n",task->pid,get_wchan(task));
+		}
                 if(task->return_disposition==RETURN_DISPOSITION_FORCE_KILL){
                 	pass = 0;
                 	printk("task {%d} comm{%s} pass{%d} ",task->pid,task->comm,pass);
@@ -2371,6 +2378,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
         if(!pass) {
             tgroup_closed = 1;
         } else {
+		cnt++;
         //    printk("%s: waiting for tgroup close out\n",__func__);
         }
     }
@@ -2792,10 +2800,11 @@ void process_group_exit_item(struct work_struct* work) {
     group_exit_work_t* w = (group_exit_work_t*) work;
     struct task_struct *task = NULL;
     struct task_struct *g;
+    unsigned long flags;
 
     //int perf = PERF_MEASURE_START(&perf_process_group_exit_item);
     PSPRINTK("%s: entered\n",__func__);
-    PSPRINTK("exit group target id{%d}, cpu{%d}\n",
+    printk(KERN_ALERT"exit group target id{%d}, cpu{%d}\n",
             w->tgroup_home_id, w->tgroup_home_cpu);
 
     do_each_thread(g,task) {
@@ -2803,9 +2812,18 @@ void process_group_exit_item(struct work_struct* work) {
            task->tgroup_home_cpu == w->tgroup_home_cpu) {
             
             if(!task->represents_remote) {
+		 exit_robust_list(task);
+		 task->robust_list = NULL;
                 // active, send sigkill
-                PSPRINTK("Issuing SIGKILL to pid %d\n",task->pid);
-                kill_pid(task_pid(task), SIGKILL, 1);
+             lock_task_sighand(task, &flags);
+	     printk(KERN_ALERT"Issuing SIGKILL to pid %d state{%d} flags{%d} \n",task->pid,task->state,task->signal->flags);
+	     task_clear_jobctl_pending(task, JOBCTL_PENDING_MASK);
+     	     sigaddset(&task->pending.signal,SIGKILL);
+	     signal_wake_up(task,1);	     
+	     clear_ti_thread_flag(task,_TIF_USER_RETURN_NOTIFY);
+             printk(KERN_ALERT" falsgs{%d} pending {%d} ",task->signal->flags,(sigismember(&task->pending.signal, SIGKILL)?1:0));
+             unlock_task_sighand(task, &flags);
+
             }
 
             // If it is a shadow task, it will eventually
@@ -2815,15 +2833,15 @@ void process_group_exit_item(struct work_struct* work) {
         }
     } while_each_thread(g,task);
     
-    dump_regs(&sub_info->remote_regs);
+ //   dump_regs(&sub_info->remote_regs);
 
     /*mklinux_akshay*/
-    sub_info->origin_pid = c->origin_pid;
+   // sub_info->origin_pid = c->origin_pid;
     /*
      * Spin up the new process.
      */
-    call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
-perf_bb = native_read_tsc();
+   // call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
+//perf_bb = native_read_tsc();
     kfree(work);
 
     PSPRINTK("%s: exiting\n",__func__);
@@ -4581,7 +4599,8 @@ finished_membership_search:
             is_last_thread_in_group = 0;
         }
     }
-    
+  //  printk(KERN_ALERT"is last{%d} \n",is_last_thread_in_group);
+
     // Find the clone data, we are going to destroy this very soon.
     clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
@@ -4632,7 +4651,7 @@ finished_membership_search:
         // thread group.
         if(is_last_thread_in_group) {
 
-            PSPRINTK("%s: This is the last thread member!\n",__func__);
+            printk("%s: This is the last thread member!\n",__func__);
 
             // Notify all cpus
             exit_notification.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION;
@@ -4667,7 +4686,7 @@ finished_membership_search:
         }
 
     } else {
-    	PSPRINTK(": This is not the last local thread member\n");
+    	printk(": This is not the last local thread member\n");
     }
 
     // We know that this task is exiting, and we will never have to work
