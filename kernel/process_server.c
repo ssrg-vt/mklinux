@@ -243,7 +243,6 @@ static DECLARE_WAIT_QUEUE_HEAD( countq);
  */
 #define RETURN_DISPOSITION_EXIT 0
 #define RETURN_DISPOSITION_MIGRATE 1
-#define RETURN_DISPOSITION_FORCE_KILL 2
 
 /**
  * Library
@@ -2342,44 +2341,30 @@ void process_tgroup_closed_item(struct work_struct* work) {
     unsigned char tgroup_closed = 0;
     int perf = -1;
     unsigned long lockflags;
-    int cnt=0;
 
     perf = PERF_MEASURE_START(&perf_process_tgroup_closed_item);
 
     PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("%s: received group exit notification\n",__func__);
 
-   // printk("%s: waiting for all members of this distributed thread group to finish\n",__func__);
+   PSPRINTK("%s: waiting for all members of this distributed thread group to finish\n",__func__);
     while(!tgroup_closed) {
         unsigned char pass = 0;
         do_each_thread(g,task) {
             if(task->tgroup_home_cpu == w->tgroup_home_cpu &&
                task->tgroup_home_id  == w->tgroup_home_id) {
-          //      printk("task {%d} comm{%s} homeid{%d} ",task->pid,task->comm,task->tgroup_home_id);
                 // there are still living tasks within this distributed thread group
                 // wait a bit
-	//	exit_robust_list(task);
-		
-		if(cnt<3)
-			printk(KERN_ALERT"cntb4 pid{%d} wchan{%pF}\n",task->pid,get_wchan(task));
                 schedule();
-		if(cnt<3){
-		   printk(KERN_ALERT"cnt pid{%d} wchan{%pF}\n",task->pid,get_wchan(task));
-		}
-                if(task->return_disposition==RETURN_DISPOSITION_FORCE_KILL){
-                	pass = 0;
-                	printk("task {%d} comm{%s} pass{%d} ",task->pid,task->comm,pass);
-                }
-                else
-                	pass = 1;
+
+                pass = 1;
             }
 
         } while_each_thread(g,task);
         if(!pass) {
             tgroup_closed = 1;
         } else {
-		cnt++;
-        //    printk("%s: waiting for tgroup close out\n",__func__);
+           PSPRINTK("%s: waiting for tgroup close out\n",__func__);
         }
     }
 
@@ -2804,27 +2789,27 @@ void process_group_exit_item(struct work_struct* work) {
 
     //int perf = PERF_MEASURE_START(&perf_process_group_exit_item);
     PSPRINTK("%s: entered\n",__func__);
-    printk(KERN_ALERT"exit group target id{%d}, cpu{%d}\n",
+    PSPRINTK(KERN_ALERT"exit group target id{%d}, cpu{%d}\n",
             w->tgroup_home_id, w->tgroup_home_cpu);
 
     do_each_thread(g,task) {
         if(task->tgroup_home_id == w->tgroup_home_id &&
            task->tgroup_home_cpu == w->tgroup_home_cpu) {
             
-            if(!task->represents_remote) {
-		 exit_robust_list(task);
-		 task->robust_list = NULL;
-                // active, send sigkill
-             lock_task_sighand(task, &flags);
-	     printk(KERN_ALERT"Issuing SIGKILL to pid %d state{%d} flags{%d} \n",task->pid,task->state,task->signal->flags);
-	     task_clear_jobctl_pending(task, JOBCTL_PENDING_MASK);
-     	     sigaddset(&task->pending.signal,SIGKILL);
-	     signal_wake_up(task,1);	     
-	     clear_ti_thread_flag(task,_TIF_USER_RETURN_NOTIFY);
-             printk(KERN_ALERT" falsgs{%d} pending {%d} ",task->signal->flags,(sigismember(&task->pending.signal, SIGKILL)?1:0));
-             unlock_task_sighand(task, &flags);
+            if (!task->represents_remote) { //similar to zap_other_threads
+				exit_robust_list(task);
+				task->robust_list = NULL;
+				// active, send sigkill
+				lock_task_sighand(task, &flags);
 
-            }
+				task_clear_jobctl_pending(task, JOBCTL_PENDING_MASK);
+				sigaddset(&task->pending.signal, SIGKILL);
+				signal_wake_up(task, 1);
+				clear_ti_thread_flag(task, _TIF_USER_RETURN_NOTIFY);
+
+				unlock_task_sighand(task, &flags);
+
+			}
 
             // If it is a shadow task, it will eventually
             // get killed when its corresponding active task
@@ -2832,16 +2817,6 @@ void process_group_exit_item(struct work_struct* work) {
 
         }
     } while_each_thread(g,task);
-    
- //   dump_regs(&sub_info->remote_regs);
-
-    /*mklinux_akshay*/
-   // sub_info->origin_pid = c->origin_pid;
-    /*
-     * Spin up the new process.
-     */
-   // call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
-//perf_bb = native_read_tsc();
     kfree(work);
 
     PSPRINTK("%s: exiting\n",__func__);
@@ -4651,7 +4626,7 @@ finished_membership_search:
         // thread group.
         if(is_last_thread_in_group) {
 
-            printk("%s: This is the last thread member!\n",__func__);
+        	PSPRINTK("%s: This is the last thread member!\n",__func__);
 
             // Notify all cpus
             exit_notification.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION;
@@ -4686,7 +4661,7 @@ finished_membership_search:
         }
 
     } else {
-    	printk(": This is not the last local thread member\n");
+    	PSPRINTK(": This is not the last local thread member\n");
     }
 
     // We know that this task is exiting, and we will never have to work
@@ -5813,35 +5788,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 void process_server_do_return_disposition(void) {
 
     PSPRINTK("%s\n",__func__);
-    printk(KERN_ALERT"%s pid {%d} disp{%d} \n",__func__,current->pid,current->return_disposition);
-    printk(KERN_ALERT"POP: remote : Migrated task struct signal details pid{%d} state{%d} \n",current->pid,current->state);
 
-                       	   	 int sig, cnt;
-                       	   	 printk(KERN_ALERT"POP: blocked signals\n");
-                       	   	    cnt = 0;
-                       	   	    for (sig = 1; sig < NSIG; sig++) {
-                       	   	        if (sigismember(&current->blocked, sig)) {
-                       	   	        	printk(KERN_ALERT"POP: %d \n", sig);
-                       	   	        }
-                       	   	    }
-                       	   	    printk(KERN_ALERT"POP: real blocked signals\n");
-                       	   	   	    cnt = 0;
-                       	   	   	    for (sig = 1; sig < NSIG; sig++) {
-                       	   	   	        if (sigismember(&current->real_blocked, sig)) {
-                       	   	   	        	printk(KERN_ALERT"POP: %d \n", sig);
-                       	   	   	        }
-                       	   	   	    }
-
-                       	   	   	printk(KERN_ALERT"POP: pending signals\n");
-                       	   	   	 	   	    for (sig = 1; sig < NSIG; sig++) {
-                       	   	   	 	   	        if (sigismember(&current->pending.signal, sig)) {
-                       	   	   	 	   	        	printk("POP: %d \n", sig);
-                       	   	   	 	   	        }
-                       	   	   	 	   	    }
-                       	   		printk(KERN_ALERT"POP: represents_remote:%d, executing_for_remote:%d,next_pid:%d\n",current->represents_remote,current-> executing_for_remote,current->next_pid);
-                       	   		printk(KERN_ALERT"POP: prev_pid:%d, prev_cpu:%d,next_cpu:%d,tgroup_home_cpu:%d\n",current->prev_pid,current->prev_cpu,current->next_cpu,current->tgroup_home_cpu);
-
-   // del_futex(current);
     switch(current->return_disposition) {
     case RETURN_DISPOSITION_MIGRATE:
         // Nothing to do, already back-imported the
@@ -5850,7 +5797,6 @@ void process_server_do_return_disposition(void) {
         // here.
         PSPRINTK("%s: return disposition migrate\n",__func__);
         break;
-    case RETURN_DISPOSITION_FORCE_KILL:
     case RETURN_DISPOSITION_EXIT:
         PSPRINTK("%s: return disposition exit\n",__func__);
     default:

@@ -716,8 +716,6 @@ handle_signal(unsigned long sig, siginfo_t *info, struct k_sigaction *ka,
 		regs->flags &= ~X86_EFLAGS_TF;
 
 	ret = setup_rt_frame(sig, ka, info, regs);
-	/*if(current->tgroup_distributed && sig==9)
-	printk(KERN_ALERT"handle_signal ret{%d}",ret);*/
 	if (ret)
 		return ret;
 
@@ -778,15 +776,10 @@ static void do_signal(struct pt_regs *regs)
 proceed:
 	signr = get_signal_to_deliver(&info, &ka, regs, NULL);
 	if (signr > 0) {
-		/*if(current->tgroup_distributed )
-			printk(KERN_ALERT"do_signal pid{%d} \n",current->pid);*/
 		/* Whee! Actually deliver the signal.  */
 		handle_signal(signr, &info, &ka, regs);
 		return;
 	}
-	/*else if(current->tgroup_distributed)
-		printk(KERN_ALERT"do_signal: sign empty\n");
-*/
 	/* Did we come from a system call? */
 	if (syscall_get_nr(current, regs) >= 0) {
 		/* Restart the system call - no handlers present */

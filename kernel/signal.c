@@ -1155,7 +1155,7 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 	 */
 	list_for_each_entry_safe(q,n, &list->list, list)
 	{
-		if(q->user==NULL)//&& q->list.next == q->list.prev
+		if(q->user==NULL)
 		{
 			/*mklinux_akshay*/
 				/**
@@ -1186,9 +1186,7 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info) {
 		list_del_init(&user->list);
 		sigemptyset(&list->signal);
 		if(sig==SIGKILL){
-		//remove_without_sigqueue: list_del_init(&user->list);
-	//	copy_siginfo(info, &user->info);
-	        info->si_signo = sig;
+	    info->si_signo = sig;
 		info->si_errno = 0;
 		info->si_code = SI_KERNEL;
 		info->si_pid = 0;
@@ -1227,8 +1225,7 @@ int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
 	list_for_each_entry_safe(q,n, &pending->list, list)
 		{
 				if(current->tgroup_distributed && q->user==NULL  && q->list.next == q->list.prev)
-				{       
-					printk(KERN_ALERT"__dequeu_signal: user null\n");
+				{
 					first=q;
 					if(sig !=SIGKILL){
 					sigemptyset(&pending->signal);
@@ -1740,9 +1737,6 @@ pending = group ? &t->signal->shared_pending : &t->pending;
  * exactly one non-rt signal, so that we can get more
  * detailed information about the cause of the signal.
  */
-if(t->tgroup_distributed)
-	printk(KERN_ALERT"sig{%d} info{%d}i group{%d}\n",sig,(info==SEND_SIG_FORCED)?2:0,group);
-
 if (legacy_queue(pending, sig))
 	return 0;
 /*
@@ -2011,8 +2005,6 @@ if (info != SEND_SIG_NOINFO && info != SEND_SIG_PRIV && info != SEND_SIG_FORCED
 	}
 }
 /*mklinux_akshay*/
-if(p->tgroup_distributed)
-	printk(KERN_ALERT"pid{%d} sig{%d} ret{%d}",p->pid,sig,ret);
 if (!ret && sig)
 	ret = do_send_sig_info(sig, info, p, true);
 

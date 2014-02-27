@@ -426,7 +426,7 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bi
 	ret = get_futex_key(uaddr, ((flags & FLAGS_DESTROY == 256)? (0 & FLAGS_SHARED) : (flags & FLAGS_SHARED)), &key, VERIFY_READ);
 
 
-	printk(KERN_ALERT "global_futex_wake ptr {%p} mm{%p} \n",key.both.ptr,current->mm);
+	FRPRINTK(KERN_ALERT "global_futex_wake ptr {%p} mm{%p} \n",key.both.ptr,current->mm);
 
 	hb = hash_futex(&key);
 	spin_lock(&hb->lock);
@@ -445,9 +445,9 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bi
 					//spin_unlock(&this->lock_ptr);
 				}
 				FRPRINTK(KERN_ALERT" call wake futex \n");
-				if (flags&FLAGS_DESTROY == 256) {
+				/*if (flags&FLAGS_DESTROY == 256) {
 					temp->return_disposition=2;//RETURN_DISPOSITION_FORCE_KILL
-				}
+				}*/
 				wake_futex(this);
 			}
 		}
@@ -890,11 +890,11 @@ get_set_remote_key(u32 __user *uaddr, unsigned int val, int fshared, union futex
 	int x=0;
 	 get_user(x,uaddr);
 
-	 if(current->return_disposition==2)
+	/* if(current->return_disposition==2)
 	 {
 		 put_user(0,uaddr);
 		 do_exit(0);
-	 }
+	 }*/
 
 	unsigned long address=(unsigned long)uaddr;
 	key->both.offset = address % PAGE_SIZE;
@@ -919,11 +919,6 @@ get_set_remote_key(u32 __user *uaddr, unsigned int val, int fshared, union futex
 
 		FRPRINTK(KERN_ALERT" pfn {%lx} shift {%lx} vm_start {%lx} vm_end {%lx}\n ",vma->vm_pgoff,vma->vm_pgoff << PAGE_SHIFT,vma->vm_start,vma->vm_end);
 
-/*
-		if((cpu=find_kernel_for_pfn(vma->vm_pgoff << PAGE_SHIFT,&pfn_list_head)) != -1)//vma->vm_pgoff << PAGE_SHIFT
-		res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
-		else
-		{*/
 			unsigned long pfn;
 			res=-ENOTINKRN;
 
