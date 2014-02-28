@@ -2521,7 +2521,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
     struct task_struct *g, *task;
     unsigned char tgroup_closed = 0;
     int perf = -1;
-    unsigned long lockflags;
+    mm_data_t* to_remove = NULL;
 
     perf = PERF_MEASURE_START(&perf_process_tgroup_closed_item);
 
@@ -2549,35 +2549,42 @@ void process_tgroup_closed_item(struct work_struct* work) {
         }
     }
 
-    spin_lock_irqsave(&_saved_mm_head_lock,lockflags);
-    
+loop:
+    spin_lock(&_saved_mm_head_lock);
     // Remove all saved mm's for this thread group.
     curr = _saved_mm_head;
     while(curr) {
-        next = curr->next;
         mm_data = (mm_data_t*)curr;
         if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
            mm_data->tgroup_home_id  == w->tgroup_home_id) {
-            // We need to remove this data entry
-            remove_data_entry_from(curr,&_saved_mm_head);
-
+            
             PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
                     __func__,
                     w->tgroup_home_cpu,
                     w->tgroup_home_id);
 
-            // Remove mm
-            mmput(mm_data->mm);
-
-            PSPRINTK("%s: mm removed\n",__func__);
-
-            // Free up the data entry
-            kfree(curr);
+            to_remove = mm_data;
+            
+            goto found;
         }
-        curr = next;
+        curr = curr->next;
     }
+found:
+    spin_unlock(&_saved_mm_head_lock);
 
-    spin_unlock_irqrestore(&_saved_mm_head_lock,lockflags);
+    if(to_remove != NULL) {
+        PSPRINTK("%s: removing a mm from cpu{%d} id{%d}\n",
+                __func__,
+                w->tgroup_home_cpu,
+                w->tgroup_home_id);
+        
+        remove_data_entry_from(to_remove,&_saved_mm_head);
+        BUG_ON(to_remove->mm == NULL);
+        mmput(to_remove->mm);
+        kfree(to_remove);
+        to_remove = NULL;
+        goto loop;
+    }
 
     kfree(work);
 
