@@ -2557,14 +2557,8 @@ loop:
         mm_data = (mm_data_t*)curr;
         if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
            mm_data->tgroup_home_id  == w->tgroup_home_id) {
-            
-            PSPRINTK("%s: removing a mm for cpu{%d} id{%d}\n",
-                    __func__,
-                    w->tgroup_home_cpu,
-                    w->tgroup_home_id);
-
+            remove_data_entry_from(curr,&_saved_mm_head);
             to_remove = mm_data;
-            
             goto found;
         }
         curr = curr->next;
@@ -2578,7 +2572,6 @@ found:
                 w->tgroup_home_cpu,
                 w->tgroup_home_id);
         
-        remove_data_entry_from(to_remove,&_saved_mm_head);
         BUG_ON(to_remove->mm == NULL);
         mmput(to_remove->mm);
         kfree(to_remove);
