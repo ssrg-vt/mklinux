@@ -3019,6 +3019,7 @@ void process_munmap_request(struct work_struct* work) {
     struct task_struct *task, *g;
     data_header_t *curr = NULL;
     mm_data_t* mm_data = NULL;
+    mm_data_t* to_munmap = NULL;
 
     int perf = PERF_MEASURE_START(&perf_process_munmap_request);
 
@@ -3051,26 +3052,28 @@ done:
     // being munmap()ped, as that would cause security/coherency
     // problems.
     PS_SPIN_LOCK(&_saved_mm_head_lock);
-
     curr = _saved_mm_head;
     while(curr) {
         mm_data = (mm_data_t*)curr;
         if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
            mm_data->tgroup_home_id  == w->tgroup_home_id) {
-            
-            // Entry found, perform munmap on this saved mm.
-            PS_DOWN_WRITE(&mm_data->mm->mmap_sem);
-            current->enable_distributed_munmap = 0;
-            do_munmap(mm_data->mm, w->vaddr_start, w->vaddr_size);
-            current->enable_distributed_munmap = 1;
-            PS_UP_WRITE(&mm_data->mm->mmap_sem);
+           
+            to_munmap = mm_data;
+            goto found;
 
         }
         curr = curr->next;
     }
-
+found:
     PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
+    if(to_munmap != NULL) {
+        PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
+        current->enable_distributed_munmap = 0;
+        do_munmap(to_munmap->mm, w->vaddr_start, w->vaddr_size);
+        current->enable_distributed_munmap = 1;
+        PS_UP_WRITE(&to_munmap->mm->mmap_sem);
+    }
 
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
@@ -3124,6 +3127,7 @@ void process_mprotect_item(struct work_struct* work) {
     } while_each_thread(g,task);
 done:
 
+    
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MPROTECT_RESPONSE;
     response.header.prio = PCN_KMSG_PRIO_NORMAL;
