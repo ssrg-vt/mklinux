@@ -971,8 +971,8 @@ static int cpu_has_known_tgroup_mm(int cpu) {
 /**
  *
  */
-static void set_cpu_has_known_tgroup_mm(int cpu) {
-    struct task_struct *me = current;
+static void set_cpu_has_known_tgroup_mm(struct task_struct *task,int cpu) {
+    struct task_struct *me = task;
     struct task_struct *t = me;
     do {
         set_bit(cpu,&t->known_cpu_with_tgroup_mm);
@@ -2876,6 +2876,10 @@ void process_mapping_request(struct work_struct* work) {
            (task->tgroup_home_id  == w->tgroup_home_id )) {
             //PSPRINTK("mapping request found common thread group here\n");
             mm = task->mm;
+
+            // Take note of the fact that an mm exists on the remote kernel
+            set_cpu_has_known_tgroup_mm(task, w->from_cpu);
+
             goto task_mm_search_exit;
         }
     } while_each_thread(g,task);
@@ -3239,11 +3243,14 @@ void process_munmap_request(struct work_struct* work) {
             // Thread group has been found, perform munmap operation on this
             // task.
             PS_DOWN_WRITE(&task->mm->mmap_sem);
-            current->enable_distributed_munmap = 0;
+            task->enable_distributed_munmap = 0;
             do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
-            current->enable_distributed_munmap = 1;
+            task->enable_distributed_munmap = 1;
             PS_UP_WRITE(&task->mm->mmap_sem);
-            
+           
+            // Take note of the fact that an mm exists on the remote kernel
+            set_cpu_has_known_tgroup_mm(task,w->from_cpu);
+
             goto done; // thread grouping - threads all share a common mm.
 
         }
@@ -3333,6 +3340,9 @@ void process_mprotect_item(struct work_struct* work) {
             do_munmap(task->mm, start, len);
             task->enable_distributed_munmap = 1;
             PS_UP_WRITE(&task->mm->mmap_sem);
+
+            // Take note of the fact that an mm exists on the remote kernel
+            set_cpu_has_known_tgroup_mm(task,w->from_cpu);
 
             // then quit
             goto done;
@@ -5846,9 +5856,6 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
 
 
         PS_UP_READ(&task->mm->mmap_sem);
-    } else {
-        PSPRINTK("%s: Skipping mm migration - dst {%d} has mm set up already\n",
-                __func__, dst_cpu);
     }
     }
 #endif
@@ -5944,7 +5951,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     }
 
     // Remember that now, that cpu has a mm for this tgroup
-    set_cpu_has_known_tgroup_mm(dst_cpu);
+    //set_cpu_has_known_tgroup_mm(dst_cpu);
 
     // Send request
     DO_UNTIL_SUCCESS(pcn_kmsg_send_long(dst_cpu, 
