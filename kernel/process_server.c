@@ -42,8 +42,20 @@
 /**
  * General purpose configuration
  */
+
+// Flag indiciating whether or not to migrate the entire virtual 
+// memory space when a migration occurs.  
 #define COPY_WHOLE_VM_WITH_MIGRATION 1
+
+// Flag indicating whether or not to migrate file-backed executable
+// pages when a fault occurs accessing executable memory.  When this
+// flag is 1, those pages will be migrated.  When it is 0, the local
+// file-system will be consulted instead.
 #define MIGRATE_EXECUTABLE_PAGES_ON_DEMAND 1
+
+// The maximum number of contiguously physical mapped regions to 
+// migrate in response to a mapping query.
+#define MAX_MAPPINGS 1
 
 /**
  * Use the preprocessor to turn off printk.
@@ -337,7 +349,6 @@ typedef struct _clone_data {
 /**
  * 
  */
-#define MAX_MAPPINGS 2
 typedef struct _mapping_request_data {
     data_header_t header;
     int tgroup_home_cpu;
