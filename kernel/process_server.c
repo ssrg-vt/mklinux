@@ -973,9 +973,9 @@ static int cpu_has_known_tgroup_mm(int cpu) {
  */
 static void set_cpu_has_known_tgroup_mm(int cpu) {
     struct task_struct *me = current;
-    struct task_stuct *t = me;
+    struct task_struct *t = me;
     do {
-        set_bit(cpu,&current->known_cpu_with_tgroup_mm);
+        set_bit(cpu,&t->known_cpu_with_tgroup_mm);
     } while_each_thread(me, t);
 }
 
@@ -5808,45 +5808,48 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
 #if COPY_WHOLE_VM_WITH_MIGRATION
     {
     int dst_has_mm = cpu_has_known_tgroup_mm(dst_cpu);
-    struct vm_area_struct* curr = NULL;
-    // We have to break every cow page before migrating if we're
-    // about to move the whole thing.
-restart_break_cow_all:
-    curr = task->mm->mmap;
-    while(curr) {
-        unsigned long addr;
-        unsigned char broken = 0;
-        PS_DOWN_WRITE(&task->mm->mmap_sem);
-        for(addr = curr->vm_start; addr < curr->vm_end; addr += PAGE_SIZE) {
-            if(break_cow(task->mm,curr,addr)) 
-                broken = 1;
+    if(!dst_has_mm) {
+        struct vm_area_struct* curr = NULL;
+        // We have to break every cow page before migrating if we're
+        // about to move the whole thing.
+    restart_break_cow_all:
+        curr = task->mm->mmap;
+        while(curr) {
+            unsigned long addr;
+            unsigned char broken = 0;
+            PS_DOWN_WRITE(&task->mm->mmap_sem);
+            for(addr = curr->vm_start; addr < curr->vm_end; addr += PAGE_SIZE) {
+                if(break_cow(task->mm,curr,addr)) 
+                    broken = 1;
+            }
+            PS_UP_WRITE(&task->mm->mmap_sem);
+            if(broken) 
+                goto restart_break_cow_all;
+            curr = curr->vm_next;
         }
-        PS_UP_WRITE(&task->mm->mmap_sem);
-        if(broken) 
-            goto restart_break_cow_all;
-        curr = curr->vm_next;
-    }
-    
-    PS_DOWN_READ(&task->mm->mmap_sem);
-    curr = task->mm->mmap;
+        
+        PS_DOWN_READ(&task->mm->mmap_sem);
+        curr = task->mm->mmap;
 
-    while(curr) {
-        // Only send the vma is either we don't think the 
-        // remote cpu has a mm already set up, or if this
-        // vma represents the task's stack.
-        if(!dst_has_mm //|| 
-                /*(curr->vm_start <= task->mm->stack_start &&
-                 curr->vm_end > task->mm->stack_start)*/) {
-            send_vma(task->mm,
-                     curr,
-                     dst_cpu,
-                    lclone_request_id);
+        while(curr) {
+            // Only send the vma is either we don't think the 
+            // remote cpu has a mm already set up, or if this
+            // vma represents the task's stack.
+            //if(!dst_has_mm ) {
+                send_vma(task->mm,
+                         curr,
+                         dst_cpu,
+                        lclone_request_id);
+            //} 
+            curr = curr->vm_next;
         }
-        curr = curr->vm_next;
-    }
 
-    PS_UP_READ(&task->mm->mmap_sem);
-    
+
+        PS_UP_READ(&task->mm->mmap_sem);
+    } else {
+        PSPRINTK("%s: Skipping mm migration - dst {%d} has mm set up already\n",
+                __func__, dst_cpu);
+    }
     }
 #endif
 
