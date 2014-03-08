@@ -3302,6 +3302,9 @@ void process_mprotect_item(struct work_struct* work) {
     size_t len = w->len;
     unsigned long prot = w->prot;
     struct task_struct* task, *g;
+    data_header_t* curr = NULL;
+    mm_data_t* mm_data = NULL;
+    mm_data_t* to_munmap = NULL;
 
     int perf = PERF_MEASURE_START(&perf_process_mprotect_item);
     
@@ -3311,7 +3314,14 @@ void process_mprotect_item(struct work_struct* work) {
            task->tgroup_home_id  == tgroup_home_id) {
             
             // do_mprotect
-            do_mprotect(task,start,len,prot,0);
+            // doing mprotect here causes errors, I do not know why
+            // for now I will unmap the region instead.
+            //do_mprotect(task,start,len,prot,0);
+            PS_DOWN_WRITE(&task->mm->mmap_sem);
+            task->enable_distributed_munmap = 0;
+            do_munmap(task->mm, start, len);
+            task->enable_distributed_munmap = 1;
+            PS_UP_WRITE(&task->mm->mmap_sem);
 
             // then quit
             goto done;
@@ -3319,6 +3329,35 @@ void process_mprotect_item(struct work_struct* work) {
         }
     } while_each_thread(g,task);
 done:
+
+    // munmap the specified region in any saved mm's as well.
+    // This keeps old mappings saved in the mm of dead thread
+    // group members from being resolved accidentally after
+    // being munmap()ped, as that would cause security/coherency
+    // problems.
+    PS_SPIN_LOCK(&_saved_mm_head_lock);
+    curr = _saved_mm_head;
+    while(curr) {
+        mm_data = (mm_data_t*)curr;
+        if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
+           mm_data->tgroup_home_id  == w->tgroup_home_id) {
+           
+            to_munmap = mm_data;
+            goto found;
+
+        }
+        curr = curr->next;
+    }
+found:
+    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
+
+    if(to_munmap != NULL) {
+        PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
+        current->enable_distributed_munmap = 0;
+        do_munmap(to_munmap->mm, start, len);
+        current->enable_distributed_munmap = 1;
+        PS_UP_WRITE(&to_munmap->mm->mmap_sem);
+    }
 
     
     // Construct response
