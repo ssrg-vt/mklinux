@@ -5427,7 +5427,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
         prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
 
-        PS_DOWN_WRITE(&current->mm->mmap_sem);
+        //PS_DOWN_WRITE(&current->mm->mmap_sem);
 
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
@@ -5440,6 +5440,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 current->enable_do_mmap_pgoff_hook = 0;
                 // mmap parts that are missing, while leaving the existing
                 // parts untouched.
+                PS_DOWN_WRITE(&current->mm->mmap_sem);
                 err = do_mmap_remaining(NULL,
                         data->vaddr_start,
                         data->vaddr_size,
@@ -5448,6 +5449,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                         MAP_ANONYMOUS|
                         ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                         0);
+                PS_UP_WRITE(&current->mm->mmap_sem);
                 current->enable_distributed_munmap = 1;
                 current->enable_do_mmap_pgoff_hook = 1;
             } else {
@@ -5474,6 +5476,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     current->enable_do_mmap_pgoff_hook = 0;
                     // mmap parts that are missing, while leaving the existing
                     // parts untouched.
+                    PS_DOWN_WRITE(&current->mm->mmap_sem);
                     err = do_mmap_remaining(f,
                             data->vaddr_start,
                             data->vaddr_size,
@@ -5483,6 +5486,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             ((data->vm_flags & VM_EXECUTABLE)?MAP_EXECUTABLE:0) |
                             ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                             data->pgoff << PAGE_SHIFT);
+                    PS_UP_WRITE(&current->mm->mmap_sem);
                     current->enable_distributed_munmap = 1;
                     current->enable_do_mmap_pgoff_hook = 1;
                     filp_close(f,NULL);
@@ -5490,7 +5494,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             }
             if(err != data->vaddr_start) {
                 PSPRINTK("ERROR: Failed to do_mmap %lx\n",err);
-                PS_UP_WRITE(&current->mm->mmap_sem);
+                //PS_UP_WRITE(&current->mm->mmap_sem);
                 goto exit_remove_data;
             }
             
@@ -5520,6 +5524,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 if(data->mappings[i].present) {
                     int tmp_err;
+                    PS_DOWN_WRITE(&current->mm->mmap_sem);
                     tmp_err = remap_pfn_range_remaining(current->mm,
                                                        vma,
                                                        data->mappings[i].vaddr,
@@ -5527,7 +5532,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                                                        data->mappings[i].sz,
                                                        vm_get_page_prot(vma->vm_flags),
                                                        1);
-                    
+                    PS_UP_WRITE(&current->mm->mmap_sem);
                     if(tmp_err) remap_pfn_range_err = tmp_err;
                 }
             }
@@ -5541,7 +5546,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             }
         } 
 
-        PS_UP_WRITE(&current->mm->mmap_sem);
+        //PS_UP_WRITE(&current->mm->mmap_sem);
 
         if(vma) {
             *vma_out = vma;
