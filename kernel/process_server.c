@@ -42,7 +42,7 @@
 /**
  * General purpose configuration
  */
-#define COPY_WHOLE_VM_WITH_MIGRATION 0
+#define COPY_WHOLE_VM_WITH_MIGRATION 1
 #define MIGRATE_EXECUTABLE_PAGES_ON_DEMAND 1
 
 /**
@@ -945,6 +945,27 @@ static struct workqueue_struct *mapping_wq;
  */
 static bool __user_addr (unsigned long x ) {
     return (x < PAGE_OFFSET);   
+}
+
+/**
+ *
+ */
+static int cpu_has_known_tgroup_mm(int cpu) {
+    if(test_bit(cpu,&current->known_cpu_with_tgroup_mm)) {
+        return 1;
+    } 
+    return 0;
+}
+
+/**
+ *
+ */
+static void set_cpu_has_known_tgroup_mm(int cpu) {
+    struct task_struct *me = current;
+    struct task_stuct *t = me;
+    do {
+        set_bit(cpu,&current->known_cpu_with_tgroup_mm);
+    } while_each_thread(me, t);
 }
 
 /**
@@ -5632,11 +5653,11 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     task->prev_pid = -1;
     task->next_pid = -1;
     task->clone_data = NULL;
-
     task->t_home_cpu = _cpu;
     task->t_home_id  = task->pid;
     task->t_distributed = 0;
     task->previous_cpus = 0;
+    task->known_cpu_with_tgroup_mm = 0;
     task->return_disposition = RETURN_DISPOSITION_EXIT;
 
     // If this is pid 1 or 2, the parent cannot have been migrated
@@ -5655,6 +5676,10 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
         task->tgroup_distributed = 0;
         return 1;
     }
+
+    // Inherit the list of known cpus with mms for this thread group 
+    // once we know that the task is int he same tgid.
+    task->known_cpu_with_tgroup_mm = orig->known_cpu_with_tgroup_mm;
 
     // This is important.  We want to make sure to keep an accurate record
     // of which cpu and thread group the new thread is a part of.
@@ -5732,6 +5757,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
 
 #if COPY_WHOLE_VM_WITH_MIGRATION
     {
+    int dst_has_mm = cpu_has_known_tgroup_mm(dst_cpu);
     struct vm_area_struct* curr = NULL;
     // We have to break every cow page before migrating if we're
     // about to move the whole thing.
@@ -5753,11 +5779,19 @@ restart_break_cow_all:
     
     PS_DOWN_READ(&task->mm->mmap_sem);
     curr = task->mm->mmap;
+
     while(curr) {
-        send_vma(task->mm,
-                 curr,
-                 dst_cpu,
-                 lclone_request_id);
+        // Only send the vma is either we don't think the 
+        // remote cpu has a mm already set up, or if this
+        // vma represents the task's stack.
+        if(!dst_has_mm //|| 
+                /*(curr->vm_start <= task->mm->stack_start &&
+                 curr->vm_end > task->mm->stack_start)*/) {
+            send_vma(task->mm,
+                     curr,
+                     dst_cpu,
+                    lclone_request_id);
+        }
         curr = curr->vm_next;
     }
 
@@ -5855,6 +5889,9 @@ restart_break_cow_all:
     // floating point: struct fpu fpu; THIS IS NEEDED
     // IO permissions: unsigned long *io_bitmap_ptr; unsigned long iopl; unsigned io_bitmap_max;
     }
+
+    // Remember that now, that cpu has a mm for this tgroup
+    set_cpu_has_known_tgroup_mm(dst_cpu);
 
     // Send request
     DO_UNTIL_SUCCESS(pcn_kmsg_send_long(dst_cpu, 
