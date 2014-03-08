@@ -42,7 +42,7 @@
 /**
  * General purpose configuration
  */
-#define COPY_WHOLE_VM_WITH_MIGRATION 1
+#define COPY_WHOLE_VM_WITH_MIGRATION 0
 #define MIGRATE_EXECUTABLE_PAGES_ON_DEMAND 1
 
 /**
@@ -2708,6 +2708,18 @@ found:
 }
 
 /**
+ * @brief Determine if the specified vma can have cow mapings.
+ * @return 1 = yes, 0 = no.
+ */
+static int is_cow(struct vm_area_struct* vma) {
+    if((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) != VM_MAYWRITE) {
+        // Not a cow vma
+        return 0;
+    }
+    return 1;
+}
+
+/**
  * @brief Break the COW page that contains "address", iff that page
  * is a COW page.
  * @return 1 = handled, 0 = not handled.
@@ -2809,7 +2821,6 @@ void process_mapping_request(struct work_struct* work) {
     };
     char* plpath = NULL;
     char lpath[512];
-    int try_count = 0;
     int i;
     
     // for perf
@@ -2863,9 +2874,30 @@ task_mm_search_exit:
     
     // OK, if mm was found, look up the mapping.
     if(mm) {
-        PS_DOWN_WRITE(&mm->mmap_sem);
-        try_count++;
+
+        // The purpose of this code block is to determine
+        // if we need to use a read or write lock, and safely.  
+        // implement whatever lock type we decided we needed.  We
+        // prefer to use read locks, since then we can service
+        // more than one mapping request at the same time.  However,
+        // if we are going to do any cow break operations, we 
+        // must lock for write.
+        int can_be_cow = 0;
+        int first = 1;
+changed_can_be_cow:
+        if(can_be_cow)
+            PS_DOWN_WRITE(&mm->mmap_sem);
+        else 
+            PS_DOWN_READ(&mm->mmap_sem);
         vma = find_vma_checked(mm, address);
+        if(vma && first) {
+            first = 0;
+            if(is_cow(vma)) {
+                can_be_cow = 1;
+                PS_UP_READ(&mm->mmap_sem);
+                goto changed_can_be_cow;
+            }
+        }
 
         walk.mm = mm;
         walk_page_range(address & PAGE_MASK, 
@@ -2883,14 +2915,16 @@ task_mm_search_exit:
              */
             {
             // Break all cows in this vma
-            unsigned long cow_addr;
-            for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
-                break_cow(mm, vma, cow_addr);
+            if(can_be_cow) {
+                unsigned long cow_addr;
+                for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
+                    break_cow(mm, vma, cow_addr);
+                }
+                // We no longer need a write lock after the break_cow process
+                // is complete, so downgrade the lock to a read lock.
+                downgrade_write(&mm->mmap_sem);
             }
 
-            // We no longer need a write lock after the break_cow process
-            // is complete, so downgrade the lock to a read lock.
-            downgrade_write(&mm->mmap_sem);
 
             // Now grab all the mappings that we can stuff into the response.
             if(0 != fill_physical_mapping_array(mm, 
@@ -2938,7 +2972,10 @@ task_mm_search_exit:
        
         } else {
 
-            PS_UP_WRITE(&mm->mmap_sem);
+            if(can_be_cow)
+                PS_UP_WRITE(&mm->mmap_sem);
+            else
+                PS_UP_READ(&mm->mmap_sem);
             // Zero out mappings
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 response.mappings[i].present = 0;
@@ -4523,7 +4560,7 @@ int process_server_import_address_space(unsigned long* ip,
     } else {
         struct mm_struct* oldmm = current->mm;
         
-        PS_DOWN_WRITE(&thread_mm->mmap_sem); // deadlock was here... is it still?
+        //PS_DOWN_WRITE(&thread_mm->mmap_sem); // deadlock was here... is it still?
 
         // Flush the tlb and cache, removing any entries for the
         // old memory map.
@@ -4567,7 +4604,7 @@ int process_server_import_address_space(unsigned long* ip,
             kfree(used_saved_mm);
         }
 
-        PS_UP_WRITE(&thread_mm->mmap_sem);
+        //PS_UP_WRITE(&thread_mm->mmap_sem);
 
         // Transplant thread group information
         // if there are other thread group members
