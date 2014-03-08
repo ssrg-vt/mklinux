@@ -48,7 +48,7 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -2887,6 +2887,11 @@ task_mm_search_exit:
             for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
                 break_cow(mm, vma, cow_addr);
             }
+
+            // We no longer need a write lock after the break_cow process
+            // is complete, so downgrade the lock to a read lock.
+            downgrade_write(&mm->mmap_sem);
+
             // Now grab all the mappings that we can stuff into the response.
             if(0 != fill_physical_mapping_array(mm, 
                                                 vma,
@@ -2926,7 +2931,14 @@ task_mm_search_exit:
                 strcpy(response.path,plpath);
                 response.pgoff = vma->vm_pgoff;
             }
+
+            // We modified this lock to be read-mode above so now
+            // we can do a read-unlock instead of a write-unlock
+            PS_UP_READ(&mm->mmap_sem);
+       
         } else {
+
+            PS_UP_WRITE(&mm->mmap_sem);
             // Zero out mappings
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 response.mappings[i].present = 0;
@@ -2934,9 +2946,9 @@ task_mm_search_exit:
                 response.mappings[i].paddr = 0;
                 response.mappings[i].sz = 0;
             }
+
         }
         
-        PS_UP_WRITE(&mm->mmap_sem);
 
     }
 
