@@ -2743,11 +2743,16 @@ found:
  * @brief Determine if the specified vma can have cow mapings.
  * @return 1 = yes, 0 = no.
  */
-static int is_cow(struct vm_area_struct* vma) {
+static int is_maybe_cow(struct vm_area_struct* vma) {
     if((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) != VM_MAYWRITE) {
         // Not a cow vma
         return 0;
     }
+
+    if(!(vma->vm_flags & VM_WRITE)) {
+        return 0;
+    }
+
     return 1;
 }
 
@@ -2928,7 +2933,7 @@ changed_can_be_cow:
         vma = find_vma_checked(mm, address);
         if(vma && first) {
             first = 0;
-            if(is_cow(vma)) {
+            if(is_maybe_cow(vma)) {
                 can_be_cow = 1;
                 PS_UP_READ(&mm->mmap_sem);
                 goto changed_can_be_cow;
@@ -5596,10 +5601,15 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         if(vma && paddr_present) { 
             int remap_pfn_range_err = 0;
             pte_provided = 1;
+            unsigned long cow_addr;
 
-            if(break_cow(current->mm,vma,address)) {
-                vma = find_vma_checked(current->mm, address);
-                BUG_ON(vma == NULL);
+            // Break cow in this entire VMA
+            if(is_maybe_cow(vma)) {
+                PS_DOWN_WRITE(&current->mm->mmap_sem);
+                for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
+                    break_cow(mm, vma, cow_addr);
+                }
+                PS_UP_WRITE(&current->mm->mmap_sem);
             }
 
             for(i = 0; i < MAX_MAPPINGS; i++) {
@@ -5826,15 +5836,18 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
         curr = task->mm->mmap;
         while(curr) {
             unsigned long addr;
-            unsigned char broken = 0;
-            PS_DOWN_WRITE(&task->mm->mmap_sem);
-            for(addr = curr->vm_start; addr < curr->vm_end; addr += PAGE_SIZE) {
-                if(break_cow(task->mm,curr,addr)) 
-                    broken = 1;
+            //unsigned char broken = 0;
+            if(is_maybe_cow(curr)) {
+                PS_DOWN_WRITE(&task->mm->mmap_sem);
+                for(addr = curr->vm_start; addr < curr->vm_end; addr += PAGE_SIZE) {
+                    if(break_cow(task->mm,curr,addr)) {
+                        //broken = 1;
+                    }
+                }
+                PS_UP_WRITE(&task->mm->mmap_sem);
             }
-            PS_UP_WRITE(&task->mm->mmap_sem);
-            if(broken) 
-                goto restart_break_cow_all;
+            //if(broken) 
+            //    goto restart_break_cow_all;
             curr = curr->vm_next;
         }
         
