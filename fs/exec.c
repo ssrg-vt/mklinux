@@ -2110,6 +2110,8 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 		.mm_flags = mm->flags,
 	};
 
+dump_stack();
+
 	audit_core_dumps(signr);
 
 	binfmt = mm->binfmt;

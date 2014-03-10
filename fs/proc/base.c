@@ -287,6 +287,8 @@ static int proc_pid_wchan(struct task_struct *task, char *buffer)
 
 	wchan = get_wchan(task);
 
+	printk("%s: %pB\n", __func__, wchan);
+
 	if (lookup_symbol_name(wchan, symname) < 0)
 		if (!ptrace_may_access(task, PTRACE_MODE_READ))
 			return 0;

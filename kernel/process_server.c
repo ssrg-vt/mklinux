@@ -28,6 +28,8 @@
 #include <linux/pcn_perf.h> // performance measurement
 #include <linux/string.h>
 
+#include <linux/popcorn.h>
+
 #include <asm/pgtable.h>
 #include <asm/atomic.h>
 #include <asm/tlbflush.h>
@@ -38,6 +40,8 @@
 #include <asm/msr.h> // wrmsr_safe
 #include <asm/mmu_context.h>
 #include <asm/processor.h> // load_cr3
+
+#define SUPPORT_FOR_CLUSTERING
 
 /**
  * General purpose configuration
@@ -337,7 +341,7 @@ typedef struct _clone_data {
 /**
  * 
  */
-#define MAX_MAPPINGS 2
+#define MAX_MAPPINGS 4
 typedef struct _mapping_request_data {
     data_header_t header;
     int tgroup_home_cpu;
@@ -2420,11 +2424,20 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
     request.requester_pid = data->requester_pid;
+
+#ifndef SUPPORT_FOR_CLUSTERING
     for(i = 0; i < NR_CPUS; i++) {
-
         // Skip the current cpu
-        if (i == _cpu) continue;
-
+        if(i == _cpu) continue;
+#else
+    // the list does not include the current processor group descirptor (TODO)
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+extern struct list_head rlist_head;
+    list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+#endif
         // Send the request to this cpu.
         s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
         if(!s) {
@@ -2740,7 +2753,7 @@ task_mm_search_exit:
     
     // OK, if mm was found, look up the mapping.
     if(mm) {
-        PS_DOWN_WRITE(&mm->mmap_sem);
+        PS_DOWN_READ(&mm->mmap_sem);
         try_count++;
         vma = find_vma_checked(mm, address);
 
@@ -2813,7 +2826,7 @@ task_mm_search_exit:
             }
         }
         
-        PS_UP_WRITE(&mm->mmap_sem);
+        PS_UP_READ(&mm->mmap_sem);
 
     }
 
@@ -3111,16 +3124,22 @@ void process_mprotect_item(struct work_struct* work) {
     
     // Find the task
     do_each_thread(g,task) {
+//	task_lock(task); // TODO consider to use this
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
            task->tgroup_home_id  == tgroup_home_id) {
             
-            // do_mprotect
-            do_mprotect(task,start,len,prot,0);
+            if (task->mm)
+                // do_mprotect
+                do_mprotect(task, start, len, prot,0);
+//	        task_unlock(task); //TODO consider to use this
+ 	    else
+		printk("%s: task->mm task:%p mm:%p\n",
+			__func__, task, task->mm);
 
             // then quit
             goto done;
-
         }
+//	task_unlock(task); // TODO consider to use this
     } while_each_thread(g,task);
 done:
 
@@ -4631,12 +4650,20 @@ int process_server_do_group_exit(void) {
     msg.tgroup_home_id = current->tgroup_home_id;
     msg.tgroup_home_cpu = current->tgroup_home_cpu;
 
-    // Send message to everybody
+#ifndef SUPPORT_FOR_CLUSTERING
     for(i = 0; i < NR_CPUS; i++) {
-
-        if (i == _cpu) continue;
-
-        // Send
+        // Skip the current cpu
+        if(i == _cpu) continue;
+#else
+    // the list does not include the current processor group descirptor (TODO)
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+extern struct list_head rlist_head;
+    list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+#endif
+	// Send
         pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&msg));
     }
 
@@ -4748,15 +4775,23 @@ finished_membership_search:
         //                a familiar place (a place you've been before), but unfortunately, 
         //                your life is over.
         //                Note: comments like this must == I am tired.
+#ifndef SUPPORT_FOR_CLUSTERING
         for(i = 0; i < NR_CPUS; i++) {
-            if(i != _cpu && test_bit(i,&current->previous_cpus)) {
-                pcn_kmsg_send(i, 
-                            (struct pcn_kmsg_message*)&msg);
-            }
+          // Skip the current cpu
+          if(i == _cpu) continue;
+#else
+        // the list does not include the current processor group descirptor (TODO)
+        struct list_head *iter;
+        _remote_cpu_info_list_t *objPtr;
+extern struct list_head rlist_head;
+        list_for_each(iter, &rlist_head) {
+          objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+          i = objPtr->_data._processor;
+#endif
+          if (test_bit(i,&current->previous_cpus))
+            pcn_kmsg_send(i, (struct pcn_kmsg_message*)&msg);
         }
     } 
-
-
 
     // If this was the last thread in the local work, we take one of two 
     // courses of action, either we:
@@ -4780,9 +4815,21 @@ finished_membership_search:
             exit_notification.header.prio = PCN_KMSG_PRIO_NORMAL;
             exit_notification.tgroup_home_cpu = current->tgroup_home_cpu;
             exit_notification.tgroup_home_id = current->tgroup_home_id;
+
+#ifndef SUPPORT_FOR_CLUSTERING
             for(i = 0; i < NR_CPUS; i++) {
-                if(i == _cpu) continue; // Don't bother notifying myself... I already know.
-                pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&exit_notification));
+              // Skip the current cpu
+              if(i == _cpu) continue;
+#else
+	    // the list does not include the current processor group descirptor (TODO)
+	    struct list_head *iter;
+	    _remote_cpu_info_list_t *objPtr;
+extern struct list_head rlist_head;
+            list_for_each(iter, &rlist_head) {
+              objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+              i = objPtr->_data._processor;
+#endif
+              pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&exit_notification));
             }
 
         } else {
@@ -4791,7 +4838,10 @@ finished_membership_search:
             // it from being destroyed
             PSPRINTK("%s: This is not the last thread member, saving mm\n",
                     __func__);
+if (current && current->mm)
             atomic_inc(&current->mm->mm_users);
+else
+  printk("%s: ERROR current %p, current->mm %p\n", __func__, current, current->mm);
 
             // Remember the mm
             mm_data = kmalloc(sizeof(mm_data_t),GFP_KERNEL);
@@ -4914,11 +4964,20 @@ int process_server_do_munmap(struct mm_struct* mm,
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
     request.requester_pid = current->pid;
+
+#ifndef SUPPORT_FOR_CLUSTERING
     for(i = 0; i < NR_CPUS; i++) {
-
         // Skip the current cpu
-        if (i == _cpu) continue;
-
+        if(i == _cpu) continue;
+#else
+    // the list does not include the current processor group descirptor (TODO)
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+extern struct list_head rlist_head;
+    list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+#endif
         // Send the request to this cpu.
         s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
         if(!s) {
@@ -5000,12 +5059,19 @@ void process_server_do_mprotect(struct task_struct* task,
     request.requester_pid = task->pid;
 
     PSPRINTK("Sending mprotect request to all other kernels... ");
-
+#ifndef SUPPORT_FOR_CLUSTERING
     for(i = 0; i < NR_CPUS; i++) {
-
         // Skip the current cpu
-        if (i == _cpu) continue;
-
+        if(i == _cpu) continue;
+#else
+    // the list does not include the current processor group descirptor (TODO)
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+extern struct list_head rlist_head;
+    list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+#endif
         // Send the request to this cpu.
         s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
         if(!s) {
@@ -5221,11 +5287,20 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
     request.requester_pid = current->pid;
-    for(i = 0; i < NR_CPUS; i++) {
 
+#ifndef SUPPORT_FOR_CLUSTERING
+    for(i = 0; i < NR_CPUS; i++) {
         // Skip the current cpu
-        if(i == _cpu) continue; 
-    
+        if(i == _cpu) continue;
+#else
+    // the list does not include the current processor group descirptor (TODO)
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+extern struct list_head rlist_head;
+    list_for_each(iter, &rlist_head) { 
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+#endif
         // Send the request to this cpu.
         s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
         if(!s) {
@@ -5838,12 +5913,39 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
    
     int ret = 0;
 
+#ifndef SUPPORT_FOR_CLUSTERING
     if(test_bit(cpu,&task->previous_cpus)) {
         ret = do_migration_back_to_previous_cpu(task,cpu);
     } else {
         ret = do_migration_to_new_cpu(task,cpu);
     }
-
+#else
+    if (cpumask_test_cpu(cpu, cpu_present_mask)) {
+        printk(KERN_ERR"%s: called but task %p does not require inter-kernel migration"
+		       "(cpu: %d present_mask)\n", __func__, task, cpu);
+        return -EBUSY;
+    }
+    // TODO seems like that David is using previous_cpus as a bitmask.. 
+    // TODO well this must be upgraded to a cpumask, declared as usigned long in task_struct
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+    struct cpumask *pcpum =0;
+    int cpuid=-1;
+extern struct list_head rlist_head;
+    list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        cpuid = objPtr->_data._processor;
+        pcpum = &(objPtr->_data._cpumask);
+	if (cpumask_test_cpu(cpu, pcpum)) {
+		if ( bitmap_intersects(cpumask_bits(pcpum),
+				       &(task->previous_cpus),
+				       (sizeof(unsigned long)*8)) )
+	            ret = do_migration_back_to_previous_cpu(task,cpuid);
+		else
+		    ret = do_migration_to_new_cpu(task,cpuid);
+	}
+    }
+#endif
     return ret;
 }
 

@@ -799,7 +799,7 @@ static noinline int init_post(void)
 	panic("No init found.  Try passing init= option to kernel. "
 	      "See Linux Documentation/init.txt for guidance.");
 }
-
+extern int _init_RemoteCPUMask(void);
 static int __init kernel_init(void * unused)
 {
 	/*
@@ -851,7 +851,7 @@ static int __init kernel_init(void * unused)
 	 * we're essentially up and running. Get rid of the
 	 * initmem segments and start the user-mode stuff..
 	 */
-
+_init_RemoteCPUMask();
 	init_post();
 	return 0;
 }

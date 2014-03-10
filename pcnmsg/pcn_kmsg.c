@@ -25,6 +25,9 @@
 #include <asm/atomic.h>
 #include <linux/delay.h>
 
+#define LOGLEN 4
+#define LOGCALL 32
+
 #define KMSG_VERBOSE 0
 
 #if KMSG_VERBOSE
@@ -92,13 +95,15 @@ struct workqueue_struct *messaging_wq;
 #define PCN_WARN(...) ;
 #define PCN_ERROR(...) printk(__VA_ARGS__)
 
-struct pcn_kmsg_hdr log_receive[16];
-struct pcn_kmsg_hdr log_send[16];
+struct pcn_kmsg_hdr log_receive[LOGLEN];
+struct pcn_kmsg_hdr log_send[LOGLEN];
 int log_r_index=0;
 int log_s_index=0;
 
-void * log_function_called[16];
+void * log_function_called[LOGCALL];
 int log_f_index=0;
+int log_f_sendindex=0;
+void * log_function_send[LOGCALL];
 
 /* From Wikipedia page "Fetch and add", modified to work for u64 */
 static inline unsigned long fetch_and_add(volatile unsigned long * variable, 
@@ -159,8 +164,8 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	       &msg->hdr, sizeof(struct pcn_kmsg_hdr));
 
 
-	//log_send[log_s_index%16]= win->buffer[ticket & RB_MASK].hdr;
-	memcpy(&(log_send[log_s_index%16]),&(win->buffer[ticket%PCN_KMSG_RBUF_SIZE].hdr),sizeof(struct pcn_kmsg_hdr));
+	//log_send[log_s_index%LOGLEN]= win->buffer[ticket & RB_MASK].hdr;
+	memcpy(&(log_send[log_s_index%LOGLEN]),&(win->buffer[ticket%PCN_KMSG_RBUF_SIZE].hdr),sizeof(struct pcn_kmsg_hdr));
 	log_s_index++;
 
 	win->second_buffer[ticket%PCN_KMSG_RBUF_SIZE]++;
@@ -211,8 +216,8 @@ static inline int win_get(struct pcn_kmsg_window *win,
 	// barrier here?
 	pcn_barrier();
 
-	//log_receive[log_r_index%16]=rcvd->hdr;
-	memcpy(&(log_receive[log_r_index%16]),&(rcvd->hdr),sizeof(struct pcn_kmsg_hdr));
+	//log_receive[log_r_index%LOGLEN]=rcvd->hdr;
+	memcpy(&(log_receive[log_r_index%LOGLEN]),&(rcvd->hdr),sizeof(struct pcn_kmsg_hdr));
 	log_r_index++;
 
 	//rcvd->hdr.ready = 0;
@@ -638,23 +643,28 @@ static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eo
         p += sprintf(p, "messages put: %ld\n", msg_put);
 
     idx = log_r_index;
-    for (i =0; i>-16; i--)
+    for (i =0; i>-LOGLEN; i--)
     	p +=sprintf (p,"r%d: from%d type%d %1d:%1d:%1d seq%d\n",
-    			(idx+i),(int) log_receive[(idx+i)%16].from_cpu, (int)log_receive[(idx+i)%16].type,
-    			(int) log_receive[(idx+i)%16].is_lg_msg, (int)log_receive[(idx+i)%16].lg_start,
-    			(int) log_receive[(idx+i)%16].lg_end, (int) log_receive[(idx+i)%16].lg_seqnum );
+    			(idx+i),(int) log_receive[(idx+i)%LOGLEN].from_cpu, (int)log_receive[(idx+i)%LOGLEN].type,
+    			(int) log_receive[(idx+i)%LOGLEN].is_lg_msg, (int)log_receive[(idx+i)%LOGLEN].lg_start,
+    			(int) log_receive[(idx+i)%LOGLEN].lg_end, (int) log_receive[(idx+i)%LOGLEN].lg_seqnum );
 
     idx = log_s_index;
-    for (i =0; i>-16; i--)
+    for (i =0; i>-LOGLEN; i--)
     	p +=sprintf (p,"s%d: from%d type%d %1d:%1d:%1d seq%d\n",
-    			(idx+i),(int) log_send[(idx+i)%16].from_cpu, (int)log_send[(idx+i)%16].type,
-    			(int) log_send[(idx+i)%16].is_lg_msg, (int)log_send[(idx+i)%16].lg_start,
-    			(int) log_send[(idx+i)%16].lg_end, (int) log_send[(idx+i)%16].lg_seqnum );
+    			(idx+i),(int) log_send[(idx+i)%LOGLEN].from_cpu, (int)log_send[(idx+i)%LOGLEN].type,
+    			(int) log_send[(idx+i)%LOGLEN].is_lg_msg, (int)log_send[(idx+i)%LOGLEN].lg_start,
+    			(int) log_send[(idx+i)%LOGLEN].lg_end, (int) log_send[(idx+i)%LOGLEN].lg_seqnum );
 
     idx = log_f_index;
-        for (i =0; i>-16; i--)
+        for (i =0; i>-LOGCALL; i--)
         	p +=sprintf (p,"f%d: %pB\n",
-        			(idx+i),(void*) log_function_called[(idx+i)%16] );
+        			(idx+i),(void*) log_function_called[(idx+i)%LOGCALL] );
+
+    idx = log_f_sendindex;
+    	for (i =0; i>-LOGCALL; i--)
+           	p +=sprintf (p,"[s%d]->: %pB\n",
+           			(idx+i),(void*) log_function_send[(idx+i)%LOGCALL] );
 
         for(i=0; i<PCN_KMSG_RBUF_SIZE; i++)
         	p +=sprintf (p,"second_buffer[%i]=%i\n",i,rkvirt[my_cpu]->second_buffer[i]);
@@ -791,9 +801,10 @@ static int __init pcn_kmsg_init(void)
 		}
 	} 
 
-	memset(log_receive,0,sizeof(struct pcn_kmsg_hdr)*16);
-	memset(log_send,0,sizeof(struct pcn_kmsg_hdr)*16);
-	memset(log_function_called,0,sizeof(void*)*16);
+	memset(log_receive,0,sizeof(struct pcn_kmsg_hdr)*LOGLEN);
+	memset(log_send,0,sizeof(struct pcn_kmsg_hdr)*LOGLEN);
+	memset(log_function_called,0,sizeof(void*)*LOGCALL);
+	memset(log_function_send,0,sizeof(void*)*LOGCALL);
 	/* if everything is ok create a proc interface */
 	struct proc_dir_entry *res;
 	res = create_proc_entry("pcnmsg", S_IRUGO, NULL);
@@ -896,6 +907,10 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 {
+	unsigned long bp;
+	get_bp(bp);
+	log_function_send[log_f_sendindex%LOGCALL]= callback_table[msg->hdr.type];
+	log_f_sendindex++;
 	msg->hdr.is_lg_msg = 0;
 	msg->hdr.lg_start = 0;
 	msg->hdr.lg_end = 0;
@@ -925,6 +940,10 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 	int num_chunks = payload_size / PCN_KMSG_PAYLOAD_SIZE;
 	struct pcn_kmsg_message this_chunk;
 	//char test_buf[15];
+
+	/*mklinux_akshay*/
+	int ret=0;
+	/*mklinux_akshay*/
 
 	if (payload_size % PCN_KMSG_PAYLOAD_SIZE) {
 		num_chunks++;
@@ -958,7 +977,9 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       i * PCN_KMSG_PAYLOAD_SIZE, 
 		       PCN_KMSG_PAYLOAD_SIZE);
 
-		__pcn_kmsg_send(dest_cpu, &this_chunk, 0);
+		ret=__pcn_kmsg_send(dest_cpu, &this_chunk, 0);
+		if(ret!=0)
+			return ret;
 	}
 
 	return 0;
@@ -991,8 +1012,9 @@ static int process_message_list(struct list_head *head)
 		if (!rc_overall) {
 			rc_overall = rc;
 		}
-		//log_function_called[log_f_index%16]= callback_table[msg->hdr.type];
-		memcpy(&(log_function_called[log_f_index%16]),&(callback_table[msg->hdr.type]),sizeof(void*));
+		//log_function_called[log_f_index%LOGLEN]= callback_table[msg->hdr.type];
+		//memcpy(&(log_function_called[log_f_index%LOGCALL]),&(callback_table[msg->hdr.type]),sizeof(void*));
+		log_function_called[log_f_index%LOGCALL]= callback_table[msg->hdr.type];
 		log_f_index++;
 		/* NOTE: callback function is responsible for freeing memory
 		   that was kmalloced! */
