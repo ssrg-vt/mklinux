@@ -1599,6 +1599,7 @@ struct task_struct {
     int enable_do_mmap_pgoff_hook;
     int enable_distributed_munmap; /* Start a thread without distributed munmap enabled, 
                                       then enable when address space is fully formed. */
+    unsigned long known_cpu_with_tgroup_mm; /* List of remote cpus that already have a mm for this tgroup  */
 
 };
 

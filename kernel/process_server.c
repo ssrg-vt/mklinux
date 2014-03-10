@@ -44,8 +44,20 @@
 /**
  * General purpose configuration
  */
-#define COPY_WHOLE_VM_WITH_MIGRATION 0
+
+// Flag indiciating whether or not to migrate the entire virtual 
+// memory space when a migration occurs.  
+#define COPY_WHOLE_VM_WITH_MIGRATION 1
+
+// Flag indicating whether or not to migrate file-backed executable
+// pages when a fault occurs accessing executable memory.  When this
+// flag is 1, those pages will be migrated.  When it is 0, the local
+// file-system will be consulted instead.
 #define MIGRATE_EXECUTABLE_PAGES_ON_DEMAND 1
+
+// The maximum number of contiguously physical mapped regions to 
+// migrate in response to a mapping query.
+#define MAX_MAPPINGS 1
 
 /**
  * Use the preprocessor to turn off printk.
@@ -259,9 +271,9 @@ typedef struct _pte_data {
     int vma_id;
     int clone_request_id;
     int cpu;
-    unsigned long vaddr;
-    unsigned long paddr;
-    unsigned long pfn;
+    unsigned long vaddr_start;
+    unsigned long paddr_start;
+    size_t sz;
 } pte_data_t;
 
 /**
@@ -339,7 +351,10 @@ typedef struct _clone_data {
 /**
  * 
  */
+<<<<<<< HEAD
 #define MAX_MAPPINGS 4
+=======
+>>>>>>> f4bd102aba55d039234434cd73e5bbea8ec437c9
 typedef struct _mapping_request_data {
     data_header_t header;
     int tgroup_home_cpu;
@@ -518,12 +533,12 @@ struct _pte_transfer {
     struct pcn_kmsg_hdr header;
     int vma_id;                  //  4
     int clone_request_id;        //  4
-    unsigned long vaddr;         //  8
-    unsigned long paddr;         //  8
-    unsigned long pfn;           //  8+
+    unsigned long vaddr_start;   //  8
+    unsigned long paddr_start;   //  8
+    size_t sz;                   //  4 +
                                  //  ---
-                                 //  32 -> 28 bytes of padding needed
-    char pad[28];
+                                 //  28 -> 32 bytes of padding needed
+    char pad[32];
 } __attribute__((packed)) __attribute__((aligned(64)));
 
 typedef struct _pte_transfer pte_transfer_t;
@@ -950,6 +965,27 @@ static bool __user_addr (unsigned long x ) {
 }
 
 /**
+ *
+ */
+static int cpu_has_known_tgroup_mm(int cpu) {
+    if(test_bit(cpu,&current->known_cpu_with_tgroup_mm)) {
+        return 1;
+    } 
+    return 0;
+}
+
+/**
+ *
+ */
+static void set_cpu_has_known_tgroup_mm(struct task_struct *task,int cpu) {
+    struct task_struct *me = task;
+    struct task_struct *t = me;
+    do {
+        set_bit(cpu,&t->known_cpu_with_tgroup_mm);
+    } while_each_thread(me, t);
+}
+
+/**
  * @brief find_vma does not always return the correct vm_area_struct*.
  * If it fails to find a vma for the specified address, it instead
  * returns the closest one in the rb list.  This function looks
@@ -968,6 +1004,34 @@ static struct vm_area_struct* find_vma_checked(struct mm_struct* mm, unsigned lo
 
     return vma;
 }
+
+/**
+ * Note, mm->mmap_sem must already be held!
+ */
+/*static int is_mapped(struct mm_struct* mm, unsigned vaddr) {
+    pte_t* remap_pte = NULL;
+    pmd_t* remap_pmd = NULL;
+    pud_t* remap_pud = NULL;
+    pgd_t* remap_pgd = NULL;
+    int ret = 0;
+
+    remap_pgd = pgd_offset(mm, vaddr);
+    if(pgd_present(*remap_pgd)) {
+        remap_pud = pud_offset(remap_pgd,vaddr); 
+        if(pud_present(*remap_pud)) {
+            remap_pmd = pmd_offset(remap_pud,vaddr);
+            if(pmd_present(*remap_pmd)) {
+                remap_pte = pte_offset_map(remap_pmd,vaddr);
+                if(remap_pte && pte_none(*remap_pte)) {
+                    // skip the mapping, it already exists!
+                    ret = 1;
+                }
+            }
+        }
+    }
+    return ret;
+
+}*/
 
 /**
  * @brief Find the mm_struct for a given distributed thread.  
@@ -1104,11 +1168,12 @@ static clone_data_t* get_current_clone_data(void) {
     return ret;
 }
 
+
 /**
  * @brief Page walk has encountered a pte while deconstructing
  * the client side processes address space.  Transfer it.
  */
-static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, 
+/*static int deconstruction_page_walk_pte_entry_callback(pte_t *pte, 
         unsigned long start, unsigned long end, struct mm_walk *walk) {
 
     deconstruction_data_t* decon_data = (deconstruction_data_t*)walk->private;
@@ -1134,7 +1199,7 @@ static int deconstruction_page_walk_pte_entry_callback(pte_t *pte,
     DO_UNTIL_SUCCESS(pcn_kmsg_send(dst_cpu, (struct pcn_kmsg_message *)&pte_xfer));
 
     return 0;
-}
+}*/
 
 /**
  * @brief Callback used when walking a memory map.  It looks to see
@@ -1241,11 +1306,11 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
                                               unsigned long* vaddr_mapping_start,
                                               unsigned long* paddr_mapping_start,
                                               size_t* paddr_mapping_sz) {
-    unsigned long paddr_curr;
+    unsigned long paddr_curr = NULL;
     unsigned long vaddr_curr = vaddr;
     unsigned long vaddr_next = vaddr;
-    unsigned long paddr_next;
-    unsigned long paddr_start;
+    unsigned long paddr_next = NULL;
+    unsigned long paddr_start = NULL;
     size_t sz = 0;
 
     
@@ -1312,7 +1377,7 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
     *paddr_mapping_start = paddr_curr;
     *paddr_mapping_sz = sz;
 
-    PSPRINTK("%s: found consecutive area- vaddr{%lx}, paddr{%lx}, sz{%lx}\n",
+    PSPRINTK("%s: found consecutive area- vaddr{%lx}, paddr{%lx}, sz{%d}\n",
                 __func__,
                 *vaddr_mapping_start,
                 *paddr_mapping_start,
@@ -1544,13 +1609,17 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
     int ret = 0;
     int err;
 
-    PSPRINTK("%s: entered\n",__func__);
+    PSPRINTK("%s: entered vaddr_start{%lx}, paddr_start{%lx}, sz{%x}\n",
+            __func__,
+            vaddr_start,
+            paddr_start,
+            sz);
 
     for(vaddr_curr = vaddr_start; 
         vaddr_curr < vaddr_start + sz; 
         vaddr_curr += PAGE_SIZE) {
         if( !is_vaddr_mapped(mm,vaddr_curr) ) {
-            PSPRINTK("%s: mapping vaddr{%lx} paddr{%lx}\n",__func__,vaddr_curr,paddr_curr);
+            //PSPRINTK("%s: mapping vaddr{%lx} paddr{%lx}\n",__func__,vaddr_curr,paddr_curr);
             // not mapped - map it
             err = remap_pfn_range(vma,
                                   vaddr_curr,
@@ -1691,6 +1760,95 @@ done:
     return ret;
 }
 
+static void send_pte(unsigned long paddr_start,
+        unsigned long vaddr_start, 
+        size_t sz, 
+        int dst,
+        int vma_id,
+        int clone_request_id) {
+
+    pte_transfer_t pte_xfer;
+    pte_xfer.header.type = PCN_KMSG_TYPE_PROC_SRV_PTE_TRANSFER;
+    pte_xfer.header.prio = PCN_KMSG_PRIO_NORMAL;
+    pte_xfer.paddr_start = paddr_start;
+    pte_xfer.vaddr_start = vaddr_start;
+    pte_xfer.sz = sz;
+    pte_xfer.clone_request_id = clone_request_id;
+    pte_xfer.vma_id = vma_id;
+    pcn_kmsg_send(dst, (struct pcn_kmsg_message *)&pte_xfer);
+}
+
+static void send_vma(struct mm_struct* mm,
+        struct vm_area_struct* vma, 
+        int dst,
+        int clone_request_id) {
+    char lpath[256];
+    char *plpath;
+    vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
+    vma_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER;  
+    vma_xfer->header.prio = PCN_KMSG_PRIO_NORMAL;
+    
+    if(vma->vm_file == NULL) {
+        vma_xfer->path[0] = '\0';
+    } else {
+        plpath = d_path(&vma->vm_file->f_path,
+                lpath,256);
+        strcpy(vma_xfer->path,plpath);
+    }
+
+    //
+    // Transfer the vma
+    //
+    PS_SPIN_LOCK(&_vma_id_lock);
+    vma_xfer->vma_id = _vma_id++;
+    PS_SPIN_UNLOCK(&_vma_id_lock);
+    vma_xfer->start = vma->vm_start;
+    vma_xfer->end = vma->vm_end;
+    vma_xfer->prot = vma->vm_page_prot;
+    vma_xfer->clone_request_id = clone_request_id;
+    vma_xfer->flags = vma->vm_flags;
+    vma_xfer->pgoff = vma->vm_pgoff;
+    pcn_kmsg_send_long(dst, 
+                        (struct pcn_kmsg_long_message*)vma_xfer, 
+                        sizeof(vma_transfer_t) - sizeof(vma_xfer->header));
+
+    // Send all physical information too
+    {
+    unsigned long curr = vma->vm_start;
+    unsigned long vaddr_resolved = -1;
+    unsigned long paddr_resolved = -1;
+    size_t sz_resolved = 0;
+    
+    while(curr < vma->vm_end) {
+        if(-1 == find_next_consecutive_physically_mapped_region(mm,
+                    vma,
+                    curr,
+                    &vaddr_resolved,
+                    &paddr_resolved,
+                    &sz_resolved)) {
+            // None more, exit
+            break;
+        } else {
+            // send the pte
+            send_pte(paddr_resolved,
+                     vaddr_resolved,
+                     sz_resolved,
+                     dst,
+                     vma_xfer->vma_id,
+                     vma_xfer->clone_request_id
+                     );
+
+            // move to the next
+            curr = vaddr_resolved + sz_resolved;
+        }
+    }
+
+    }
+
+
+    kfree(vma_xfer);
+}
+
 /**
  * @brief Display a mapping request data entry.
  */
@@ -1813,9 +1971,9 @@ static void dump_pte_data(pte_data_t* p) {
     PSPRINTK("vma_id{%x}\n",p->vma_id);
     PSPRINTK("clone_request_id{%x}\n",p->clone_request_id);
     PSPRINTK("cpu{%x}\n",p->cpu);
-    PSPRINTK("vaddr{%lx}\n",p->vaddr);
-    PSPRINTK("paddr{%lx}\n",p->paddr);
-    PSPRINTK("pfn{%lx}\n",p->pfn);
+    PSPRINTK("vaddr_start{%lx}\n",p->vaddr_start);
+    PSPRINTK("paddr_start{%lx}\n",p->paddr_start);
+    PSPRINTK("sz{%d}\n",p->sz);
 }
 
 /**
@@ -2353,9 +2511,10 @@ static void dump_data_list(void) {
             break;
         case PROCESS_SERVER_PTE_DATA_TYPE:
             pte_data = (pte_data_t*)curr;
-            PSPRINTK("PTE DATA: vaddr{%lx}, paddr{%lx}, vmaid{%d}, cpu{%d}\n",
-                    pte_data->vaddr,
-                    pte_data->paddr,
+            PSPRINTK("PTE DATA: vaddr_start{%lx}, paddr_start{%lx}, sz{%d}, vmaid{%d}, cpu{%d}\n",
+                    pte_data->vaddr_start,
+                    pte_data->paddr_start,
+                    pte_data->sz,
                     pte_data->vma_id,
                     pte_data->cpu);
             break;
@@ -2596,6 +2755,23 @@ found:
 }
 
 /**
+ * @brief Determine if the specified vma can have cow mapings.
+ * @return 1 = yes, 0 = no.
+ */
+static int is_maybe_cow(struct vm_area_struct* vma) {
+    if((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) != VM_MAYWRITE) {
+        // Not a cow vma
+        return 0;
+    }
+
+    if(!(vma->vm_flags & VM_WRITE)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+/**
  * @brief Break the COW page that contains "address", iff that page
  * is a COW page.
  * @return 1 = handled, 0 = not handled.
@@ -2697,7 +2873,6 @@ void process_mapping_request(struct work_struct* work) {
     };
     char* plpath = NULL;
     char lpath[512];
-    int try_count = 0;
     int i;
     
     // for perf
@@ -2721,6 +2896,10 @@ void process_mapping_request(struct work_struct* work) {
            (task->tgroup_home_id  == w->tgroup_home_id )) {
             //PSPRINTK("mapping request found common thread group here\n");
             mm = task->mm;
+
+            // Take note of the fact that an mm exists on the remote kernel
+            set_cpu_has_known_tgroup_mm(task, w->from_cpu);
+
             goto task_mm_search_exit;
         }
     } while_each_thread(g,task);
@@ -2751,9 +2930,35 @@ task_mm_search_exit:
     
     // OK, if mm was found, look up the mapping.
     if(mm) {
+<<<<<<< HEAD
         PS_DOWN_READ(&mm->mmap_sem);
         try_count++;
+=======
+
+        // The purpose of this code block is to determine
+        // if we need to use a read or write lock, and safely.  
+        // implement whatever lock type we decided we needed.  We
+        // prefer to use read locks, since then we can service
+        // more than one mapping request at the same time.  However,
+        // if we are going to do any cow break operations, we 
+        // must lock for write.
+        int can_be_cow = 0;
+        int first = 1;
+changed_can_be_cow:
+        if(can_be_cow)
+            PS_DOWN_WRITE(&mm->mmap_sem);
+        else 
+            PS_DOWN_READ(&mm->mmap_sem);
+>>>>>>> f4bd102aba55d039234434cd73e5bbea8ec437c9
         vma = find_vma_checked(mm, address);
+        if(vma && first) {
+            first = 0;
+            if(is_maybe_cow(vma)) {
+                can_be_cow = 1;
+                PS_UP_READ(&mm->mmap_sem);
+                goto changed_can_be_cow;
+            }
+        }
 
         walk.mm = mm;
         walk_page_range(address & PAGE_MASK, 
@@ -2771,10 +2976,17 @@ task_mm_search_exit:
              */
             {
             // Break all cows in this vma
-            unsigned long cow_addr;
-            for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
-                break_cow(mm, vma, cow_addr);
+            if(can_be_cow) {
+                unsigned long cow_addr;
+                for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
+                    break_cow(mm, vma, cow_addr);
+                }
+                // We no longer need a write lock after the break_cow process
+                // is complete, so downgrade the lock to a read lock.
+                downgrade_write(&mm->mmap_sem);
             }
+
+
             // Now grab all the mappings that we can stuff into the response.
             if(0 != fill_physical_mapping_array(mm, 
                                                 vma,
@@ -2814,7 +3026,17 @@ task_mm_search_exit:
                 strcpy(response.path,plpath);
                 response.pgoff = vma->vm_pgoff;
             }
+
+            // We modified this lock to be read-mode above so now
+            // we can do a read-unlock instead of a write-unlock
+            PS_UP_READ(&mm->mmap_sem);
+       
         } else {
+
+            if(can_be_cow)
+                PS_UP_WRITE(&mm->mmap_sem);
+            else
+                PS_UP_READ(&mm->mmap_sem);
             // Zero out mappings
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 response.mappings[i].present = 0;
@@ -2822,9 +3044,13 @@ task_mm_search_exit:
                 response.mappings[i].paddr = 0;
                 response.mappings[i].sz = 0;
             }
+
         }
         
+<<<<<<< HEAD
         PS_UP_READ(&mm->mmap_sem);
+=======
+>>>>>>> f4bd102aba55d039234434cd73e5bbea8ec437c9
 
     }
 
@@ -3030,6 +3256,7 @@ void process_munmap_request(struct work_struct* work) {
     struct task_struct *task, *g;
     data_header_t *curr = NULL;
     mm_data_t* mm_data = NULL;
+    mm_data_t* to_munmap = NULL;
 
     int perf = PERF_MEASURE_START(&perf_process_munmap_request);
 
@@ -3045,11 +3272,14 @@ void process_munmap_request(struct work_struct* work) {
             // Thread group has been found, perform munmap operation on this
             // task.
             PS_DOWN_WRITE(&task->mm->mmap_sem);
-            current->enable_distributed_munmap = 0;
+            task->enable_distributed_munmap = 0;
             do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
-            current->enable_distributed_munmap = 1;
+            task->enable_distributed_munmap = 1;
             PS_UP_WRITE(&task->mm->mmap_sem);
-            
+           
+            // Take note of the fact that an mm exists on the remote kernel
+            set_cpu_has_known_tgroup_mm(task,w->from_cpu);
+
             goto done; // thread grouping - threads all share a common mm.
 
         }
@@ -3062,26 +3292,28 @@ done:
     // being munmap()ped, as that would cause security/coherency
     // problems.
     PS_SPIN_LOCK(&_saved_mm_head_lock);
-
     curr = _saved_mm_head;
     while(curr) {
         mm_data = (mm_data_t*)curr;
         if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
            mm_data->tgroup_home_id  == w->tgroup_home_id) {
-            
-            // Entry found, perform munmap on this saved mm.
-            PS_DOWN_WRITE(&mm_data->mm->mmap_sem);
-            current->enable_distributed_munmap = 0;
-            do_munmap(mm_data->mm, w->vaddr_start, w->vaddr_size);
-            current->enable_distributed_munmap = 1;
-            PS_UP_WRITE(&mm_data->mm->mmap_sem);
+           
+            to_munmap = mm_data;
+            goto found;
 
         }
         curr = curr->next;
     }
-
+found:
     PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
+    if(to_munmap != NULL) {
+        PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
+        current->enable_distributed_munmap = 0;
+        do_munmap(to_munmap->mm, w->vaddr_start, w->vaddr_size);
+        current->enable_distributed_munmap = 1;
+        PS_UP_WRITE(&to_munmap->mm->mmap_sem);
+    }
 
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
@@ -3117,6 +3349,9 @@ void process_mprotect_item(struct work_struct* work) {
     size_t len = w->len;
     unsigned long prot = w->prot;
     struct task_struct* task, *g;
+    data_header_t* curr = NULL;
+    mm_data_t* mm_data = NULL;
+    mm_data_t* to_munmap = NULL;
 
     int perf = PERF_MEASURE_START(&perf_process_mprotect_item);
     
@@ -3126,6 +3361,7 @@ void process_mprotect_item(struct work_struct* work) {
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
            task->tgroup_home_id  == tgroup_home_id) {
             
+<<<<<<< HEAD
             if (task->mm)
                 // do_mprotect
                 do_mprotect(task, start, len, prot,0);
@@ -3133,6 +3369,20 @@ void process_mprotect_item(struct work_struct* work) {
  	    else
 		printk("%s: task->mm task:%p mm:%p\n",
 			__func__, task, task->mm);
+=======
+            // do_mprotect
+            // doing mprotect here causes errors, I do not know why
+            // for now I will unmap the region instead.
+            //do_mprotect(task,start,len,prot,0);
+            PS_DOWN_WRITE(&task->mm->mmap_sem);
+            task->enable_distributed_munmap = 0;
+            do_munmap(task->mm, start, len);
+            task->enable_distributed_munmap = 1;
+            PS_UP_WRITE(&task->mm->mmap_sem);
+
+            // Take note of the fact that an mm exists on the remote kernel
+            set_cpu_has_known_tgroup_mm(task,w->from_cpu);
+>>>>>>> f4bd102aba55d039234434cd73e5bbea8ec437c9
 
             // then quit
             goto done;
@@ -3141,6 +3391,36 @@ void process_mprotect_item(struct work_struct* work) {
     } while_each_thread(g,task);
 done:
 
+    // munmap the specified region in any saved mm's as well.
+    // This keeps old mappings saved in the mm of dead thread
+    // group members from being resolved accidentally after
+    // being munmap()ped, as that would cause security/coherency
+    // problems.
+    PS_SPIN_LOCK(&_saved_mm_head_lock);
+    curr = _saved_mm_head;
+    while(curr) {
+        mm_data = (mm_data_t*)curr;
+        if(mm_data->tgroup_home_cpu == w->tgroup_home_cpu &&
+           mm_data->tgroup_home_id  == w->tgroup_home_id) {
+           
+            to_munmap = mm_data;
+            goto found;
+
+        }
+        curr = curr->next;
+    }
+found:
+    PS_SPIN_UNLOCK(&_saved_mm_head_lock);
+
+    if(to_munmap != NULL) {
+        PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
+        current->enable_distributed_munmap = 0;
+        do_munmap(to_munmap->mm, start, len);
+        current->enable_distributed_munmap = 1;
+        PS_UP_WRITE(&to_munmap->mm->mmap_sem);
+    }
+
+    
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MPROTECT_RESPONSE;
     response.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -3785,9 +4065,9 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
         return 0;
     }
 
-    PSPRINTK("pte transfer: src{%d}, vaddr{%lx}, paddr{%lx}, vma_id{%d}, pfn{%lx}\n",
+    PSPRINTK("pte transfer: src{%d}, vaddr_start{%lx}, paddr_start{%lx}, sz{%d}, vma_id{%d}\n",
             source_cpu,
-            msg->vaddr, msg->paddr, msg->vma_id, msg->pfn);
+            msg->vaddr_start, msg->paddr_start, msg->sz,  msg->vma_id);
 
     pte_data->header.data_type = PROCESS_SERVER_PTE_DATA_TYPE;
     pte_data->header.next = NULL;
@@ -3796,9 +4076,9 @@ static int handle_pte_transfer(struct pcn_kmsg_message* inc_msg) {
     // Copy data into new data item.
     pte_data->cpu = source_cpu;
     pte_data->vma_id = msg->vma_id;
-    pte_data->vaddr = msg->vaddr;
-    pte_data->paddr = msg->paddr;
-    pte_data->pfn = msg->pfn;
+    pte_data->vaddr_start = msg->vaddr_start;
+    pte_data->paddr_start = msg->paddr_start;
+    pte_data->sz = msg->sz;
     pte_data->clone_request_id = msg->clone_request_id;
 
     // Look through data store for matching vma_data_t entries.
@@ -4379,37 +4659,15 @@ int process_server_import_address_space(unsigned long* ip,
                         PSPRINTK("vma->pte_curr == null\n");
                     }
                     while(pte_curr) {
-                        // MAP it
-                        int domapping = 1;
-                        pte_t* remap_pte = NULL;
-                        pmd_t* remap_pmd = NULL;
-                        pud_t* remap_pud = NULL;
-                        pgd_t* remap_pgd = NULL;
-
                         PS_DOWN_WRITE(&current->mm->mmap_sem);
-                        remap_pgd = pgd_offset(current->mm, pte_curr->vaddr);
-                        if(pgd_present(*remap_pgd)) {
-                            remap_pud = pud_offset(remap_pgd,pte_curr->vaddr); 
-                            if(pud_present(*remap_pud)) {
-                                remap_pmd = pmd_offset(remap_pud,pte_curr->vaddr);
-                                if(pmd_present(*remap_pmd)) {
-                                    remap_pte = pte_offset_map(remap_pmd,pte_curr->vaddr);
-                                    if(remap_pte && pte_none(*remap_pte)) {
-                                        // skip the mapping, it already exists!
-                                        domapping = 0;
-                                    }
-                                }
-                            }
-                        }
+                        err = remap_pfn_range_remaining(current->mm,
+                                                        vma,
+                                                        pte_curr->vaddr_start,
+                                                        pte_curr->paddr_start,
+                                                        pte_curr->sz,
+                                                        vma->vm_page_prot,
+                                                        1);
 
-                        if(domapping) {
-                            err = remap_pfn_range(vma,
-                                                    pte_curr->vaddr,
-                                                    pte_curr->paddr >> PAGE_SHIFT,
-                                                    PAGE_SIZE,
-                                                    vma->vm_page_prot);
-                        }
-                        ptes_installed++;
                         PS_UP_WRITE(&current->mm->mmap_sem);
                         
                         pte_curr = (pte_data_t*)pte_curr->header.next;
@@ -4423,7 +4681,7 @@ int process_server_import_address_space(unsigned long* ip,
     } else {
         struct mm_struct* oldmm = current->mm;
         
-        PS_DOWN_WRITE(&thread_mm->mmap_sem); // deadlock was here... is it still?
+        //PS_DOWN_WRITE(&thread_mm->mmap_sem); // deadlock was here... is it still?
 
         // Flush the tlb and cache, removing any entries for the
         // old memory map.
@@ -4467,7 +4725,7 @@ int process_server_import_address_space(unsigned long* ip,
             kfree(used_saved_mm);
         }
 
-        PS_UP_WRITE(&thread_mm->mmap_sem);
+        //PS_UP_WRITE(&thread_mm->mmap_sem);
 
         // Transplant thread group information
         // if there are other thread group members
@@ -5346,7 +5604,7 @@ extern struct list_head rlist_head;
         prot |= (data->vm_flags & VM_WRITE)? PROT_WRITE : 0;
         prot |= (data->vm_flags & VM_EXEC)?  PROT_EXEC  : 0;
 
-        PS_DOWN_WRITE(&current->mm->mmap_sem);
+        //PS_DOWN_WRITE(&current->mm->mmap_sem);
 
         // If there was not previously a vma, create one.
         if(!vma || vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size)) {
@@ -5359,6 +5617,7 @@ extern struct list_head rlist_head;
                 current->enable_do_mmap_pgoff_hook = 0;
                 // mmap parts that are missing, while leaving the existing
                 // parts untouched.
+                PS_DOWN_WRITE(&current->mm->mmap_sem);
                 err = do_mmap_remaining(NULL,
                         data->vaddr_start,
                         data->vaddr_size,
@@ -5367,6 +5626,7 @@ extern struct list_head rlist_head;
                         MAP_ANONYMOUS|
                         ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                         0);
+                PS_UP_WRITE(&current->mm->mmap_sem);
                 current->enable_distributed_munmap = 1;
                 current->enable_do_mmap_pgoff_hook = 1;
             } else {
@@ -5393,6 +5653,7 @@ extern struct list_head rlist_head;
                     current->enable_do_mmap_pgoff_hook = 0;
                     // mmap parts that are missing, while leaving the existing
                     // parts untouched.
+                    PS_DOWN_WRITE(&current->mm->mmap_sem);
                     err = do_mmap_remaining(f,
                             data->vaddr_start,
                             data->vaddr_size,
@@ -5402,6 +5663,7 @@ extern struct list_head rlist_head;
                             ((data->vm_flags & VM_EXECUTABLE)?MAP_EXECUTABLE:0) |
                             ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                             data->pgoff << PAGE_SHIFT);
+                    PS_UP_WRITE(&current->mm->mmap_sem);
                     current->enable_distributed_munmap = 1;
                     current->enable_do_mmap_pgoff_hook = 1;
                     filp_close(f,NULL);
@@ -5409,7 +5671,7 @@ extern struct list_head rlist_head;
             }
             if(err != data->vaddr_start) {
                 PSPRINTK("ERROR: Failed to do_mmap %lx\n",err);
-                PS_UP_WRITE(&current->mm->mmap_sem);
+                //PS_UP_WRITE(&current->mm->mmap_sem);
                 goto exit_remove_data;
             }
             
@@ -5430,15 +5692,21 @@ extern struct list_head rlist_head;
         if(vma && paddr_present) { 
             int remap_pfn_range_err = 0;
             pte_provided = 1;
+            unsigned long cow_addr;
 
-            if(break_cow(current->mm,vma,address)) {
-                vma = find_vma_checked(current->mm, address);
-                BUG_ON(vma == NULL);
+            // Break cow in this entire VMA
+            if(is_maybe_cow(vma)) {
+                PS_DOWN_WRITE(&current->mm->mmap_sem);
+                for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
+                    break_cow(mm, vma, cow_addr);
+                }
+                PS_UP_WRITE(&current->mm->mmap_sem);
             }
 
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 if(data->mappings[i].present) {
                     int tmp_err;
+                    PS_DOWN_WRITE(&current->mm->mmap_sem);
                     tmp_err = remap_pfn_range_remaining(current->mm,
                                                        vma,
                                                        data->mappings[i].vaddr,
@@ -5446,7 +5714,7 @@ extern struct list_head rlist_head;
                                                        data->mappings[i].sz,
                                                        vm_get_page_prot(vma->vm_flags),
                                                        1);
-                    
+                    PS_UP_WRITE(&current->mm->mmap_sem);
                     if(tmp_err) remap_pfn_range_err = tmp_err;
                 }
             }
@@ -5460,7 +5728,7 @@ extern struct list_head rlist_head;
             }
         } 
 
-        PS_UP_WRITE(&current->mm->mmap_sem);
+        //PS_UP_WRITE(&current->mm->mmap_sem);
 
         if(vma) {
             *vma_out = vma;
@@ -5546,11 +5814,11 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     task->prev_pid = -1;
     task->next_pid = -1;
     task->clone_data = NULL;
-
     task->t_home_cpu = _cpu;
     task->t_home_id  = task->pid;
     task->t_distributed = 0;
     task->previous_cpus = 0;
+    task->known_cpu_with_tgroup_mm = 0;
     task->return_disposition = RETURN_DISPOSITION_EXIT;
 
     // If this is pid 1 or 2, the parent cannot have been migrated
@@ -5569,6 +5837,10 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
         task->tgroup_distributed = 0;
         return 1;
     }
+
+    // Inherit the list of known cpus with mms for this thread group 
+    // once we know that the task is int he same tgid.
+    task->known_cpu_with_tgroup_mm = orig->known_cpu_with_tgroup_mm;
 
     // This is important.  We want to make sure to keep an accurate record
     // of which cpu and thread group the new thread is a part of.
@@ -5646,88 +5918,49 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
 
 #if COPY_WHOLE_VM_WITH_MIGRATION
     {
-    vma_transfer_t* vma_xfer;
-    deconstruction_data_t decon_data;
-    struct vm_area_struct* curr = NULL;
-    char lpath[256];
-    char *plpath;
-    struct mm_walk walk = {
-        .pte_entry = deconstruction_page_walk_pte_entry_callback,
-        .mm = task->mm,
-        .private = NULL
-        };
-    // We have to break every cow page before migrating if we're
-    // about to move the whole thing.
-restart_break_cow_all:
-    curr = task->mm->mmap;
-    while(curr) {
-        unsigned long addr;
-        unsigned char broken = 0;
-        PS_DOWN_WRITE(&task->mm->mmap_sem);
-        for(addr = curr->vm_start; addr < curr->vm_end; addr += PAGE_SIZE) {
-            if(break_cow(task->mm,curr,addr)) 
-                broken = 1;
+    int dst_has_mm = cpu_has_known_tgroup_mm(dst_cpu);
+    if(!dst_has_mm) {
+        struct vm_area_struct* curr = NULL;
+        // We have to break every cow page before migrating if we're
+        // about to move the whole thing.
+    restart_break_cow_all:
+        curr = task->mm->mmap;
+        while(curr) {
+            unsigned long addr;
+            //unsigned char broken = 0;
+            if(is_maybe_cow(curr)) {
+                PS_DOWN_WRITE(&task->mm->mmap_sem);
+                for(addr = curr->vm_start; addr < curr->vm_end; addr += PAGE_SIZE) {
+                    if(break_cow(task->mm,curr,addr)) {
+                        //broken = 1;
+                    }
+                }
+                PS_UP_WRITE(&task->mm->mmap_sem);
+            }
+            //if(broken) 
+            //    goto restart_break_cow_all;
+            curr = curr->vm_next;
         }
-        PS_UP_WRITE(&task->mm->mmap_sem);
-        if(broken) 
-            goto restart_break_cow_all;
-        curr = curr->vm_next;
-    }
-    
-    vma_transfer_t* vma_xfer = kmalloc(sizeof(vma_transfer_t),GFP_KERNEL);
-    vma_xfer->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_TRANSFER;
-    vma_xfer->header.prio = PCN_KMSG_PRIO_NORMAL;
-    
-    PS_DOWN_READ(&task->mm->mmap_sem);
-    curr = task->mm->mmap;
-    while(curr) {
-        unsigned long start_stack = task->mm->start_stack;
+        
+        PS_DOWN_READ(&task->mm->mmap_sem);
+        curr = task->mm->mmap;
 
-        //
-        // re-initialize path.
-        //
-        if(curr->vm_file == NULL) {
-            vma_xfer->path[0] = '\0';
-        } else {
-            plpath = d_path(&curr->vm_file->f_path,
-                        lpath,256);
-            strcpy(vma_xfer->path,plpath);
+        while(curr) {
+            // Only send the vma is either we don't think the 
+            // remote cpu has a mm already set up, or if this
+            // vma represents the task's stack.
+            //if(!dst_has_mm ) {
+                send_vma(task->mm,
+                         curr,
+                         dst_cpu,
+                        lclone_request_id);
+            //} 
+            curr = curr->vm_next;
         }
 
-        //
-        // Transfer the vma
-        //
-        PS_SPIN_LOCK(&_vma_id_lock);
-        vma_xfer->vma_id = _vma_id++;
-        PS_SPIN_UNLOCK(&_vma_id_lock);
-        vma_xfer->start = curr->vm_start;
-        vma_xfer->end = curr->vm_end;
-        vma_xfer->prot = curr->vm_page_prot;
-        vma_xfer->clone_request_id = lclone_request_id;
-        vma_xfer->flags = curr->vm_flags;
-        vma_xfer->pgoff = curr->vm_pgoff;
-        DO_UNTIL_SUCCESS(pcn_kmsg_send_long(dst_cpu, 
-                            (struct pcn_kmsg_long_message*)vma_xfer, 
-                            sizeof(vma_transfer_t) - sizeof(vma_xfer->header)));
 
-        PSPRINTK("Anonymous VM Entry: start{%lx}, end{%lx}, pgoff{%lx}\n",
-                curr->vm_start, 
-                curr->vm_end,
-                curr->vm_pgoff);
-
-        decon_data.clone_request_id = lclone_request_id;
-        decon_data.vma_id = vma_xfer->vma_id;
-        decon_data.dst_cpu = dst_cpu;
-
-        walk.private = &decon_data;
-        walk_page_range(curr->vm_start,curr->vm_end,&walk);
-    
-        curr = curr->vm_next;
+        PS_UP_READ(&task->mm->mmap_sem);
     }
-
-    PS_UP_READ(&task->mm->mmap_sem);
-    
-    kfree(vma_xfer);
     }
 #endif
 
@@ -5820,6 +6053,9 @@ restart_break_cow_all:
     // floating point: struct fpu fpu; THIS IS NEEDED
     // IO permissions: unsigned long *io_bitmap_ptr; unsigned long iopl; unsigned io_bitmap_max;
     }
+
+    // Remember that now, that cpu has a mm for this tgroup
+    //set_cpu_has_known_tgroup_mm(dst_cpu);
 
     // Send request
     DO_UNTIL_SUCCESS(pcn_kmsg_send_long(dst_cpu, 
