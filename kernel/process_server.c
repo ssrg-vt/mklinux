@@ -1065,7 +1065,8 @@ static struct mm_struct* find_thread_mm(
         int tgroup_home_cpu, 
         int tgroup_home_id, 
         mm_data_t **used_saved_mm,
-        struct task_struct** task_out) {
+        struct task_struct** task_out)
+{
 
     struct task_struct *task, *g;
     struct mm_struct * mm = NULL;
@@ -2602,8 +2603,8 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
 
     request.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_REQUEST;
     request.header.prio = PCN_KMSG_PRIO_NORMAL;
-    request.tgroup_home_cpu = current->tgroup_home_cpu;
-    request.tgroup_home_id  = current->tgroup_home_id;
+    request.tgroup_home_cpu = current->tgroup_home_cpu; //TODO why not tgroup_home_cpu?!?!
+    request.tgroup_home_id  = current->tgroup_home_id; //TODO why not tgroup_home_id?!?!
     request.requester_pid = data->requester_pid;
 
 #ifndef SUPPORT_FOR_CLUSTERING
@@ -5005,7 +5006,12 @@ finished_membership_search:
         // Not the last local thread, which means we're not the
         // last in the distributed thread group either.
         is_last_thread_in_group = 0;
-    } else if (!(task->t_home_cpu == _cpu && task->t_home_id == task->pid)) {
+#ifndef SUPPORT_FOR_CLUSTERING
+    } else if (!(task->t_home_cpu == _cpu &&
+#else
+    } else if (!(task->t_home_cpu == cpumask_first(cpu_present_mask) &&
+#endif
+              task->t_home_id == task->pid)) {
         // OPTIMIZATION: only bother to count threads if we are not home base for
         // this thread.
         is_last_thread_in_group = 0;
@@ -5819,7 +5825,16 @@ not_handled_no_perf:
  * that all members of a thread group are kept up-to-date when
  * one member migrates.
  */
-int process_server_dup_task(struct task_struct* orig, struct task_struct* task) {
+int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
+{
+    // TODO more work to support kernel clustering is still required
+    int home_kernel =
+#ifndef SUPPORT_FOR_CLUSERING
+    _cpu;
+#else
+    cpumask_first(cpu_present_mask);
+#endif
+
     task->executing_for_remote = 0;
     task->represents_remote = 0;
     task->enable_do_mmap_pgoff_hook = 1;
@@ -5828,7 +5843,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     task->prev_pid = -1;
     task->next_pid = -1;
     task->clone_data = NULL;
-    task->t_home_cpu = _cpu;
+    task->t_home_cpu = home_kernel;
     task->t_home_id  = task->pid;
     task->t_distributed = 0;
     task->previous_cpus = 0;
@@ -5838,7 +5853,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     // If this is pid 1 or 2, the parent cannot have been migrated
     // so it is safe to take on all local thread info.
     if(unlikely(orig->pid == 1 || orig->pid == 2)) {
-        task->tgroup_home_cpu = _cpu;
+        task->tgroup_home_cpu = home_kernel;
         task->tgroup_home_id = orig->tgid;
         task->tgroup_distributed = 0;
         return 1;
@@ -5846,7 +5861,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
     // If the new task is not in the same thread group as the parent,
     // then we do not need to propagate the old thread info.
     if(orig->tgid != task->tgid) {
-        task->tgroup_home_cpu = _cpu;
+        task->tgroup_home_cpu = home_kernel;
         task->tgroup_home_id = task->tgid;
         task->tgroup_distributed = 0;
         return 1;
@@ -5863,13 +5878,12 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
         task->tgroup_home_id = orig->tgroup_home_id;
         task->tgroup_distributed = 1;
     } else {
-        task->tgroup_home_cpu = _cpu;
+        task->tgroup_home_cpu = home_kernel;
         task->tgroup_home_id = orig->tgid;
         task->tgroup_distributed = 0;
     }
 
     return 1;
-
 }
 
 /**
