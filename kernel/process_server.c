@@ -960,14 +960,42 @@ static bool __user_addr (unsigned long x ) {
     return (x < PAGE_OFFSET);   
 }
 
+// TODO the cpu_has_known_tgroup_mm must be reworked, i.e. the map must be pointed by the threads NOT one copy per thread, anti scaling and redudandt information
 /**
  *
  */
-static int cpu_has_known_tgroup_mm(int cpu) {
+static int cpu_has_known_tgroup_mm(int cpu)
+{
+#ifdef SUPPORT_FOR_CLUSTERING
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+    struct cpumask *pcpum =0;
+    int cpuid =-1;
+extern struct list_head rlist_head;
+    if (cpumask_test_cpu(cpu, cpu_present_mask))
+	return 1;
+    list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        cpuid = objPtr->_data._processor;
+        pcpum = &(objPtr->_data._cpumask);
+        if (cpumask_test_cpu(cpu, pcpum)) {
+	    if ( bitmap_intersects(cpumask_bits(pcpum),
+			           &(current->known_cpu_with_tgroup_mm),
+			           (sizeof(unsigned long) *8)) ) {
+	        return 1;
+            }
+	    return 0;
+	}
+    }
+    printk(KERN_ERR"%s: ERROR the input cpu (%d) is not included in any known cpu cluster\n",
+		__func__, cpu);
+    return 0;
+#else
     if(test_bit(cpu,&current->known_cpu_with_tgroup_mm)) {
         return 1;
-    } 
+    }
     return 0;
+#endif
 }
 
 /**
