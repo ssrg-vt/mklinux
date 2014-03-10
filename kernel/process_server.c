@@ -41,8 +41,6 @@
 #include <asm/mmu_context.h>
 #include <asm/processor.h> // load_cr3
 
-#define SUPPORT_FOR_CLUSTERING
-
 /**
  * General purpose configuration
  */

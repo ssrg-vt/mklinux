@@ -73,6 +73,9 @@
 #include <linux/slab.h>
 #include <linux/init_task.h>
 #include <linux/process_server.h>
+#ifdef SUPPORT_FOR_CLUSTERING
+#include <linux/popcorn.h>
+#endif
 
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>
