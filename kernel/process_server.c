@@ -351,10 +351,6 @@ typedef struct _clone_data {
 /**
  * 
  */
-<<<<<<< HEAD
-#define MAX_MAPPINGS 4
-=======
->>>>>>> f4bd102aba55d039234434cd73e5bbea8ec437c9
 typedef struct _mapping_request_data {
     data_header_t header;
     int tgroup_home_cpu;
@@ -2930,10 +2926,6 @@ task_mm_search_exit:
     
     // OK, if mm was found, look up the mapping.
     if(mm) {
-<<<<<<< HEAD
-        PS_DOWN_READ(&mm->mmap_sem);
-        try_count++;
-=======
 
         // The purpose of this code block is to determine
         // if we need to use a read or write lock, and safely.  
@@ -2949,7 +2941,6 @@ changed_can_be_cow:
             PS_DOWN_WRITE(&mm->mmap_sem);
         else 
             PS_DOWN_READ(&mm->mmap_sem);
->>>>>>> f4bd102aba55d039234434cd73e5bbea8ec437c9
         vma = find_vma_checked(mm, address);
         if(vma && first) {
             first = 0;
@@ -3047,10 +3038,6 @@ changed_can_be_cow:
 
         }
         
-<<<<<<< HEAD
-        PS_UP_READ(&mm->mmap_sem);
-=======
->>>>>>> f4bd102aba55d039234434cd73e5bbea8ec437c9
 
     }
 
@@ -3360,8 +3347,7 @@ void process_mprotect_item(struct work_struct* work) {
 //	task_lock(task); // TODO consider to use this
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
            task->tgroup_home_id  == tgroup_home_id) {
-            
-<<<<<<< HEAD
+           /* 
             if (task->mm)
                 // do_mprotect
                 do_mprotect(task, start, len, prot,0);
@@ -3369,8 +3355,9 @@ void process_mprotect_item(struct work_struct* work) {
  	    else
 		printk("%s: task->mm task:%p mm:%p\n",
 			__func__, task, task->mm);
-=======
-            // do_mprotect
+            */
+
+	    // do_mprotect
             // doing mprotect here causes errors, I do not know why
             // for now I will unmap the region instead.
             //do_mprotect(task,start,len,prot,0);
@@ -3382,7 +3369,6 @@ void process_mprotect_item(struct work_struct* work) {
 
             // Take note of the fact that an mm exists on the remote kernel
             set_cpu_has_known_tgroup_mm(task,w->from_cpu);
->>>>>>> f4bd102aba55d039234434cd73e5bbea8ec437c9
 
             // then quit
             goto done;
