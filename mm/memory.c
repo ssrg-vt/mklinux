@@ -835,6 +835,7 @@ struct page *vm_normal_page(struct vm_area_struct *vma, unsigned long addr,
 		return NULL;
 check_pfn:
 	if (unlikely(pfn > highest_memmap_pfn)) {
+printk("%s: pfn: %lx highest_memmap_pfn: %lx\n", __func__, pfn, highest_memmap_pfn);
 		print_bad_pte(vma, addr, pte, NULL);
 		return NULL;
 	}

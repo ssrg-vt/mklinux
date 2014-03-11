@@ -3391,9 +3391,9 @@ void process_mprotect_item(struct work_struct* work) {
             // for now I will unmap the region instead.
             //do_mprotect(task,start,len,prot,0);
             PS_DOWN_WRITE(&task->mm->mmap_sem);
-            task->enable_distributed_munmap = 0;
+            current->enable_distributed_munmap = 0; //task->
             do_munmap(task->mm, start, len);
-            task->enable_distributed_munmap = 1;
+            current->enable_distributed_munmap = 1; //task->
             PS_UP_WRITE(&task->mm->mmap_sem);
 
             // Take note of the fact that an mm exists on the remote kernel
@@ -4863,7 +4863,7 @@ int process_server_import_address_space(unsigned long* ip,
     current->thread.gs = clone_data->thread_gs;    
     current->thread.gsindex = clone_data->thread_gsindex;
     if (unlikely(gsindex | current->thread.gsindex))
-      loadsegment(gs, current->thread.gsindex);
+      load_gs_index(current->thread.gsindex);
     else
       load_gs_index(0);
     if (current->thread.gs)
@@ -4890,10 +4890,10 @@ int process_server_import_address_space(unsigned long* ip,
 
 
     perf_e = native_read_tsc();
-    printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+    printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu (%d)\n",
             __func__,
             perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
-            perf_a, perf_b, perf_c, perf_d, perf_e);
+            perf_a, perf_b, perf_c, perf_d, perf_e, current->t_home_id);
 
     return 0;
 }
@@ -5054,17 +5054,23 @@ finished_membership_search:
 #ifndef SUPPORT_FOR_CLUSTERING
         for(i = 0; i < NR_CPUS; i++) {
           // Skip the current cpu
-          if(i == _cpu) continue;
+          if(i == _cpu)
+            continue;
+	  if (test_bit(i,&current->previous_cpus))
 #else
         // the list does not include the current processor group descirptor (TODO)
         struct list_head *iter;
         _remote_cpu_info_list_t *objPtr;
+	struct cpumask *pcpum =0;
 extern struct list_head rlist_head;
         list_for_each(iter, &rlist_head) {
           objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
           i = objPtr->_data._processor;
+          pcpum  = &(objPtr->_data._cpumask);
+	  if ( bitmap_intersects(cpumask_bits(pcpum),  
+				&(current->previous_cpus),
+				(sizeof(unsigned long) *8)) )
 #endif
-          if (test_bit(i,&current->previous_cpus))
             pcn_kmsg_send(i, (struct pcn_kmsg_message*)&msg);
         }
     } 
@@ -5829,7 +5835,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
 {
     // TODO more work to support kernel clustering is still required
     int home_kernel =
-#ifndef SUPPORT_FOR_CLUSERING
+#ifndef SUPPORT_FOR_CLUSTERING
     _cpu;
 #else
     cpumask_first(cpu_present_mask);
@@ -6056,7 +6062,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     request->thread_fsindex = task->thread.fsindex;
     savesegment(fs, fsindex);
     if (fsindex != request->thread_fsindex)
-        PSPRINTK("%s: DAVEK: fsindex %x (TLS_SEL:%x) thread %x\n", __func__, fsindex, FS_TLS_SEL, request->thread_fsindex);
+        printk(KERN_WARNING"%s: fsindex %x (TLS_SEL:%x) thread %x\n", __func__, fsindex, FS_TLS_SEL, request->thread_fsindex);
     request->thread_fs = task->thread.fs;
     rdmsrl(MSR_FS_BASE, fs);
     if (fs != request->thread_fs) {
@@ -6068,7 +6074,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     request->thread_gsindex = task->thread.gsindex;
     savesegment(gs, gsindex);
     if (gsindex != request->thread_gsindex)
-        PSPRINTK("%s: DAVEK: gsindex %x (TLS_SEL:%x) thread %x\n", __func__, gsindex, GS_TLS_SEL, request->thread_gsindex);
+        printk(KERN_WARNING"%s: gsindex %x (TLS_SEL:%x) thread %x\n", __func__, gsindex, GS_TLS_SEL, request->thread_gsindex);
     request->thread_gs = task->thread.gs;
     rdmsrl(MSR_KERNEL_GS_BASE, gs); //NOTE there are two gs base registers in Kernel the used one is MSR_GS_BASE, so MSR_KERNEL_GS_BASE is user space in kernel
     if (gs != request->thread_gs) {
