@@ -3239,6 +3239,7 @@ void process_munmap_request(struct work_struct* work) {
     PSPRINTK("%s: entered\n",__func__);
 
     // munmap the specified region in the specified thread group
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
 
         // Look for the thread group
@@ -3248,9 +3249,9 @@ void process_munmap_request(struct work_struct* work) {
             // Thread group has been found, perform munmap operation on this
             // task.
             PS_DOWN_WRITE(&task->mm->mmap_sem);
-            task->enable_distributed_munmap = 0;
+            current->enable_distributed_munmap = 0;
             do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
-            task->enable_distributed_munmap = 1;
+            current->enable_distributed_munmap = 1;
             PS_UP_WRITE(&task->mm->mmap_sem);
            
             // Take note of the fact that an mm exists on the remote kernel
@@ -3261,6 +3262,7 @@ void process_munmap_request(struct work_struct* work) {
         }
     } while_each_thread(g,task);
 done:
+    read_unlock(&tasklist_lock);
 
     // munmap the specified region in any saved mm's as well.
     // This keeps old mappings saved in the mm of dead thread
@@ -3332,18 +3334,20 @@ void process_mprotect_item(struct work_struct* work) {
     int perf = PERF_MEASURE_START(&perf_process_mprotect_item);
     
     // Find the task
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
-           task->tgroup_home_id  == tgroup_home_id) {
+           task->tgroup_home_id  == tgroup_home_id &&
+           !(task->flags & PF_EXITING)) {
             
             // do_mprotect
             // doing mprotect here causes errors, I do not know why
             // for now I will unmap the region instead.
             //do_mprotect(task,start,len,prot,0);
             PS_DOWN_WRITE(&task->mm->mmap_sem);
-            task->enable_distributed_munmap = 0;
+            current->enable_distributed_munmap = 0;
             do_munmap(task->mm, start, len);
-            task->enable_distributed_munmap = 1;
+            current->enable_distributed_munmap = 1;
             PS_UP_WRITE(&task->mm->mmap_sem);
 
             // Take note of the fact that an mm exists on the remote kernel
@@ -3355,6 +3359,7 @@ void process_mprotect_item(struct work_struct* work) {
         }
     } while_each_thread(g,task);
 done:
+    read_unlock(&tasklist_lock);
 
     // munmap the specified region in any saved mm's as well.
     // This keeps old mappings saved in the mm of dead thread
