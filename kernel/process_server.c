@@ -1003,21 +1003,21 @@ static struct vm_area_struct* find_vma_checked(struct mm_struct* mm, unsigned lo
  * Note, mm->mmap_sem must already be held!
  */
 /*static int is_mapped(struct mm_struct* mm, unsigned vaddr) {
-    pte_t* remap_pte = NULL;
-    pmd_t* remap_pmd = NULL;
-    pud_t* remap_pud = NULL;
-    pgd_t* remap_pgd = NULL;
+    pte_t* pte = NULL;
+    pmd_t* pmd = NULL;
+    pud_t* pud = NULL;
+    pgd_t* pgd = NULL;
     int ret = 0;
 
-    remap_pgd = pgd_offset(mm, vaddr);
-    if(pgd_present(*remap_pgd)) {
-        remap_pud = pud_offset(remap_pgd,vaddr); 
-        if(pud_present(*remap_pud)) {
-            remap_pmd = pmd_offset(remap_pud,vaddr);
-            if(pmd_present(*remap_pmd)) {
-                remap_pte = pte_offset_map(remap_pmd,vaddr);
-                if(remap_pte && pte_none(*remap_pte)) {
-                    // skip the mapping, it already exists!
+    pgd = pgd_offset(mm, vaddr);
+    if(pgd_present(*pgd) && pgd_present(*pgd)) {
+        pud = pud_offset(pgd,vaddr); 
+        if(pud_present(*pud)) {
+            pmd = pmd_offset(pud,vaddr);
+            if(pmd_present(*pmd)) {
+                pte = pte_offset_map(pmd,vaddr);
+                if(pte && !pte_none(*pte)) {
+                    // It exists!
                     ret = 1;
                 }
             }
@@ -1205,7 +1205,7 @@ static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long star
  
     unsigned long* resolved_addr = (unsigned long*)walk->private;
 
-    if(NULL == pte || !pte_present(*pte)) {
+    if(NULL == pte || !pte_present(*pte) || pte_none(*pte)) {
         return 0;
     }
 
