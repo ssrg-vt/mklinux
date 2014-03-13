@@ -1033,21 +1033,21 @@ static struct vm_area_struct* find_vma_checked(struct mm_struct* mm, unsigned lo
  * Note, mm->mmap_sem must already be held!
  */
 /*static int is_mapped(struct mm_struct* mm, unsigned vaddr) {
-    pte_t* remap_pte = NULL;
-    pmd_t* remap_pmd = NULL;
-    pud_t* remap_pud = NULL;
-    pgd_t* remap_pgd = NULL;
+    pte_t* pte = NULL;
+    pmd_t* pmd = NULL;
+    pud_t* pud = NULL;
+    pgd_t* pgd = NULL;
     int ret = 0;
 
-    remap_pgd = pgd_offset(mm, vaddr);
-    if(pgd_present(*remap_pgd)) {
-        remap_pud = pud_offset(remap_pgd,vaddr); 
-        if(pud_present(*remap_pud)) {
-            remap_pmd = pmd_offset(remap_pud,vaddr);
-            if(pmd_present(*remap_pmd)) {
-                remap_pte = pte_offset_map(remap_pmd,vaddr);
-                if(remap_pte && pte_none(*remap_pte)) {
-                    // skip the mapping, it already exists!
+    pgd = pgd_offset(mm, vaddr);
+    if(pgd_present(*pgd) && pgd_present(*pgd)) {
+        pud = pud_offset(pgd,vaddr); 
+        if(pud_present(*pud)) {
+            pmd = pmd_offset(pud,vaddr);
+            if(pmd_present(*pmd)) {
+                pte = pte_offset_map(pmd,vaddr);
+                if(pte && !pte_none(*pte)) {
+                    // It exists!
                     ret = 1;
                 }
             }
@@ -1259,7 +1259,7 @@ static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long star
  
     unsigned long* resolved_addr = (unsigned long*)walk->private;
 
-    if (!pte || pte_none(*pte) || !pte_present(*pte)) {
+    if (pte == NULL || pte_none(*pte) || !pte_present(*pte)) {
         return 0;
     }
 
@@ -3301,6 +3301,7 @@ void process_munmap_request(struct work_struct* work) {
     PSPRINTK("%s: entered\n",__func__);
 
     // munmap the specified region in the specified thread group
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
 
         // Look for the thread group
@@ -3310,9 +3311,9 @@ void process_munmap_request(struct work_struct* work) {
             // Thread group has been found, perform munmap operation on this
             // task.
             PS_DOWN_WRITE(&task->mm->mmap_sem);
-            task->enable_distributed_munmap = 0;
+            current->enable_distributed_munmap = 0;
             do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
-            task->enable_distributed_munmap = 1;
+            current->enable_distributed_munmap = 1;
             PS_UP_WRITE(&task->mm->mmap_sem);
            
             // Take note of the fact that an mm exists on the remote kernel
@@ -3323,6 +3324,7 @@ void process_munmap_request(struct work_struct* work) {
         }
     } while_each_thread(g,task);
 done:
+    read_unlock(&tasklist_lock);
 
     // munmap the specified region in any saved mm's as well.
     // This keeps old mappings saved in the mm of dead thread
@@ -3394,10 +3396,12 @@ void process_mprotect_item(struct work_struct* work) {
     int perf = PERF_MEASURE_START(&perf_process_mprotect_item);
     
     // Find the task
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
 //	task_lock(task); // TODO consider to use this
-        if(task->tgroup_home_cpu == tgroup_home_cpu &&
-           task->tgroup_home_id  == tgroup_home_id) {
+        if (task->tgroup_home_cpu == tgroup_home_cpu &&
+            task->tgroup_home_id  == tgroup_home_id &&
+            !(task->flags & PF_EXITING)) {
            /* 
             if (task->mm)
                 // do_mprotect
@@ -3407,8 +3411,6 @@ void process_mprotect_item(struct work_struct* work) {
 		printk("%s: task->mm task:%p mm:%p\n",
 			__func__, task, task->mm);
             */
-
-	    // do_mprotect
             // doing mprotect here causes errors, I do not know why
             // for now I will unmap the region instead.
             //do_mprotect(task,start,len,prot,0);
@@ -3427,6 +3429,7 @@ void process_mprotect_item(struct work_struct* work) {
 //	task_unlock(task); // TODO consider to use this
     } while_each_thread(g,task);
 done:
+    read_unlock(&tasklist_lock);
 
     // munmap the specified region in any saved mm's as well.
     // This keeps old mappings saved in the mm of dead thread
