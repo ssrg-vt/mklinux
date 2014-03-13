@@ -1056,6 +1056,29 @@ static struct vm_area_struct* find_vma_checked(struct mm_struct* mm, unsigned lo
     return ret;
 
 }*/
+/* Antonio's Version
+static int is_mapped(struct mm_struct* mm, unsigned vaddr)
+{
+    pte_t* pte = NULL;
+    pmd_t* pmd = NULL;                                                             
+    pud_t* pud = NULL;                                                             
+    pgd_t* pgd = NULL; 
+
+    pgd = pgd_offset(mm, vaddr);                                                   
+    if (pgd && !pgd_none(*pgd) && likely(!pgd_bad(*pgd)) && pgd_present(*pgd)) {
+      pud = pud_offset(pgd,vaddr);                                               
+      if (pud && !pud_none(*pud) && likely(!pud_bad(*pud)) && pud_present(*pud)) {
+	pmd = pmd_offset(pud,vaddr);
+        if(pmd && !pmd_none(*pmd) && likely(!pmd_bad(*pmd)) && pmd_present(*pmd)) {                      pte = pte_offset_map(pmd,vaddr);                                   
+	  if(pte && !pte_none(*pte) && pte_present(*pte)) { 
+                   // It exists!                                                  
+                    return 1;
+          }                                                                  
+        }                                                                      
+      }                                                                          
+    }
+    return 0;                                                                                  }
+*/
 
 /**
  * @brief Find the mm_struct for a given distributed thread.  
@@ -1236,7 +1259,7 @@ static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long star
  
     unsigned long* resolved_addr = (unsigned long*)walk->private;
 
-    if(NULL == pte || !pte_present(*pte)) {
+    if (!pte || pte_none(*pte) || !pte_present(*pte)) {
         return 0;
     }
 
@@ -1295,7 +1318,6 @@ static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
         return 1;
     }
     return 0;
-
 }
 
 /**

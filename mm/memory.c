@@ -809,8 +809,10 @@ struct page *vm_normal_page(struct vm_area_struct *vma, unsigned long addr,
 			goto check_pfn;
 		if (vma->vm_flags & (VM_PFNMAP | VM_MIXEDMAP))
 			return NULL;
-		if (!is_zero_pfn(pfn))
+		if (!is_zero_pfn(pfn)) {
+printk(KERN_ERR"%s: pfn: %lx !is_zero_pfn %d\n", __func__, pfn, (int)!is_zero_pfn(pfn)); 
 			print_bad_pte(vma, addr, pte, NULL);
+}
 		return NULL;
 	}
 
@@ -835,7 +837,7 @@ struct page *vm_normal_page(struct vm_area_struct *vma, unsigned long addr,
 		return NULL;
 check_pfn:
 	if (unlikely(pfn > highest_memmap_pfn)) {
-printk("%s: pfn: %lx highest_memmap_pfn: %lx\n", __func__, pfn, highest_memmap_pfn);
+printk(KERN_ERR"%s: pfn: %lx highest_memmap_pfn: %lx\n", __func__, pfn, highest_memmap_pfn);
 		print_bad_pte(vma, addr, pte, NULL);
 		return NULL;
 	}
