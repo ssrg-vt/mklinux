@@ -810,7 +810,10 @@ struct page *vm_normal_page(struct vm_area_struct *vma, unsigned long addr,
 		if (vma->vm_flags & (VM_PFNMAP | VM_MIXEDMAP))
 			return NULL;
 		if (!is_zero_pfn(pfn)) {
-printk(KERN_ERR"%s: pfn: %lx !is_zero_pfn %d\n", __func__, pfn, (int)!is_zero_pfn(pfn)); 
+			printk(KERN_ERR"%s: pte: 0x%lx pfn: 0x%lx !pte_special %d !is_zero_pfn %d vm_flags 0x%lx {%lx-%lx}\n",
+				 __func__, *((unsigned long*)&pte), pfn,
+				(int) !pte_special(pte), (int)!is_zero_pfn(pfn),
+				vma->vm_flags, vma->vm_start, vma->vm_end); 
 			print_bad_pte(vma, addr, pte, NULL);
 }
 		return NULL;
@@ -2271,8 +2274,10 @@ int remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
 	if (addr == vma->vm_start && end == vma->vm_end) {
 		vma->vm_pgoff = pfn;
 		vma->vm_flags |= VM_PFN_AT_MMAP;
-	} else if (is_cow_mapping(vma->vm_flags) && !current->executing_for_remote  && ! current->tgroup_distributed) 
+	} else if (is_cow_mapping(vma->vm_flags) && !current->executing_for_remote  && ! current->tgroup_distributed) {
+printk(KERN_ALERT"%s: is_cow_mapping start:%lx end:%lx\n", __func__, vma->vm_start, vma->vm_end);
 		return -EINVAL;
+}
     
 
 	vma->vm_flags |= VM_IO | VM_RESERVED | VM_PFNMAP;
@@ -2285,6 +2290,7 @@ int remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
 		 */
 		vma->vm_flags &= ~(VM_IO | VM_RESERVED | VM_PFNMAP);
 		vma->vm_flags &= ~VM_PFN_AT_MMAP;
+printk(KERN_ALERT"%s: track_pfn_vma_new start:%lx end:%lx\n", __func__, vma->vm_start, vma->vm_end);
 		return -EINVAL;
 	}
 
@@ -2301,13 +2307,17 @@ if (current->executing_for_remote) {
 		next = pgd_addr_end(addr, end);
 		err = remap_pud_range(mm, pgd, addr, next,
 				pfn + (addr >> PAGE_SHIFT), prot);
-		if (err) 
+		if (err) {
+printk(KERN_ALERT"%s: remap_pud_range start:%lx end:%lx\n", __func__, vma->vm_start, vma->vm_end);
 			break;
+}
         
 	} while (pgd++, addr = next, addr != end);
 
-	if (err)
+	if (err) {
+printk(KERN_ALERT"%s: error start:%lx end:%lx\n", __func__, vma->vm_start, vma->vm_end);
 		untrack_pfn_vma(vma, pfn, PAGE_ALIGN(size));
+}
 
 	return err;
 }
