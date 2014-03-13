@@ -1097,10 +1097,15 @@ static void mk_page_writable(struct mm_struct* mm,
     if (!ptep)
         goto out;
 
-    arch_enter_lazy_mmu_mode();
-
     // grab the contents of the pte pointer
     pte = *ptep;
+    
+    if(pte_none(*ptep)) {
+        pte_unmap_unlock(pte,ptl);
+        goto out;
+    }
+
+    arch_enter_lazy_mmu_mode();
 
     // Make the content copy writable and dirty, then
     // write it back into the page tables.
@@ -1133,6 +1138,12 @@ static int is_page_writable(struct mm_struct* mm,
         goto out;
 
     pte = *ptep;
+    
+    if(pte_none(*ptep)) {
+        pte_unmap_unlock(*ptep,ptl);
+        ret = -1;
+        goto out;
+    }
 
     ret = pte_write(pte);
 
@@ -2798,7 +2809,7 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     }
 
     ptep = pte_offset_map(pmd,address);
-    if(!ptep || !pte_present(*ptep)) {
+    if(!ptep || !pte_present(*ptep) || pte_none(*ptep)) {
         pte_unmap(ptep);
         goto not_handled_unlock;
     }
@@ -4744,14 +4755,18 @@ int process_server_import_address_space(unsigned long* ip,
            
             // copy fs
             // TODO: This should probably only happen when CLONE_FS is used...
+            task_lock(current);
+            PS_SPIN_LOCK(&thread_task->fs->lock);
             current->fs = thread_task->fs;
-            PS_SPIN_LOCK(&current->fs->lock);
             current->fs->users++;
-            PS_SPIN_UNLOCK(&current->fs->lock);
+            PS_SPIN_UNLOCK(&thread_task->fs->lock);
+            task_unlock(current);
 
             // copy files
             // TODO: This should probably only happen when CLONE_FILES is used...
+            task_lock(current);
             current->files = thread_task->files;
+            task_unlock(current);
             atomic_inc(&current->files->count);
         }
     }
@@ -5378,7 +5393,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // This is a security hole, and is VERY bad.
         // It will also probably cause problems for genuine COW mappings..
         if(vma->vm_flags & VM_WRITE && 
-                !is_page_writable(mm, vma, address & PAGE_MASK)) {
+                0 == is_page_writable(mm, vma, address & PAGE_MASK)) {
             PSPRINTK("Touching up write setting\n");
             mk_page_writable(mm,vma,address & PAGE_MASK);
             adjusted_permissions = 1;
