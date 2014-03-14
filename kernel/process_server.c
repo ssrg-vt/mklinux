@@ -41,6 +41,8 @@
 #include <asm/mmu_context.h>
 #include <asm/processor.h> // load_cr3
 
+unsigned long get_percpu_old_rsp(void);
+
 /**
  * General purpose configuration
  */
@@ -6125,7 +6127,13 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     request->thread_sp = task->thread.sp;
     //printk("%s: usersp percpu %lx thread %lx\n", __func__, percpu_read(old_rsp), task->thread.usersp);
     // if (percpu_read(old_rsp), task->thread.usersp) set to 0 otherwise copy
-    request->thread_usersp = task->thread.usersp;
+unsigned long _usersp = get_percpu_old_rsp();
+if (task->thread.usersp != _usersp) {
+printk("%s: USERSP %lx %lx", __func__, task->thread.usersp, _usersp);
+  request->thread_usersp = _usersp;
+}
+else
+  request->thread_usersp = task->thread.usersp;
     
     request->thread_es = task->thread.es;
     savesegment(es, es);          
@@ -6222,7 +6230,14 @@ static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) 
     mig.previous_cpus   = task->previous_cpus;
     mig.thread_fs       = task->thread.fs;
     mig.thread_gs       = task->thread.gs;
+
+unsigned long _usersp = get_percpu_old_rsp();
+if (task->thread.usersp != _usersp) { 
+printk("mig_to_previous DIFFERENT!!! :-)\n");
+    mig.thread_usersp = _usersp;
+}else
     mig.thread_usersp   = task->thread.usersp;
+
     mig.thread_es       = task->thread.es;
     mig.thread_ds       = task->thread.ds;
     mig.thread_fsindex  = task->thread.fsindex;

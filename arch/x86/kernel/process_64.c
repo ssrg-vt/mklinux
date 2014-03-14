@@ -58,6 +58,11 @@ asmlinkage extern void ret_from_fork(void);
 DEFINE_PER_CPU(unsigned long, old_rsp);
 static DEFINE_PER_CPU(unsigned char, is_idle);
 
+unsigned long get_percpu_old_rsp(void)
+{
+	return percpu_read(old_rsp);
+}
+
 static ATOMIC_NOTIFIER_HEAD(idle_notifier);
 
 void idle_notifier_register(struct notifier_block *n)
@@ -339,13 +344,16 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 	if ( !current->executing_for_remote ) {
 	    loadsegment(fs, 0);
 	    load_gs_index(0);
-	} 
+
+            regs->cs                = _cs;
+            regs->ss                = _ss;
+            regs->flags             = X86_EFLAGS_IF;
+	}
+
 	regs->ip		= new_ip;
 	regs->sp		= new_sp;
 	percpu_write(old_rsp, new_sp);
-	regs->cs		= _cs;
-	regs->ss		= _ss;
-	regs->flags		= X86_EFLAGS_IF;
+
 	/*
 	 * Free the old FP and other extended state
 	 */
