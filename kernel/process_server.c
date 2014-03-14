@@ -1690,16 +1690,14 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
                 }
             } else {
                 printk(KERN_ALERT"%s: ERROR mapping %lx to %lx with err{%d}\n",
-                            __func__,
-                            vaddr_curr,
-                            paddr_curr,
-                            err);
+                            __func__, vaddr_curr, paddr_curr, err);
             }
 
             if( err != 0 ) ret = err;
         }
-else
-  printk(KERN_ALERT"%s: is_vaddr_mapped %d, star:%lx end:%lx\n", __func__, val, vma->vm_start, vma->vm_end);
+	else
+  	    PSPRINTK("%s: is_vaddr_mapped %d, star:%lx end:%lx\n",
+	  	    __func__, val, vma->vm_start, vma->vm_end);
 
         paddr_curr += PAGE_SIZE;
     }
@@ -1720,7 +1718,12 @@ else
  *       ordered by starting address.  This is helpful, because
  *       I can exit my check early sometimes.
  */
+#define FORCE_NODEBUG
+#ifndef FORCE_NODEBUG
 #define DBGPSPRINTK(...) { if (dbg ==1) printk(KERN_ALERT __VA_ARGS__); }
+#else
+#define DBGPSPRINTK(...) ;
+#endif
 unsigned long do_mmap_remaining(struct file *file, unsigned long addr,
                                 unsigned long len, unsigned long prot,
                                 unsigned long flags, unsigned long pgoff, int dbg) {
@@ -1729,11 +1732,10 @@ unsigned long do_mmap_remaining(struct file *file, unsigned long addr,
     unsigned long local_end = start;
     unsigned long end = addr + len;
     struct vm_area_struct* curr;
-unsigned long error;
+    unsigned long error;
 
     // go through ALL vma's, looking for interference with this space.
     curr = current->mm->mmap;
-
     DBGPSPRINTK("%s: processing {%lx,%lx}\n",__func__,addr,len);
 
     while(1) {
@@ -1745,9 +1747,9 @@ unsigned long error;
             // map through the end
             DBGPSPRINTK("%s: curr == NULL - mapping {%lx,%lx}\n",
                     __func__,start,end-start);
-error=do_mmap(file, start, end - start, prot, flags, pgoff); 
-if (error != start)
-	printk(KERN_ALERT"%s_1: ERROR %lx start: %lx end %lx\n", __func__, error, start, end);
+	    error=do_mmap(file, start, end - start, prot, flags, pgoff); 
+	    if (error != start)
+        	printk(KERN_ALERT"%s_1: ERROR %lx start: %lx end %lx\n", __func__, error, start, end);
             goto done;
         }
 
@@ -1756,9 +1758,9 @@ if (error != start)
                 // mmap through local_end
             DBGPSPRINTK("%s: VMA is fully above the region of interest - mapping {%lx,%lx}\n",
                     __func__,start,end-start);
-error=do_mmap(file, start, end - start, prot, flags, pgoff);
-if (error != start)
-        printk(KERN_ALERT"%s_2: ERROR %lx start: %lx end %lx\n", __func__, error, start, end);
+	    error=do_mmap(file, start, end - start, prot, flags, pgoff);
+	    if (error != start)
+                printk(KERN_ALERT"%s_2: ERROR %lx start: %lx end %lx\n", __func__, error, start, end);
             goto done;
         }
 
@@ -1796,9 +1798,9 @@ if (error != start)
             // mmap through local_end
             DBGPSPRINTK("%s: VMA includes end but not start - mapping {%lx,%lx}\n",
                     __func__,start, local_end - start);
-error=do_mmap(file, start, local_end - start, prot, flags, pgoff);
-if (error != start)
-        printk(KERN_ALERT"%s_3: ERROR %lx start: %lx end %lx\n", __func__, error, start, end);
+            error=do_mmap(file, start, local_end - start, prot, flags, pgoff);
+            if (error != start)
+                printk(KERN_ALERT"%s_3: ERROR %lx start: %lx end %lx\n", __func__, error, start, end);
 
             // Then we're done
             goto done;
@@ -1812,9 +1814,9 @@ if (error != start)
             // map the difference
             DBGPSPRINTK("%s: VMS is fully within the region of interest - mapping {%lx,%lx}\n",
                     __func__,start, local_end - start);
-error=do_mmap(file, start, local_end - start, prot, flags, pgoff);
-if (error != start)
-        printk(KERN_ALERT"%s_4: ERROR %lx start: %lx end %lx\n", __func__, error, start, end);
+            error=do_mmap(file, start, local_end - start, prot, flags, pgoff);
+            if (error != start)
+                printk(KERN_ALERT"%s_4: ERROR %lx start: %lx end %lx\n", __func__, error, start, end);
 
             // Then advance to the end of this vma
             start = curr->vm_end;
@@ -2808,8 +2810,7 @@ found:
     spin_unlock(&_saved_mm_head_lock);
 
     if(to_remove != NULL) {
-//        PSPRINTK
-	printk("%s: removing a mm from cpu{%d} id{%d}\n",
+        PSPRINTK("%s: removing a mm from cpu{%d} id{%d}\n",
                 __func__,
                 w->tgroup_home_cpu,
                 w->tgroup_home_id);
@@ -3335,12 +3336,14 @@ void process_munmap_request(struct work_struct* work) {
 
             // Thread group has been found, perform munmap operation on this
             // task.
-if (task->mm && task->mm )
+if (task->mm && task->mm ) {
             PS_DOWN_WRITE(&task->mm->mmap_sem);
             current->enable_distributed_munmap = 0;
             do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
             current->enable_distributed_munmap = 1;
+// it fails in PS_UP_WRITE
             PS_UP_WRITE(&task->mm->mmap_sem);
+}
 else
 printk("%s: pirla\n", __func__);
 // TODO try and check if make sense
@@ -5680,15 +5683,10 @@ extern struct list_head rlist_head;
     
     // Handle successful response.
     if(data->present) {
-//        PSPRINTK
-if (data->address > 0x7f0000000000)
-printk(KERN_ALERT"Mapping(%d): %p v:%lx p:%lx vaddr{%lx-%lx} prot{%lx} vm_flags{%lx} pgoff{%lx} \"%s\"\n",
-		smp_processor_id(), vma, data->address, data->mappings[0].paddr,
+        PSPRINTK(KERN_ALERT"Mapping(%d): %lx v:%lx p:%lx vaddr{%lx-%lx} prot{%lx} vm_flags{%lx} pgoff{%lx} \"%s\"\n",
+		smp_processor_id(), (unsigned long)vma, data->address, data->mappings[0].paddr,
                 data->vaddr_start, (data->vaddr_start + data->vaddr_size),
-                data->prot, 
-                data->vm_flags,
-                data->pgoff,
-		data->path);
+                data->prot, data->vm_flags, data->pgoff, data->path);
         vma_not_found = 0;
 
         // Figure out how to protect this region.
@@ -5719,9 +5717,13 @@ printk(KERN_ALERT"Mapping(%d): %p v:%lx p:%lx vaddr{%lx-%lx} prot{%lx} vm_flags{
                         ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                         0, (data->vm_flags & VM_NORESERVE) ?1:0);
                 PS_UP_WRITE(&current->mm->mmap_sem);
-if ( data->vm_flags & VM_NORESERVE )
-printk(KERN_ALERT"MAPPING ANONYMOUS %p %p data: %lx vma: %lx {%lx-%lx} ret%lx\n.", data->mappings[i].vaddr, data->mappings[i].paddr, data->vm_flags, vma?vma->vm_flags:0, vma?vma->vm_start:0, vma?vma->vm_end:0, err);
-                current->enable_distributed_munmap = 1;
+
+/*		// NOTE we use the following to catch the megabug
+		if ( data->vm_flags & VM_NORESERVE )
+			printk(KERN_ALERT"MAPPING ANONYMOUS %p %p data: %lx vma: %lx {%lx-%lx} ret%lx\n",
+				__func__, data->mappings[i].vaddr, data->mappings[i].paddr, 
+				data->vm_flags, vma?vma->vm_flags:0, vma?vma->vm_start:0, vma?vma->vm_end:0, err);
+*/                current->enable_distributed_munmap = 1;
                 current->enable_do_mmap_pgoff_hook = 1;
             } else {
                 PSPRINTK("opening file to map\n");
@@ -5770,10 +5772,10 @@ printk(KERN_ALERT"MAPPING ANONYMOUS %p %p data: %lx vma: %lx {%lx-%lx} ret%lx\n.
             }
             
             vma = find_vma_checked(current->mm, data->address); //data->vaddr_start);
-if (vma->vm_start != data->vaddr_start || vma->vm_end != (data->vaddr_start + data->vaddr_size))
-printk(KERN_ALERT"%s: ERROR WE ARE NOT MAPPED! vma {%lx-%lx} data {%lx-%lx} addr%lx\n", __func__,
-	vma->vm_start, vma->vm_end, data->vaddr_start, (data->vaddr_start + data->vaddr_size), data->address);
-        
+            if (data->address < vma->vm_start || vma->vm_end <= data->address)
+		printk(KERN_ALERT"%s: ERROR %lx is not mapped in current vma {%lx-%lx} remote vma {%lx-%lx}\n",
+			__func__, data->address, vma->vm_start, vma->vm_end,
+			data->vaddr_start, (data->vaddr_start + data->vaddr_size));
         } else {
             PSPRINTK("vma is present, using existing\n");
         }
@@ -5811,9 +5813,11 @@ printk(KERN_ALERT"%s: ERROR WE ARE NOT MAPPED! vma {%lx-%lx} data {%lx-%lx} addr
                                                        data->mappings[i].sz,
                                                        vm_get_page_prot(vma->vm_flags),
                                                        1);
-if ( data->vm_flags & VM_NORESERVE )
-printk(KERN_ALERT"NORESERVE %p %p data: %lx vma: %lx {%lx-%lx} ret%d\n.", data->mappings[i].vaddr, data->mappings[i].paddr, data->vm_flags, vma->vm_flags, vma->vm_start, vma->vm_end, tmp_err);
-
+/*		if ( data->vm_flags & VM_NORESERVE )
+			printk(KERN_ALERT"%s: NORESERVE %p %p data: %lx vma: %lx {%lx-%lx} ret%d\n",
+				__func__,  data->mappings[i].vaddr, data->mappings[i].paddr,
+				data->vm_flags, vma->vm_flags, vma->vm_start, vma->vm_end, tmp_err);
+*/
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     if(tmp_err) remap_pfn_range_err = tmp_err;
                 }
