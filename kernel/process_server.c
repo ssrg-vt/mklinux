@@ -6129,7 +6129,8 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     // if (percpu_read(old_rsp), task->thread.usersp) set to 0 otherwise copy
 unsigned long _usersp = get_percpu_old_rsp();
 if (task->thread.usersp != _usersp) {
-printk("%s: USERSP %lx %lx", __func__, task->thread.usersp, _usersp);
+  printk("%s: USERSP %lx %lx\n",
+    __func__, task->thread.usersp, _usersp);
   request->thread_usersp = _usersp;
 }
 else
@@ -6233,10 +6234,11 @@ static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) 
 
 unsigned long _usersp = get_percpu_old_rsp();
 if (task->thread.usersp != _usersp) { 
-printk("mig_to_previous DIFFERENT!!! :-)\n");
-    mig.thread_usersp = _usersp;
+  printk("%s: USERSP %lx %lx\n",
+    __func__, task->thread.usersp, _usersp);
+  mig.thread_usersp = _usersp;
 }else
-    mig.thread_usersp   = task->thread.usersp;
+  mig.thread_usersp = task->thread.usersp;
 
     mig.thread_es       = task->thread.es;
     mig.thread_ds       = task->thread.ds;
