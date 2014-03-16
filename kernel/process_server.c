@@ -3334,7 +3334,8 @@ void process_munmap_request(struct work_struct* work) {
 
         // Look for the thread group
         if(task->tgroup_home_cpu == w->tgroup_home_cpu &&
-           task->tgroup_home_id  == w->tgroup_home_id) {
+           task->tgroup_home_id  == w->tgroup_home_id &&
+           !(task->flags & PF_EXITING)) {
 
             // Thread group has been found, perform munmap operation on this
             // task.
@@ -3386,13 +3387,13 @@ found:
         current->enable_distributed_munmap = 0;
         do_munmap(to_munmap->mm, w->vaddr_start, w->vaddr_size);
         current->enable_distributed_munmap = 1;
-if (to_munmap && to_munmap->mm)
-        PS_UP_WRITE(&to_munmap->mm->mmap_sem);
-else
-printk(KERN_ALERT"%s: ERROR2: to_munmap %p mm %p\n", __func__, to_munmap, to_munmap?to_munmap->mm:0);
+        if (to_munmap && to_munmap->mm)
+            PS_UP_WRITE(&to_munmap->mm->mmap_sem);
+        else
+            printk(KERN_ALERT"%s: ERROR2: to_munmap %p mm %p\n", __func__, to_munmap, to_munmap?to_munmap->mm:0);
     }
-else
-printk(KERN_ALERT"%s: ERROR1: to_munmap %p mm %p\n", __func__, to_munmap, to_munmap?to_munmap->mm:0);
+    else if (to_munmap) // It is OK for to_munmap to be null, but not to_munmap->mm
+        printk(KERN_ALERT"%s: ERROR1: to_munmap %p mm %p\n", __func__, to_munmap, to_munmap?to_munmap->mm:0);
 
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;

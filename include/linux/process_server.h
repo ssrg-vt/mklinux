@@ -13,8 +13,8 @@
 #define PROCESS_SERVER_CLONE_FAIL 1
 
 //configuration
-#define SUPPORT_FOR_CLUSTERING
-//#undef SUPPORT_FOR_CLUSTERING
+//#define SUPPORT_FOR_CLUSTERING
+#undef SUPPORT_FOR_CLUSTERING
 
 /*
  * Migration hook.
