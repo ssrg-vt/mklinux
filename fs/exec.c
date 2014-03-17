@@ -2088,7 +2088,6 @@ static int umh_pipe_setup(struct subprocess_info *info, struct cred *new)
 
 void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 {
-	printk(KERN_ALERT"do do_coredump enter \n");
 	struct core_state core_state;
 	struct core_name cn;
 	struct mm_struct *mm = current->mm;
@@ -2110,27 +2109,20 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 		 */
 		.mm_flags = mm->flags,
 	};
-	printk(KERN_ALERT"b4 audit_core_dumps \n");
+
+dump_stack();
+
 	audit_core_dumps(signr);
 
 	binfmt = mm->binfmt;
 	if (!binfmt || !binfmt->core_dump)
-	{
-		printk(KERN_ALERT"!binfmt || !binfmt->core_dump\n");
 		goto fail;
-	}
 	if (!__get_dumpable(cprm.mm_flags))
-	{
-			printk(KERN_ALERT"!__get_dumpable(cprm.mm_flags\n");
-			goto fail;
-	}
+		goto fail;
 
 	cred = prepare_creds();
-	if (!cred){
-		printk(KERN_ALERT"!cred\n");
-
+	if (!cred)
 		goto fail;
-	}
 	/*
 	 *	We cannot trust fsuid as being the "true" uid of the
 	 *	process nor do we know its entire history. We only know it
@@ -2143,11 +2135,8 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 	}
 
 	retval = coredump_wait(exit_code, &core_state);
-	if (retval < 0){
-		printk(KERN_ALERT"retval < 0\n");
+	if (retval < 0)
 		goto fail_creds;
-	}
-
 
 	old_cred = override_creds(cred);
 
@@ -2160,13 +2149,12 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 	ispipe = format_corename(&cn, signr);
 
  	if (ispipe) {
- 		printk(KERN_ALERT"ispipe\n");
 		int dump_count;
 		char **helper_argv;
 
 		if (ispipe < 0) {
-			printk(KERN_ALERT "format_corename failed\n");
-			printk(KERN_ALERT "Aborting core\n");
+			printk(KERN_WARNING "format_corename failed\n");
+			printk(KERN_WARNING "Aborting core\n");
 			goto fail_corename;
 		}
 
@@ -2185,120 +2173,93 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 			 * right pid if a thread in a multi-threaded
 			 * core_pattern process dies.
 			 */
-			printk(KERN_ALERT
+			printk(KERN_WARNING
 				"Process %d(%s) has RLIMIT_CORE set to 1\n",
 				task_tgid_vnr(current), current->comm);
-			printk(KERN_ALERT "Aborting core\n");
+			printk(KERN_WARNING "Aborting core\n");
 			goto fail_unlock;
 		}
 		cprm.limit = RLIM_INFINITY;
 
 		dump_count = atomic_inc_return(&core_dump_count);
 		if (core_pipe_limit && (core_pipe_limit < dump_count)) {
-			printk(KERN_ALERT "Pid %d(%s) over core_pipe_limit\n",
+			printk(KERN_WARNING "Pid %d(%s) over core_pipe_limit\n",
 			       task_tgid_vnr(current), current->comm);
-			printk(KERN_ALERT "Skipping core dump\n");
+			printk(KERN_WARNING "Skipping core dump\n");
 			goto fail_dropcount;
 		}
 
 		helper_argv = argv_split(GFP_KERNEL, cn.corename+1, NULL);
 		if (!helper_argv) {
-			printk(KERN_ALERT "%s failed to allocate memory\n",
+			printk(KERN_WARNING "%s failed to allocate memory\n",
 			       __func__);
 			goto fail_dropcount;
 		}
-		printk(KERN_ALERT"b4 call_usermodehelper_fns rlimit{%d} \n",cprm.limit );
+
 		retval = call_usermodehelper_fns(helper_argv[0], helper_argv,
 					NULL, UMH_WAIT_EXEC, umh_pipe_setup,
 					NULL, &cprm);
 		argv_free(helper_argv);
 		if (retval) {
- 			printk(KERN_ALERT "Core dump to %s pipe failed\n",
+ 			printk(KERN_INFO "Core dump to %s pipe failed\n",
 			       cn.corename);
 			goto close_fail;
  		}
 	} else {
-		printk(KERN_ALERT"no ispipe but file \n");
 		struct inode *inode;
 
 		if (cprm.limit < binfmt->min_coredump)
-		{   cprm.limit = 819200;
-			printk(KERN_ALERT"goto fail_unlock cprm.limit{%d} < binfmt->min_coredump{%d} name{%s} \n",cprm.limit , binfmt->min_coredump,cn.corename);
-			//goto fail_unlock;
-		}
+			goto fail_unlock;
 
 		cprm.file = filp_open(cn.corename,
 				 O_CREAT | 2 | O_NOFOLLOW | O_LARGEFILE | flag,
 				 0600);
 		if (IS_ERR(cprm.file))
-		{
-					printk(KERN_ALERT"goto fail_unlock IS_ERR(cprm.file) \n");
 			goto fail_unlock;
-		}
 
 		inode = cprm.file->f_path.dentry->d_inode;
-		if (inode->i_nlink > 1){
-			printk(KERN_ALERT"inode->i_nlink > 1 \n");
+		if (inode->i_nlink > 1)
 			goto close_fail;
-		}
-		if (d_unhashed(cprm.file->f_path.dentry)){
-			printk(KERN_ALERT"d_unhashed(cprm.file->f_path.dentry) \n");
+		if (d_unhashed(cprm.file->f_path.dentry))
 			goto close_fail;
-		}
 		/*
 		 * AK: actually i see no reason to not allow this for named
 		 * pipes etc, but keep the previous behaviour for now.
 		 */
-		if (!S_ISREG(inode->i_mode)){
-			printk(KERN_ALERT"!S_ISREG(inode->i_mode) \n");
+		if (!S_ISREG(inode->i_mode))
 			goto close_fail;
-		}
 		/*
 		 * Dont allow local users get cute and trick others to coredump
 		 * into their pre-created files.
 		 */
 		if (inode->i_uid != current_fsuid())
-		{
-			printk(KERN_ALERT"inode->i_uid != current_fsuid() \n");
-			//goto close_fail;
-		}
-		if (!cprm.file->f_op || !cprm.file->f_op->write){
-			printk(KERN_ALERT"!cprm.file->f_op || !cprm.file->f_op->write \n");
-			//goto close_fail;
-		}
-		if (do_truncate(cprm.file->f_path.dentry, 0, 0, cprm.file)){
-			printk(KERN_ALERT"do_truncate(cprm.file->f_path.dentry, 0, 0, cprm.file)\n");
-			//goto close_fail;
-		}
+			goto close_fail;
+		if (!cprm.file->f_op || !cprm.file->f_op->write)
+			goto close_fail;
+		if (do_truncate(cprm.file->f_path.dentry, 0, 0, cprm.file))
+			goto close_fail;
 	}
 
 	retval = binfmt->core_dump(&cprm);
-	printk(KERN_ALERT"binfmt->core_dump(&cprm) {%d} \n",retval);
 	if (retval)
 		current->signal->group_exit_code |= 0x80;
 
 	if (ispipe && core_pipe_limit)
 		wait_for_dump_helpers(cprm.file);
 close_fail:
-printk(KERN_ALERT"goto close_fail \n");
 	if (cprm.file)
 		filp_close(cprm.file, NULL);
 fail_dropcount:
-printk(KERN_ALERT"goto fail_dropcount \n");
 	if (ispipe)
 		atomic_dec(&core_dump_count);
 fail_unlock:
-printk(KERN_ALERT"goto ffail_unlock \n");
 	kfree(cn.corename);
 fail_corename:
-printk(KERN_ALERT"goto fail_corename \n");
 	coredump_finish(mm);
 	revert_creds(old_cred);
 fail_creds:
-printk(KERN_ALERT"goto fail_creds \n");
 	put_cred(cred);
 fail:
-printk(KERN_ALERT"goto fail \n");
 	return;
 }
 
