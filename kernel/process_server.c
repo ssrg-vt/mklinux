@@ -3334,23 +3334,25 @@ void process_munmap_request(struct work_struct* work) {
 
         // Look for the thread group
         if(task->tgroup_home_cpu == w->tgroup_home_cpu &&
-           task->tgroup_home_id  == w->tgroup_home_id) {
+           task->tgroup_home_id  == w->tgroup_home_id &&
+	   !(task->flags & PF_EXITING)) {
 
             // Thread group has been found, perform munmap operation on this
             // task.
-if (task->mm && task->mm ) {
+	if (task && task->mm ) {
             PS_DOWN_WRITE(&task->mm->mmap_sem);
             current->enable_distributed_munmap = 0;
             do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
             current->enable_distributed_munmap = 1;
 // it fails in PS_UP_WRITE
             PS_UP_WRITE(&task->mm->mmap_sem);
-}
-else
-printk("%s: pirla\n", __func__);
-// TODO try and check if make sense
+	}
+	else
+	  printk("%s: unexpected error task %p task->mm %p\n", 
+        	 __func__, task, (task ? task->mm : 0) );
            
             // Take note of the fact that an mm exists on the remote kernel
+	if (task)
             set_cpu_has_known_tgroup_mm(task,w->from_cpu);
 
             goto done; // thread grouping - threads all share a common mm.
@@ -3386,13 +3388,15 @@ found:
         current->enable_distributed_munmap = 0;
         do_munmap(to_munmap->mm, w->vaddr_start, w->vaddr_size);
         current->enable_distributed_munmap = 1;
-if (to_munmap && to_munmap->mm)
-        PS_UP_WRITE(&to_munmap->mm->mmap_sem);
-else
-printk(KERN_ALERT"%s: ERROR2: to_munmap %p mm %p\n", __func__, to_munmap, to_munmap?to_munmap->mm:0);
+	if (to_munmap && to_munmap->mm)
+        	PS_UP_WRITE(&to_munmap->mm->mmap_sem);
+	else
+		printk(KERN_ALERT"%s: ERROR2: to_munmap %p mm %p\n",
+			         __func__, to_munmap, to_munmap?to_munmap->mm:0);
     }
-else
-printk(KERN_ALERT"%s: ERROR1: to_munmap %p mm %p\n", __func__, to_munmap, to_munmap?to_munmap->mm:0);
+    else if (to_munmap) // It is OK for to_munmap to be null, but not to_munmap->mm
+	printk(KERN_ALERT"%s: ERROR1: to_munmap %p mm %p\n",
+		         __func__, to_munmap, to_munmap?to_munmap->mm:0);
 
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;

@@ -29,10 +29,10 @@
 #include <linux/bootmem.h>
 //#include <linux/multikernel.h>
 
+#include <linux/process_server.h>
+
 extern unsigned long orig_boot_params;
 #define max_nodes 1 << 8
-
-
 
 #define PRINT_MESSAGES 0
 #if PRINT_MESSAGES
@@ -42,36 +42,19 @@ extern unsigned long orig_boot_params;
 #endif
 
 unsigned long *token_bucket;
-unsigned int Kernel_Id;
-unsigned long long bucket_phys_addr = 0;
 
+unsigned int Kernel_Id;
 EXPORT_SYMBOL(Kernel_Id);
-EXPORT_SYMBOL(bucket_phys_addr);
 
 static int _cpu=0;
-
-static int __init popcorn_kernel_init(char *arg)
-{
-	bucket_phys_addr= simple_strtoull (arg,0, 16);
-	return 0;
-}
-
-early_param("kernel_init", popcorn_kernel_init);
-
-
-
 
 /*
  *  Variables
  */
 static int wait_cpu_list = -1;
-
 static DECLARE_WAIT_QUEUE_HEAD( wq_cpu);
-
 struct list_head rlist_head;
 
-
-///////////////////////////////////////////////////////////////////////////////
 #include <linux/popcorn.h>
 /*
  struct _remote_cpu_info_data
@@ -110,29 +93,31 @@ struct _remote_cpu_info_list
   };
 typedef struct _remote_cpu_info_list _remote_cpu_info_list_t;
 */
-void popcorn_init(void)
+/*void popcorn_init (void)
 {
-	
-	Kernel_Id=smp_processor_id();;
-	printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
-
+  Kernel_Id=smp_processor_id();
+  printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
 }
+*/
 
 /*
- * ****************************** Message structures for obtaining PID status ********************************
+ * Message structures for obtaining PID status ********************************
  */
-
 void add_node(_remote_cpu_info_data_t *arg, struct list_head *head)
 {
-   _remote_cpu_info_list_t *Ptr = (_remote_cpu_info_list_t *)kmalloc(sizeof(struct _remote_cpu_info_list),GFP_KERNEL);
-   // assert(Ptr != NULL);
+  _remote_cpu_info_list_t *Ptr =
+	(_remote_cpu_info_list_t *)kmalloc(sizeof(_remote_cpu_info_list_t), GFP_KERNEL);
+  if (!Ptr) {
+    printk(KERN_ALERT"%s: can not allocate memory for kernel node descriptor\n", __func__);
+    return;
+  }
+  printk("%s: _remote_cpu_info_list_t %ld, _remote_cpu_info_data_t %ld\n",
+	__func__, sizeof(_remote_cpu_info_list_t), sizeof(_remote_cpu_info_data_t) );
 
-    Ptr->_data = *arg;
-    INIT_LIST_HEAD(&Ptr->cpu_list_member);
-    list_add(&Ptr->cpu_list_member, head);
+  INIT_LIST_HEAD(&(Ptr->cpu_list_member));
+  memcpy(&(Ptr->_data), arg, sizeof(_remote_cpu_info_data_t)); //Ptr->_data = *arg;
+  list_add(&Ptr->cpu_list_member, head);
 }
-
-
 
 int find_and_delete(int cpuno, struct list_head *head)
 {
@@ -147,29 +132,28 @@ int find_and_delete(int cpuno, struct list_head *head)
             return 1;
         }
     }
+    return 0;
 }
 
-
+#define DISPLAY_BUFFER 128
 static void display(struct list_head *head)
 {
     struct list_head *iter;
     _remote_cpu_info_list_t *objPtr;
-    char buffer[128];
+    char buffer[DISPLAY_BUFFER];
 
     list_for_each(iter, head) {
         objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 
-	memset(buffer, 0, 128);
-	cpumask_scnprintf(buffer, 127, &(objPtr->_data._cpumask));
+	memset(buffer, 0, DISPLAY_BUFFER);
+	cpumask_scnprintf(buffer, (DISPLAY_BUFFER -1), &(objPtr->_data._cpumask));
         printk("%s: cpu:%d fam:%d %s\n", __func__,
 		objPtr->_data._processor, objPtr->_data._cpu_family,
 		buffer);
     }
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
-
 
 struct _remote_cpu_info_request {
 	struct pcn_kmsg_hdr header;
@@ -188,97 +172,98 @@ typedef struct _remote_cpu_info_response _remote_cpu_info_response_t;
 /*
  * ******************************* Define variables holding Result *******************************************
  */
-static _remote_cpu_info_response_t *cpu_result;
+static _remote_cpu_info_response_t cpu_result;
 
 /*
  * ******************************* Common Functions **********************************************************
  */
 
-int flush_cpu_info_var() {
-	cpu_result = NULL;
-	wait_cpu_list = -1;
-	return 0;
-}
 struct cpumask cpu_global_online_mask;
 #define for_each_global_online_cpu(cpu)   for_each_cpu((cpu), cpu_global_online_mask)
+
+// TODO rewrite with a list
+int flush_cpu_info_var(void)
+{
+  memset(&cpu_result, 0, sizeof(cpu_result)); //cpu_result = NULL;
+  wait_cpu_list = -1;
+  return 0;
+}
+
 static int handle_remote_proc_cpu_info_response(struct pcn_kmsg_message* inc_msg)
 {
   _remote_cpu_info_response_t* msg = (_remote_cpu_info_response_t*) inc_msg;
-  printk("%s: Entered remote cpu info response \n", "handle_remote_proc_cpu_info_response");
+  printk("%s: entered\n", __func__);
 
   wait_cpu_list = 1;
   if (msg != NULL)
-    cpu_result = msg;
+    memcpy(&cpu_result, msg, sizeof(_remote_cpu_info_response_t));
 
   wake_up_interruptible(&wq_cpu);
-  printk("%s: response ---- wait_cpu_list{%d} \n", "handle_remote_proc_cpu_info_response", wait_cpu_list);
+  printk("%s: response, wait_cpu_list{%d}\n", __func__, wait_cpu_list);
 
   pcn_kmsg_free_msg(inc_msg);
   return 0;
 }
 
+extern int my_cpu;
 static int handle_remote_proc_cpu_info_request(struct pcn_kmsg_message* inc_msg)
 {
   int i;
-  
-  printk("%s : cpus online in kernel %d!!!", "handle_remote_proc_cpu_info_request",_cpu);
-  for_each_online_cpu(i) {
-    printk("%d ", i);
-  }
-  printk("\n");
-  
   _remote_cpu_info_request_t* msg = (_remote_cpu_info_request_t*) inc_msg;
   _remote_cpu_info_response_t response;
+  printk("%s: entered\n", __func__);
 
-  printk("%s: Entered remote  cpu info request \n", "handle_remote_proc_cpu_info_request");
+  printk("%s: kernel representative %d(%d), online cpus { ", 
+         __func__, _cpu, my_cpu);
+  for_each_online_cpu(i) {
+    printk("%d, ", i);
+  }
+  printk("}\n");
 
-  // Finish constructing response
+  // constructing response
   response.header.type = PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE;
   response.header.prio = PCN_KMSG_PRIO_NORMAL;
-//  response._data._cpumask = kmalloc( sizeof(struct cpumask), GFP_KERNEL); //this is an error, how you can pass a pointer to another kernel?!
-  memcpy(&(response._data._cpumask), cpu_present_mask, sizeof(cpu_present_mask));
-extern int my_cpu;
+  //response._data._cpumask = kmalloc( sizeof(struct cpumask), GFP_KERNEL); //this is an error, how you can pass a pointer to another kernel?!
+  memcpy(&(response._data._cpumask), cpu_present_mask, sizeof(struct cpumask));
   response._data._processor = my_cpu;
 
-/*  cpumask_or(&cpu_global_online_mask,&cpu_global_online_mask,(const struct cpumask *)(msg->_data._cpumask));
-*/  add_node(&msg->_data,&rlist_head);
-
+  // Adding the new cpuset to the list
+  add_node(&msg->_data,&rlist_head); //add_node copies the content
   display(&rlist_head);
-
-  printk("%s : global cpus online in kernel %d!!!", "handle_remote_proc_cpu_info_request",_cpu);
-  /*for_each_global_online_cpu(i) {
-    printk("%d %t", i);
+  //cpumask_or(&cpu_global_online_mask,&cpu_global_online_mask,(const struct cpumask *)(msg->_data._cpumask));
+  /*printk("%s: kernel %d, global online cpus { ",
+	 __func__, _cpu);
+  for_each_global_online_cpu(i) {
+    printk("%d, ", i);
   }
-  printk("\n");
+  printk("}\n");
 */
+
   // Send response
   pcn_kmsg_send_long(msg->header.from_cpu,
-		(struct pcn_kmsg_message*) (&response),
+		(struct pcn_kmsg_long_message*) (&response),
 		sizeof(_remote_cpu_info_response_t) - sizeof(struct pcn_kmsg_hdr));
-  
+  // Delete received message
   pcn_kmsg_free_msg(inc_msg);
   return 0;
 }
 
 int send_cpu_info_request(int KernelId)
 {
+  int res = 0;
+  _remote_cpu_info_request_t *request =
+	kmalloc(sizeof(_remote_cpu_info_request_t), GFP_KERNEL);
 
-	int res = 0;
-	_remote_cpu_info_request_t* request = kmalloc(
-			sizeof(_remote_cpu_info_request_t),
-			GFP_KERNEL);
-	// Build request
-	request->header.type = PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST;
-	request->header.prio = PCN_KMSG_PRIO_NORMAL;
-//	request->_data._cpumask = kmalloc( sizeof(struct cpumask), GFP_KERNEL);
-	memcpy(&(request->_data._cpumask), cpu_present_mask, sizeof(cpu_present_mask));
-extern int my_cpu;
-request->_data._processor = my_cpu;
+  // Build request
+  request->header.type = PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST;
+  request->header.prio = PCN_KMSG_PRIO_NORMAL;
+  memcpy(&(request->_data._cpumask), cpu_present_mask, sizeof(struct cpumask));
+  request->_data._processor = my_cpu;
 
-	// Send response
-	res = pcn_kmsg_send_long(KernelId, (struct pcn_kmsg_message*) (request),
+  // Send response
+  res = pcn_kmsg_send_long(KernelId, (struct pcn_kmsg_long_message*) (request),
 			sizeof(_remote_cpu_info_request_t) - sizeof(struct pcn_kmsg_hdr));
-	return res;
+  return res;
 }
 
 /*
@@ -287,63 +272,61 @@ request->_data._processor = my_cpu;
 int _init_RemoteCPUMask(void)
 {
   unsigned int i;
-  printk("%s : cpus online in kernel %d!!!", "_init_RemoteCPUMask",_cpu);
-
-  flush_cpu_info_var();
-  int res = 0;
-
   int result = 0;
-  int retval;
 
-//should we add self?!
+  printk("%s: kernel representative %d(%d)\n", __func__, _cpu, my_cpu);
+
+  //TODO should we add self to the node list?! Actually all the code runs without self
 
   for (i = 0; i < NR_CPUS; i++) { 
     flush_cpu_info_var();
     
-    // Skip the current cpu
-    //if (i == _cpu)
     if (cpumask_test_cpu(i, cpu_present_mask)) {
-printk("%s: cpu already known %i continue.\n", __func__,  i);
+      printk("%s: cpu already known %i, continue\n", __func__,  i);
       continue;
-}
-    printk("%s: checking cpu %d.\n", __func__, i);
+    }
+
+    printk("%s: checking cpu %d\n", __func__, i);
     result = send_cpu_info_request(i);
     if (!result) {
       PRINTK("%s : go to sleep!!!!", __func__);
       wait_event_interruptible(wq_cpu, wait_cpu_list != -1);
       wait_cpu_list = -1;
 
-// TODO      
-//      cpumask_or(cpu_global_online_mask,cpu_global_online_mask,(const struct cpumask *)(cpu_result->_data._cpumask));
-
-      add_node(&cpu_result->_data,&rlist_head);
+      //cpumask_or(cpu_global_online_mask,cpu_global_online_mask,(const struct cpumask *)(cpu_result->_data._cpumask));
+      add_node(&(cpu_result._data), &rlist_head);
       display(&rlist_head);
     }
   }
 
-  printk("%s : global cpus online in kernel %d!!!", "_init_RemoteCPUMask",_cpu);
-/*  for_each_cpu(i,cpu_global_online_mask) {
-    printk("------%d %t", i);
+  /*printk("%s: kernel %d, global online cpus { ",
+	 __func__, _cpu);
+  for_each_cpu(i,cpu_global_online_mask) {
+    printk("%d, ", i);
   }
-  
-  printk("\n");
-*/  return 0;
+  printk("}\n");
+*/
+  return 0;
 }
 
 
 static int __init cpu_info_handler_init(void)
 {
-    _cpu = smp_processor_id();
+#ifndef SUPPORT_FOR_CLUSTERING
+  _cpu = smp_processor_id();
+#else
+  _cpu = my_cpu;
+#endif
+  INIT_LIST_HEAD(&rlist_head);
 
-    INIT_LIST_HEAD(&rlist_head);
+  pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
+		handle_remote_proc_cpu_info_request);
+  pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE,
+		handle_remote_proc_cpu_info_response);
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
-				    		handle_remote_proc_cpu_info_request);
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE,
-							handle_remote_proc_cpu_info_response);
-
-	return 0;
+  return 0;
 }
+
 /**
  * Register remote pid init function as
  * module initialization function.
