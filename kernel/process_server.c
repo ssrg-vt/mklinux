@@ -3323,6 +3323,7 @@ void process_munmap_request(struct work_struct* work) {
     data_header_t *curr = NULL;
     mm_data_t* mm_data = NULL;
     mm_data_t* to_munmap = NULL;
+    struct mm_struct* mm_to_munmap = NULL;
 
     int perf = PERF_MEASURE_START(&perf_process_munmap_request);
 
@@ -3337,29 +3338,29 @@ void process_munmap_request(struct work_struct* work) {
            task->tgroup_home_id  == w->tgroup_home_id &&
            !(task->flags & PF_EXITING)) {
 
-            // Thread group has been found, perform munmap operation on this
-            // task.
-if (task->mm && task->mm ) {
-            PS_DOWN_WRITE(&task->mm->mmap_sem);
-            current->enable_distributed_munmap = 0;
-            do_munmap(task->mm, w->vaddr_start, w->vaddr_size);
-            current->enable_distributed_munmap = 1;
-// it fails in PS_UP_WRITE
-            PS_UP_WRITE(&task->mm->mmap_sem);
-}
-else
-printk("%s: pirla\n", __func__);
-// TODO try and check if make sense
-           
             // Take note of the fact that an mm exists on the remote kernel
             set_cpu_has_known_tgroup_mm(task,w->from_cpu);
+            
+            if (task->mm) {
+                mm_to_munmap = task->mm;
+            }
+            else
+                printk("%s: pirla\n", __func__);
 
-            goto done; // thread grouping - threads all share a common mm.
-
+            goto done; 
         }
     } while_each_thread(g,task);
 done:
     read_unlock(&tasklist_lock);
+
+    if(mm_to_munmap) {
+        PS_DOWN_WRITE(&mm_to_munmap->mmap_sem);
+        current->enable_distributed_munmap = 0;
+        do_munmap(mm_to_munmap, w->vaddr_start, w->vaddr_size);
+        current->enable_distributed_munmap = 1;
+        PS_UP_WRITE(&mm_to_munmap->mmap_sem);
+    }
+
 
     // munmap the specified region in any saved mm's as well.
     // This keeps old mappings saved in the mm of dead thread
@@ -3432,44 +3433,41 @@ void process_mprotect_item(struct work_struct* work) {
     data_header_t* curr = NULL;
     mm_data_t* mm_data = NULL;
     mm_data_t* to_munmap = NULL;
+    struct mm_struct *mm_to_munmap = NULL;
 
     int perf = PERF_MEASURE_START(&perf_process_mprotect_item);
     
     // Find the task
     read_lock(&tasklist_lock);
     do_each_thread(g,task) {
-//	task_lock(task); // TODO consider to use this
+
+        // Look for the thread group
         if (task->tgroup_home_cpu == tgroup_home_cpu &&
             task->tgroup_home_id  == tgroup_home_id &&
             !(task->flags & PF_EXITING)) {
-           /* 
-            if (task->mm)
-                // do_mprotect
-                do_mprotect(task, start, len, prot,0);
-//	        task_unlock(task); //TODO consider to use this
- 	    else
-		printk("%s: task->mm task:%p mm:%p\n",
-			__func__, task, task->mm);
-            */
-            // doing mprotect here causes errors, I do not know why
-            // for now I will unmap the region instead.
-            //do_mprotect(task,start,len,prot,0);
-            PS_DOWN_WRITE(&task->mm->mmap_sem);
-            current->enable_distributed_munmap = 0; //task->
-            do_munmap(task->mm, start, len);
-            current->enable_distributed_munmap = 1; //task->
-            PS_UP_WRITE(&task->mm->mmap_sem);
 
             // Take note of the fact that an mm exists on the remote kernel
             set_cpu_has_known_tgroup_mm(task,w->from_cpu);
 
-            // then quit
+            if(task->mm) {
+                mm_to_munmap = task->mm;
+            }
+            else
+                printk("%s: pirla\n",__func__);
+            
             goto done;
         }
-//	task_unlock(task); // TODO consider to use this
     } while_each_thread(g,task);
 done:
     read_unlock(&tasklist_lock);
+
+    if(mm_to_munmap) {
+        PS_DOWN_WRITE(&mm_to_munmap->mmap_sem);
+        current->enable_distributed_munmap = 0;
+        do_munmap(mm_to_munmap, start, len);
+        current->enable_distributed_munmap = 1;
+        PS_UP_WRITE(&mm_to_munmap->mmap_sem);
+    }
 
     // munmap the specified region in any saved mm's as well.
     // This keeps old mappings saved in the mm of dead thread
