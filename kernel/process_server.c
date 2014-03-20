@@ -245,11 +245,6 @@ static void perf_init(void) {
 #define PERF_MEASURE_STOP(x, y, z)
 #endif
 
-/**
- * Constants
- */
-#define RETURN_DISPOSITION_EXIT 0
-#define RETURN_DISPOSITION_MIGRATE 1
 
 /**
  * Library
@@ -5114,27 +5109,23 @@ finished_membership_search:
         // take over, so do not mark this as executing for remote
         current->executing_for_remote = 0;
 
-        // Migrate back - you just had an out of body experience, you will wake in
-        //                a familiar place (a place you've been before), but unfortunately, 
-        //                your life is over.
-        //                Note: comments like this must == I am tired.
 #ifndef SUPPORT_FOR_CLUSTERING
         for(i = 0; i < NR_CPUS; i++) {
-          // Skip the current cpu
-          if(i == _cpu)
-            continue;
-	  if (test_bit(i,&current->previous_cpus))
+            // Skip the current cpu
+            if(i == _cpu)
+                continue;
+            if (test_bit(i,&current->previous_cpus))
 #else
         // the list does not include the current processor group descirptor (TODO)
         struct list_head *iter;
         _remote_cpu_info_list_t *objPtr;
-	struct cpumask *pcpum =0;
-extern struct list_head rlist_head;
+        struct cpumask *pcpum =0;
+        extern struct list_head rlist_head;
         list_for_each(iter, &rlist_head) {
-          objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-          i = objPtr->_data._processor;
-          pcpum  = &(objPtr->_data._cpumask);
-	  if ( bitmap_intersects(cpumask_bits(pcpum),  
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+        pcpum  = &(objPtr->_data._cpumask);
+        if ( bitmap_intersects(cpumask_bits(pcpum),  
 				&(current->previous_cpus),
 				(sizeof(unsigned long) *8)) )
 #endif
@@ -5933,7 +5924,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
     task->t_distributed = 0;
     task->previous_cpus = 0;
     task->known_cpu_with_tgroup_mm = 0;
-    task->return_disposition = RETURN_DISPOSITION_EXIT;
+    task->return_disposition = RETURN_DISPOSITION_NONE;
 
     // If this is pid 1 or 2, the parent cannot have been migrated
     // so it is safe to take on all local thread info.
@@ -6220,7 +6211,6 @@ static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) 
     task->executing_for_remote = 0;
     task->represents_remote = 1;
     task->t_distributed = 1; // This should already be the case
-    task->return_disposition = RETURN_DISPOSITION_EXIT;
     
     // Build message
     mig.tgroup_home_cpu = task->tgroup_home_cpu;
@@ -6320,8 +6310,15 @@ extern struct list_head rlist_head;
 void process_server_do_return_disposition(void) {
 
     PSPRINTK("%s\n",__func__);
+    int return_disposition = current->return_disposition;
 
-    switch(current->return_disposition) {
+    // Reset the return disposition
+    current->return_disposition = RETURN_DISPOSITION_NONE;
+
+    switch(return_disposition) {
+    case RETURN_DISPOSITION_NONE:
+        printk("%s: ERROR, return disposition is none!\n",__func__);
+        break;
     case RETURN_DISPOSITION_MIGRATE:
         // Nothing to do, already back-imported the
         // state in process_back_migration.  This will

@@ -5561,6 +5561,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	int retval;
     int current_cpu = smp_processor_id();
     int i;
+    int spin = 0;
 
 	get_online_cpus();
 	rcu_read_lock();
@@ -5600,22 +5601,29 @@ if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
     struct list_head *iter;
     _remote_cpu_info_list_t *objPtr;
     struct cpumask *pcpum;
-extern struct list_head rlist_head;
+    extern struct list_head rlist_head;
     list_for_each(iter, &rlist_head) {
         objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
         i = objPtr->_data._processor;
         pcpum = &(objPtr->_data._cpumask);
         if ( cpumask_intersects(in_mask, pcpum) ) {
 #endif
-        // TODO ask the global scheduler if there are multiple affinities    
-	// do the migration
+            // TODO ask the global scheduler if there are multiple affinities    
+	        // do the migration
             get_task_struct(p);
             rcu_read_unlock();
             process_server_do_migration(p,i);
             put_task_struct(p);
             put_online_cpus();
 
-            schedule(); // this will save us from death
+            do {
+                spin = 0;
+                schedule(); // this will save us from death
+                if(current->return_disposition == RETURN_DISPOSITION_NONE) {
+                    __set_task_state(current,TASK_UNINTERRUPTIBLE);
+                    spin = 1;
+                }
+            } while (spin);
 
             // We are here because of either the task is exiting,
             // or because the task is migrating back.  Let's handle
