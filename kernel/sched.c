@@ -5560,7 +5560,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	struct task_struct *p;
 	int retval;
     int current_cpu = smp_processor_id();
-    int i;
+    int i, spin =0;
 
 	get_online_cpus();
 	rcu_read_lock();
@@ -5615,7 +5615,14 @@ extern struct list_head rlist_head;
             put_task_struct(p);
             put_online_cpus();
 
-            schedule(); // this will save us from death
+           do {
+               spin = 0;	    
+               schedule(); // this will save us from death
+	       if(current->return_disposition == RETURN_DISPOSITION_NONE) {
+                    __set_task_state(current,TASK_UNINTERRUPTIBLE);
+                    spin = 1;
+                }
+            } while (spin);
 
             // We are here because of either the task is exiting,
             // or because the task is migrating back.  Let's handle
