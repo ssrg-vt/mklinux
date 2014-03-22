@@ -1,6 +1,8 @@
 
- struct _remote_cpu_info_data
- {
+extern struct list_head rlist_head;
+
+struct _remote_cpu_info_data
+{
                  unsigned int _processor;
                  char _vendor_id[16];
                  int _cpu_family;
@@ -23,7 +25,7 @@
                  unsigned int _bits_virtual;
                 char _power_management[64];
                  struct cpumask _cpumask;
- };
+};
 
 
 typedef struct _remote_cpu_info_data _remote_cpu_info_data_t;
