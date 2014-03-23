@@ -122,7 +122,7 @@ static int allocate_shared_memory (void)
 			break; // node found continue
 		}
 	}
-	printk(KERN_INFO"Virtual TTY Driver: buffer %ld, rows %ld, cpus(columns) %d, node %ld[0x%lx-0x%lx]\n",
+	printk(KERN_INFO"virtualTTY: buffer %ld, rows %ld, columns(cpus) %d, node %ld[0x%lx-0x%lx]\n",
 	       sizeof(struct ring_buffer), (long) size, (int)NO_OF_DEV, node,
 	       (node!=-1)?node_start_pfn(node):0l, (node!=-1)?node_end_pfn(node):0l);
 	
@@ -298,7 +298,7 @@ static int __init vty_init(void)
 {
 	int ret;
 	order = smp_processor_id();
-	printk(KERN_INFO "Virtual TTY Driver: cpu %d, phys 0x%llx-0x%llx\n",
+	printk(KERN_INFO "virtualTTY: cpu %d, phys 0x%llx-0x%llx\n",
 	       order, global_poff, global_poff + (SHM_SIZE * NO_OF_DEV));
 
 	if ( (ret = allocate_shared_memory()) ) {
@@ -349,7 +349,7 @@ static int __init vty_init(void)
 
 static void __exit vty_exit(void)
 {
-	printk(KERN_INFO "Virtual TTY Driver: unloading\n");
+	printk(KERN_INFO "virtualTTY Driver: unloading\n");
 	// TODO not implemented
 }
 
