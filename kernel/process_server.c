@@ -3151,7 +3151,7 @@ changed_can_be_cow:
     // Send response
     if(response->present) {
         DO_UNTIL_SUCCESS(pcn_kmsg_send_long(w->from_cpu,
-                            (struct pcn_kmsg_long_message*)(&response),
+                            (struct pcn_kmsg_long_message*)(response),
                             sizeof(mapping_response_t) - 
                             sizeof(struct pcn_kmsg_hdr) -   //
                             sizeof(response->path) +         // Chop off the end of the path
