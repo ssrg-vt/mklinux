@@ -978,6 +978,16 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 	union futex_key key = FUTEX_KEY_INIT;
 	int ret;
 
+	if (current->executing_for_remote) {
+	  struct task_struct * tsk = current;
+	  struct pt_regs * regs = task_pt_regs(tsk);
+	  printk(KERN_INFO
+		  "%s[%d] aborting program ip:%lx ?sp:%lx error: %s not supported\n",
+		  tsk->comm, task_pid_nr(tsk), regs->ip, regs->sp, __func__);
+	  force_sig(SIGSEGV, tsk);
+	  return -EBUSY;
+	}	
+	
 	if (!bitset)
 		return -EINVAL;
 
@@ -1875,6 +1885,16 @@ static int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 	struct futex_q q = futex_q_init;
 	int ret;
 
+	if (current->executing_for_remote) {
+	  struct task_struct * tsk = current;
+	  struct pt_regs * regs = task_pt_regs(tsk);
+	  printk(KERN_INFO
+		  "%s[%d] aborting program ip:%lx ?sp:%lx error: %s not supported\n",
+		  tsk->comm, task_pid_nr(tsk), regs->ip, regs->sp, __func__);
+	  force_sig(SIGSEGV, tsk);
+	  return -EBUSY;
+	}
+	  
 	if (!bitset)
 		return -EINVAL;
 	q.bitset = bitset;

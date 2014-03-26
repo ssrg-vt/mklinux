@@ -39,6 +39,10 @@ MODULE_LICENSE("GPL");
 #define BUF_SIZE ((SHM_SIZE/NO_OF_DEV) - PAGE_SIZE)
 #define READING_INTERVAL 125
 
+#if ( (NO_OF_DEV * (BUF_SIZE + PAGE_SIZE)) > SHM_SIZE )
+# error "(NO_OF_DEV * (BUF_SIZE + PAGE_SIZE)) exceeds SHM_SIZE"
+#endif
+
 /*
  * constants
  */
