@@ -188,6 +188,7 @@ static int ____call_usermodehelper(void *data)
      * Multikernel
      * Handle delegation case
      */
+#ifdef PROCESS_SERVER_USE_KMOD
     if (sub_info->delegated) {
 
         // Copy identity information to current task.
@@ -202,6 +203,7 @@ static int ____call_usermodehelper(void *data)
         // Notify of PID/PID pairing.
         process_server_notify_delegated_subprocess_starting(current->pid,sub_info->remote_pid,sub_info->remote_cpu);
     } 
+#endif
 
 	retval = kernel_execve(sub_info->path,
 			       (const char *const *)sub_info->argv,
@@ -398,7 +400,9 @@ struct subprocess_info *call_usermodehelper_setup(char *path, char **argv,
 	sub_info->path = path;
 	sub_info->argv = argv;
 	sub_info->envp = envp;
+#ifdef PROCESS_SERVER_USE_KMOD
     sub_info->delegated = 0;  // multikernel
+#endif
   out:
 	return sub_info;
 }

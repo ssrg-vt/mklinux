@@ -25,6 +25,7 @@
 #include <linux/compiler.h>
 #include <linux/workqueue.h>
 #include <linux/sysctl.h>
+#include <linux/process_server.h>
 
 #define KMOD_PATH_LEN 256
 
@@ -69,12 +70,14 @@ struct subprocess_info {
     /**
      * multikernel
      */
+#ifdef PROCESS_SERVER_USE_KMOD
     int delegated; // Is this subprocess a delegated worker 
                    // working on behalf of another cpu?
     pid_t remote_pid;
     int   remote_cpu;
     int   clone_request_id;
     struct pt_regs remote_regs;
+#endif
 };
 
 /* Allocate a subprocess_info structure */

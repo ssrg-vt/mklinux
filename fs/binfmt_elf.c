@@ -991,16 +991,16 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
     /*
      * Multikernel
      */
+#ifdef PROCESS_SERVER_USE_KMOD
     if(current->executing_for_remote) {
         process_server_import_address_space(&mk_ip, &mk_sp, regs);
-        /*printk("stack pointer = %lx\n",mk_sp);
-        for(i = 0; i <= 16; i++) {
-            printk("stack peak %lx at %lx\n",*(unsigned long*)(mk_sp + i*8), mk_sp + i*8);
-        }*/
 	    start_thread(regs, mk_ip, mk_sp);
     } else {
         start_thread(regs, elf_entry, bprm->p);
     }
+#else
+    start_thread(regs, elf_entry, bprm->p);
+#endif
 	retval = 0;
 out:
 	kfree(loc);

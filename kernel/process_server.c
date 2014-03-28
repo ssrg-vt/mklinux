@@ -1,4 +1,4 @@
-/**
+/*
  * Implements task migration and maintains coherent 
  * address spaces across CPU cores.
  *
@@ -27,8 +27,11 @@
 #include <linux/pcn_kmsg.h> // Messaging
 #include <linux/pcn_perf.h> // performance measurement
 #include <linux/string.h>
-
+#include <linux/unistd.h>
+#include <linux/tsacct_kern.h>
 #include <linux/popcorn.h>
+#include <linux/syscalls.h>
+#include <linux/kernel.h>
 
 #include <asm/pgtable.h>
 #include <asm/atomic.h>
@@ -49,7 +52,7 @@ unsigned long get_percpu_old_rsp(void);
 
 // Flag indiciating whether or not to migrate the entire virtual 
 // memory space when a migration occurs.  
-#define COPY_WHOLE_VM_WITH_MIGRATION 1
+#define COPY_WHOLE_VM_WITH_MIGRATION 0
 
 // Flag indicating whether or not to migrate file-backed executable
 // pages when a fault occurs accessing executable memory.  When this
@@ -333,6 +336,8 @@ typedef struct _clone_data {
     unsigned short thread_ds;
     unsigned short thread_fsindex;
     unsigned short thread_gsindex;
+    unsigned long def_flags;
+    unsigned int personality;
     int tgroup_home_cpu;
     int tgroup_home_id;
     int t_home_cpu;
@@ -452,6 +457,8 @@ typedef struct _clone_request {
     unsigned short thread_ds;
     unsigned short thread_fsindex;
     unsigned short thread_gsindex;
+    unsigned long def_flags;
+    unsigned int personality;
     int tgroup_home_cpu;
     int tgroup_home_id;
     int t_home_cpu;
@@ -757,6 +764,14 @@ typedef struct {
  */
 typedef struct {
     struct work_struct work;
+    clone_data_t* data;
+} import_task_work_t;
+
+/**
+ *
+ */
+typedef struct {
+    struct work_struct work;
     int tgroup_home_cpu;
     int tgroup_home_id;
 } group_exit_work_t;
@@ -891,6 +906,7 @@ typedef struct {
 /**
  * Prototypes
  */
+static void process_import_task(struct work_struct* work);
 static int handle_clone_request(struct pcn_kmsg_message* msg);
 long process_server_clone(unsigned long clone_flags,
                           unsigned long stack_start,                                                                                                                   
@@ -915,6 +931,11 @@ int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
                unsigned long address, pte_t *page_table, pmd_t *pmd,
                spinlock_t *ptl, pte_t orig_pte);
 int do_mprotect(struct task_struct* task, unsigned long start, size_t len, unsigned long prot, int do_remote);
+#ifndef PROCESS_SERVER_USE_KMOD
+extern int exec_mmap(struct mm_struct* mm);
+extern void start_remote_thread(struct pt_regs* regs);
+extern void flush_old_files(struct files_struct * files);
+#endif
 
 /**
  * Module variables
@@ -1098,15 +1119,18 @@ static struct mm_struct* find_thread_mm(
     *task_out = NULL;
 
     // First, look through all active processes.
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
         if(task->tgroup_home_cpu == tgroup_home_cpu &&
            task->tgroup_home_id  == tgroup_home_id) {
             mm = task->mm;
             *task_out = task;
             *used_saved_mm = NULL;
+            read_unlock(&tasklist_lock);
             goto out;
         }
     } while_each_thread(g,task);
+    read_unlock(&tasklist_lock);
 
     // Failing that, look through saved mm's.
     spin_lock_irqsave(&_saved_mm_head_lock,lockflags);
@@ -2709,6 +2733,7 @@ static int count_local_thread_members(int tgroup_home_cpu,
     struct task_struct *task, *g;
     int count = 0;
     PSPRINTK("%s: entered\n",__func__);
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
         if(task->tgroup_home_id == tgroup_home_id &&
            task->tgroup_home_cpu == tgroup_home_cpu &&
@@ -2722,6 +2747,7 @@ static int count_local_thread_members(int tgroup_home_cpu,
             
         }
     } while_each_thread(g,task);
+    read_unlock(&tasklist_lock);
     PSPRINTK("%s: exited\n",__func__);
 
     return count;
@@ -2757,7 +2783,7 @@ void process_tgroup_closed_item(struct work_struct* work) {
 
     tgroup_closed_work_t* w = (tgroup_closed_work_t*) work;
     data_header_t *curr, *next;
-    mm_data_t* mm_data;
+    mm_data_t* mm_data = NULL;
     struct task_struct *g, *task;
     unsigned char tgroup_closed = 0;
     int perf = -1;
@@ -2771,21 +2797,21 @@ void process_tgroup_closed_item(struct work_struct* work) {
     PSPRINTK("%s: waiting for all members of this distributed thread group to finish\n",__func__);
     while(!tgroup_closed) {
         unsigned char pass = 0;
+        read_lock(&tasklist_lock);
         do_each_thread(g,task) {
             if(task->tgroup_home_cpu == w->tgroup_home_cpu &&
                task->tgroup_home_id  == w->tgroup_home_id) {
-                
                 // there are still living tasks within this distributed thread group
                 // wait a bit
-                schedule();
                 pass = 1;
             }
-
         } while_each_thread(g,task);
+        read_unlock(&tasklist_lock);
         if(!pass) {
             tgroup_closed = 1;
         } else {
             PSPRINTK("%s: waiting for tgroup close out\n",__func__);
+            schedule();
         }
     }
 
@@ -2961,6 +2987,7 @@ void process_mapping_request(struct work_struct* work) {
             w->tgroup_home_id);
 
     // First, search through existing processes
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
         if((task->tgroup_home_cpu == w->tgroup_home_cpu) &&
            (task->tgroup_home_id  == w->tgroup_home_id )) {
@@ -2974,6 +3001,7 @@ void process_mapping_request(struct work_struct* work) {
         }
     } while_each_thread(g,task);
 task_mm_search_exit:
+    read_unlock(&tasklist_lock);
 
     // Failing the process search, look through saved mm's.
     if(!mm) {
@@ -3087,9 +3115,11 @@ changed_can_be_cow:
             if(vma->vm_file == NULL) {
                 response.path[0] = '\0';
             } else {    
+         
                 plpath = d_path(&vma->vm_file->f_path,lpath,512);
                 strcpy(response.path,plpath);
                 response.pgoff = vma->vm_pgoff;
+                printk("File backed - %s\n",response.path);
             }
 
             // We modified this lock to be read-mode above so now
@@ -3566,6 +3596,7 @@ void process_back_migration(struct work_struct* work) {
     PSPRINTK("%s\n",__func__);
 
     // Find the task
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
         if(task->tgroup_home_id  == w->tgroup_home_id &&
            task->tgroup_home_cpu == w->tgroup_home_cpu &&
@@ -3576,6 +3607,7 @@ void process_back_migration(struct work_struct* work) {
         }
     } while_each_thread(g,task);
 search_exit:
+    read_unlock(&tasklist_lock);
     if(!found) {
         goto exit;
     }
@@ -4254,13 +4286,15 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
 
     PSPRINTK("%s: cpu: %d msg: (pid: %d from_cpu: %d [%d])\n", 
 	   __func__, smp_processor_id(), msg->my_pid,  inc_msg->hdr.from_cpu, msg->header.from_cpu);
-    
+   
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
         if(task->t_home_id == msg->t_home_id &&
            task->t_home_cpu == msg->t_home_cpu) {
 
             PSPRINTK("kmkprocsrv: killing local task pid{%d}\n",task->pid);
 
+            read_unlock(&tasklist_lock);
 
             // Now we're executing locally, so update our records
             // Should I be doing this here, or in the bottom-half handler?
@@ -4281,7 +4315,7 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
             goto done; // No need to continue;
         }
     } while_each_thread(g,task);
-
+    read_unlock(&tasklist_lock);
 done:
 
     pcn_kmsg_free_msg(inc_msg);
@@ -4343,6 +4377,7 @@ static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
      * Once that task is found, do the bookkeeping necessary to remember
      * the remote cpu and pid information.
      */
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
 
         if(task->pid == msg->your_pid && task->represents_remote ) {
@@ -4360,6 +4395,7 @@ static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
     } while_each_thread(g,task);
 
 done:
+    read_unlock(&tasklist_lock);
 
     pcn_kmsg_free_msg(inc_msg);
 
@@ -4375,21 +4411,23 @@ done:
 static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     clone_request_t* request = (clone_request_t*)inc_msg;
     unsigned int source_cpu = request->header.from_cpu;
-    clone_data_t* clone_data;
-    data_header_t* curr;
-    data_header_t* next;
-    vma_data_t* vma;
+    clone_data_t* clone_data = NULL;
+    data_header_t* curr = NULL;
+    data_header_t* next = NULL;
+    vma_data_t* vma = NULL;
     unsigned long lockflags;
 
     int perf = PERF_MEASURE_START(&perf_handle_clone_request);
 
-perf_cc = native_read_tsc();
+    perf_cc = native_read_tsc();
+
     PSPRINTK("%s: entered\n",__func__);
     
     /*
      * Remember this request
      */
     clone_data = kmalloc(sizeof(clone_data_t),GFP_ATOMIC);
+    
     clone_data->header.data_type = PROCESS_SERVER_CLONE_DATA_TYPE;
 
     clone_data->clone_request_id = request->clone_request_id;
@@ -4419,6 +4457,8 @@ perf_cc = native_read_tsc();
     clone_data->thread_ds = request->thread_ds;
     clone_data->thread_fsindex = request->thread_fsindex;
     clone_data->thread_gsindex = request->thread_gsindex;
+    clone_data->def_flags = request->def_flags;
+    clone_data->personality = request->personality;
     clone_data->vma_list = NULL;
     clone_data->tgroup_home_cpu = request->tgroup_home_cpu;
     clone_data->tgroup_home_id = request->tgroup_home_id;
@@ -4435,6 +4475,7 @@ perf_cc = native_read_tsc();
     /*
      * Pull in vma data
      */
+#if COPY_WHOLE_VM_WITH_MIGRATION 
     spin_lock_irqsave(&_data_head_lock,lockflags);
 
     curr = _data_head;
@@ -4464,12 +4505,12 @@ perf_cc = native_read_tsc();
     }
 
     spin_unlock_irqrestore(&_data_head_lock,lockflags);
+#endif
 
-    add_data_entry(clone_data);
-
-perf_dd = native_read_tsc();
+    perf_dd = native_read_tsc();
 
     {
+#ifdef PROCESS_SERVER_USE_KMOD
     struct subprocess_info* sub_info;
     char* argv[] = {clone_data->exe_path,NULL};
     static char *envp[] = { 
@@ -4477,7 +4518,10 @@ perf_dd = native_read_tsc();
         "TERM=linux",
         "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL
     };
-perf_aa = native_read_tsc();
+    
+    add_data_entry(clone_data);
+    
+    perf_aa = native_read_tsc();
     sub_info = call_usermodehelper_setup( clone_data->exe_path /*argv[0]*/, 
             argv, envp, 
             GFP_ATOMIC );
@@ -4504,11 +4548,23 @@ perf_aa = native_read_tsc();
      * Spin up the new process.
      */
     call_usermodehelper_exec(sub_info, UMH_NO_WAIT);
-perf_bb = native_read_tsc();
+    perf_bb = native_read_tsc();
+#else
+    import_task_work_t* work;
+    work = kmalloc(sizeof(import_task_work_t),GFP_ATOMIC);
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_import_task );
+        work->data = clone_data;
+        queue_work(clone_wq, (struct work_struct*)work);
+
+    }
+#endif
     }
 
     pcn_kmsg_free_msg(inc_msg);
-perf_ee = native_read_tsc();
+
+    perf_ee = native_read_tsc();
+
     PERF_MEASURE_STOP(&perf_handle_clone_request," ",perf);
     return 0;
 }
@@ -4565,27 +4621,34 @@ int process_server_import_address_space(unsigned long* ip,
         unsigned long* sp, 
         struct pt_regs* regs) {
     clone_data_t* clone_data = NULL;
-    struct file* f;
-    struct vm_area_struct* vma;
+    struct file* f = NULL;
+    struct vm_area_struct* vma = NULL;
     int munmap_ret = 0;
     struct mm_struct* thread_mm = NULL;
     struct task_struct* thread_task = NULL;
     mm_data_t* used_saved_mm = NULL;
     int perf = -1;
+#ifndef PROCESS_SERVER_USE_KMOD
+    struct cred* new_cred = NULL;
+#endif
 
     perf_a = native_read_tsc();
     
     PSPRINTK("import address space\n");
     
     // Verify that we're a delegated task // deadlock.
+#ifdef PROCESS_SERVER_USE_KMOD
     if (!current->executing_for_remote) {
         PSPRINTK("ERROR - not executing for remote\n");
         return -1;
     }
+#endif
 
     perf = PERF_MEASURE_START(&perf_process_server_import_address_space);
 
-    clone_data = find_clone_data(current->prev_cpu,current->clone_request_id);
+    clone_data = current->clone_data;
+    if(!clone_data)
+        clone_data = find_clone_data(current->prev_cpu,current->clone_request_id);
     if(!clone_data) {
         PERF_MEASURE_STOP(&perf_process_server_import_address_space,"Clone data missing, early exit",perf);
         return -1;
@@ -4616,15 +4679,32 @@ int process_server_import_address_space(unsigned long* ip,
                                                         // been updated by the
                                                         // sending cpu.
                                                         //
+    current->executing_for_remote = 1;
     current->tgroup_distributed = 1;
     current->t_distributed = 1;
+
+#ifndef PROCESS_SERVER_USE_KMOD
+    spin_lock_irq(&current->sighand->siglock);
+    flush_signal_handlers(current,1);
+    spin_unlock_irq(&current->sighand->siglock);
+
+    set_cpus_allowed_ptr(current,cpu_all_mask);
+
+    set_user_nice(current,0);
+
+    new_cred = prepare_kernel_cred(current);
+    new_cred->cap_bset = CAP_FULL_SET;
+    new_cred->cap_inheritable = CAP_FULL_SET;
+    commit_creds(new_cred);
+#endif
 
     PSPRINTK("%s: previous_cpus{%lx}\n",__func__,current->previous_cpus);
     PSPRINTK("%s: t_home_cpu{%d}\n",__func__,current->t_home_cpu);
     PSPRINTK("%s: t_home_id{%d}\n",__func__,current->t_home_id);
   
     if(!thread_mm) {
-        
+       
+#ifdef PROCESS_SERVER_USE_KMOD
         PS_DOWN_WRITE(&current->mm->mmap_sem);
 
         // Gut existing mappings
@@ -4641,7 +4721,7 @@ int process_server_import_address_space(unsigned long* ip,
         flush_tlb_mm(current->mm);
         flush_cache_mm(current->mm);
         PS_UP_WRITE(&current->mm->mmap_sem);
-        
+ 
         // import exe_file
         f = filp_open(clone_data->exe_path,O_RDONLY | O_LARGEFILE, 0);
         if(f) {
@@ -4649,6 +4729,32 @@ int process_server_import_address_space(unsigned long* ip,
             current->mm->exe_file = f;
             filp_close(f,NULL);
         }
+       
+#else
+        struct mm_struct* mm = mm_alloc();
+        if(mm) {
+            init_new_context(current,mm);
+
+            // import exe_file
+            f = filp_open(clone_data->exe_path,O_RDONLY | O_LARGEFILE , 0);
+            if(!IS_ERR(f)) {
+                //get_file(f);
+                //mm->exe_file = f;
+                set_mm_exe_file(mm,f);
+                filp_close(f,NULL);
+            } else {
+                printk("Error opening executable file\n");
+            }
+            mm->task_size = TASK_SIZE;
+            mm->token_priority = 0;
+            mm->last_interval = 0;
+
+            arch_pick_mmap_layout(mm);
+
+            atomic_inc(&mm->mm_users);
+            exec_mmap(mm);
+        }
+#endif
 
         perf_c = native_read_tsc();    
 
@@ -4724,7 +4830,9 @@ int process_server_import_address_space(unsigned long* ip,
            
             if(err > 0) {
                 // mmap_region succeeded
+                PS_DOWN_READ(&current->mm->mmap_sem);
                 vma = find_vma_checked(current->mm, vma_curr->start);
+                PS_UP_READ(&current->mm->mmap_sem);
                 PSPRINTK("vma mmapped, pulling in pte's\n");
                 if(vma) {
                     pte_curr = vma_curr->pte_list;
@@ -4876,13 +4984,17 @@ int process_server_import_address_space(unsigned long* ip,
     current->mm->arg_end = clone_data->arg_end;
     current->mm->start_data = clone_data->data_start;
     current->mm->end_data = clone_data->data_end;
+    current->mm->def_flags = clone_data->def_flags;
 
     // install thread information
     // TODO: Move to arch
     current->thread.es = clone_data->thread_es;
     current->thread.ds = clone_data->thread_ds;
     current->thread.usersp = clone_data->thread_usersp;
-   
+    current->thread.fsindex = clone_data->thread_fsindex;
+    current->thread.fs = clone_data->thread_fs;
+    current->thread.gs = clone_data->thread_gs;    
+    current->thread.gsindex = clone_data->thread_gsindex;
 
     // Set output variables.
     *sp = clone_data->thread_usersp;
@@ -4898,19 +5010,20 @@ int process_server_import_address_space(unsigned long* ip,
     current->normal_prio = clone_data->normal_prio;
     current->rt_priority = clone_data->rt_priority;
     current->policy = clone_data->sched_class;
+    current->personality = clone_data->personality;
 
     // We assume that an exec is going on and the current process is the one is executing
     // (a switch will occur if it is not the one that must execute)
     { // FS/GS update --- start
+#ifdef PROCESS_SERVER_USE_KMOD
     unsigned long fs, gs;
     unsigned int fsindex, gsindex;
+    unsigned short es, ds;
                     
     savesegment(fs, fsindex);
     if ( !(clone_data->thread_fs) || !(__user_addr(clone_data->thread_fs)) ) {
       printk(KERN_ERR "%s: ERROR corrupted fs base address %p\n", __func__, clone_data->thread_fs);
     }    
-    current->thread.fsindex = clone_data->thread_fsindex;
-    current->thread.fs = clone_data->thread_fs;
     if (unlikely(fsindex | current->thread.fsindex))
       loadsegment(fs, current->thread.fsindex);
     else
@@ -4922,19 +5035,47 @@ int process_server_import_address_space(unsigned long* ip,
     if ( !(clone_data->thread_gs) && !(__user_addr(clone_data->thread_gs)) ) {
       printk(KERN_ERR "%s: ERROR corrupted gs base address %p\n", __func__, clone_data->thread_gs);      
     }
-    current->thread.gs = clone_data->thread_gs;    
-    current->thread.gsindex = clone_data->thread_gsindex;
     if (unlikely(gsindex | current->thread.gsindex))
       load_gs_index(current->thread.gsindex);
     else
       load_gs_index(0);
     if (current->thread.gs)
       checking_wrmsrl(MSR_KERNEL_GS_BASE, current->thread.gs);
-                                                   
+#else
+    {
+    int i, ch;
+    const char* name = NULL;
+    char tcomm[sizeof(current->comm)];
+
+    flush_thread();
+    set_fs(USER_DS);
+    current->flags &= ~(PF_RANDOMIZE | PF_KTHREAD);
+    current->sas_ss_sp = current->sas_ss_size = 0;
+
+    // Copy exe name
+    name = clone_data->exe_path;
+    for(i = 0; (ch = *(name++)) != '\0';) {
+        if(ch == '/')
+            i = 0;
+        else if (i < (sizeof(tcomm) - 1)) 
+            tcomm[i++] = ch;
+    }
+    tcomm[i] = '\0';
+    set_task_comm(current,tcomm);
+
+    current->self_exec_id++;
+        
+    flush_signal_handlers(current,0);
+    flush_old_files(current->files);
+    }
+    start_remote_thread(regs);
+#endif
+
     } // FS/GS update --- end
 
     // Save off clone data, replacing any that may
     // already exist.
+#ifdef PROCESS_SERVER_USE_KMOD
     if(current->clone_data) {
         unsigned long lockflags;
         spin_lock_irqsave(&_data_head_lock,lockflags);
@@ -4943,8 +5084,13 @@ int process_server_import_address_space(unsigned long* ip,
         destroy_clone_data(current->clone_data);
     }
     current->clone_data = clone_data;
+#endif
 
     PS_UP_WRITE(&_import_sem);
+
+    process_server_notify_delegated_subprocess_starting(current->pid,
+            clone_data->placeholder_pid,
+            clone_data->requesting_cpu);
 
     //dump_task(current,NULL,0);
 
@@ -4957,6 +5103,30 @@ int process_server_import_address_space(unsigned long* ip,
             perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
             perf_a, perf_b, perf_c, perf_d, perf_e, current->t_home_id);
 
+    return 0;
+}
+
+static int call_import_task(void* data) {
+    kernel_import_task(data);
+    return -1;
+}
+
+static void process_import_task(struct work_struct* work) {
+    import_task_work_t* w = (import_task_work_t*)work;
+    clone_data_t* data = w->data;
+    kfree(work); 
+    kernel_thread(call_import_task, data, SIGCHLD);
+}
+
+long sys_process_server_import_task(void *info /*name*/,
+        const char* argv,
+        const char* envp,
+        struct pt_regs* regs) {
+    clone_data_t* clone_data = (clone_data_t*)info;
+    unsigned long ip, sp;
+    current->clone_data = clone_data;
+    printk("in sys_process_server_import_task pid{%d}, clone_data{%lx}\n",current->pid,(unsigned long)clone_data);
+    process_server_import_address_space(&ip,&sp,regs);
     return 0;
 }
 
@@ -4991,7 +5161,7 @@ int process_server_do_group_exit(void) {
     // the list does not include the current processor group descirptor (TODO)
     struct list_head *iter;
     _remote_cpu_info_list_t *objPtr;
-extern struct list_head rlist_head;
+    extern struct list_head rlist_head;
     list_for_each(iter, &rlist_head) {
         objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
         i = objPtr->_data._processor;
@@ -5050,6 +5220,7 @@ int process_server_do_exit(void) {
     // local group.  We have to count shadow tasks because
     // otherwise we risk missing tasks when they are exiting
     // and migrating back.
+    read_lock(&tasklist_lock);
     do_each_thread(g,task) {
         if(task->tgid == current->tgid &&           // <--- narrow search to current thread group only 
                 task->pid != current->pid &&        // <--- don't include current in the search
@@ -5061,6 +5232,7 @@ int process_server_do_exit(void) {
         }
     } while_each_thread(g,task);
 finished_membership_search:
+    read_unlock(&tasklist_lock);
 
     // Count the number of threads in this distributed thread group
     // this will be useful for determining what to do with the mm.
@@ -5092,7 +5264,8 @@ finished_membership_search:
     }
     
     // Find the clone data, we are going to destroy this very soon.
-    clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
+    clone_data = get_current_clone_data();
+    //clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
 
     // Build the message that is going to migrate this task back 
     // from whence it came.
@@ -5162,12 +5335,12 @@ finished_membership_search:
               if(i == _cpu) continue;
 #else
 	    // the list does not include the current processor group descirptor (TODO)
-	    struct list_head *iter;
-	    _remote_cpu_info_list_t *objPtr;
-extern struct list_head rlist_head;
+	        struct list_head *iter;
+	        _remote_cpu_info_list_t *objPtr;
+            extern struct list_head rlist_head;
             list_for_each(iter, &rlist_head) {
-              objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-              i = objPtr->_data._processor;
+                objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+                i = objPtr->_data._processor;
 #endif
               pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&exit_notification));
             }
@@ -5178,10 +5351,10 @@ extern struct list_head rlist_head;
             // it from being destroyed
             PSPRINTK("%s: This is not the last thread member, saving mm\n",
                     __func__);
-if (current && current->mm)
-            atomic_inc(&current->mm->mm_users);
-else
-  printk("%s: ERROR current %p, current->mm %p\n", __func__, current, current->mm);
+            if (current && current->mm)
+                atomic_inc(&current->mm->mm_users);
+            else
+                printk("%s: ERROR current %p, current->mm %p\n", __func__, current, current->mm);
 
             // Remember the mm
             mm_data = kmalloc(sizeof(mm_data_t),GFP_KERNEL);
@@ -5205,10 +5378,12 @@ else
     // with it again, so remove its clone_data from the linked list, and
     // nuke it.
     if(clone_data) {
+#ifdef PROCESS_SERVER_USE_KMOD
         unsigned long lockflags;
         spin_lock_irqsave(&_data_head_lock,lockflags);
         remove_data_entry(clone_data);
         spin_unlock_irqrestore(&_data_head_lock,lockflags);
+#endif
         destroy_clone_data(clone_data);
     }
 
@@ -5241,9 +5416,11 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid,
     msg.your_pid = remote_pid; 
     msg.my_pid = pid;
     
-    DO_UNTIL_SUCCESS(pcn_kmsg_send_long(remote_cpu, 
-                        (struct pcn_kmsg_long_message*)&msg, 
-                        sizeof(msg) - sizeof(msg.header)));
+    if(0 != pcn_kmsg_send(remote_cpu, (struct pcn_kmsg_message*)(&msg))) {
+        printk("%s: ERROR sending message pairing message to cpu %d\n",
+                __func__,
+                remote_cpu);
+    }
 
     PERF_MEASURE_STOP(&perf_process_server_notify_delegated_subprocess_starting,
             " ",
@@ -5494,19 +5671,19 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                                        struct vm_area_struct **vma_out,
                                        unsigned long error_code) {
 
-    mapping_request_data_t *data;
+    mapping_request_data_t *data = NULL;
     unsigned long err = 0;
     int ret = 0;
     mapping_request_t request;
     int i;
     int s;
     int j;
-    struct file* f;
+    struct file* f = NULL;
     unsigned long prot = 0;
     unsigned char started_outside_vma = 0;
     unsigned char did_early_removal = 0;
     char path[512];
-    char* ppath;
+    
     // for perf
     unsigned char pte_provided = 0;
     unsigned char is_anonymous = 0;
@@ -5568,10 +5745,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 #endif
     
     if(vma) {
-        if(vma->vm_file) {
-            ppath = d_path(&vma->vm_file->f_path,
-                        path,512);
-        } else {
+        if(!vma->vm_file) {
             path[0] = '\0';
         }
 
@@ -5633,11 +5807,11 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // Skip the current cpu
         if(i == _cpu) continue;
 #else
-    // the list does not include the current processor group descirptor (TODO)
-    struct list_head *iter;
-    _remote_cpu_info_list_t *objPtr;
-extern struct list_head rlist_head;
-    list_for_each(iter, &rlist_head) { 
+        // the list does not include the current processor group descirptor (TODO)
+        struct list_head *iter;
+        _remote_cpu_info_list_t *objPtr;
+        extern struct list_head rlist_head;
+        list_for_each(iter, &rlist_head) { 
         objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
         i = objPtr->_data._processor;
 #endif
@@ -5730,7 +5904,7 @@ extern struct list_head rlist_head;
                 if( !strncmp( "/dev/zero (deleted)", data->path, strlen("/dev/zero (deleted)")+1 )) {
                     data->path[9] = '\0';
                 }
-
+                
                 f = filp_open(data->path, (data->vm_flags & VM_SHARED)? O_RDWR:O_RDONLY, 0);
                 if(f) {
                     PSPRINTK("mapping file %s, %lx, %lx, %lx\n",data->path,
@@ -5762,12 +5936,13 @@ extern struct list_head rlist_head;
                 //PS_UP_WRITE(&current->mm->mmap_sem);
                 goto exit_remove_data;
             }
-            
+            PS_DOWN_READ(&current->mm->mmap_sem); 
             vma = find_vma_checked(current->mm, data->address); //data->vaddr_start);
+            PS_UP_READ(&current->mm->mmap_sem);
             if (data->address < vma->vm_start || vma->vm_end <= data->address)
-		printk(KERN_ALERT"%s: ERROR %lx is not mapped in current vma {%lx-%lx} remote vma {%lx-%lx}\n",
-			__func__, data->address, vma->vm_start, vma->vm_end,
-			data->vaddr_start, (data->vaddr_start + data->vaddr_size));
+                printk(KERN_ALERT"%s: ERROR %lx is not mapped in current vma {%lx-%lx} remote vma {%lx-%lx}\n",
+			        __func__, data->address, vma->vm_start, vma->vm_end,
+			        data->vaddr_start, (data->vaddr_start + data->vaddr_size));
         } else {
             PSPRINTK("vma is present, using existing\n");
         }
@@ -6005,6 +6180,8 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
 
     // Book keeping for distributed threads.
     task->tgroup_distributed = 1;
+
+    read_lock(&tasklist_lock);
     do_each_thread(g,tgroup_iterator) {
         if(tgroup_iterator != task) {
             if(tgroup_iterator->tgid == task->tgid) {
@@ -6014,6 +6191,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
             }
         }
     } while_each_thread(g,tgroup_iterator);
+    read_unlock(&tasklist_lock);
 
     // Pick an id for this remote process request
     PS_SPIN_LOCK(&_clone_request_id_lock);
@@ -6086,6 +6264,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     request->arg_end = task->mm->arg_end;
     request->data_start = task->mm->start_data;
     request->data_end = task->mm->end_data;
+    request->def_flags = task->mm->def_flags;
     
     // struct task_struct ---------------------------------------------------------    
     request->stack_ptr = stack_start;
@@ -6101,6 +6280,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     request->normal_prio = task->normal_prio;
     request->rt_priority = task->rt_priority;
     request->sched_class = task->policy;
+    request->personality = task->personality;
     
     // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 

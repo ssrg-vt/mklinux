@@ -23,6 +23,9 @@
 //#define SUPPORT_FOR_CLUSTERING
 #undef SUPPORT_FOR_CLUSTERING
 
+//#define PROCESS_SERVER_USE_KMOD
+#undef PROCESS_SERVER_USE_KMOD
+
 /*
  * Migration hook.
  */
@@ -33,7 +36,11 @@ void process_server_do_return_disposition(void);
  * Utilities for other modules to hook
  * into the process server.
  */
+#ifdef PROCESS_SERVER_USE_KMOD
 int process_server_import_address_space(unsigned long* ip, unsigned long *sp, struct pt_regs* regs);
+#else
+// long sys_process_server_import_task(void* info, struct pt_regs* regs) 
+#endif
 int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu);
 int process_server_do_exit(void);
 int process_server_do_group_exit(void);
