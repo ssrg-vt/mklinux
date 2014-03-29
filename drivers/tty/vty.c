@@ -39,6 +39,9 @@ MODULE_LICENSE("GPL");
 #define BUF_SIZE ((SHM_SIZE/NO_OF_DEV) - PAGE_SIZE)
 #define READING_INTERVAL 125
 
+#if ( (SHM_SIZE & ~PAGE_MASK) )
+# error "size must be a multiple of the architecture page size"
+#endif
 #if ( (NO_OF_DEV * (BUF_SIZE + PAGE_SIZE)) > SHM_SIZE )
 # error "(NO_OF_DEV * (BUF_SIZE + PAGE_SIZE)) exceeds SHM_SIZE"
 #endif
@@ -109,8 +112,6 @@ static int allocate_shared_memory (void)
 	pfn = (unsigned long) poff >> PAGE_SHIFT;
 	pfn_end = ((unsigned long) poff + ((unsigned long) size * NO_OF_DEV)) >> PAGE_SHIFT;
 	
-	//size must be multiple of a page for mapping
-	BUG_ON( (size & ~PAGE_MASK) );
 	//buffers do not have to overlap
 	BUG_ON( (sizeof(struct ring_buffer) > (BUF_SIZE + PAGE_SIZE)) );
 	
@@ -151,6 +152,7 @@ static int allocate_shared_memory (void)
 		for (j = 0; j < NO_OF_DEV; j++) {
 			ring_buffer_address[i][j] = (struct ring_buffer *) ((void *) p
 					+ ((BUF_SIZE + PAGE_SIZE) * j));
+			
 			ring_buffer_address[i][j]->current_pos = 0;
 			rwlock_init(&(ring_buffer_address[i][j]->lock));
 		}
@@ -214,7 +216,8 @@ int tty_dev_write(struct tty_struct * tty, const unsigned char *buf, int count)
 	  
 		write_lock(&(ring_buffer_address[xGrid][yGrid]->lock));
 		if (ring_buffer_address[xGrid][yGrid]->current_pos < 0 ||
-				ring_buffer_address[xGrid][yGrid]->current_pos >= BUF_SIZE || count > BUF_SIZE) {
+				ring_buffer_address[xGrid][yGrid]->current_pos >= BUF_SIZE ||
+				count > BUF_SIZE) {
 		  
 			ring_buffer_address[xGrid][yGrid]->current_pos = 0;
 			printk(KERN_ALERT "Memory Overflow...........\n Resetting the value.....\n");
