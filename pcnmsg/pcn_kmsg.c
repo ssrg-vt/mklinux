@@ -148,9 +148,9 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	/* spin until there's a spot free for me */
 	//while (win_inuse(win) >= RB_SIZE) {}
 	//if(ticket>=PCN_KMSG_RBUF_SIZE){
-		while((win->buffer[ticket%PCN_KMSG_RBUF_SIZE].last_ticket!=ticket-PCN_KMSG_RBUF_SIZE)) {
+		while((win->buffer[ticket%PCN_KMSG_RBUF_SIZE].last_ticket != ticket-PCN_KMSG_RBUF_SIZE)) {
 			//pcn_cpu_relax();
-					msleep(1);
+			msleep(1);
 		}
 		while(	win->buffer[ticket%PCN_KMSG_RBUF_SIZE].ready!=0){
 			//pcn_cpu_relax();
@@ -388,6 +388,7 @@ static inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 	int i;
 	for(i=0;i<PCN_KMSG_RBUF_SIZE;i++){
 		window->buffer[i].last_ticket=i-PCN_KMSG_RBUF_SIZE;
+		window->buffer[i].ready=0;
 	}
 	memset(&window->second_buffer, 0,
 		       PCN_KMSG_RBUF_SIZE * sizeof(int));
@@ -508,6 +509,8 @@ static int __init pcn_kmsg_init(void)
 
 	my_cpu = raw_smp_processor_id();
 	
+	printk("%s: THIS VERSION DOES NOT SUPPORT CACHE ALIGNED BUFFERS\n",
+	       __func__);
 	printk("%s: Entered pcn_kmsg_init raw: %d id: %d\n",
 		__func__, my_cpu, smp_processor_id());
 
@@ -766,29 +769,22 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       struct pcn_kmsg_long_message *lmsg, 
 		       unsigned int payload_size)
 {
-	int i;
+	int i, ret =0;
 	int num_chunks = payload_size / PCN_KMSG_PAYLOAD_SIZE;
 	struct pcn_kmsg_message this_chunk;
-	//char test_buf[15];
-
-	/*mklinux_akshay*/
-	int ret=0;
-	/*mklinux_akshay*/
 
 	if (payload_size % PCN_KMSG_PAYLOAD_SIZE) {
 		num_chunks++;
 	}
 
-	 if ( num_chunks >= ((1<<LG_SEQNUM_SIZE)-1) ){
+	 if ( num_chunks >= MAX_CHUNKS ){
 		 KMSG_PRINTK("Message too long (size:%d, chunks:%d, max:%d) can not be transferred\n",
-	                payload_size, num_chunks, ((1 << LG_SEQNUM_SIZE)-1));
+	                payload_size, num_chunks, MAX_CHUNKS);
 	        return -1;
 	 }
 
 	KMSG_PRINTK("Sending large message to CPU %d, type %d, payload size %d bytes, %d chunks\n", 
 		    dest_cpu, lmsg->hdr.type, payload_size, num_chunks);
-
-
 
 	this_chunk.hdr.type = lmsg->hdr.type;
 	this_chunk.hdr.prio = lmsg->hdr.prio;
@@ -931,7 +927,6 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 	int work_done = 0;
 	struct pcn_kmsg_container* container_long=NULL, *n=NULL;
 
-
 	KMSG_PRINTK("Got a large message fragment, type %u, from_cpu %u, start %u, end %u, seqnum %u!\n",
 		    msg->hdr.type, msg->hdr.from_cpu,
 		    msg->hdr.lg_start, msg->hdr.lg_end,
@@ -940,30 +935,34 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 	if (msg->hdr.lg_start) {
 		KMSG_PRINTK("Processing initial message fragment...\n");
 
+		if (!msg->hdr.lg_seqnum)
+		  printk(KERN_ALERT"%s: ERROR lg_seqnum is zero:%d long_number:%ld\n",
+		      __func__, (int)msg->hdr.lg_seqnum, (long)msg->hdr.long_number);
+		  
+		// calculate the size of the holding buffer
 		recv_buf_size = sizeof(struct list_head) + 
 			sizeof(struct pcn_kmsg_hdr) + 
 			msg->hdr.lg_seqnum * PCN_KMSG_PAYLOAD_SIZE;
-
-		/*lg_buf[msg->hdr.from_cpu] = kmalloc(recv_buf_size, GFP_ATOMIC);
+#undef BEN_VERSION
+#ifdef BEN_VERSION		
+		lg_buf[msg->hdr.from_cpu] = kmalloc(recv_buf_size, GFP_ATOMIC);
 		if (!lg_buf[msg->hdr.from_cpu]) {
 					KMSG_ERR("Unable to kmalloc buffer for incoming message!\n");
 					goto out;
 				}
 		lmsg = (struct pcn_kmsg_long_message *) &lg_buf[msg->hdr.from_cpu]->msg;
-		*/
-
+#else /* BEN_VERSION */
 		container_long= kmalloc(recv_buf_size, GFP_ATOMIC);
 		if (!container_long) {
-					KMSG_ERR("Unable to kmalloc buffer for incoming message!\n");
-					goto out;
+			KMSG_ERR("Unable to kmalloc buffer for incoming message!\n");
+			goto out;
 		}
-
-		lmsg = (struct pcn_kmsg_long_message *) &container_long->msg;
+		lmsg = (struct pcn_kmsg_long_message *) &container_long->msg; //TODO wrong cast!
+#endif /* !BEN_VERSION */
 
 		/* copy header first */
 		memcpy((unsigned char *) &lmsg->hdr, 
 		       &msg->hdr, sizeof(struct pcn_kmsg_hdr));
-
 		/* copy first chunk of message */
 		memcpy((unsigned char *) &lmsg->payload,
 		       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
@@ -972,67 +971,59 @@ static int process_large_message(struct pcn_kmsg_reverse_message *msg)
 			KMSG_PRINTK("NOTE: Long message of length 1 received; this isn't efficient!\n");
 
 			/* add to appropriate list */
-
-			//rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
+#ifdef BEN_VERSION			
+			rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
+#else /* BEN_VERSION */
 			rc = msg_add_list(container_long);
-			work_done = 1;
-
-			if (rc) {
+#endif /* !BEN_VERSION */
+			if (rc)
 				KMSG_ERR("Failed to add large message to list!\n");
-			}
+			work_done = 1;
 		}
-		else{
-
-			list_add_tail(&container_long->list,&lg_buf[msg->hdr.from_cpu]);
-
-		}
-	} else {
-
+#ifndef BEN_VERSION		
+		else
+		  // add the message in the lg_buf
+		  list_add_tail(&container_long->list, &lg_buf[msg->hdr.from_cpu]);
+#endif /* !BEN_VERSION */
+	}
+	else {
 		KMSG_PRINTK("Processing subsequent message fragment...\n");
-
 
 		//It should not be needed safe
 		list_for_each_entry_safe(container_long, n, &lg_buf[msg->hdr.from_cpu], list) {
-
-			if(container_long!=NULL && container_long->msg.hdr.long_number==msg->hdr.long_number)
+			if ( (container_long != NULL) &&
+			  (container_long->msg.hdr.long_number == msg->hdr.long_number) )
+				// found!
 				goto next;
-
 		}
 
-		KMSG_ERR("Failed to find long message %lu in the list of cpu %i!\n",msg->hdr.long_number,msg->hdr.from_cpu);
+		KMSG_ERR("Failed to find long message %lu in the list of cpu %i!\n",
+			 msg->hdr.long_number, msg->hdr.from_cpu);
 		goto out;
 
-next:		lmsg = (struct pcn_kmsg_long_message *) &container_long->msg;
-
-		memcpy((unsigned char *) &lmsg->payload + PCN_KMSG_PAYLOAD_SIZE * msg->hdr.lg_seqnum,
+next:		
+		lmsg = (struct pcn_kmsg_long_message *) &container_long->msg;
+		memcpy((unsigned char *) ((void*)&lmsg->payload) + (PCN_KMSG_PAYLOAD_SIZE * msg->hdr.lg_seqnum),
 		       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
 
 		if (msg->hdr.lg_end) {
 			KMSG_PRINTK("Last fragment in series...\n");
-
 			KMSG_PRINTK("from_cpu %d, type %d, prio %d\n",
-				    lmsg->hdr.from_cpu,
-				    lmsg->hdr.type,
-				    lmsg->hdr.prio);
-
-
-			//rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
-
-			list_del(&container_long->list);
-
+				    lmsg->hdr.from_cpu, lmsg->hdr.type, lmsg->hdr.prio);
 			/* add to appropriate list */
+#ifdef BEN_VERSION
+			rc = msg_add_list(lg_buf[msg->hdr.from_cpu]);
+#else /* BEN_VERSION */
+			list_del(&container_long->list);
 			rc = msg_add_list(container_long);
-
-			work_done = 1;
-
-			if (rc) {
+#endif /* !BEN_VERSION */			
+			if (rc)
 				KMSG_ERR("Failed to add large message to list!\n");
-			}
+			work_done = 1;
 		}
 	}
 
 out:
-
 	return work_done;
 }
 
