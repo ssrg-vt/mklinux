@@ -18,7 +18,6 @@
 /* BOOKKEEPING */
 
 #define POPCORN_MAX_MCAST_CHANNELS 32
-#define LG_SEQNUM_SIZE 7
 
 struct pcn_kmsg_mcast_wininfo {
 	volatile unsigned char lock;
@@ -101,24 +100,37 @@ enum pcn_kmsg_prio {
 	PCN_KMSG_PRIO_NORMAL
 };
 
+#define __READY_SIZE 1
+#define LG_SEQNUM_SIZE  (8 - __READY_SIZE)
+
 /* Message header */
 struct pcn_kmsg_hdr {
 	unsigned int from_cpu	:8; // b0
-
+	
 	enum pcn_kmsg_type type	:8; // b1
-
+	
 	enum pcn_kmsg_prio prio	:5; // b2
 	unsigned int is_lg_msg  :1;
 	unsigned int lg_start   :1;
 	unsigned int lg_end     :1;
-	unsigned long long_number;
 
-	unsigned int lg_seqnum 	:LG_SEQNUM_SIZE;// b3
-	//volatile unsigned int ready	:1;
+	unsigned long long_number; // b3 .. b10
+	
+	unsigned int lg_seqnum 	:LG_SEQNUM_SIZE; // b11
+	unsigned int __ready	:__READY_SIZE;
 }__attribute__((packed));
 
+//#if ( &((struct pcn_kmsg_hdr*)0)->ready != 12 )
+//# error "ready is not the last byte of the struct"
+//#endif
+
+// TODO cache size can be retrieved by the compiler, put it here
+#define CACHE_LINE_SIZE 64
 //#define PCN_KMSG_PAYLOAD_SIZE 60
-#define PCN_KMSG_PAYLOAD_SIZE (64-sizeof(struct pcn_kmsg_hdr))
+#define PCN_KMSG_PAYLOAD_SIZE (CACHE_LINE_SIZE - sizeof(struct pcn_kmsg_hdr))
+
+#define MAX_CHUNKS ((1 << LG_SEQNUM_SIZE) -1)
+#define PCN_KMSG_LONG_PAYLOAD_SIZE (MAX_CHUNKS*PCN_KMSG_PAYLOAD_SIZE)
 
 /* The actual messages.  The expectation is that developers will create their
    own message structs with the payload replaced with their own fields, and then
@@ -131,12 +143,19 @@ struct pcn_kmsg_hdr {
 struct pcn_kmsg_message {
 	struct pcn_kmsg_hdr hdr;
 	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
-}__attribute__((packed)) __attribute__((aligned(64)));
+}__attribute__((packed)) __attribute__((aligned(CACHE_LINE_SIZE)));
+
+struct pcn_kmsg_reverse_message {
+	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
+	struct pcn_kmsg_hdr hdr;
+	volatile unsigned long last_ticket;
+	volatile unsigned char ready;
+}__attribute__((packed)) __attribute__((aligned(CACHE_LINE_SIZE)));
 
 /* Struct for sending long messages (>60 bytes payload) */
 struct pcn_kmsg_long_message {
 	struct pcn_kmsg_hdr hdr;
-	unsigned char payload[512];
+	unsigned char payload[PCN_KMSG_LONG_PAYLOAD_SIZE];
 }__attribute__((packed));
 
 /* List entry to copy message into and pass around in receiving kernel */
@@ -145,13 +164,6 @@ struct pcn_kmsg_container {
 	struct pcn_kmsg_message msg;
 }__attribute__((packed));
 
-
-struct pcn_kmsg_reverse_message {
-	unsigned char payload[PCN_KMSG_PAYLOAD_SIZE];
-	struct pcn_kmsg_hdr hdr;
-	volatile unsigned char ready;
-	volatile unsigned long last_ticket;
-}__attribute__((packed)) __attribute__((aligned(64)));
 
 
 /* TYPES OF MESSAGES */
@@ -162,7 +174,7 @@ struct pcn_kmsg_checkin_message {
 	unsigned long window_phys_addr;
 	unsigned char cpu_to_add;
 	char pad[51];
-}__attribute__((packed)) __attribute__((aligned(64)));
+}__attribute__((packed)) __attribute__((aligned(CACHE_LINE_SIZE)));
 
 
 
@@ -227,7 +239,7 @@ struct pcn_kmsg_mcast_message {
 	unsigned int num_members;
 	unsigned long window_phys_addr;
 	char pad[28];
-}__attribute__((packed)) __attribute__((aligned(64)));
+}__attribute__((packed)) __attribute__((aligned(CACHE_LINE_SIZE)));
 
 struct pcn_kmsg_mcast_window {
 	volatile unsigned long head;

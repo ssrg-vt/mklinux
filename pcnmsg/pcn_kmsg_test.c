@@ -163,6 +163,7 @@ static int pcn_kmsg_test_long_msg(struct pcn_kmsg_test_args __user *args)
 	return rc;
 }
 
+#ifdef PCN_SUPPORT_MULTICAST
 static int pcn_kmsg_test_mcast_open(struct pcn_kmsg_test_args __user *args)
 {
 	int rc;
@@ -226,6 +227,7 @@ static int pcn_kmsg_test_mcast_close(struct pcn_kmsg_test_args __user *args)
 
 	return rc;
 }
+#endif /* PCN_SUPPORT_MULTICAST */
 
 /* Syscall for testing all this stuff */
 SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
@@ -252,7 +254,7 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 		case PCN_KMSG_TEST_SEND_LONG:
 			rc = pcn_kmsg_test_long_msg(args);
 			break;
-
+#ifdef PCN_SUPPORT_MULTICAST
 		case PCN_KMSG_TEST_OP_MCAST_OPEN:
 			rc = pcn_kmsg_test_mcast_open(args);
 			break;
@@ -264,7 +266,8 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 		case PCN_KMSG_TEST_OP_MCAST_CLOSE:
 			rc = pcn_kmsg_test_mcast_close(args);
 			break;
-
+#endif /* PCN_SUPPORT_MULTICAST */
+			
 		default:
 			TEST_ERR("invalid option %d\n", op);
 			return -1;
@@ -272,7 +275,6 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 
 	return rc;
 }
-
 
 /* CALLBACKS */
 
