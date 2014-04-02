@@ -150,11 +150,11 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	//if(ticket>=PCN_KMSG_RBUF_SIZE){
 		while((win->buffer[ticket%PCN_KMSG_RBUF_SIZE].last_ticket != ticket-PCN_KMSG_RBUF_SIZE)) {
 			//pcn_cpu_relax();
-			msleep(1);
+			//msleep(1);
 		}
 		while(	win->buffer[ticket%PCN_KMSG_RBUF_SIZE].ready!=0){
 			//pcn_cpu_relax();
-			msleep(1);
+			//msleep(1);
 		}
 	//}
 	/* insert item */
@@ -207,7 +207,7 @@ static inline int win_get(struct pcn_kmsg_window *win,
 	while (!rcvd->ready) {
 
 		//pcn_cpu_relax();
-		msleep(1);
+		//msleep(1);
 
 	}
 
