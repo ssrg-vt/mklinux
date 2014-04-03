@@ -994,6 +994,14 @@ unsigned long long _break_cow_time = 0;
 int _break_cow_count = 0;
 unsigned long long _max_break_cow_time = 0;
 unsigned long long _min_break_cow_time = 0;
+unsigned long long _mapping_request_processing_time = 0;
+int _mapping_request_processing_count = 0;
+unsigned long long _max_mapping_request_processing_time = 0;
+unsigned long long _min_mapping_request_processing_time = 0;
+unsigned long long _fault_processing_time = 0;
+int _fault_processing_count = 0;
+unsigned long long _max_fault_processing_time = 0;
+unsigned long long _min_fault_processing_time = 0;
 
 #endif
 
@@ -3013,6 +3021,8 @@ void process_mapping_request(struct work_struct* work) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     unsigned long long mapping_response_send_time_start = 0;
     unsigned long long mapping_response_send_time_end = 0;
+    unsigned long long mapping_request_processing_time_start = native_read_tsc();
+    unsigned long long mapping_request_processing_time_end = 0;
 #endif
     
     // Perf start
@@ -3307,6 +3317,22 @@ changed_can_be_cow:
     } else {
         PERF_MEASURE_STOP(&perf_process_mapping_request,"ERR",perf);
     }
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    {
+    unsigned long long mapping_request_processing_time;
+    mapping_request_processing_time_end = native_read_tsc();
+    mapping_request_processing_time = mapping_request_processing_time_end - 
+                                        mapping_request_processing_time_start;
+    _mapping_request_processing_time += mapping_request_processing_time; 
+    _mapping_request_processing_count++;
+    if(mapping_request_processing_time > _max_mapping_request_processing_time)
+        _max_mapping_request_processing_time = mapping_request_processing_time;
+    if(_min_mapping_request_processing_time == 0 || 
+            (mapping_request_processing_time < _min_mapping_request_processing_time))
+        _min_mapping_request_processing_time = mapping_request_processing_time;
+    }
+#endif
 
     return;
 }
@@ -5772,6 +5798,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     unsigned long long mapping_wait_end = 0;
     unsigned long long mapping_request_send_start = 0;
     unsigned long long mapping_request_send_end = 0;
+    unsigned long long fault_processing_time_start = 0;
+    unsigned long long fault_processing_time_end = 0;
+    unsigned long long fault_processing_time = 0;
 #endif
 
     // Nothing to do for a thread group that's not distributed.
@@ -5780,6 +5809,10 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     }
 
     perf = PERF_MEASURE_START(&perf_process_server_try_handle_mm_fault);
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    fault_processing_time_start = native_read_tsc();
+#endif
 
     PSPRINTK("Fault caught on address{%lx}, cpu{%d}, id{%d}, pid{%d}, tgid{%d}, error_code{%lx}\n",
             address,
@@ -6192,6 +6225,17 @@ not_handled:
     } else {
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"test",perf);
     }
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    fault_processing_time_end = native_read_tsc();
+    fault_processing_time = fault_processing_time_end - fault_processing_time_start;
+    _fault_processing_time += fault_processing_time;
+    _fault_processing_count++;
+    if(fault_processing_time > _fault_processing_time)
+        _fault_processing_time = fault_processing_time;
+    if(_min_fault_processing_time == 0 || fault_processing_time < _min_fault_processing_time)
+        _min_fault_processing_time = fault_processing_time;
+#endif
 
     return ret;
 
@@ -6668,6 +6712,14 @@ static int proc_read(char* buf, char**start, off_t off, int count,
     p += sprintf(p,"\tOldvma Fileback Pte: %d\n",_oldvma_filebacked_pte_count);
     p += sprintf(p,"\tOldvma Fileback Nopte: %d\n",_oldvma_filebacked_nopte_count);
     p += sprintf(p,"Mapping request timing statistics:\n");
+    p += sprintf(p,"\tEntire time to process a fault[Tot,Cnt,Max,Min]:\n");
+    p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
+                    _fault_processing_time,
+                    _fault_processing_count,
+                    _max_fault_processing_time,
+                    _min_fault_processing_time);
+    if(_fault_processing_count)
+        p += sprintf(p,"\t\tAvg: %llx\n",_fault_processing_time/_fault_processing_count);
     p += sprintf(p,"\tSending out requests to all other cpus[Tot,Cnt,Max,Min]:\n");
     p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
                     _mapping_request_send_time,
@@ -6685,6 +6737,14 @@ static int proc_read(char* buf, char**start, off_t off, int count,
     if(_mapping_wait_count) 
         p += sprintf(p,"\t\tAvg: %llx\n",_mapping_wait_time/_mapping_wait_count);
     p += sprintf(p,"Mapping response timing statistics:\n");
+    p += sprintf(p,"\tCreating entire response [Tot,Cnt,Max,Min]:\n");
+    p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
+                    _mapping_request_processing_time,
+                    _mapping_request_processing_count,
+                    _max_mapping_request_processing_time,
+                    _min_mapping_request_processing_time);
+    if(_mapping_request_processing_count)
+        p += sprintf(p,"\t\tAvg: %llx\n",_mapping_request_processing_time/_mapping_request_processing_count);
     p += sprintf(p,"\tSending out the response [Tot,Cnt,Max,Min]:\n");
     p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
                     _mapping_response_send_time,
@@ -6738,6 +6798,14 @@ static int proc_write(struct file* file,
     _break_cow_count = 0;
     _max_break_cow_time = 0;
     _min_break_cow_time = 0;
+    _mapping_request_processing_time = 0;
+    _mapping_request_processing_count = 0;
+    _max_mapping_request_processing_time = 0;
+    _min_mapping_request_processing_time = 0;
+    _fault_processing_time = 0;
+    _fault_processing_count = 0;
+    _max_fault_processing_time = 0;
+    _min_fault_processing_time = 0;
     return count;
 } 
 #endif
