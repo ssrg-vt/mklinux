@@ -1396,6 +1396,121 @@ static int is_vaddr_mapped(struct mm_struct* mm, unsigned long vaddr) {
 }
 
 /**
+ * @brief Determine if the specified vma can have cow mapings.
+ * @return 1 = yes, 0 = no.
+ */
+static int is_maybe_cow(struct vm_area_struct* vma) {
+    if((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) != VM_MAYWRITE) {
+        // Not a cow vma
+        return 0;
+    }
+
+    if(!(vma->vm_flags & VM_WRITE)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+/**
+ * @brief Break the COW page that contains "address", iff that page
+ * is a COW page.
+ * @return 1 = handled, 0 = not handled.
+ * @prerequisite Caller must grab mm->mmap_sem
+ */
+static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned long address) {
+    pgd_t *pgd = NULL;
+    pud_t *pud = NULL;
+    pmd_t *pmd = NULL;
+    pte_t *ptep = NULL;
+    pte_t pte;
+    spinlock_t* ptl;
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time = 0;
+    unsigned long long total_time = 0;
+    unsigned long long start_time = native_read_tsc();
+#endif
+    //PSPRINTK("%s: entered\n",__func__);
+
+    // if it's not a cow mapping, return.
+    if((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) != VM_MAYWRITE) {
+        goto not_handled;
+    }
+
+    // if it's not writable in vm_flags, return.
+    if(!(vma->vm_flags & VM_WRITE)) {
+        goto not_handled;
+    }
+
+    pgd = pgd_offset(mm, address);
+    if(!pgd_present(*pgd)) {
+        goto not_handled_unlock;
+    }
+
+    pud = pud_offset(pgd,address);
+    if(!pud_present(*pud)) {
+        goto not_handled_unlock;
+    }
+
+    pmd = pmd_offset(pud,address);
+    if(!pmd_present(*pmd)) {
+        goto not_handled_unlock;
+    }
+
+    ptep = pte_offset_map(pmd,address);
+    if(!ptep || !pte_present(*ptep) || pte_none(*ptep)) {
+        pte_unmap(ptep);
+        goto not_handled_unlock;
+    }
+
+    pte = *ptep;
+
+    if(pte_write(pte)) {
+        goto not_handled_unlock;
+    }
+    
+    // break the cow!
+    ptl = pte_lockptr(mm,pmd);
+    PS_SPIN_LOCK(ptl);
+   
+    PSPRINTK("%s: proceeding\n",__func__);
+    do_wp_page(mm,vma,address,ptep,pmd,ptl,pte);
+
+
+    // NOTE:
+    // Do not call pte_unmap_unlock(ptep,ptl), since do_wp_page does that!
+    
+    goto handled;
+
+not_handled_unlock:
+not_handled:
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    _break_cow_count++;
+    _break_cow_time += total_time;
+    if(total_time > _max_break_cow_time)
+        _max_break_cow_time = total_time;
+    if(_min_break_cow_time == 0 || total_time < _min_break_cow_time)
+        _min_break_cow_time = total_time;
+#endif
+    return 0;
+handled:
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    _break_cow_count++;
+    _break_cow_time += total_time;
+    if(total_time > _max_break_cow_time)
+        _max_break_cow_time = total_time;
+    if(_min_break_cow_time == 0 || total_time < _min_break_cow_time)
+        _min_break_cow_time = total_time;
+#endif
+    return 1;
+}
+
+/**
  *  @brief Find the bounds of a physically consecutive mapped region.
  *  The region must be contained within the specified VMA.
  *
@@ -1427,7 +1542,8 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
                                               unsigned long vaddr,
                                               unsigned long* vaddr_mapping_start,
                                               unsigned long* paddr_mapping_start,
-                                              size_t* paddr_mapping_sz) {
+                                              size_t* paddr_mapping_sz,
+                                              int br_cow) {
     unsigned long paddr_curr = NULL;
     unsigned long vaddr_curr = vaddr;
     unsigned long vaddr_next = vaddr;
@@ -1437,6 +1553,9 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
 
     
     // Initializes paddr_curr
+    if(br_cow) {
+        break_cow(mm,vma,vaddr_curr);
+    }
     if(get_physical_address(mm,vaddr_curr,&paddr_curr) < 0) {
         return -1;
     }
@@ -1455,6 +1574,10 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
         // dont' go past the end of the vma
         if(vaddr_next >= vma->vm_end) {
             break;
+        }
+
+        if(br_cow) {
+            break_cow(mm,vma,vaddr_next);
         }
 
         if(get_physical_address(mm,vaddr_next,&paddr_next) < 0) {
@@ -1480,6 +1603,10 @@ int find_consecutive_physically_mapped_region(struct mm_struct* mm,
         // don't go past the start of the vma
         if(vaddr_next < vma->vm_start) {
             break;
+        }
+
+        if(br_cow) {
+            break_cow(mm,vma,vaddr_next);
         }
 
         if(get_physical_address(mm,vaddr_next,&paddr_next) < 0) {
@@ -1518,7 +1645,8 @@ int find_prev_consecutive_physically_mapped_region(struct mm_struct* mm,
                                               unsigned long vaddr,
                                               unsigned long* vaddr_mapping_start,
                                               unsigned long* paddr_mapping_start,
-                                              size_t* paddr_mapping_sz) {
+                                              size_t* paddr_mapping_sz,
+                                              int break_cow) {
     unsigned long curr_vaddr_mapping_start;
     unsigned long curr_paddr_mapping_start;
     unsigned long curr_paddr_mapping_sz;
@@ -1533,7 +1661,8 @@ int find_prev_consecutive_physically_mapped_region(struct mm_struct* mm,
                                                      curr_vaddr,
                                                      &curr_vaddr_mapping_start,
                                                      &curr_paddr_mapping_start,
-                                                     &curr_paddr_mapping_sz);
+                                                     &curr_paddr_mapping_sz,
+                                                     break_cow);
         if(0 == res) {
 
             // this is a match, we can store off results and exit
@@ -1560,7 +1689,8 @@ int find_next_consecutive_physically_mapped_region(struct mm_struct* mm,
                                               unsigned long vaddr,
                                               unsigned long* vaddr_mapping_start,
                                               unsigned long* paddr_mapping_start,
-                                              size_t* paddr_mapping_sz) {
+                                              size_t* paddr_mapping_sz,
+                                              int break_cow) {
     unsigned long curr_vaddr_mapping_start;
     unsigned long curr_paddr_mapping_start;
     unsigned long curr_paddr_mapping_sz;
@@ -1575,7 +1705,8 @@ int find_next_consecutive_physically_mapped_region(struct mm_struct* mm,
                                                      curr_vaddr,
                                                      &curr_vaddr_mapping_start,
                                                      &curr_paddr_mapping_start,
-                                                     &curr_paddr_mapping_sz);
+                                                     &curr_paddr_mapping_sz,
+                                                     break_cow);
         if(0 == res) {
 
             // this is a match, we can store off results and exit
@@ -1601,7 +1732,8 @@ int fill_physical_mapping_array(struct mm_struct* mm,
         struct vm_area_struct* vma,
         unsigned long address,
         contiguous_physical_mapping_t* mappings, 
-        int arr_sz) {
+        int arr_sz,
+        int break_cow) {
     int i;
     unsigned long next_vaddr = address & PAGE_MASK;
     int ret = -1;
@@ -1618,7 +1750,8 @@ int fill_physical_mapping_array(struct mm_struct* mm,
                                             next_vaddr,
                                             &mappings[i].vaddr,
                                             &mappings[i].paddr,
-                                            &mappings[i].sz);
+                                            &mappings[i].sz,
+                                            break_cow);
 
 
         if(valid_mapping == 0) {
@@ -1653,7 +1786,8 @@ int fill_physical_mapping_array(struct mm_struct* mm,
                                             next_vaddr,
                                             &mappings[i].vaddr,
                                             &mappings[i].paddr,
-                                            &mappings[i].sz);
+                                            &mappings[i].sz,
+                                            break_cow);
             if(valid_mapping == 0) {
                 PSPRINTK("%s: supplying a mapping in slot %d\n",__func__,i);
                 mappings[i].present = 1;
@@ -1962,7 +2096,8 @@ static void send_vma(struct mm_struct* mm,
                     curr,
                     &vaddr_resolved,
                     &paddr_resolved,
-                    &sz_resolved)) {
+                    &sz_resolved,
+                    0)) {
             // None more, exit
             break;
         } else {
@@ -2893,95 +3028,6 @@ found:
     PERF_MEASURE_STOP(&perf_process_tgroup_closed_item," ",perf);
 }
 
-/**
- * @brief Determine if the specified vma can have cow mapings.
- * @return 1 = yes, 0 = no.
- */
-static int is_maybe_cow(struct vm_area_struct* vma) {
-    if((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) != VM_MAYWRITE) {
-        // Not a cow vma
-        return 0;
-    }
-
-    if(!(vma->vm_flags & VM_WRITE)) {
-        return 0;
-    }
-
-    return 1;
-}
-
-/**
- * @brief Break the COW page that contains "address", iff that page
- * is a COW page.
- * @return 1 = handled, 0 = not handled.
- * @prerequisite Caller must grab mm->mmap_sem
- */
-static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned long address) {
-    pgd_t *pgd = NULL;
-    pud_t *pud = NULL;
-    pmd_t *pmd = NULL;
-    pte_t *ptep = NULL;
-    pte_t pte;
-    spinlock_t* ptl;
-
-    //PSPRINTK("%s: entered\n",__func__);
-
-    // if it's not a cow mapping, return.
-    if((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) != VM_MAYWRITE) {
-        goto not_handled;
-    }
-
-    // if it's not writable in vm_flags, return.
-    if(!(vma->vm_flags & VM_WRITE)) {
-        goto not_handled;
-    }
-
-    pgd = pgd_offset(mm, address);
-    if(!pgd_present(*pgd)) {
-        goto not_handled_unlock;
-    }
-
-    pud = pud_offset(pgd,address);
-    if(!pud_present(*pud)) {
-        goto not_handled_unlock;
-    }
-
-    pmd = pmd_offset(pud,address);
-    if(!pmd_present(*pmd)) {
-        goto not_handled_unlock;
-    }
-
-    ptep = pte_offset_map(pmd,address);
-    if(!ptep || !pte_present(*ptep) || pte_none(*ptep)) {
-        pte_unmap(ptep);
-        goto not_handled_unlock;
-    }
-
-    pte = *ptep;
-
-    if(pte_write(pte)) {
-        goto not_handled_unlock;
-    }
-    
-    // break the cow!
-    ptl = pte_lockptr(mm,pmd);
-    PS_SPIN_LOCK(ptl);
-   
-    PSPRINTK("%s: proceeding\n",__func__);
-    do_wp_page(mm,vma,address,ptep,pmd,ptl,pte);
-
-
-    // NOTE:
-    // Do not call pte_unmap_unlock(ptep,ptl), since do_wp_page does that!
-    
-    goto handled;
-
-not_handled_unlock:
-not_handled:
-    return 0;
-handled:
-    return 1;
-}
 
 /**
  * @brief Process a request made by a remote CPU for a mapping.  This function
@@ -3118,7 +3164,7 @@ changed_can_be_cow:
              */
             {
             // Break all cows in this vma
-            if(can_be_cow) {
+            /*if(can_be_cow) {
                 unsigned long cow_addr;
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
                 unsigned long long break_cow_start = native_read_tsc();
@@ -3139,7 +3185,7 @@ changed_can_be_cow:
                 // We no longer need a write lock after the break_cow process
                 // is complete, so downgrade the lock to a read lock.
                 downgrade_write(&mm->mmap_sem);
-            }
+            }*/
 
 
             // Now grab all the mappings that we can stuff into the response.
@@ -3147,7 +3193,8 @@ changed_can_be_cow:
                                                 vma,
                                                 address,
                                                 &response.mappings, 
-                                                MAX_MAPPINGS)) {
+                                                MAX_MAPPINGS,
+                                                can_be_cow)) {
                 // If the fill process fails, clear out all
                 // results.  Otherwise, we might trick the
                 // receiving cpu into thinking the target
@@ -3159,6 +3206,10 @@ changed_can_be_cow:
                     response.mappings[i].sz = 0;
                 }
                     
+            }
+
+            if(can_be_cow) {
+                downgrade_write(&mm->mmap_sem);
             }
 
             }
