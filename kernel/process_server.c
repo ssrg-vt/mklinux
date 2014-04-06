@@ -3163,30 +3163,6 @@ changed_can_be_cow:
              * if possible.
              */
             {
-            // Break all cows in this vma
-            /*if(can_be_cow) {
-                unsigned long cow_addr;
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-                unsigned long long break_cow_start = native_read_tsc();
-                unsigned long long break_cow_end = 0;
-#endif
-                for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
-                    break_cow(mm, vma, cow_addr);
-                }
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-                break_cow_end = native_read_tsc();
-                _break_cow_count++;
-                _break_cow_time += (break_cow_end - break_cow_start);
-                if(break_cow_end - break_cow_start > _max_break_cow_time)
-                    _max_break_cow_time = (break_cow_end - break_cow_start);
-                if(_min_break_cow_time == 0 || (break_cow_end - break_cow_start) < _min_break_cow_time)
-                    _min_break_cow_time = (break_cow_end - break_cow_start);
-#endif
-                // We no longer need a write lock after the break_cow process
-                // is complete, so downgrade the lock to a read lock.
-                downgrade_write(&mm->mmap_sem);
-            }*/
-
 
             // Now grab all the mappings that we can stuff into the response.
             if(0 != fill_physical_mapping_array(mm, 
@@ -6150,15 +6126,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             int remap_pfn_range_err = 0;
             pte_provided = 1;
             unsigned long cow_addr;
-
-            // Break cow in this entire VMA
-            if(is_maybe_cow(vma)) {
-                PS_DOWN_WRITE(&current->mm->mmap_sem);
-                for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
-                    break_cow(mm, vma, cow_addr);
-                }
-                PS_UP_WRITE(&current->mm->mmap_sem);
-            }
 
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 if(data->mappings[i].present) {
