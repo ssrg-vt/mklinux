@@ -969,40 +969,48 @@ DEFINE_SPINLOCK(_remap_lock);
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
 struct proc_dir_entry *_proc_entry = NULL;
-int _adjusted_permissions_count = 0;
-int _newvma_anonymous_pte_count = 0;
-int _newvma_anonymous_nopte_count = 0;
-int _newvma_filebacked_pte_count = 0;
-int _newvma_filebacked_nopte_count = 0;
-int _oldvma_anonymous_pte_count = 0;
-int _oldvma_anonymous_nopte_count = 0;
-int _oldvma_filebacked_pte_count = 0;
-int _oldvma_filebacked_nopte_count = 0;
-unsigned long long _mapping_wait_time = 0;
-int _mapping_wait_count = 0;
-unsigned long long _max_mapping_wait_time = 0;
-unsigned long long _min_mapping_wait_time = 0;
-unsigned long long _mapping_request_send_time = 0;
-int _mapping_request_send_count = 0;
-unsigned long long _max_mapping_request_send_time = 0;
-unsigned long long _min_mapping_request_send_time = 0;
-unsigned long long _mapping_response_send_time = 0;
-int _mapping_response_send_count = 0;
-unsigned long long _max_mapping_response_send_time = 0;
-unsigned long long _min_mapping_response_send_time = 0;
-unsigned long long _break_cow_time = 0;
-int _break_cow_count = 0;
-unsigned long long _max_break_cow_time = 0;
-unsigned long long _min_break_cow_time = 0;
-unsigned long long _mapping_request_processing_time = 0;
-int _mapping_request_processing_count = 0;
-unsigned long long _max_mapping_request_processing_time = 0;
-unsigned long long _min_mapping_request_processing_time = 0;
-unsigned long long _fault_processing_time = 0;
-int _fault_processing_count = 0;
-unsigned long long _max_fault_processing_time = 0;
-unsigned long long _min_fault_processing_time = 0;
-
+static void proc_track_data(int entry, unsigned long long time);//proto
+static void proc_data_init();
+typedef struct _proc_data {
+    int count;
+    unsigned long long total;
+    unsigned long long min;
+    unsigned long long max;
+    char name[256];
+} proc_data_t;
+typedef enum _proc_data_index{
+    PS_PROC_DATA_MAPPING_WAIT_TIME=0,
+    PS_PROC_DATA_MAPPING_REQUEST_SEND_TIME,
+    PS_PROC_DATA_MAPPING_RESPONSE_SEND_TIME,
+    PS_PROC_DATA_BREAK_COW_TIME,
+    PS_PROC_DATA_MAPPING_REQUEST_PROCESSING_TIME,
+    PS_PROC_DATA_FAULT_PROCESSING_TIME,
+    PS_PROC_DATA_ADJUSTED_PERMISSIONS,
+    PS_PROC_DATA_NEWVMA_ANONYMOUS_PTE,
+    PS_PROC_DATA_NEWVMA_ANONYMOUS_NOPTE,
+    PS_PROC_DATA_NEWVMA_FILEBACKED_PTE,
+    PS_PROC_DATA_NEWVMA_FILEBACKED_NOPTE,
+    PS_PROC_DATA_OLDVMA_ANONYMOUS_PTE,
+    PS_PROC_DATA_OLDVMA_ANONYMOUS_NOPTE,
+    PS_PROC_DATA_OLDVMA_FILEBACKED_PTE,
+    PS_PROC_DATA_OLDVMA_FILEBACKED_NOPTE,
+    PS_PROC_DATA_MUNMAP_PROCESSING_TIME,
+    PS_PROC_DATA_MUNMAP_REQUEST_PROCESSING_TIME,
+    PS_PROC_DATA_MPROTECT_PROCESSING_TIME,
+    PS_PROC_DATA_MPROTECT_REQUEST_PROCESSING_TIME,
+    PS_PROC_DATA_EXIT_PROCESSING_TIME,
+    PS_PROC_DATA_EXIT_NOTIFICATION_PROCESSING_TIME,
+    PS_PROC_DATA_GROUP_EXIT_PROCESSING_TIME,
+    PS_PROC_DATA_GROUP_EXIT_NOTIFICATION_PROCESSING_TIME,
+    PS_PROC_DATA_IMPORT_TASK_TIME,
+    PS_PROC_DATA_MAX
+} proc_data_index_t;
+proc_data_t _proc_data[PS_PROC_DATA_MAX];
+#define PS_PROC_DATA_TRACK(x,y) proc_track_data(x,y)
+#define PS_PROC_DATA_INIT() proc_data_init()
+#else
+#define PS_PROC_DATA_TRACK(x,y)
+#define PS_PROC_DATA_INIT()
 #endif
 
 // Work Queues
@@ -1488,24 +1496,14 @@ not_handled:
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     end_time = native_read_tsc();
     total_time = end_time - start_time;
-    _break_cow_count++;
-    _break_cow_time += total_time;
-    if(total_time > _max_break_cow_time)
-        _max_break_cow_time = total_time;
-    if(_min_break_cow_time == 0 || total_time < _min_break_cow_time)
-        _min_break_cow_time = total_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_BREAK_COW_TIME,total_time);
 #endif
     return 0;
 handled:
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     end_time = native_read_tsc();
     total_time = end_time - start_time;
-    _break_cow_count++;
-    _break_cow_time += total_time;
-    if(total_time > _max_break_cow_time)
-        _max_break_cow_time = total_time;
-    if(_min_break_cow_time == 0 || total_time < _min_break_cow_time)
-        _min_break_cow_time = total_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_BREAK_COW_TIME,total_time);
 #endif
     return 1;
 }
@@ -3306,12 +3304,8 @@ changed_can_be_cow:
     
     // proc
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    _mapping_response_send_count++;
-    _mapping_response_send_time += (mapping_response_send_time_end - mapping_response_send_time_start);
-    if(mapping_response_send_time_end - mapping_response_send_time_start > _max_mapping_response_send_time)
-        _max_mapping_response_send_time = mapping_response_send_time_end - mapping_response_send_time_start;
-     if(_min_mapping_response_send_time == 0 || mapping_response_send_time_end - mapping_response_send_time_start < _min_mapping_response_send_time)
-        _min_mapping_response_send_time = mapping_response_send_time_end - mapping_response_send_time_start;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MAPPING_RESPONSE_SEND_TIME,
+            mapping_response_send_time_end - mapping_response_send_time_start);
 #endif
 
     kfree(work);
@@ -3351,13 +3345,8 @@ changed_can_be_cow:
     mapping_request_processing_time_end = native_read_tsc();
     mapping_request_processing_time = mapping_request_processing_time_end - 
                                         mapping_request_processing_time_start;
-    _mapping_request_processing_time += mapping_request_processing_time; 
-    _mapping_request_processing_count++;
-    if(mapping_request_processing_time > _max_mapping_request_processing_time)
-        _max_mapping_request_processing_time = mapping_request_processing_time;
-    if(_min_mapping_request_processing_time == 0 || 
-            (mapping_request_processing_time < _min_mapping_request_processing_time))
-        _min_mapping_request_processing_time = mapping_request_processing_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MAPPING_REQUEST_PROCESSING_TIME,
+            mapping_request_processing_time);
     }
 #endif
 
@@ -3381,6 +3370,11 @@ void process_exit_item(struct work_struct* work) {
     struct task_struct *task = w->task;
 
     int perf = PERF_MEASURE_START(&perf_process_exit_item);
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    unsigned long long start_time = native_read_tsc();
+#endif
 
     if(unlikely(!task)) {
         printk("%s: ERROR - empty task\n",__func__);
@@ -3414,6 +3408,12 @@ void process_exit_item(struct work_struct* work) {
     kfree(work);
 
     PERF_MEASURE_STOP(&perf_process_exit_item," ",perf);
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_EXIT_NOTIFICATION_PROCESSING_TIME,total_time);
+#endif
 }
 
 /**
@@ -3431,6 +3431,11 @@ void process_group_exit_item(struct work_struct* work) {
     group_exit_work_t* w = (group_exit_work_t*) work;
     struct task_struct *task = NULL;
     struct task_struct *g;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    unsigned long long start_time = native_read_tsc();
+#endif
 
     //int perf = PERF_MEASURE_START(&perf_process_group_exit_item);
     PSPRINTK("%s: entered\n",__func__);
@@ -3459,6 +3464,12 @@ void process_group_exit_item(struct work_struct* work) {
     PSPRINTK("%s: exiting\n",__func__);
     //PERF_MEASURE_STOP(&perf_process_group_exit_item," ",perf);
 
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_GROUP_EXIT_NOTIFICATION_PROCESSING_TIME,total_time);
+#endif
+
 }
 
 
@@ -3477,7 +3488,11 @@ void process_munmap_request(struct work_struct* work) {
     mm_data_t* mm_data = NULL;
     mm_data_t* to_munmap = NULL;
     struct mm_struct* mm_to_munmap = NULL;
-
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    unsigned long long start_time = native_read_tsc();
+#endif
     int perf = PERF_MEASURE_START(&perf_process_munmap_request);
 
     PSPRINTK("%s: entered\n",__func__);
@@ -3564,6 +3579,12 @@ found:
 
     kfree(work);
     
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MUNMAP_REQUEST_PROCESSING_TIME,total_time);
+#endif
+
     PERF_MEASURE_STOP(&perf_process_munmap_request," ",perf);
 }
 
@@ -3589,6 +3610,12 @@ void process_mprotect_item(struct work_struct* work) {
     struct mm_struct *mm_to_munmap = NULL;
 
     int perf = PERF_MEASURE_START(&perf_process_mprotect_item);
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    unsigned long long start_time = native_read_tsc();
+#endif
     
     // Find the task
     read_lock(&tasklist_lock);
@@ -3667,6 +3694,12 @@ found:
     kfree(work);
 
     PERF_MEASURE_STOP(&perf_process_mprotect_item," ",perf);
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MPROTECT_REQUEST_PROCESSING_TIME,total_time);
+#endif
 }
 
 /**
@@ -4759,6 +4792,12 @@ int process_server_import_address_space(unsigned long* ip,
 #ifndef PROCESS_SERVER_USE_KMOD
     struct cred* new_cred = NULL;
 #endif
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    int do_time_measurement = 0;
+    unsigned long long start_time = native_read_tsc();
+#endif
 
     perf_a = native_read_tsc();
     
@@ -4781,6 +4820,10 @@ int process_server_import_address_space(unsigned long* ip,
         PERF_MEASURE_STOP(&perf_process_server_import_address_space,"Clone data missing, early exit",perf);
         return -1;
     }
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    do_time_measurement = 1;
+#endif
 
     perf_b = native_read_tsc();    
     
@@ -5226,6 +5269,13 @@ int process_server_import_address_space(unsigned long* ip,
 
 
     perf_e = native_read_tsc();
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_IMPORT_TASK_TIME,total_time);
+#endif
+
     printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu (%d)\n",
             __func__,
             perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
@@ -5266,12 +5316,22 @@ long sys_process_server_import_task(void *info /*name*/,
 int process_server_do_group_exit(void) {
     exiting_group_t msg;
     int i;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    int do_time_measurement = 0;
+    unsigned long long start_time = native_read_tsc();
+#endif
 
      // Select only relevant tasks to operate on
     if(!(current->t_distributed || current->tgroup_distributed)/* || 
             !current->enable_distributed_exit*/) {
         return -1;
     }
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    do_time_measurement = 1;
+#endif
 
     PSPRINTK("%s: doing distributed group exit\n",__func__);
 
@@ -5298,6 +5358,13 @@ int process_server_do_group_exit(void) {
         pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&msg));
     }
 
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    if(do_time_measurement) {
+        end_time = native_read_tsc();
+        total_time = end_time - start_time;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_GROUP_EXIT_PROCESSING_TIME,total_time);
+    }
+#endif
 
     return 0;
 }
@@ -5321,11 +5388,22 @@ int process_server_do_exit(void) {
     clone_data_t* clone_data = NULL;
     int perf = -1;
 
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    int do_time_measurement = 0;
+    unsigned long long start_time = native_read_tsc();
+#endif
+
     // Select only relevant tasks to operate on
     if(!(current->t_distributed || current->tgroup_distributed)/* || 
             !current->enable_distributed_exit*/) {
         return -1;
     }
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    do_time_measurement = 1;
+#endif
 
 /*     printk("%s: CHANGED? prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
 		__func__,
@@ -5519,6 +5597,14 @@ finished_membership_search:
     
     PERF_MEASURE_STOP(&perf_process_server_do_exit," ",perf);
 
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    if(do_time_measurement) {
+        end_time = native_read_tsc();
+        total_time = end_time - start_time;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_EXIT_PROCESSING_TIME,total_time);
+    }
+#endif
+
     return 0;
 }
 
@@ -5577,11 +5663,21 @@ int process_server_do_munmap(struct mm_struct* mm,
     int s;
     int perf = -1;
     unsigned long lockflags;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time = 0;
+    unsigned long long total_time = 0;
+    unsigned long long start_time = native_read_tsc();
+    int do_time_measurement = 0;
+#endif
 
      // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed || !current->enable_distributed_munmap) {
         goto exit;
     } 
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    do_time_measurement = 1;
+#endif
 
     perf = PERF_MEASURE_START(&perf_process_server_do_munmap);
 
@@ -5650,6 +5746,14 @@ exit:
 
     PERF_MEASURE_STOP(&perf_process_server_do_munmap,"Exit success",perf);
 
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    if(do_time_measurement) {
+        end_time = native_read_tsc();
+        total_time = end_time - start_time;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_MUNMAP_PROCESSING_TIME,total_time);
+    }
+#endif
+
     return 0;
 }
 
@@ -5668,11 +5772,21 @@ void process_server_do_mprotect(struct task_struct* task,
     int s;
     int perf = -1;
     unsigned lockflags;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    unsigned long long start_time = native_read_tsc();
+    int do_time_measurement = 0;
+#endif
 
      // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
         goto exit;
     }
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    do_time_measurement = 1;
+#endif
 
     PSPRINTK("%s entered\n",__func__);
 
@@ -5745,6 +5859,14 @@ extern struct list_head rlist_head;
     kfree(data);
 
 exit:
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    if(do_time_measurement) {
+        end_time = native_read_tsc();
+        total_time = end_time - start_time;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_MPROTECT_PROCESSING_TIME,total_time);
+    }
+#endif
 
     PERF_MEASURE_STOP(&perf_process_server_do_mprotect," ",perf);
 
@@ -5970,13 +6092,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     }
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     mapping_request_send_end = native_read_tsc();
-    _mapping_request_send_time += (mapping_request_send_end - mapping_request_send_start);
-    _mapping_request_send_count++;
-    if(mapping_request_send_end - mapping_request_send_start > _max_mapping_request_send_time)
-        _max_mapping_request_send_time = (mapping_request_send_end - mapping_request_send_start);
-    if(_min_mapping_request_send_time == 0 || 
-            mapping_request_send_end - mapping_request_send_start < _min_mapping_request_send_time)
-        _min_mapping_request_send_time = (mapping_request_send_end - mapping_request_send_start);
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MAPPING_REQUEST_SEND_TIME,
+                        mapping_request_send_end - mapping_request_send_start);
 #endif
 
     // Wait for all cpus to respond, or a mapping that is complete
@@ -6006,12 +6123,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     }
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     mapping_wait_end = native_read_tsc();
-    _mapping_wait_time += (mapping_wait_end - mapping_wait_start);
-    _mapping_wait_count++;
-    if(mapping_wait_end - mapping_wait_start > _max_mapping_wait_time)
-        _max_mapping_wait_time = (mapping_wait_end - mapping_wait_start);
-    if(_min_mapping_wait_time == 0 || mapping_wait_end - mapping_wait_start < _min_mapping_wait_time)
-        _min_mapping_wait_time = mapping_wait_end - mapping_wait_start;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MAPPING_WAIT_TIME,
+                        mapping_wait_end - mapping_wait_start);
 #endif
     
     // Handle successful response.
@@ -6138,11 +6251,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                                                        data->mappings[i].sz,
                                                        vm_get_page_prot(vma->vm_flags),
                                                        1);
-/*		if ( data->vm_flags & VM_NORESERVE )
-			printk(KERN_ALERT"%s: NORESERVE %p %p data: %lx vma: %lx {%lx-%lx} ret%d\n",
-				__func__,  data->mappings[i].vaddr, data->mappings[i].paddr,
-				data->vm_flags, vma->vm_flags, vma->vm_start, vma->vm_end, tmp_err);
-*/
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     if(tmp_err) remap_pfn_range_err = tmp_err;
                 }
@@ -6181,61 +6289,61 @@ not_handled:
 
     if (adjusted_permissions) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-        _adjusted_permissions_count++; 
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_ADJUSTED_PERMISSIONS,0);
 #endif
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"Adjusted Permissions",perf);
     } else if (is_new_vma && is_anonymous && pte_provided) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-        _newvma_anonymous_pte_count++;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_NEWVMA_ANONYMOUS_PTE,0);
 #endif
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
                 "New Anonymous VMA + PTE",
                 perf);
     } else if (is_new_vma && is_anonymous && !pte_provided) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-        _newvma_anonymous_nopte_count++;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_NEWVMA_ANONYMOUS_NOPTE,0);
 #endif
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
                 "New Anonymous VMA + No PTE",
                 perf);
     } else if (is_new_vma && !is_anonymous && pte_provided) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-        _newvma_filebacked_pte_count++;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_NEWVMA_FILEBACKED_PTE,0);
 #endif
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
                 "New File Backed VMA + PTE",
                 perf);
     } else if (is_new_vma && !is_anonymous && !pte_provided) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-        _newvma_filebacked_nopte_count++;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_NEWVMA_FILEBACKED_NOPTE,0);
 #endif
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
                 "New File Backed VMA + No PTE",
                 perf);
     } else if (!is_new_vma && is_anonymous && pte_provided) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-        _oldvma_anonymous_pte_count++;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_OLDVMA_ANONYMOUS_PTE,0);
 #endif
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
                 "Existing Anonymous VMA + PTE",
                 perf);
     } else if (!is_new_vma && is_anonymous && !pte_provided) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-        _oldvma_anonymous_nopte_count++;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_OLDVMA_ANONYMOUS_NOPTE,0);
 #endif
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
                 "Existing Anonymous VMA + No PTE",
                 perf);
     } else if (!is_new_vma && !is_anonymous && pte_provided) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-        _oldvma_filebacked_pte_count++;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_OLDVMA_FILEBACKED_PTE,0);
 #endif
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
                 "Existing File Backed VMA + PTE",
                 perf);
     } else if (!is_new_vma && !is_anonymous && !pte_provided) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-        _oldvma_filebacked_nopte_count++;
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_OLDVMA_FILEBACKED_NOPTE,0);
 #endif
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,
                 "Existing File Backed VMA + No PTE",
@@ -6247,12 +6355,8 @@ not_handled:
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     fault_processing_time_end = native_read_tsc();
     fault_processing_time = fault_processing_time_end - fault_processing_time_start;
-    _fault_processing_time += fault_processing_time;
-    _fault_processing_count++;
-    if(fault_processing_time > _fault_processing_time)
-        _fault_processing_time = fault_processing_time;
-    if(_min_fault_processing_time == 0 || fault_processing_time < _min_fault_processing_time)
-        _min_fault_processing_time = fault_processing_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_FAULT_PROCESSING_TIME,
+                        fault_processing_time);
 #endif
 
     return ret;
@@ -6712,6 +6816,20 @@ void process_server_do_return_disposition(void) {
     return;
 }
 
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+static void proc_data_reset(int entry) {
+    if(entry >= PS_PROC_DATA_MAX) {
+        printk("Invalid proc_data_reset entry %d\n",entry);
+        return;
+    }
+    _proc_data[entry].total = 0;
+    _proc_data[entry].count = 0;
+    _proc_data[entry].min = 0;
+    _proc_data[entry].max = 0;
+   
+}
+#endif
+
 /**
  *
  */
@@ -6719,70 +6837,44 @@ void process_server_do_return_disposition(void) {
 static int proc_read(char* buf, char**start, off_t off, int count,
                         int *eof, void*data) {
     char* p = buf;
-    p += sprintf(p,"Mapping types:\n");
-    p += sprintf(p,"\tAdjusted permission count: %d\n",_adjusted_permissions_count);
-    p += sprintf(p,"\tNewvma Anonymous Pte: %d\n",_newvma_anonymous_pte_count);
-    p += sprintf(p,"\tNewvma Anonymous Nopte: %d\n",_newvma_anonymous_nopte_count);
-    p += sprintf(p,"\tNewvma Fileback Pte: %d\n",_newvma_filebacked_pte_count);
-    p += sprintf(p,"\tNewvma Fileback Nopte: %d\n",_newvma_filebacked_nopte_count);
-    p += sprintf(p,"\tOldvma Anonymous Pte: %d\n",_oldvma_anonymous_pte_count);
-    p += sprintf(p,"\tOldvma Anonymous Nopte: %d\n",_oldvma_anonymous_nopte_count);
-    p += sprintf(p,"\tOldvma Fileback Pte: %d\n",_oldvma_filebacked_pte_count);
-    p += sprintf(p,"\tOldvma Fileback Nopte: %d\n",_oldvma_filebacked_nopte_count);
-    p += sprintf(p,"Mapping request timing statistics:\n");
-    p += sprintf(p,"\tEntire time to process a fault[Tot,Cnt,Max,Min]:\n");
-    p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
-                    _fault_processing_time,
-                    _fault_processing_count,
-                    _max_fault_processing_time,
-                    _min_fault_processing_time);
-    if(_fault_processing_count)
-        p += sprintf(p,"\t\tAvg: %llx\n",_fault_processing_time/_fault_processing_count);
-    p += sprintf(p,"\tSending out requests to all other cpus[Tot,Cnt,Max,Min]:\n");
-    p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
-                    _mapping_request_send_time,
-                    _mapping_request_send_count, 
-                    _max_mapping_request_send_time,
-                    _min_mapping_request_send_time);   
-    if(_mapping_request_send_count)
-        p += sprintf(p,"\t\tAvg: %llx\n",_mapping_request_send_time/_mapping_request_send_count);
-    p += sprintf(p,"\tWaiting for all responses to come in from other cpus[Tot,Cnt,Max,Min]:\n");
-    p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
-                    _mapping_wait_time,
-                    _mapping_wait_count,
-                    _max_mapping_wait_time,
-                    _min_mapping_wait_time);
-    if(_mapping_wait_count) 
-        p += sprintf(p,"\t\tAvg: %llx\n",_mapping_wait_time/_mapping_wait_count);
-    p += sprintf(p,"Mapping response timing statistics:\n");
-    p += sprintf(p,"\tCreating entire response [Tot,Cnt,Max,Min]:\n");
-    p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
-                    _mapping_request_processing_time,
-                    _mapping_request_processing_count,
-                    _max_mapping_request_processing_time,
-                    _min_mapping_request_processing_time);
-    if(_mapping_request_processing_count)
-        p += sprintf(p,"\t\tAvg: %llx\n",_mapping_request_processing_time/_mapping_request_processing_count);
-    p += sprintf(p,"\tSending out the response [Tot,Cnt,Max,Min]:\n");
-    p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
-                    _mapping_response_send_time,
-                    _mapping_response_send_count,
-                    _max_mapping_response_send_time,
-                    _min_mapping_response_send_time);
-    if(_mapping_response_send_count)
-        p += sprintf(p,"\t\tAvg: %llx\n",_mapping_response_send_time/_mapping_response_send_count);
-    p += sprintf(p,"\tTime spent breaking cow while building response[Tot,Cnt,Max,Min]:\n");
-    p += sprintf(p,"\t\t[%llx,%d,%llx,%llx]\n",
-                    _break_cow_time,
-                    _break_cow_count,
-                    _max_break_cow_time,
-                    _min_break_cow_time);
-    if(_break_cow_count)
-        p += sprintf(p,"\t\tAvg: %llx\n",_break_cow_time/_break_cow_count);
-     return strlen(buf);
+    int i;
+
+    p += sprintf(p,"Process Server Data\n");
+
+    for(i = 0; i < PS_PROC_DATA_MAX; i++) {
+        unsigned long long avg = 0;
+        if(_proc_data[i].count)
+            avg = _proc_data[i].total / _proc_data[i].count;
+        p += sprintf(p,"%s[Tot,Cnt,Max,Min,Avg]:\n\t%llx,%d,%llx,%llx,%llx\n",
+                        _proc_data[i].name,
+                        _proc_data[i].total,
+                        _proc_data[i].count,
+                        _proc_data[i].max,
+                        _proc_data[i].min,
+                        avg);
+    }
+    return strlen(buf);
 }           
 #endif
-  
+
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+static void proc_track_data(int entry, unsigned long long time) {
+    if(entry >= PS_PROC_DATA_MAX) {
+        printk("Invalid proc_track_data entry %d\n",entry);
+        return;
+    }
+    _proc_data[entry].total += time;
+    _proc_data[entry].count++;
+    if(_proc_data[entry].min == 0 || time < _proc_data[entry].min)
+        _proc_data[entry].min = time;
+    if(time > _proc_data[entry].max)
+        _proc_data[entry].max = time;
+}
+#endif
+
+
+
 /**
  *
  */      
@@ -6791,42 +6883,74 @@ static int proc_write(struct file* file,
                         const char* buffer,
                         unsigned long count,
                         void* data) {
-    _adjusted_permissions_count = 0;
-    _newvma_anonymous_pte_count = 0;
-    _newvma_anonymous_nopte_count= 0; 
-    _newvma_filebacked_pte_count = 0;
-    _newvma_filebacked_nopte_count = 0;
-    _oldvma_anonymous_pte_count = 0;
-    _oldvma_anonymous_nopte_count = 0;
-    _oldvma_filebacked_pte_count = 0;
-    _oldvma_filebacked_nopte_count = 0;
-    _mapping_wait_time = 0;
-    _mapping_wait_count = 0;
-    _max_mapping_wait_time = 0;
-    _min_mapping_wait_time = 0;
-    _mapping_request_send_time = 0;
-    _mapping_request_send_count = 0;
-    _max_mapping_request_send_time = 0;
-    _min_mapping_request_send_time = 0;
-    _mapping_response_send_count = 0;
-    _mapping_response_send_time = 0;
-    _max_mapping_response_send_time = 0;
-    _min_mapping_response_send_time = 0;
-    _break_cow_time = 0;
-    _break_cow_count = 0;
-    _max_break_cow_time = 0;
-    _min_break_cow_time = 0;
-    _mapping_request_processing_time = 0;
-    _mapping_request_processing_count = 0;
-    _max_mapping_request_processing_time = 0;
-    _min_mapping_request_processing_time = 0;
-    _fault_processing_time = 0;
-    _fault_processing_count = 0;
-    _max_fault_processing_time = 0;
-    _min_fault_processing_time = 0;
+    int i;
+    for(i = 0; i < PS_PROC_DATA_MAX; i++)
+        proc_data_reset(i);
     return count;
 } 
 #endif
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+static void proc_data_init() {
+    int i;
+    _proc_entry = create_proc_entry("procsrv",666,NULL);
+    _proc_entry->read_proc = proc_read;
+    _proc_entry->write_proc = proc_write;
+
+    for(i = 0; i < PS_PROC_DATA_MAX; i++)
+        proc_data_reset(i);
+
+    sprintf(_proc_data[PS_PROC_DATA_MAPPING_WAIT_TIME].name,
+            "Mapping wait time");
+    sprintf(_proc_data[PS_PROC_DATA_MAPPING_REQUEST_SEND_TIME].name,
+            "Mapping request send time");
+    sprintf(_proc_data[PS_PROC_DATA_MAPPING_RESPONSE_SEND_TIME].name,
+            "Mapping response send time");
+    sprintf(_proc_data[PS_PROC_DATA_BREAK_COW_TIME].name,
+            "Break cow time");
+    sprintf(_proc_data[PS_PROC_DATA_MAPPING_REQUEST_PROCESSING_TIME].name,
+            "Mapping request processing time");
+    sprintf(_proc_data[PS_PROC_DATA_FAULT_PROCESSING_TIME].name,
+            "Fault processing time");
+    sprintf(_proc_data[PS_PROC_DATA_ADJUSTED_PERMISSIONS].name,
+            "Adjusted permissions fault time");
+    sprintf(_proc_data[PS_PROC_DATA_NEWVMA_ANONYMOUS_PTE].name,
+            "Newvma anonymous pte fault time");
+    sprintf(_proc_data[PS_PROC_DATA_NEWVMA_ANONYMOUS_NOPTE].name,
+            "Newvma anonymous nopte fault time");
+    sprintf(_proc_data[PS_PROC_DATA_NEWVMA_FILEBACKED_PTE].name,
+            "Newvma filebacked pte fault time");
+    sprintf(_proc_data[PS_PROC_DATA_NEWVMA_FILEBACKED_NOPTE].name,
+            "Newvma filebacked nopte fault time");
+    sprintf(_proc_data[PS_PROC_DATA_OLDVMA_ANONYMOUS_PTE].name,
+            "Oldvma anonymous pte fault time");
+    sprintf(_proc_data[PS_PROC_DATA_OLDVMA_ANONYMOUS_NOPTE].name,
+            "Oldvma anonymous nopte fault time");
+    sprintf(_proc_data[PS_PROC_DATA_OLDVMA_FILEBACKED_PTE].name,
+            "Oldvma filebacked pte fault time");
+    sprintf(_proc_data[PS_PROC_DATA_OLDVMA_FILEBACKED_NOPTE].name,
+            "Oldvma filebacked nopte fault time");
+    sprintf(_proc_data[PS_PROC_DATA_MUNMAP_PROCESSING_TIME].name,
+            "Munmap processing time");
+    sprintf(_proc_data[PS_PROC_DATA_MUNMAP_REQUEST_PROCESSING_TIME].name,
+            "Munmap request processing time");
+    sprintf(_proc_data[PS_PROC_DATA_MPROTECT_PROCESSING_TIME].name,
+            "Mprotect processing time");
+    sprintf(_proc_data[PS_PROC_DATA_MPROTECT_REQUEST_PROCESSING_TIME].name,
+            "Mprotect request processing time");
+    sprintf(_proc_data[PS_PROC_DATA_EXIT_PROCESSING_TIME].name,
+            "Exit processing time");
+    sprintf(_proc_data[PS_PROC_DATA_EXIT_NOTIFICATION_PROCESSING_TIME].name,
+            "Exit notification processing time");
+    sprintf(_proc_data[PS_PROC_DATA_GROUP_EXIT_PROCESSING_TIME].name,
+            "Group exit processing time");
+    sprintf(_proc_data[PS_PROC_DATA_GROUP_EXIT_NOTIFICATION_PROCESSING_TIME].name,
+            "Group exit notification processing time");
+    sprintf(_proc_data[PS_PROC_DATA_IMPORT_TASK_TIME].name,
+            "Import migrated task information time");
+}
+#endif
+
 
 /**
  * @brief Initialize this module
@@ -6855,11 +6979,7 @@ static int __init process_server_init(void) {
     /*
      * Proc entry to publish information
      */
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    _proc_entry = create_proc_entry("procsrv",666,NULL);
-    _proc_entry->read_proc = proc_read;
-    _proc_entry->write_proc = proc_write;
-#endif
+    PS_PROC_DATA_INIT();
 
     /*
      * Register to receive relevant incomming messages.
