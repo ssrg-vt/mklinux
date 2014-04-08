@@ -2933,7 +2933,7 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
     // the list does not include the current processor group descirptor (TODO)
     struct list_head *iter;
     _remote_cpu_info_list_t *objPtr;
-extern struct list_head rlist_head;
+    extern struct list_head rlist_head;
     list_for_each(iter, &rlist_head) {
         objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
         i = objPtr->_data._processor;
@@ -6924,8 +6924,19 @@ static int proc_read(char* buf, char**start, off_t off, int count,
     add_data_entry(&data);
 
     // Update all the data
+#ifndef SUPPORT_FOR_CLUSTERING
     for(i = 0; i < NR_CPUS; i++) {
         if(i == _cpu) continue;
+#else
+    // the list does not include the current processor group descirptor (TODO)
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+    extern struct list_head rlist_head;
+    list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+
+#endif
         s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&query));
         if(!s) {
             data.expected_responses++;
@@ -6998,8 +7009,19 @@ static int proc_write(struct file* file,
         for(i = 0; i < PS_PROC_DATA_MAX; i++)
             proc_data_reset(j,i);
 
+#ifndef SUPPORT_FOR_CLUSTERING
     for(i = 0; i < NR_CPUS; i++) {
         if(i == _cpu) continue;
+#else
+    // the list does not include the current processor group descirptor (TODO)
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+    extern struct list_head rlist_head;
+    list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+
+#endif
         pcn_kmsg_send(i,(struct pcn_kmsg_message*)&msg);
     }
 
