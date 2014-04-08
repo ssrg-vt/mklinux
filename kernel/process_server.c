@@ -123,6 +123,7 @@ unsigned long get_percpu_old_rsp(void);
 #define PROCESS_SERVER_MM_DATA_TYPE 6
 #define PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE 7
 #define PROCESS_SERVER_MPROTECT_DATA_TYPE 8
+#define PROCESS_SERVER_STATS_DATA_TYPE 9
 
 /**
  * Useful macros
@@ -1005,9 +1006,51 @@ typedef enum _proc_data_index{
     PS_PROC_DATA_IMPORT_TASK_TIME,
     PS_PROC_DATA_MAX
 } proc_data_index_t;
-proc_data_t _proc_data[PS_PROC_DATA_MAX];
+proc_data_t _proc_data[NR_CPUS][PS_PROC_DATA_MAX];
+
+typedef struct proc_xfer {
+    unsigned long long total;
+    int count;
+    unsigned long long min;
+    unsigned long long max;
+} proc_xfer_t;
+
+struct _stats_clear {
+    struct pcn_kmsg_hdr header;
+    char pad[60];
+} __attribute__((packed)) __attribute__((aligned(64)));;
+typedef struct _stats_clear stats_clear_t;
+
+struct _stats_query {
+    struct pcn_kmsg_hdr header;
+    pid_t pid;
+    char pad[56];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _stats_query stats_query_t;
+
+struct _stats_response {
+    struct pcn_kmsg_hdr header;
+    pid_t pid;
+    proc_xfer_t data[PS_PROC_DATA_MAX];
+} __attribute__((packed)) __attribute__((aligned(64))); 
+typedef struct _stats_response stats_response_t;
+
+typedef struct _stats_query_data {
+    data_header_t header;
+    int expected_responses;
+    int responses;
+    pid_t pid;
+} stats_query_data_t;
+
+typedef struct {
+    struct work_struct work;
+    int pid;
+    int from_cpu;
+} stats_query_work_t;
+
 #define PS_PROC_DATA_TRACK(x,y) proc_track_data(x,y)
 #define PS_PROC_DATA_INIT() proc_data_init()
+
 #else
 #define PS_PROC_DATA_TRACK(x,y)
 #define PS_PROC_DATA_INIT()
@@ -2300,6 +2343,36 @@ static void dump_clone_data(clone_data_t* r) {
         v = (vma_data_t*)v->header.next;
     }
 }
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+/**
+ * @brief Finds a stats_query data entry.
+ * @return Either a stats entry or NULL if one is not found
+ * that satisfies the parameter requirements.
+ */
+static stats_query_data_t* find_stats_query_data(pid_t pid) {
+    data_header_t* curr = NULL;
+    stats_query_data_t* query = NULL;
+    stats_query_data_t* ret = NULL;
+    PS_SPIN_LOCK(&_data_head_lock);
+    
+    curr = _data_head;
+    while(curr) {
+        if(curr->data_type == PROCESS_SERVER_STATS_DATA_TYPE) {
+            query = (stats_query_data_t*)curr;
+            if(query->pid == pid) {
+                ret = query;
+                break;
+            }
+        }
+        curr = curr->next;
+    }
+
+    PS_SPIN_UNLOCK(&_data_head_lock);
+
+    return ret;
+}
+#endif
 
 /**
  * @brief Find a thread count data entry.
@@ -6817,15 +6890,15 @@ void process_server_do_return_disposition(void) {
 }
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-static void proc_data_reset(int entry) {
+static void proc_data_reset(int cpu,int entry) {
     if(entry >= PS_PROC_DATA_MAX) {
         printk("Invalid proc_data_reset entry %d\n",entry);
         return;
     }
-    _proc_data[entry].total = 0;
-    _proc_data[entry].count = 0;
-    _proc_data[entry].min = 0;
-    _proc_data[entry].max = 0;
+    _proc_data[cpu][entry].total = 0;
+    _proc_data[cpu][entry].count = 0;
+    _proc_data[cpu][entry].min = 0;
+    _proc_data[cpu][entry].max = 0;
    
 }
 #endif
@@ -6835,23 +6908,55 @@ static void proc_data_reset(int entry) {
  */
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
 static int proc_read(char* buf, char**start, off_t off, int count,
-                        int *eof, void*data) {
+                        int *eof, void*d) {
     char* p = buf;
-    int i;
+    int i,j,s;
+    stats_query_t query;
+    stats_query_data_t data;
+    query.header.prio = PCN_KMSG_PRIO_NORMAL;
+    query.header.type = PCN_KMSG_TYPE_PROC_SRV_STATS_QUERY;
+    query.pid = current->pid;
+    data.pid = current->pid;
+    data.header.data_type = PROCESS_SERVER_STATS_DATA_TYPE;
+    data.expected_responses = 0;
+    data.responses = 0;
+
+    add_data_entry(&data);
+
+    // Update all the data
+    for(i = 0; i < NR_CPUS; i++) {
+        if(i == _cpu) continue;
+        s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&query));
+        if(!s) {
+            data.expected_responses++;
+        }
+    }
+
+    while(data.expected_responses != data.responses) {
+        schedule();
+    }
+
+    spin_lock(&_data_head_lock);
+    remove_data_entry(&data);
+    spin_unlock(&_data_head_lock);
 
     p += sprintf(p,"Process Server Data\n");
-
     for(i = 0; i < PS_PROC_DATA_MAX; i++) {
-        unsigned long long avg = 0;
-        if(_proc_data[i].count)
-            avg = _proc_data[i].total / _proc_data[i].count;
-        p += sprintf(p,"%s[Tot,Cnt,Max,Min,Avg]:\n\t%llx,%d,%llx,%llx,%llx\n",
-                        _proc_data[i].name,
-                        _proc_data[i].total,
-                        _proc_data[i].count,
-                        _proc_data[i].max,
-                        _proc_data[i].min,
-                        avg);
+        p += sprintf(p,"%s[Tot,Cnt,Max,Min,Avg]:\n",_proc_data[_cpu][i].name);
+        for(j = 0; j < NR_CPUS; j++) {
+            if(_proc_data[j][i].count) {
+                unsigned long long avg = 0;
+                if(_proc_data[j][i].count)
+                    avg = _proc_data[j][i].total / _proc_data[j][i].count;
+                p += sprintf(p,"\tcpu{%d}[%llx,%d,%llx,%llx,%llx]\n",
+                                j,
+                                _proc_data[j][i].total,
+                                _proc_data[j][i].count,
+                                _proc_data[j][i].max,
+                                _proc_data[j][i].min,
+                                avg);
+            }
+        }
     }
     return strlen(buf);
 }           
@@ -6864,12 +6969,12 @@ static void proc_track_data(int entry, unsigned long long time) {
         printk("Invalid proc_track_data entry %d\n",entry);
         return;
     }
-    _proc_data[entry].total += time;
-    _proc_data[entry].count++;
-    if(_proc_data[entry].min == 0 || time < _proc_data[entry].min)
-        _proc_data[entry].min = time;
-    if(time > _proc_data[entry].max)
-        _proc_data[entry].max = time;
+    _proc_data[_cpu][entry].total += time;
+    _proc_data[_cpu][entry].count++;
+    if(_proc_data[_cpu][entry].min == 0 || time < _proc_data[_cpu][entry].min)
+        _proc_data[_cpu][entry].min = time;
+    if(time > _proc_data[_cpu][entry].max)
+        _proc_data[_cpu][entry].max = time;
 }
 #endif
 
@@ -6884,8 +6989,21 @@ static int proc_write(struct file* file,
                         unsigned long count,
                         void* data) {
     int i;
-    for(i = 0; i < PS_PROC_DATA_MAX; i++)
-        proc_data_reset(i);
+    int j;
+    stats_clear_t msg;
+    msg.header.type = PCN_KMSG_TYPE_PROC_SRV_STATS_CLEAR;
+    msg.header.prio = PCN_KMSG_PRIO_NORMAL;
+
+    for(j = 0; j < NR_CPUS; j++)
+        for(i = 0; i < PS_PROC_DATA_MAX; i++)
+            proc_data_reset(j,i);
+
+    for(i = 0; i < NR_CPUS; i++) {
+        if(i == _cpu) continue;
+        pcn_kmsg_send(i,(struct pcn_kmsg_message*)&msg);
+    }
+
+
     return count;
 } 
 #endif
@@ -6893,61 +7011,137 @@ static int proc_write(struct file* file,
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
 static void proc_data_init() {
     int i;
+    int j;
     _proc_entry = create_proc_entry("procsrv",666,NULL);
     _proc_entry->read_proc = proc_read;
     _proc_entry->write_proc = proc_write;
 
-    for(i = 0; i < PS_PROC_DATA_MAX; i++)
-        proc_data_reset(i);
+    for(j = 0; j < NR_CPUS; j++)
+        for(i = 0; i < PS_PROC_DATA_MAX; i++)
+            proc_data_reset(j,i);
 
-    sprintf(_proc_data[PS_PROC_DATA_MAPPING_WAIT_TIME].name,
-            "Mapping wait time");
-    sprintf(_proc_data[PS_PROC_DATA_MAPPING_REQUEST_SEND_TIME].name,
-            "Mapping request send time");
-    sprintf(_proc_data[PS_PROC_DATA_MAPPING_RESPONSE_SEND_TIME].name,
-            "Mapping response send time");
-    sprintf(_proc_data[PS_PROC_DATA_BREAK_COW_TIME].name,
-            "Break cow time");
-    sprintf(_proc_data[PS_PROC_DATA_MAPPING_REQUEST_PROCESSING_TIME].name,
-            "Mapping request processing time");
-    sprintf(_proc_data[PS_PROC_DATA_FAULT_PROCESSING_TIME].name,
-            "Fault processing time");
-    sprintf(_proc_data[PS_PROC_DATA_ADJUSTED_PERMISSIONS].name,
-            "Adjusted permissions fault time");
-    sprintf(_proc_data[PS_PROC_DATA_NEWVMA_ANONYMOUS_PTE].name,
-            "Newvma anonymous pte fault time");
-    sprintf(_proc_data[PS_PROC_DATA_NEWVMA_ANONYMOUS_NOPTE].name,
-            "Newvma anonymous nopte fault time");
-    sprintf(_proc_data[PS_PROC_DATA_NEWVMA_FILEBACKED_PTE].name,
-            "Newvma filebacked pte fault time");
-    sprintf(_proc_data[PS_PROC_DATA_NEWVMA_FILEBACKED_NOPTE].name,
-            "Newvma filebacked nopte fault time");
-    sprintf(_proc_data[PS_PROC_DATA_OLDVMA_ANONYMOUS_PTE].name,
-            "Oldvma anonymous pte fault time");
-    sprintf(_proc_data[PS_PROC_DATA_OLDVMA_ANONYMOUS_NOPTE].name,
-            "Oldvma anonymous nopte fault time");
-    sprintf(_proc_data[PS_PROC_DATA_OLDVMA_FILEBACKED_PTE].name,
-            "Oldvma filebacked pte fault time");
-    sprintf(_proc_data[PS_PROC_DATA_OLDVMA_FILEBACKED_NOPTE].name,
-            "Oldvma filebacked nopte fault time");
-    sprintf(_proc_data[PS_PROC_DATA_MUNMAP_PROCESSING_TIME].name,
-            "Munmap processing time");
-    sprintf(_proc_data[PS_PROC_DATA_MUNMAP_REQUEST_PROCESSING_TIME].name,
-            "Munmap request processing time");
-    sprintf(_proc_data[PS_PROC_DATA_MPROTECT_PROCESSING_TIME].name,
-            "Mprotect processing time");
-    sprintf(_proc_data[PS_PROC_DATA_MPROTECT_REQUEST_PROCESSING_TIME].name,
-            "Mprotect request processing time");
-    sprintf(_proc_data[PS_PROC_DATA_EXIT_PROCESSING_TIME].name,
-            "Exit processing time");
-    sprintf(_proc_data[PS_PROC_DATA_EXIT_NOTIFICATION_PROCESSING_TIME].name,
-            "Exit notification processing time");
-    sprintf(_proc_data[PS_PROC_DATA_GROUP_EXIT_PROCESSING_TIME].name,
-            "Group exit processing time");
-    sprintf(_proc_data[PS_PROC_DATA_GROUP_EXIT_NOTIFICATION_PROCESSING_TIME].name,
-            "Group exit notification processing time");
-    sprintf(_proc_data[PS_PROC_DATA_IMPORT_TASK_TIME].name,
-            "Import migrated task information time");
+    for(j = 0; j < NR_CPUS; j++) {
+        sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_WAIT_TIME].name,
+                "Mapping wait time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_REQUEST_SEND_TIME].name,
+                "Mapping request send time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_RESPONSE_SEND_TIME].name,
+                "Mapping response send time");
+        sprintf(_proc_data[j][PS_PROC_DATA_BREAK_COW_TIME].name,
+                "Break cow time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_REQUEST_PROCESSING_TIME].name,
+                "Mapping request processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_FAULT_PROCESSING_TIME].name,
+                "Fault processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_ADJUSTED_PERMISSIONS].name,
+                "Adjusted permissions fault time");
+        sprintf(_proc_data[j][PS_PROC_DATA_NEWVMA_ANONYMOUS_PTE].name,
+                "Newvma anonymous pte fault time");
+        sprintf(_proc_data[j][PS_PROC_DATA_NEWVMA_ANONYMOUS_NOPTE].name,
+                "Newvma anonymous nopte fault time");
+        sprintf(_proc_data[j][PS_PROC_DATA_NEWVMA_FILEBACKED_PTE].name,
+                "Newvma filebacked pte fault time");
+        sprintf(_proc_data[j][PS_PROC_DATA_NEWVMA_FILEBACKED_NOPTE].name,
+                "Newvma filebacked nopte fault time");
+        sprintf(_proc_data[j][PS_PROC_DATA_OLDVMA_ANONYMOUS_PTE].name,
+                "Oldvma anonymous pte fault time");
+        sprintf(_proc_data[j][PS_PROC_DATA_OLDVMA_ANONYMOUS_NOPTE].name,
+                "Oldvma anonymous nopte fault time");
+        sprintf(_proc_data[j][PS_PROC_DATA_OLDVMA_FILEBACKED_PTE].name,
+                "Oldvma filebacked pte fault time");
+        sprintf(_proc_data[j][PS_PROC_DATA_OLDVMA_FILEBACKED_NOPTE].name,
+                "Oldvma filebacked nopte fault time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MUNMAP_PROCESSING_TIME].name,
+                "Munmap processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MUNMAP_REQUEST_PROCESSING_TIME].name,
+                "Munmap request processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MPROTECT_PROCESSING_TIME].name,
+                "Mprotect processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MPROTECT_REQUEST_PROCESSING_TIME].name,
+                "Mprotect request processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_EXIT_PROCESSING_TIME].name,
+                "Exit processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_EXIT_NOTIFICATION_PROCESSING_TIME].name,
+                "Exit notification processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_GROUP_EXIT_PROCESSING_TIME].name,
+                "Group exit processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_GROUP_EXIT_NOTIFICATION_PROCESSING_TIME].name,
+                "Group exit notification processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_IMPORT_TASK_TIME].name,
+                "Import migrated task information time");
+    }
+}
+#endif
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+static int handle_stats_clear(struct pcn_kmsg_message* inc_msg) {
+
+    int i,j;
+    for(j = 0; j < NR_CPUS; j++)
+        for(i = 0; i < PS_PROC_DATA_MAX; i++)
+            proc_data_reset(j,i);
+    pcn_kmsg_free_msg(inc_msg);
+    return 0;
+}
+#endif
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+static void process_stats_query(struct work_struct* w) {
+    stats_response_t* response = kmalloc(sizeof(stats_response_t),GFP_KERNEL);
+    int i;
+    stats_query_work_t* work = (stats_query_work_t*)w;
+    response->header.type = PCN_KMSG_TYPE_PROC_SRV_STATS_RESPONSE;
+    response->header.prio = PCN_KMSG_PRIO_NORMAL;
+    response->pid = work->pid;
+    for(i = 0; i < PS_PROC_DATA_MAX; i++) { 
+        response->data[i].count = _proc_data[_cpu][i].count;
+        response->data[i].total = _proc_data[_cpu][i].total;
+        response->data[i].min   = _proc_data[_cpu][i].min;
+        response->data[i].max   = _proc_data[_cpu][i].max;
+    }
+    pcn_kmsg_send_long(work->from_cpu,
+                        (struct pcn_kmsg_long_message*)response,
+                        sizeof(stats_response_t) - sizeof(response->header));
+    kfree(response);
+    kfree(w);
+}
+#endif
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+static int handle_stats_query(struct pcn_kmsg_message* inc_msg) {
+    stats_query_t* query = (stats_query_t*)inc_msg;
+    stats_query_work_t* work = kmalloc(sizeof(stats_query_work_t),GFP_ATOMIC);
+
+    if(work) {
+        INIT_WORK( (struct work_struct*)work, process_stats_query);
+        work->pid = query->pid;
+        work->from_cpu = query->header.from_cpu;
+        queue_work(exit_wq, (struct work_struct*)work);
+    }
+
+    pcn_kmsg_free_msg(inc_msg);
+    return 0;
+}
+#endif
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+static int handle_stats_response(struct pcn_kmsg_message* inc_msg) {
+    stats_response_t* response = (stats_response_t*)inc_msg;
+    stats_query_data_t* data = find_stats_query_data(response->pid);
+    int from_cpu = response->header.from_cpu;
+    if(data) {
+        int i;
+        for(i = 0; i < PS_PROC_DATA_MAX; i++) {
+            _proc_data[from_cpu][i].count = response->data[i].count;
+            _proc_data[from_cpu][i].total = response->data[i].total;
+            _proc_data[from_cpu][i].min   = response->data[i].min;
+            _proc_data[from_cpu][i].max   = response->data[i].max;
+        }
+
+        data->responses++;
+    }
+    pcn_kmsg_free_msg(inc_msg);
+    return 0;
 }
 #endif
 
@@ -7018,6 +7212,17 @@ static int __init process_server_init(void) {
             handle_mprotect_response);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_BACK_MIGRATION,
             handle_back_migration);
+
+    // stats messages
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_STATS_CLEAR,
+            handle_stats_clear);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_STATS_QUERY,
+            handle_stats_query);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_STATS_RESPONSE,
+            handle_stats_response);
+#endif
+
     PERF_INIT(); 
     return 0;
 }
