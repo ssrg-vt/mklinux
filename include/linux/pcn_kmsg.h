@@ -128,7 +128,7 @@ struct pcn_kmsg_hdr {
 //#endif
 
 // TODO cache size can be retrieved by the compiler, put it here
-#define CACHE_LINE_SIZE 64
+#define CACHE_LINE_SIZE 128
 //#define PCN_KMSG_PAYLOAD_SIZE 60
 #define PCN_KMSG_PAYLOAD_SIZE (CACHE_LINE_SIZE - sizeof(struct pcn_kmsg_hdr))
 
