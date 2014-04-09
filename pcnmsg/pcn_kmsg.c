@@ -1,8 +1,9 @@
 /*
  * Inter-kernel messaging support for Popcorn
  *
- * Current ver: Antonio Barbalace, Phil Wilshire 2013
- * First ver: Ben Shelton <beshelto@vt.edu> 2013
+ * Antonio Barbalace, David Katz, Marina Sadini 2014
+ * Antonio Barbalace, Marina Sadini, Phil Wilshire 2013
+ * Ben Shelton 2012 - 2013
  */
 
 #include <linux/irq.h>
@@ -36,6 +37,8 @@
 #define KMSG_PRINTK(...) ;
 #endif
 
+#define MAX_LOOPS 12345
+#define MAX_LOOPS_JIFFIES 123
 
 #define MCAST_VERBOSE 0
 
@@ -106,6 +109,11 @@ int log_f_index=0;
 int log_f_sendindex=0;
 void * log_function_send[LOGCALL];
 
+#define SIZE_RANGES 7
+unsigned int large_message_sizes[(SIZE_RANGES +1)];
+unsigned int large_message_count[(SIZE_RANGES +1)];
+unsigned int type_message_count[PCN_KMSG_TYPE_MAX];
+
 /* From Wikipedia page "Fetch and add", modified to work for u64 */
 static inline unsigned long fetch_and_add(volatile unsigned long * variable, 
 					  unsigned long value)
@@ -128,6 +136,7 @@ static inline int win_put(struct pcn_kmsg_window *win,
 			  int no_block) 
 {
 	unsigned long ticket;
+	unsigned long loop;
 
 	/* if we can't block and the queue is already really long, 
 	   return EAGAIN */
@@ -148,15 +157,22 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	/* spin until there's a spot free for me */
 	//while (win_inuse(win) >= RB_SIZE) {}
 	//if(ticket>=PCN_KMSG_RBUF_SIZE){
-		while((win->buffer[ticket%PCN_KMSG_RBUF_SIZE].last_ticket != ticket-PCN_KMSG_RBUF_SIZE)) {
-			//pcn_cpu_relax();
-			msleep(1);
-		}
-		while(	win->buffer[ticket%PCN_KMSG_RBUF_SIZE].ready!=0){
-			//pcn_cpu_relax();
-			msleep(1);
-		}
 	//}
+	loop=0;  
+	while( (win->buffer[ticket%PCN_KMSG_RBUF_SIZE].last_ticket
+	  != (ticket - PCN_KMSG_RBUF_SIZE)) ) {
+		//pcn_cpu_relax();
+		//msleep(1);
+		if ( !(loop++ % MAX_LOOPS) )
+			schedule_timeout(MAX_LOOPS_JIFFIES);
+	}
+	loop=0;
+	while( win->buffer[ticket%PCN_KMSG_RBUF_SIZE].ready!=0 ) {
+		//pcn_cpu_relax();
+		//msleep(1);
+		if ( !(loop++ % MAX_LOOPS) )
+			schedule_timeout(MAX_LOOPS_JIFFIES);
+	}
 	/* insert item */
 	memcpy(&win->buffer[ticket%PCN_KMSG_RBUF_SIZE].payload,
 	       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
@@ -459,9 +475,14 @@ static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eo
 	char *p= page;
     int len, i, idx;
 
-	p += sprintf(p, "messages get: %ld\n", msg_get);
-        p += sprintf(p, "messages put: %ld\n", msg_put);
-
+	p += sprintf(p, "get: %ld\n", msg_get);
+        p += sprintf(p, "put: %ld\n", msg_put);
+    for (i =0; i<(SIZE_RANGES +1); i++)
+      p +=sprintf (p,"%u: %u\n", large_message_sizes[i], large_message_count[i]);
+    
+    for (i =0; i<PCN_KMSG_TYPE_MAX; i++)
+      p +=sprintf (p, "t%u: %u\n", i, type_message_count[i]);
+    
     idx = log_r_index;
     for (i =0; i>-LOGLEN; i--)
     	p +=sprintf (p,"r%d: from%d type%d %1d:%1d:%1d seq%d\n",
@@ -475,7 +496,7 @@ static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eo
     			(idx+i),(int) log_send[(idx+i)%LOGLEN].from_cpu, (int)log_send[(idx+i)%LOGLEN].type,
     			(int) log_send[(idx+i)%LOGLEN].is_lg_msg, (int)log_send[(idx+i)%LOGLEN].lg_start,
     			(int) log_send[(idx+i)%LOGLEN].lg_end, (int) log_send[(idx+i)%LOGLEN].lg_seqnum );
-
+/*
     idx = log_f_index;
         for (i =0; i>-LOGCALL; i--)
         	p +=sprintf (p,"f%d: %pB\n",
@@ -488,7 +509,7 @@ static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eo
 
         for(i=0; i<PCN_KMSG_RBUF_SIZE; i++)
         	p +=sprintf (p,"second_buffer[%i]=%i\n",i,rkvirt[my_cpu]->second_buffer[i]);
-
+*/
 
 	len = (p -page) - off;
 	if (len < 0)
@@ -496,6 +517,20 @@ static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eo
 	*eof = (len <= count) ? 1 : 0;
 	*start = page + off;
 	return len;
+}
+
+static int pcn_write_proc (struct file *file, const char __user *buffer, unsigned long count, void *data)
+{
+  int i;
+	msg_get=0;
+	msg_put=0;
+  	memset(large_message_count, 0, sizeof(int)*(SIZE_RANGES +1));
+	memset(large_message_sizes, 0, sizeof(int)*(SIZE_RANGES +1));
+	for (i=0; i<SIZE_RANGES; i++)
+	  large_message_sizes[i] = ((i+1)*PCN_KMSG_PAYLOAD_SIZE);
+	large_message_sizes[SIZE_RANGES] = ~0;
+	memset(type_message_count, 0, sizeof(int)*PCN_KMSG_TYPE_MAX);
+	return count;
 }
 
 static int __init pcn_kmsg_init(void)
@@ -591,6 +626,10 @@ static int __init pcn_kmsg_init(void)
 		boot_params_va->pcn_kmsg_master_window = rkinfo_phys_addr;
 		KMSG_INIT("boot_params virt %p phys %p\n",
 			boot_params_va, orig_boot_params);
+		
+		KMSG_INIT("LOOPS %ld, LOOPS_JIFFIES %ld, 1nsec %ld, 1usec %ld, 1msec %ld, 1jiffies %d %d\n",
+			  MAX_LOOPS, MAX_LOOPS_JIFFIES, nsecs_to_jiffies(1), usecs_to_jiffies(1), msecs_to_jiffies(1),
+			  jiffies_to_msecs(1), jiffies_to_usecs(1));
 	}
 	else {
 		KMSG_INIT("Primary kernel rkinfo phys addr: 0x%lx\n", 
@@ -636,6 +675,14 @@ static int __init pcn_kmsg_init(void)
 		}
 	} 
 
+	/* proc interface for debugging and stats */
+	memset(large_message_count, 0, sizeof(int)*(SIZE_RANGES +1));
+	memset(large_message_sizes, 0, sizeof(int)*(SIZE_RANGES +1));
+	for (i=0; i<SIZE_RANGES; i++)
+	  large_message_sizes[i] = ((i+1)*PCN_KMSG_PAYLOAD_SIZE);
+	large_message_sizes[SIZE_RANGES] = ~0;
+	memset(type_message_count, 0, sizeof(int)*PCN_KMSG_TYPE_MAX);
+
 	memset(log_receive,0,sizeof(struct pcn_kmsg_hdr)*LOGLEN);
 	memset(log_send,0,sizeof(struct pcn_kmsg_hdr)*LOGLEN);
 	memset(log_function_called,0,sizeof(void*)*LOGCALL);
@@ -648,6 +695,7 @@ static int __init pcn_kmsg_init(void)
 		return -ENOMEM;
 	}
 	res->read_proc = pcn_read_proc;
+	res->write_proc = pcn_write_proc;
 
 	return 0;
 }
@@ -715,6 +763,7 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 	msg->hdr.from_cpu = my_cpu;
 
 	rc = win_put(dest_window, msg, no_block);
+type_message_count[msg->hdr.type]++;
 
 	if (rc) {
 		if (no_block && (rc == EAGAIN)) {
@@ -807,6 +856,10 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		if(ret!=0)
 			return ret;
 	}
+	
+	/* statistics */
+	num_chunks = payload_size / PCN_KMSG_PAYLOAD_SIZE;
+	large_message_count[((num_chunks < SIZE_RANGES) ? num_chunks : SIZE_RANGES)]++;
 
 	return 0;
 }
