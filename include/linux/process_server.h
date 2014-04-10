@@ -53,7 +53,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm, struct vm_area_stru
                                 struct vm_area_struct **vma_out,
                                 unsigned long error_code);
 int process_server_do_munmap(struct mm_struct* mm, 
-                                struct vm_area_struct *vma,
                                 unsigned long start, 
                                 unsigned long len);
 void process_server_do_mprotect(struct task_struct* task,

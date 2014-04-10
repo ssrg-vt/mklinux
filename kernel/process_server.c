@@ -1004,6 +1004,8 @@ typedef enum _proc_data_index{
     PS_PROC_DATA_GROUP_EXIT_PROCESSING_TIME,
     PS_PROC_DATA_GROUP_EXIT_NOTIFICATION_PROCESSING_TIME,
     PS_PROC_DATA_IMPORT_TASK_TIME,
+    PS_PROC_DATA_COUNT_REMOTE_THREADS_PROCESSING_TIME,
+    PS_PROC_DATA_MK_PAGE_WRITABLE,
     PS_PROC_DATA_MAX
 } proc_data_index_t;
 proc_data_t _proc_data[NR_CPUS][PS_PROC_DATA_MAX];
@@ -1258,6 +1260,11 @@ out:
 static void mk_page_writable(struct mm_struct* mm,
                              struct vm_area_struct* vma,
                              unsigned long vaddr) {
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    unsigned long long start_time = native_read_tsc();
+#endif
     spinlock_t* ptl;
     pte_t *ptep, pte, entry;
      
@@ -1288,6 +1295,11 @@ static void mk_page_writable(struct mm_struct* mm,
     // Unlock the pte
     pte_unmap_unlock(pte, ptl);
 out:
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MK_PAGE_WRITABLE,total_time);
+#endif
     return;
 }
 
@@ -2898,6 +2910,11 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
     int ret = -1;
     int perf = -1;
     unsigned long lockflags;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time;
+    unsigned long long total_time;
+    unsigned long long start_time = native_read_tsc();
+#endif
 
     perf = PERF_MEASURE_START(&perf_count_remote_thread_members);
 
@@ -2968,6 +2985,13 @@ static int count_remote_thread_members(int exclude_t_home_cpu,
     kfree(data);
 
 exit:
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_COUNT_REMOTE_THREADS_PROCESSING_TIME,total_time);
+#endif
+
     PERF_MEASURE_STOP(&perf_count_remote_thread_members," ",perf);
     return ret;
 }
@@ -3053,8 +3077,10 @@ void process_tgroup_closed_item(struct work_struct* work) {
                 // there are still living tasks within this distributed thread group
                 // wait a bit
                 pass = 1;
+                goto pass_complete;
             }
         } while_each_thread(g,task);
+pass_complete:
         read_unlock(&tasklist_lock);
         if(!pass) {
             tgroup_closed = 1;
@@ -5726,7 +5752,6 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid,
  * <MEASURE perf_process_server_do_munmap>
  */
 int process_server_do_munmap(struct mm_struct* mm, 
-            struct vm_area_struct *vma,
             unsigned long start, 
             unsigned long len) {
 
@@ -5736,6 +5761,7 @@ int process_server_do_munmap(struct mm_struct* mm,
     int s;
     int perf = -1;
     unsigned long lockflags;
+    int already_lock = 0;
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     unsigned long long end_time = 0;
     unsigned long long total_time = 0;
@@ -5746,7 +5772,7 @@ int process_server_do_munmap(struct mm_struct* mm,
      // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed || !current->enable_distributed_munmap) {
         goto exit;
-    } 
+    }
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     do_time_measurement = 1;
@@ -5779,6 +5805,8 @@ int process_server_do_munmap(struct mm_struct* mm,
     request.tgroup_home_id  = current->tgroup_home_id;
     request.requester_pid = current->pid;
 
+    up_write(&mm->mmap_sem);
+
 #ifndef SUPPORT_FOR_CLUSTERING
     for(i = 0; i < NR_CPUS; i++) {
         // Skip the current cpu
@@ -5805,6 +5833,8 @@ extern struct list_head rlist_head;
     while(data->expected_responses != data->responses) {
         schedule();
     }
+
+    down_write(&mm->mmap_sem);
 
     // OK, all responses are in, we can proceed.
 
@@ -5971,7 +6001,6 @@ unsigned long process_server_do_mmap_pgoff(struct file *file, unsigned long addr
     // do_mmap_pgoff implementation) to keep from having differing
     // vm address spaces on different cpus.
     process_server_do_munmap(current->mm,
-                             /*struct vm_area_struct *vma*/NULL,
                              addr,
                              len);
 
@@ -7091,6 +7120,10 @@ static void proc_data_init() {
                 "Group exit notification processing time");
         sprintf(_proc_data[j][PS_PROC_DATA_IMPORT_TASK_TIME].name,
                 "Import migrated task information time");
+        sprintf(_proc_data[j][PS_PROC_DATA_COUNT_REMOTE_THREADS_PROCESSING_TIME].name,
+                "Count remote threads processing time");
+        sprintf(_proc_data[i][PS_PROC_DATA_MK_PAGE_WRITABLE].name,
+                "Make page writable processing time");
     }
 }
 #endif

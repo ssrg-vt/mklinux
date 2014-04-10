@@ -533,7 +533,7 @@ unsigned long do_mremap(unsigned long addr,
          * operation, and notify all remotes of a munmap.  If they want to access
          * the new space, they will fault and re-acquire the mapping.
          */
-        process_server_do_munmap(mm, vma, addr, old_len);
+        process_server_do_munmap(mm, addr, old_len);
 
 	}
 out:
