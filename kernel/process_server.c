@@ -449,6 +449,8 @@ typedef struct _fault_barrier_entry {
     int responses;
     int expected_responses;
     int available;
+    int all_sent;
+    spinlock_t lock;
 } fault_barrier_entry_t;
 
 /**
@@ -4119,6 +4121,12 @@ void process_fault_barrier_response(struct work_struct* work) {
     entry = find_fault_barrier_entry(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
                                      w->address);
+    PS_SPIN_UNLOCK(&_fault_barrier_lock);
+
+    while(!entry->all_sent) schedule();
+
+    PS_SPIN_LOCK(&_fault_barrier_lock);
+    //PS_SPIN_LOCK(&entry->lock);
     entry->responses++;
     if(!w->available) entry->available = 0;
     if(entry->responses == entry->expected_responses) {
@@ -4126,6 +4134,7 @@ void process_fault_barrier_response(struct work_struct* work) {
             entry->state = FAULT_ENTRY_OWNED; // Victory, take ownership!
         }
     }
+    //PS_SPIN_LOCK(&entry->lock);
     PS_SPIN_UNLOCK(&_fault_barrier_lock);
 
     kfree(work);
@@ -7286,7 +7295,16 @@ int process_server_acquire_fault_lock(unsigned long address) {
 
 retry:
     entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_KERNEL);
-    // wait while already a local entry
+    entry->tgroup_home_id = current->tgroup_home_id;
+    entry->tgroup_home_cpu = current->tgroup_home_cpu;
+    entry->address = address;
+    entry->state = FAULT_ENTRY_CONTENDED;
+    entry->responses = 0;
+    entry->expected_responses = 0;
+    entry->available = 1;
+    entry->all_sent = 0;
+    spin_lock_init(&entry->lock);
+   // wait while already a local entry
     do {
         PS_SPIN_LOCK(&_fault_barrier_lock);
         existing = find_fault_barrier_entry(current->tgroup_home_cpu,
@@ -7294,13 +7312,6 @@ retry:
                                             address);
         if(!existing) {
             // create entry, set to contended
-            entry->tgroup_home_id = current->tgroup_home_id;
-            entry->tgroup_home_cpu = current->tgroup_home_cpu;
-            entry->address = address;
-            entry->state = FAULT_ENTRY_CONTENDED;
-            entry->responses = 0;
-            entry->expected_responses = 0;
-            entry->available = 1;
             add_data_entry_to(entry, NULL, &_fault_barrier_head); 
         }
         PS_SPIN_UNLOCK(&_fault_barrier_lock);
@@ -7316,6 +7327,8 @@ retry:
     request->tgroup_home_cpu = current->tgroup_home_cpu;
     request->address = address;
 
+    //PS_SPIN_LOCK(&entry->lock);
+
     // send request to everyone
     for(i = 0; i < NR_CPUS; i++) {
         if(i == _cpu) continue;
@@ -7324,6 +7337,12 @@ retry:
             entry->expected_responses++;
         }
     }
+
+    mb();
+    entry->all_sent = 1;
+
+
+    //PS_SPIN_UNLOCK(&entry->lock);
 
     do {
         schedule();
