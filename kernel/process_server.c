@@ -446,6 +446,7 @@ typedef struct _fault_barrier_entry {
     int tgroup_home_id;
     unsigned long address;
     fault_barrier_state_t state;
+    int cpu_owner;
     int responses;
     int expected_responses;
     int available;
@@ -2515,8 +2516,8 @@ static stats_query_data_t* find_stats_query_data(pid_t pid) {
  * @return Either a data entry, or NULL if one does 
  * not exist that satisfies the parameter requirements.
  */
-static fault_barrier_entry_t* find_fault_barrier_entry(int cpu, 
-        int id, unsigned long address) {
+static fault_barrier_entry_t* find_fault_barrier_entry(int tgroup_home_cpu, 
+        int tgroup_home_id, unsigned long address, int cpu_owner) {
 
     data_header_t* curr = NULL;
     fault_barrier_entry_t* entry = NULL;
@@ -2528,9 +2529,10 @@ static fault_barrier_entry_t* find_fault_barrier_entry(int cpu,
     curr = _fault_barrier_head;
     while(curr) {
         entry = (fault_barrier_entry_t*)curr;
-        if(entry->tgroup_home_cpu == cpu &&
-           entry->tgroup_home_id == id &&
-           entry->address == address) {
+        if(entry->tgroup_home_cpu == tgroup_home_cpu &&
+           entry->tgroup_home_id == tgroup_home_id &&
+           entry->address == address &&
+           (cpu_owner < 0 || entry->cpu_owner == cpu_owner)) {
             ret = entry;
             break;
         }
@@ -4076,7 +4078,8 @@ void process_fault_barrier_request(struct work_struct* work) {
 
     entry = find_fault_barrier_entry(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
-                                     w->address);
+                                     w->address,
+                                     _cpu);
 
     // If this entry is owned, reply unavailable
     if(entry) {
@@ -4120,8 +4123,14 @@ void process_fault_barrier_response(struct work_struct* work) {
     PS_SPIN_LOCK(&_fault_barrier_lock);
     entry = find_fault_barrier_entry(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
-                                     w->address);
+                                     w->address,
+                                     _cpu);
+
     PS_SPIN_UNLOCK(&_fault_barrier_lock);
+
+    BUG_ON(entry == NULL);
+    BUG_ON(entry->state == FAULT_ENTRY_OWNED);
+    BUG_ON(entry->state == FAULT_ENTRY_OFF_LIMITS);
 
     while(!entry->all_sent) schedule();
 
@@ -4151,20 +4160,23 @@ void process_fault_barrier_commit(struct work_struct* work) {
     // to someone else
     entry = find_fault_barrier_entry(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
-                                     w->address);
+                                     w->address,
+                                     _cpu);
     if(entry) {
-        entry->state = FAULT_ENTRY_OFF_LIMITS;
-    } else {
-        // If an entry doesn't exist, create one
-        entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_ATOMIC); // Don't sleep
-        entry->tgroup_home_cpu = w->tgroup_home_cpu;
-        entry->tgroup_home_id  = w->tgroup_home_id;
-        entry->address = w->address;
-        entry->state = FAULT_ENTRY_OFF_LIMITS;
+        BUG_ON(entry->state == FAULT_ENTRY_OFF_LIMITS);
         entry->available = 0;
-        entry->responses = 0;
-        entry->expected_responses = 0;
-    }
+    } 
+    
+    entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_ATOMIC); // Don't sleep
+    entry->tgroup_home_cpu = w->tgroup_home_cpu;
+    entry->tgroup_home_id  = w->tgroup_home_id;
+    entry->address = w->address;
+    entry->state = FAULT_ENTRY_OFF_LIMITS;
+    entry->cpu_owner = w->from_cpu;
+    entry->available = 0;
+    entry->responses = 0;
+    entry->expected_responses = 0;
+
     PS_SPIN_UNLOCK(&_fault_barrier_lock);
     kfree(work);
 }
@@ -4175,16 +4187,27 @@ void process_fault_barrier_commit(struct work_struct* work) {
 void process_fault_barrier_release(struct work_struct* work) {
     fault_barrier_release_work_t* w = (fault_barrier_release_work_t*)work;
     fault_barrier_entry_t* entry = NULL;
-    
+    int removed = 0;
+    int was_in_process = 0;
+    int was_owned_by_me = 0;
     PS_SPIN_LOCK(&_fault_barrier_lock);
     entry = find_fault_barrier_entry(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
-                                     w->address);
-    if(entry) {
+                                     w->address,
+                                     w->from_cpu);
+    if(entry && entry->responses != entry->expected_responses) was_in_process = 1;
+
+    if(entry && entry->state == FAULT_ENTRY_OFF_LIMITS) {
+        if(entry->cpu_owner == _cpu) was_owned_by_me = 1;
         remove_data_entry_from(entry,&_fault_barrier_head);
+        removed = 1;
     }
     PS_SPIN_UNLOCK(&_fault_barrier_lock);
-    kfree(entry);
+    if(removed) kfree(entry);
+
+    BUG_ON(was_in_process);
+    BUG_ON(was_owned_by_me);
+
     kfree(work);
 }
 /**
@@ -7299,6 +7322,7 @@ retry:
     entry->tgroup_home_cpu = current->tgroup_home_cpu;
     entry->address = address;
     entry->state = FAULT_ENTRY_CONTENDED;
+    entry->cpu_owner = _cpu;
     entry->responses = 0;
     entry->expected_responses = 0;
     entry->available = 1;
@@ -7309,7 +7333,8 @@ retry:
         PS_SPIN_LOCK(&_fault_barrier_lock);
         existing = find_fault_barrier_entry(current->tgroup_home_cpu,
                                             current->tgroup_home_id,
-                                            address);
+                                            address,
+                                            -1);
         if(!existing) {
             // create entry, set to contended
             add_data_entry_to(entry, NULL, &_fault_barrier_head); 
@@ -7408,7 +7433,8 @@ void process_server_release_fault_lock(unsigned long address) {
     PS_SPIN_LOCK(&_fault_barrier_lock);
     entry = find_fault_barrier_entry(current->tgroup_home_cpu,
                                      current->tgroup_home_id,
-                                     address);
+                                     address,
+                                     _cpu);
     if(entry) {
         remove_data_entry_from(entry,&_fault_barrier_head);
         kfree(entry);
