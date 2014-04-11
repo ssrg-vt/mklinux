@@ -1091,6 +1091,7 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	}
 
     vma = find_vma(mm, address);
+    process_server_acquire_fault_lock(address);
 	if (unlikely(!vma)) {
         // Multikernel - see if another member of the thread group has mapped
         // this vma
@@ -1099,10 +1100,10 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
         }
 		if(!vma) {
             bad_area(regs, error_code, address);
-		    return;
+		    goto ret;
         }
 	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags,&vma,error_code)) {
-        return;
+        goto ret;
     }
 
 	/*
@@ -1125,7 +1126,7 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		if ((error_code & PF_USER) == 0 &&
 		    !search_exception_tables(regs->ip)) {
 			bad_area_nosemaphore(regs, error_code, address);
-			return;
+			goto ret;
 		}
 retry:
 		down_read(&mm->mmap_sem);
@@ -1157,7 +1158,7 @@ retry:
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
 		bad_area(regs, error_code, address);
-		return;
+		goto ret;
 	}
 	if (error_code & PF_USER) {
 		/*
@@ -1168,12 +1169,12 @@ retry:
 		 */
 		if (unlikely(address + 65536 + 32 * sizeof(unsigned long) < regs->sp)) {
 			bad_area(regs, error_code, address);
-			return;
+			goto ret;
 		}
 	}
 	if (unlikely(expand_stack(vma, address))) {
 		bad_area(regs, error_code, address);
-		return;
+		goto ret;
 	}
 
 	/*
@@ -1183,7 +1184,7 @@ retry:
 good_area:
 	if (unlikely(access_error(error_code, vma))) {
 		bad_area_access_error(regs, error_code, address);
-		return;
+		goto ret;
 	}
 
 	/*
@@ -1195,7 +1196,7 @@ good_area:
 
 	if (unlikely(fault & (VM_FAULT_RETRY|VM_FAULT_ERROR))) {
 		if (mm_fault_error(regs, error_code, address, fault))
-			return;
+			goto ret;
 	}
 
 	/*
@@ -1224,4 +1225,8 @@ good_area:
 	check_v8086_mode(regs, address, tsk);
 
 	up_read(&mm->mmap_sem);
+
+ret:
+    process_server_release_fault_lock(address);
+    return;
 }
