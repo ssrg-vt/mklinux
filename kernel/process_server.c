@@ -123,7 +123,8 @@ unsigned long get_percpu_old_rsp(void);
 #define PROCESS_SERVER_MM_DATA_TYPE 6
 #define PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE 7
 #define PROCESS_SERVER_MPROTECT_DATA_TYPE 8
-#define PROCESS_SERVER_STATS_DATA_TYPE 9
+#define PROCESS_SERVER_FAULT_BARRIER_DATA_TYPE 9
+#define PROCESS_SERVER_STATS_DATA_TYPE 10
 
 /**
  * Useful macros
@@ -451,7 +452,6 @@ typedef struct _fault_barrier_entry {
     int expected_responses;
     int available;
     int all_sent;
-    spinlock_t lock;
 } fault_barrier_entry_t;
 
 /**
@@ -2511,6 +2511,59 @@ static stats_query_data_t* find_stats_query_data(pid_t pid) {
     return ret;
 }
 #endif
+
+/**
+ *
+ */
+static fault_barrier_entry_t* find_fault_barrier_entry_in_state(int tgroup_home_cpu,
+        int tgroup_home_id, unsigned long address,fault_barrier_state_t state ) {
+
+    data_header_t* curr = NULL;
+    fault_barrier_entry_t* entry = NULL;
+    fault_barrier_entry_t* ret = NULL;
+
+    curr = _fault_barrier_head;
+    while(curr) {
+        entry = (fault_barrier_entry_t*)curr;
+        if(entry->tgroup_home_cpu == tgroup_home_cpu &&
+           entry->tgroup_home_id == tgroup_home_id &&
+           entry->address == address &&
+           entry->state == state) {
+            ret = entry;
+            break;
+        }
+        curr = curr->next;
+    }
+
+    return ret;
+}
+
+/**
+ *
+ */
+static fault_barrier_entry_t* find_owned_fault_barrier_entry(int tgroup_home_cpu,
+        int tgroup_home_id, unsigned long address) {
+
+    data_header_t* curr = NULL;
+    fault_barrier_entry_t* entry = NULL;
+    fault_barrier_entry_t* ret = NULL;
+
+    curr = _fault_barrier_head;
+    while(curr) {
+        entry = (fault_barrier_entry_t*)curr;
+        if(entry->tgroup_home_cpu == tgroup_home_cpu &&
+           entry->tgroup_home_id == tgroup_home_id &&
+           entry->address == address &&
+           entry->state == FAULT_ENTRY_OWNED) {
+            ret = entry;
+            break;
+        }
+        curr = curr->next;
+    }
+
+    return ret;
+}
+
 /**
  * @brief Find a fault barrier data entry.
  * @return Either a data entry, or NULL if one does 
@@ -2522,9 +2575,6 @@ static fault_barrier_entry_t* find_fault_barrier_entry(int tgroup_home_cpu,
     data_header_t* curr = NULL;
     fault_barrier_entry_t* entry = NULL;
     fault_barrier_entry_t* ret = NULL;
-    //unsigned long lockflags;
-
-    //spin_lock_irqsave(&fault_barrier_lock,lockflags);
 
     curr = _fault_barrier_head;
     while(curr) {
@@ -2538,8 +2588,6 @@ static fault_barrier_entry_t* find_fault_barrier_entry(int tgroup_home_cpu,
         }
         curr = curr->next;
     }
-
-    //spin_unlock_irqrestore(&_fault_barrier_lock,lockflags);
 
     return ret;
 }
@@ -4068,6 +4116,8 @@ void process_fault_barrier_request(struct work_struct* work) {
     fault_barrier_response_t* response = kmalloc(sizeof(fault_barrier_response_t),
                                                  GFP_KERNEL);
     fault_barrier_entry_t* entry = NULL;
+    fault_barrier_entry_t* owned = NULL;
+    fault_barrier_entry_t* off_limits = NULL;
     response->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RESPONSE;
     response->header.prio = PCN_KMSG_PRIO_NORMAL;
     response->tgroup_home_cpu = w->tgroup_home_cpu;
@@ -4101,8 +4151,16 @@ void process_fault_barrier_request(struct work_struct* work) {
             }
         }
     } else {
-        // If this entry does not exist, it must be available
-        response->available = 1;
+        owned = find_fault_barrier_entry_in_state(w->tgroup_home_cpu,
+                                                  w->tgroup_home_id,
+                                                  w->address,
+                                                  FAULT_ENTRY_OWNED);
+        off_limits = find_fault_barrier_entry_in_state(w->tgroup_home_cpu,
+                                                       w->tgroup_home_id,
+                                                       w->address,
+                                                       FAULT_ENTRY_OFF_LIMITS);
+        if(owned || off_limits) response->available = 0;
+        else response->available = 1;
     }
     
     PS_SPIN_UNLOCK(&_fault_barrier_lock);
@@ -4126,16 +4184,14 @@ void process_fault_barrier_response(struct work_struct* work) {
                                      w->address,
                                      _cpu);
 
-    PS_SPIN_UNLOCK(&_fault_barrier_lock);
-
     BUG_ON(entry == NULL);
-    BUG_ON(entry->state == FAULT_ENTRY_OWNED);
-    BUG_ON(entry->state == FAULT_ENTRY_OFF_LIMITS);
+    BUG_ON(entry->state != FAULT_ENTRY_CONTENDED);
+    if(!entry->all_sent) {
+        PS_SPIN_UNLOCK(&_fault_barrier_lock);
+        while(!entry->all_sent) schedule();
+        PS_SPIN_LOCK(&_fault_barrier_lock);
+    }
 
-    while(!entry->all_sent) schedule();
-
-    PS_SPIN_LOCK(&_fault_barrier_lock);
-    //PS_SPIN_LOCK(&entry->lock);
     entry->responses++;
     if(!w->available) entry->available = 0;
     if(entry->responses == entry->expected_responses) {
@@ -4143,7 +4199,6 @@ void process_fault_barrier_response(struct work_struct* work) {
             entry->state = FAULT_ENTRY_OWNED; // Victory, take ownership!
         }
     }
-    //PS_SPIN_LOCK(&entry->lock);
     PS_SPIN_UNLOCK(&_fault_barrier_lock);
 
     kfree(work);
@@ -4155,19 +4210,22 @@ void process_fault_barrier_response(struct work_struct* work) {
 void process_fault_barrier_commit(struct work_struct* work) {
     fault_barrier_commit_work_t* w = (fault_barrier_commit_work_t*)work;
     fault_barrier_entry_t* entry = NULL;
+    fault_barrier_entry_t* loc_entry = NULL;
+    
+    entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_KERNEL);
+    
     PS_SPIN_LOCK(&_fault_barrier_lock);
     // If it already exists, make sure we mark it as belonging
     // to someone else
-    entry = find_fault_barrier_entry(w->tgroup_home_cpu,
+    loc_entry = find_fault_barrier_entry(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
                                      w->address,
                                      _cpu);
-    if(entry) {
-        BUG_ON(entry->state == FAULT_ENTRY_OFF_LIMITS);
-        entry->available = 0;
+    if(loc_entry) {
+        BUG_ON(loc_entry->state != FAULT_ENTRY_CONTENDED);
+        loc_entry->available = 0;
     } 
     
-    entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_ATOMIC); // Don't sleep
     entry->tgroup_home_cpu = w->tgroup_home_cpu;
     entry->tgroup_home_id  = w->tgroup_home_id;
     entry->address = w->address;
@@ -4176,6 +4234,8 @@ void process_fault_barrier_commit(struct work_struct* work) {
     entry->available = 0;
     entry->responses = 0;
     entry->expected_responses = 0;
+
+    add_data_entry_to(entry, NULL, &_fault_barrier_head);
 
     PS_SPIN_UNLOCK(&_fault_barrier_lock);
     kfree(work);
@@ -4190,11 +4250,13 @@ void process_fault_barrier_release(struct work_struct* work) {
     int removed = 0;
     int was_in_process = 0;
     int was_owned_by_me = 0;
+    int no_entry = 0;
     PS_SPIN_LOCK(&_fault_barrier_lock);
     entry = find_fault_barrier_entry(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
                                      w->address,
                                      w->from_cpu);
+    if(!entry) no_entry = 1;
     if(entry && entry->responses != entry->expected_responses) was_in_process = 1;
 
     if(entry && entry->state == FAULT_ENTRY_OFF_LIMITS) {
@@ -4205,6 +4267,7 @@ void process_fault_barrier_release(struct work_struct* work) {
     PS_SPIN_UNLOCK(&_fault_barrier_lock);
     if(removed) kfree(entry);
 
+    BUG_ON(no_entry);
     BUG_ON(was_in_process);
     BUG_ON(was_owned_by_me);
 
@@ -7315,19 +7378,18 @@ int process_server_acquire_fault_lock(unsigned long address) {
     // page.
     address &= PAGE_MASK;
 
-
-retry:
     entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_KERNEL);
+    entry->header.data_type = PROCESS_SERVER_FAULT_BARRIER_DATA_TYPE;
     entry->tgroup_home_id = current->tgroup_home_id;
     entry->tgroup_home_cpu = current->tgroup_home_cpu;
     entry->address = address;
-    entry->state = FAULT_ENTRY_CONTENDED;
     entry->cpu_owner = _cpu;
+retry:
+    entry->state = FAULT_ENTRY_CONTENDED;
     entry->responses = 0;
     entry->expected_responses = 0;
     entry->available = 1;
     entry->all_sent = 0;
-    spin_lock_init(&entry->lock);
    // wait while already a local entry
     do {
         PS_SPIN_LOCK(&_fault_barrier_lock);
@@ -7352,8 +7414,6 @@ retry:
     request->tgroup_home_cpu = current->tgroup_home_cpu;
     request->address = address;
 
-    //PS_SPIN_LOCK(&entry->lock);
-
     // send request to everyone
     for(i = 0; i < NR_CPUS; i++) {
         if(i == _cpu) continue;
@@ -7366,9 +7426,6 @@ retry:
     mb();
     entry->all_sent = 1;
 
-
-    //PS_SPIN_UNLOCK(&entry->lock);
-
     do {
         schedule();
         PS_SPIN_LOCK(&_fault_barrier_lock);
@@ -7378,7 +7435,7 @@ retry:
 
     // if yes, then commit and return
     // note: if yes, we've already taken ownership
-    if(entry->available) {
+    if(entry->state == FAULT_ENTRY_OWNED) {
         commit = kmalloc(sizeof(fault_barrier_commit_t),GFP_KERNEL);
         if(commit) {
             commit->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_COMMIT;
@@ -7399,7 +7456,6 @@ retry:
     PS_SPIN_LOCK(&_fault_barrier_lock);
     remove_data_entry_from(entry,&_fault_barrier_head);
     PS_SPIN_UNLOCK(&_fault_barrier_lock);
-    kfree(entry);
     goto retry;
 
 exit:
