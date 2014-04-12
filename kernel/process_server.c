@@ -2526,7 +2526,7 @@ static void add_fault_entry_to_queue(fault_barrier_entry_t* entry,
     // Now we have to iterate, but we know that we don't
     // have to change the value of queue->queue.
     while(curr) {
-        if(curr->timestamp > entry) {
+        if(curr->timestamp > entry->timestamp) {
             curr->header.prev->next = entry;
             entry->header.prev = curr->header.prev;
             curr->header.prev = entry;
@@ -3241,7 +3241,7 @@ static int count_thread_members() {
 void process_tgroup_closed_item(struct work_struct* work) {
 
     tgroup_closed_work_t* w = (tgroup_closed_work_t*) work;
-    data_header_t *curr, *next;
+    data_header_t *curr;
     mm_data_t* mm_data = NULL;
     struct task_struct *g, *task;
     unsigned char tgroup_closed = 0;
@@ -5187,6 +5187,8 @@ static int handle_fault_barrier_request(struct pcn_kmsg_message* inc_msg) {
     }
 
     pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
 }
 
 static int handle_fault_barrier_response(struct pcn_kmsg_message* inc_msg) {
@@ -5205,6 +5207,8 @@ static int handle_fault_barrier_response(struct pcn_kmsg_message* inc_msg) {
     }
 
     pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
 }
 
 static int handle_fault_barrier_release(struct pcn_kmsg_message* inc_msg) {
@@ -5223,6 +5227,8 @@ static int handle_fault_barrier_release(struct pcn_kmsg_message* inc_msg) {
     }
 
     pcn_kmsg_free_msg(inc_msg);
+
+    return 0;
 }
 
 /**
@@ -6122,7 +6128,6 @@ int process_server_do_munmap(struct mm_struct* mm,
     int s;
     int perf = -1;
     unsigned long lockflags;
-    int already_lock = 0;
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     unsigned long long end_time = 0;
     unsigned long long total_time = 0;
@@ -7294,7 +7299,6 @@ int process_server_acquire_fault_lock(unsigned long address) {
     fault_barrier_request_t* request = NULL;
     fault_barrier_entry_t* entry = NULL;
     fault_barrier_queue_t* queue = NULL;
-    int wait_complete = 0;
     int i,s;
 
     if(!current->tgroup_distributed) return 0;
@@ -7409,15 +7413,21 @@ void process_server_release_fault_lock(unsigned long address) {
     queue = find_fault_barrier_queue(current->tgroup_home_cpu,
                                      current->tgroup_home_id,
                                      address);
+
+    BUG_ON(!queue);
+
     if(queue) {
 
-        entry = queue->queue;
-        if(entry) {
-            timestamp = entry->timestamp;
-        }
+        BUG_ON(!queue->queue);
+        BUG_ON(queue->queue->cpu != _cpu);
 
+        entry = queue->queue;
+        
+        timestamp = entry->timestamp;
+        
         // remove entry from queue
         remove_data_entry_from(queue->queue,&queue->queue);
+
 
         // garbage collect the queue if necessary
         if(!queue->queue) {
@@ -7650,7 +7660,7 @@ static void proc_data_init() {
                 "Import migrated task information time");
         sprintf(_proc_data[j][PS_PROC_DATA_COUNT_REMOTE_THREADS_PROCESSING_TIME].name,
                 "Count remote threads processing time");
-        sprintf(_proc_data[i][PS_PROC_DATA_MK_PAGE_WRITABLE].name,
+        sprintf(_proc_data[j][PS_PROC_DATA_MK_PAGE_WRITABLE].name,
                 "Make page writable processing time");
     }
 }
