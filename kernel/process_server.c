@@ -443,16 +443,20 @@ typedef struct _mprotect_data {
 
 typedef struct _fault_barrier_entry {
     data_header_t header;
+    unsigned long long timestamp;
+    int responses;
+    int expected_responses;
+    int allow_responses;
+    int cpu;
+} fault_barrier_entry_t;
+
+typedef struct _fault_barrier_queue {
+    data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
     unsigned long address;
-    fault_barrier_state_t state;
-    int cpu_owner;
-    int responses;
-    int expected_responses;
-    int available;
-    int all_sent;
-} fault_barrier_entry_t;
+    fault_barrier_entry_t* queue;
+} fault_barrier_queue_t;
 
 /**
  * This message is sent to a remote cpu in order to 
@@ -763,11 +767,12 @@ typedef struct _back_migration {
  */
 struct _fault_barrier_request{
     struct pcn_kmsg_hdr header;
-    int tgroup_home_cpu;        // 4
-    int tgroup_home_id;         // 4
-    unsigned long address;      // 8
-                                // ---
-                                // 16 -> 44 bytes of padding needed
+    int tgroup_home_cpu;            // 4
+    int tgroup_home_id;             // 4
+    unsigned long address;          // 8
+    unsigned long long timestamp;   // 16
+                                    // ---
+                                    // 16 -> 44 bytes of padding needed
     char pad[44];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _fault_barrier_request fault_barrier_request_t;
@@ -777,41 +782,28 @@ typedef struct _fault_barrier_request fault_barrier_request_t;
  */
 struct _fault_barrier_response {
     struct pcn_kmsg_hdr header;
-    int tgroup_home_cpu;        // 4
-    int tgroup_home_id;         // 4
-    unsigned long address;      // 8
-    int available;              // 4
-                                // ---
-                                // 20 -> 40 bytes of padding needed
-    char pad[40];
+    int tgroup_home_cpu;            // 4
+    int tgroup_home_id;             // 4
+    unsigned long address;          // 8
+    unsigned long long timestamp;   // 16
+                                    // ---
+                                    // 32 -> 28 bytes of padding needed
+    char pad[28];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _fault_barrier_response fault_barrier_response_t;
 
 /**
  *
  */
-struct _fault_barrier_commit {
-    struct pcn_kmsg_hdr header;
-    int tgroup_home_cpu;        // 4
-    int tgroup_home_id;         // 4
-    unsigned long address;      // 8
-                                // ---
-                                // 16 -> 44 bytes of padding needed
-    char pad[44];
-} __attribute__((packed)) __attribute__((aligned(64)));
-typedef struct _fault_barrier_commit fault_barrier_commit_t;
-
-/**
- *
- */
 struct _fault_barrier_release {
     struct pcn_kmsg_hdr header;
-    int tgroup_home_cpu;        // 4
-    int tgroup_home_id;         // 4
-    unsigned long address;      // 8
-                                // ---
-                                // 16 -> 44 bytes of padding needed
-    char pad[44];
+    int tgroup_home_cpu;            // 4
+    int tgroup_home_id;             // 4
+    unsigned long address;          // 8
+    unsigned long long timestamp;   //16
+                                    // ---
+                                    // 32 -> 28 bytes of padding needed
+    char pad[28];
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _fault_barrier_release fault_barrier_release_t;
 
@@ -998,6 +990,7 @@ typedef struct {
     int tgroup_home_id;
     int from_cpu;
     unsigned long address;
+    unsigned long long timestamp;
 } fault_barrier_request_work_t;
 
 /**
@@ -1009,19 +1002,9 @@ typedef struct {
     int tgroup_home_id;
     int from_cpu;
     unsigned long address;
-    int available;
+    unsigned long long timestamp;
 } fault_barrier_response_work_t;
 
-/**
- *
- */
-typedef struct {
-    struct work_struct work;
-    int tgroup_home_cpu;
-    int tgroup_home_id;
-    int from_cpu;
-    unsigned long address;
-} fault_barrier_commit_work_t;
 
 /**
  * 
@@ -1032,6 +1015,7 @@ typedef struct {
     int tgroup_home_id;
     int from_cpu;
     unsigned long address;
+    unsigned long long timestamp
 } fault_barrier_release_work_t;
 
 /**
@@ -1091,8 +1075,8 @@ DEFINE_SPINLOCK(_vma_id_lock);                    // Lock for _vma_id
 DEFINE_SPINLOCK(_clone_request_id_lock);          // Lock for _clone_request_id
 struct rw_semaphore _import_sem;
 DEFINE_SPINLOCK(_remap_lock);
-data_header_t* _fault_barrier_head = NULL;
-DEFINE_SPINLOCK(_fault_barrier_lock);
+data_header_t* _fault_barrier_queue_head = NULL;
+DEFINE_SPINLOCK(_fault_barrier_queue_lock);
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
 struct proc_dir_entry *_proc_entry = NULL;
@@ -2513,55 +2497,52 @@ static stats_query_data_t* find_stats_query_data(pid_t pid) {
 #endif
 
 /**
- *
+ * Queue lock must already be held.
  */
-static fault_barrier_entry_t* find_fault_barrier_entry_in_state(int tgroup_home_cpu,
-        int tgroup_home_id, unsigned long address,fault_barrier_state_t state ) {
+static void add_fault_entry_to_queue(fault_barrier_entry_t* entry,
+                                     fault_barrier_queue_t* queue)
+{
+    fault_barrier_entry_t* curr = queue->queue;
+    fault_barrier_entry_t* last = NULL;
 
-    data_header_t* curr = NULL;
-    fault_barrier_entry_t* entry = NULL;
-    fault_barrier_entry_t* ret = NULL;
+    entry->header.next = NULL;
+    entry->header.prev = NULL;
 
-    curr = _fault_barrier_head;
-    while(curr) {
-        entry = (fault_barrier_entry_t*)curr;
-        if(entry->tgroup_home_cpu == tgroup_home_cpu &&
-           entry->tgroup_home_id == tgroup_home_id &&
-           entry->address == address &&
-           entry->state == state) {
-            ret = entry;
-            break;
-        }
-        curr = curr->next;
+    // Take care of the "empty" scenario first because it's easy.
+    if(!queue->queue) {
+        queue->queue = entry;
+        return;
     }
 
-    return ret;
-}
-
-/**
- *
- */
-static fault_barrier_entry_t* find_owned_fault_barrier_entry(int tgroup_home_cpu,
-        int tgroup_home_id, unsigned long address) {
-
-    data_header_t* curr = NULL;
-    fault_barrier_entry_t* entry = NULL;
-    fault_barrier_entry_t* ret = NULL;
-
-    curr = _fault_barrier_head;
-    while(curr) {
-        entry = (fault_barrier_entry_t*)curr;
-        if(entry->tgroup_home_cpu == tgroup_home_cpu &&
-           entry->tgroup_home_id == tgroup_home_id &&
-           entry->address == address &&
-           entry->state == FAULT_ENTRY_OWNED) {
-            ret = entry;
-            break;
-        }
-        curr = curr->next;
+    // Next take care of the scenario where we have to replace
+    // the first entry
+    if(queue->queue->timestamp > entry->timestamp) {
+        queue->queue->header.prev = entry;
+        entry->header.next = queue->queue;
+        queue->queue = entry;
+        return;
     }
 
-    return ret;
+    // Now we have to iterate, but we know that we don't
+    // have to change the value of queue->queue.
+    while(curr) {
+        if(curr->timestamp > entry) {
+            curr->header.prev->next = entry;
+            entry->header.prev = curr->header.prev;
+            curr->header.prev = entry;
+            entry->header.next = curr;
+            return;
+        }
+        last = curr;
+        curr = curr->header.next;
+    }
+
+    // It must be the last entry then
+    if(last) {
+        last->header.next = entry;
+        entry->header.prev = last;
+    }
+
 }
 
 /**
@@ -2569,20 +2550,19 @@ static fault_barrier_entry_t* find_owned_fault_barrier_entry(int tgroup_home_cpu
  * @return Either a data entry, or NULL if one does 
  * not exist that satisfies the parameter requirements.
  */
-static fault_barrier_entry_t* find_fault_barrier_entry(int tgroup_home_cpu, 
-        int tgroup_home_id, unsigned long address, int cpu_owner) {
+static fault_barrier_entry_t* find_fault_barrier_queue(int tgroup_home_cpu, 
+        int tgroup_home_id, unsigned long address) {
 
     data_header_t* curr = NULL;
-    fault_barrier_entry_t* entry = NULL;
-    fault_barrier_entry_t* ret = NULL;
+    fault_barrier_queue_t* entry = NULL;
+    fault_barrier_queue_t* ret = NULL;
 
-    curr = _fault_barrier_head;
+    curr = _fault_barrier_queue_head;
     while(curr) {
-        entry = (fault_barrier_entry_t*)curr;
+        entry = (fault_barrier_queue_t*)curr;
         if(entry->tgroup_home_cpu == tgroup_home_cpu &&
            entry->tgroup_home_id == tgroup_home_id &&
-           entry->address == address &&
-           (cpu_owner < 0 || entry->cpu_owner == cpu_owner)) {
+           entry->address == address) {
             ret = entry;
             break;
         }
@@ -4113,61 +4093,50 @@ exit:
  */
 void process_fault_barrier_request(struct work_struct* work) {
     fault_barrier_request_work_t* w = (fault_barrier_request_work_t*)work;
-    fault_barrier_response_t* response = kmalloc(sizeof(fault_barrier_response_t),
-                                                 GFP_KERNEL);
-    fault_barrier_entry_t* entry = NULL;
-    fault_barrier_entry_t* owned = NULL;
-    fault_barrier_entry_t* off_limits = NULL;
+    fault_barrier_response_t* response = NULL;
+    fault_barrier_entry_t* entry = kmalloc(sizeof(fault_barrier_entry_t),
+                                            GFP_KERNEL);
+    fault_barrier_queue_t* queue = NULL;
+
+    entry->timestamp = w->timestamp;
+    entry->responses = 0;
+    entry->expected_responses = 0;
+    entry->allow_responses = 0;
+    entry->cpu = w->from_cpu;
+
+    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+
+    // Find queue, if it exists
+    queue = find_fault_barrier_queue(w->tgroup_home_cpu,
+                                     w->tgroup_home_id,
+                                     w->address);
+
+    // If we cannot find one, make one
+    if(!queue) {
+        queue = kmalloc(sizeof(fault_barrier_queue_t),GFP_ATOMIC);
+        queue->tgroup_home_cpu = w->tgroup_home_cpu;
+        queue->tgroup_home_id  = w->tgroup_home_id;
+        queue->address = w->address;
+        queue->queue = NULL;
+        add_data_entry_to(queue,NULL,&_fault_barrier_queue_head);
+    }
+
+    // Add entry to queue
+    add_fault_entry_to_queue(entry,queue);
+
+    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+
+    // Reply
+    response = kmalloc(sizeof(fault_barrier_response_t),GFP_KERNEL);
     response->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RESPONSE;
     response->header.prio = PCN_KMSG_PRIO_NORMAL;
     response->tgroup_home_cpu = w->tgroup_home_cpu;
     response->tgroup_home_id  = w->tgroup_home_id;
     response->address = w->address;
-
-    PS_SPIN_LOCK(&_fault_barrier_lock);
-
-    entry = find_fault_barrier_entry(w->tgroup_home_cpu,
-                                     w->tgroup_home_id,
-                                     w->address,
-                                     _cpu);
-
-    // If this entry is owned, reply unavailable
-    if(entry) {
-        if(entry->state == FAULT_ENTRY_OWNED) {
-            response->available = 0;
-        } else {
-            // This is the contention case because an entry exists
-            // and it does not indicate that it is owned, which
-            // means that it is in the process of gaining consensus
-            // from remote cpus.
-            // Contention rule:
-            // If the requesting CPU has a lower CPU number, it wins.  This
-            // is totally arbitrary, but the tie must be broken!
-            if(w->from_cpu < _cpu) {
-                response->available = 1;
-                entry->available = 0; // Our own request must now fail.
-            } else {
-                response->available = 0;
-            }
-        }
-    } else {
-        owned = find_fault_barrier_entry_in_state(w->tgroup_home_cpu,
-                                                  w->tgroup_home_id,
-                                                  w->address,
-                                                  FAULT_ENTRY_OWNED);
-        off_limits = find_fault_barrier_entry_in_state(w->tgroup_home_cpu,
-                                                       w->tgroup_home_id,
-                                                       w->address,
-                                                       FAULT_ENTRY_OFF_LIMITS);
-        if(owned || off_limits) response->available = 0;
-        else response->available = 1;
-    }
-    
-    PS_SPIN_UNLOCK(&_fault_barrier_lock);
-
-    // And send the response.
+    response->timestamp = w->timestamp;
     pcn_kmsg_send(w->from_cpu,(struct pcn_kmsg_message*)response);
-
+    kfree(response);
+    
     kfree(work);
 }
 
@@ -4176,100 +4145,71 @@ void process_fault_barrier_request(struct work_struct* work) {
  */
 void process_fault_barrier_response(struct work_struct* work) {
     fault_barrier_response_work_t* w = (fault_barrier_response_work_t*)work;
-    fault_barrier_entry_t* entry = NULL;
+    fault_barrier_queue_t* queue = NULL;
+    fault_barrier_entry_t* curr = NULL;
 
-    PS_SPIN_LOCK(&_fault_barrier_lock);
-    entry = find_fault_barrier_entry(w->tgroup_home_cpu,
+    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+    queue = find_fault_barrier_queue(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
-                                     w->address,
-                                     _cpu);
-
-    BUG_ON(entry == NULL);
-    BUG_ON(entry->state != FAULT_ENTRY_CONTENDED);
-    if(!entry->all_sent) {
-        PS_SPIN_UNLOCK(&_fault_barrier_lock);
-        while(!entry->all_sent) schedule();
-        PS_SPIN_LOCK(&_fault_barrier_lock);
-    }
-
-    entry->responses++;
-    if(!w->available) entry->available = 0;
-    if(entry->responses == entry->expected_responses) {
-        if(entry->available) {
-            entry->state = FAULT_ENTRY_OWNED; // Victory, take ownership!
+                                     w->address);
+    if(queue) {
+        curr = queue->queue;
+        while(curr) {
+            if(curr->cpu == _cpu &&
+               curr->timestamp == w->timestamp) {
+                curr->responses++;
+                goto accounted_for;
+            }
+            curr = curr->header.next;
         }
     }
-    PS_SPIN_UNLOCK(&_fault_barrier_lock);
+accounted_for:
+
+    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
 
     kfree(work);
 }
 
-/**
- *
- */
-void process_fault_barrier_commit(struct work_struct* work) {
-    fault_barrier_commit_work_t* w = (fault_barrier_commit_work_t*)work;
-    fault_barrier_entry_t* entry = NULL;
-    fault_barrier_entry_t* loc_entry = NULL;
-    
-    entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_KERNEL);
-    
-    PS_SPIN_LOCK(&_fault_barrier_lock);
-    // If it already exists, make sure we mark it as belonging
-    // to someone else
-    loc_entry = find_fault_barrier_entry(w->tgroup_home_cpu,
-                                     w->tgroup_home_id,
-                                     w->address,
-                                     _cpu);
-    if(loc_entry) {
-        BUG_ON(loc_entry->state != FAULT_ENTRY_CONTENDED);
-        loc_entry->available = 0;
-    } 
-    
-    entry->tgroup_home_cpu = w->tgroup_home_cpu;
-    entry->tgroup_home_id  = w->tgroup_home_id;
-    entry->address = w->address;
-    entry->state = FAULT_ENTRY_OFF_LIMITS;
-    entry->cpu_owner = w->from_cpu;
-    entry->available = 0;
-    entry->responses = 0;
-    entry->expected_responses = 0;
 
-    add_data_entry_to(entry, NULL, &_fault_barrier_head);
-
-    PS_SPIN_UNLOCK(&_fault_barrier_lock);
-    kfree(work);
-}
 
 /**
  *
  */
 void process_fault_barrier_release(struct work_struct* work) {
     fault_barrier_release_work_t* w = (fault_barrier_release_work_t*)work;
-    fault_barrier_entry_t* entry = NULL;
-    int removed = 0;
-    int was_in_process = 0;
-    int was_owned_by_me = 0;
-    int no_entry = 0;
-    PS_SPIN_LOCK(&_fault_barrier_lock);
-    entry = find_fault_barrier_entry(w->tgroup_home_cpu,
+    fault_barrier_queue_t* queue = NULL;
+    fault_barrier_entry_t* curr = NULL;
+    int free_curr = 0;
+    int free_queue = 0;
+
+    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+
+    queue = find_fault_barrier_queue(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
-                                     w->address,
-                                     w->from_cpu);
-    if(!entry) no_entry = 1;
-    if(entry && entry->responses != entry->expected_responses) was_in_process = 1;
+                                     w->address);
 
-    if(entry && entry->state == FAULT_ENTRY_OFF_LIMITS) {
-        if(entry->cpu_owner == _cpu) was_owned_by_me = 1;
-        remove_data_entry_from(entry,&_fault_barrier_head);
-        removed = 1;
+    if(queue) {
+        // find the specific entry
+        curr = queue->queue;
+        while(curr) {
+            if(curr->cpu == w->from_cpu &&
+               curr->timestamp == w->timestamp) {
+                remove_data_entry_from(curr,&queue->queue);
+                free_curr = 1;
+                break;
+            }
+        }
+        if(!queue->queue) {
+            remove_data_entry_from(queue,_fault_barrier_queue_head);
+            free_queue = 1;
+        }
     }
-    PS_SPIN_UNLOCK(&_fault_barrier_lock);
-    if(removed) kfree(entry);
 
-    BUG_ON(no_entry);
-    BUG_ON(was_in_process);
-    BUG_ON(was_owned_by_me);
+
+    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+
+    if(free_curr) kfree(curr);
+    if(free_queue) kfree(queue);
 
     kfree(work);
 }
@@ -5242,6 +5182,7 @@ static int handle_fault_barrier_request(struct pcn_kmsg_message* inc_msg) {
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->from_cpu = msg->header.from_cpu;
         work->address = msg->address;
+        work->timestamp = msg->timestamp;
         queue_work(clone_wq, (struct work_struct*)work);
     }
 
@@ -5259,24 +5200,7 @@ static int handle_fault_barrier_response(struct pcn_kmsg_message* inc_msg) {
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->from_cpu = msg->header.from_cpu;
         work->address = msg->address;
-        work->available = msg->available;
-        queue_work(clone_wq, (struct work_struct*)work);
-    }
-
-    pcn_kmsg_free_msg(inc_msg);
-}
-
-static int handle_fault_barrier_commit(struct pcn_kmsg_message* inc_msg) {
-    fault_barrier_commit_t* msg = (fault_barrier_commit_t*)inc_msg;
-    fault_barrier_commit_work_t* work;
-
-    work = kmalloc(sizeof(fault_barrier_commit_work_t),GFP_ATOMIC);
-    if(work) {
-        INIT_WORK( (struct work_struct*)work, process_fault_barrier_commit);
-        work->tgroup_home_cpu = msg->tgroup_home_cpu;
-        work->tgroup_home_id  = msg->tgroup_home_id;
-        work->from_cpu = msg->header.from_cpu;
-        work->address = msg->address;
+        work->timestamp = msg->timestamp;
         queue_work(clone_wq, (struct work_struct*)work);
     }
 
@@ -5294,6 +5218,7 @@ static int handle_fault_barrier_release(struct pcn_kmsg_message* inc_msg) {
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->from_cpu = msg->header.from_cpu;
         work->address = msg->address;
+        work->timestamp = msg->timestamp;
         queue_work(clone_wq, (struct work_struct*)work);
     }
 
@@ -6781,8 +6706,8 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         }
         if(vma && paddr_present) { 
             int remap_pfn_range_err = 0;
-            pte_provided = 1;
             unsigned long cow_addr;
+            pte_provided = 1;
 
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 if(data->mappings[i].present) {
@@ -7130,25 +7055,26 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h
     {
-      	unsigned long fs, gs;
+  	unsigned long fs, gs;
 	unsigned int fsindex, gsindex;
 	unsigned int ds, es;
-	
-	    if (current != task)
-	      PSPRINTK("DAVEK current is different from task!\n");
+    unsigned long _usersp;
+
+	if (current != task)
+	    PSPRINTK("DAVEK current is different from task!\n");
 
     request->thread_sp0 = task->thread.sp0;
     request->thread_sp = task->thread.sp;
     //printk("%s: usersp percpu %lx thread %lx\n", __func__, percpu_read(old_rsp), task->thread.usersp);
     // if (percpu_read(old_rsp), task->thread.usersp) set to 0 otherwise copy
-unsigned long _usersp = get_percpu_old_rsp();
-if (task->thread.usersp != _usersp) {
-  printk("%s: USERSP %lx %lx\n",
-    __func__, task->thread.usersp, _usersp);
-  request->thread_usersp = _usersp;
-}
-else
-  request->thread_usersp = task->thread.usersp;
+    _usersp = get_percpu_old_rsp();
+    if (task->thread.usersp != _usersp) {
+        printk("%s: USERSP %lx %lx\n",
+                __func__, task->thread.usersp, _usersp);
+        request->thread_usersp = _usersp;
+    } else {
+        request->thread_usersp = task->thread.usersp;
+    }
     
     request->thread_es = task->thread.es;
     savesegment(es, es);          
@@ -7216,7 +7142,7 @@ else
 static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) {
     back_migration_t mig;
     struct pt_regs* regs = task_pt_regs(task);
-
+    unsigned long _usersp;
     int perf = -1;
 
     perf = PERF_MEASURE_START(&perf_process_server_do_migration);
@@ -7245,13 +7171,14 @@ static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) 
     mig.thread_fs       = task->thread.fs;
     mig.thread_gs       = task->thread.gs;
 
-unsigned long _usersp = get_percpu_old_rsp();
-if (task->thread.usersp != _usersp) { 
-  printk("%s: USERSP %lx %lx\n",
-    __func__, task->thread.usersp, _usersp);
-  mig.thread_usersp = _usersp;
-}else
-  mig.thread_usersp = task->thread.usersp;
+    _usersp = get_percpu_old_rsp();
+    if (task->thread.usersp != _usersp) { 
+        printk("%s: USERSP %lx %lx\n",
+                __func__, task->thread.usersp, _usersp);
+        mig.thread_usersp = _usersp;
+    } else {
+        mig.thread_usersp = task->thread.usersp;
+    }
 
     mig.thread_es       = task->thread.es;
     mig.thread_ds       = task->thread.ds;
@@ -7333,9 +7260,9 @@ extern struct list_head rlist_head;
  */
 void process_server_do_return_disposition(void) {
 
-    PSPRINTK("%s\n",__func__);
     int return_disposition = current->return_disposition;
 
+    PSPRINTK("%s\n",__func__);
     // Reset the return disposition
     current->return_disposition = RETURN_DISPOSITION_NONE;
 
@@ -7364,57 +7291,60 @@ void process_server_do_return_disposition(void) {
  *
  */
 int process_server_acquire_fault_lock(unsigned long address) {
-    fault_barrier_entry_t * existing = NULL;
-    fault_barrier_entry_t* entry = NULL;
     fault_barrier_request_t* request = NULL;
-    fault_barrier_commit_t* commit = NULL;
+    fault_barrier_entry_t* entry = NULL;
+    fault_barrier_queue_t* queue = NULL;
+    int wait_complete = 0;
     int i,s;
-    int done = 0;
-    if(!current->tgroup_distributed) {
-        goto exit;
-    }
 
-    // We want to make sure we're guarding the entire
-    // page.
-    address &= PAGE_MASK;
-
-    entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_KERNEL);
-    entry->header.data_type = PROCESS_SERVER_FAULT_BARRIER_DATA_TYPE;
-    entry->tgroup_home_id = current->tgroup_home_id;
-    entry->tgroup_home_cpu = current->tgroup_home_cpu;
-    entry->address = address;
-    entry->cpu_owner = _cpu;
-retry:
-    entry->state = FAULT_ENTRY_CONTENDED;
-    entry->responses = 0;
-    entry->expected_responses = 0;
-    entry->available = 1;
-    entry->all_sent = 0;
-   // wait while already a local entry
-    do {
-        PS_SPIN_LOCK(&_fault_barrier_lock);
-        existing = find_fault_barrier_entry(current->tgroup_home_cpu,
-                                            current->tgroup_home_id,
-                                            address,
-                                            -1);
-        if(!existing) {
-            // create entry, set to contended
-            add_data_entry_to(entry, NULL, &_fault_barrier_head); 
-        }
-        PS_SPIN_UNLOCK(&_fault_barrier_lock);
-        if(existing) {
-            schedule();
-        }
-    } while(existing);
-
+    if(!current->tgroup_distributed) return 0;
+ 
     request = kmalloc(sizeof(fault_barrier_request_t), GFP_KERNEL);
+    entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_KERNEL);
+  
+    BUG_ON(!request);
+    BUG_ON(!entry);
+
+    address &= PAGE_MASK;
     request->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_REQUEST;
     request->header.prio = PCN_KMSG_PRIO_NORMAL;
-    request->tgroup_home_id = current->tgroup_home_id;
-    request->tgroup_home_cpu = current->tgroup_home_cpu;
     request->address = address;
+    request->tgroup_home_cpu = current->tgroup_home_cpu;
+    request->tgroup_home_id =  current->tgroup_home_id;
 
-    // send request to everyone
+    // Grab the fault barrier queue lock
+    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+    
+    // create timestamp
+    request->timestamp = native_read_tsc();
+
+    // form record and place in queue
+    entry->timestamp = request->timestamp;
+    entry->responses = 0;
+    entry->expected_responses = 0;
+    entry->allow_responses = 0;
+    entry->cpu = _cpu;
+   
+    // find queue if it exists
+    queue = find_fault_barrier_queue(current->tgroup_home_cpu,
+                                     current->tgroup_home_id,
+                                     address);
+    // If no queue exists, create one
+    if(!queue) {
+        queue = kmalloc(sizeof(fault_barrier_queue_t),GFP_ATOMIC);
+        queue->tgroup_home_cpu = current->tgroup_home_cpu;
+        queue->tgroup_home_id  = current->tgroup_home_id;
+        queue->address = address;
+        queue->queue = NULL;
+        add_data_entry_to(queue,NULL,&_fault_barrier_queue_head);
+    }
+
+    // Add entry to queue
+    add_fault_entry_to_queue(entry,queue);
+
+    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+    
+    // Send out request to everybody
     for(i = 0; i < NR_CPUS; i++) {
         if(i == _cpu) continue;
         s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)request);
@@ -7424,81 +7354,96 @@ retry:
     }
 
     mb();
-    entry->all_sent = 1;
+    entry->allow_responses = 1;
 
-    do {
-        schedule();
-        PS_SPIN_LOCK(&_fault_barrier_lock);
-        if(entry->expected_responses == entry->responses) done = 1;
-        PS_SPIN_UNLOCK(&_fault_barrier_lock);
-    } while(!done);
+    kfree(request);
 
-    // if yes, then commit and return
-    // note: if yes, we've already taken ownership
-    if(entry->state == FAULT_ENTRY_OWNED) {
-        commit = kmalloc(sizeof(fault_barrier_commit_t),GFP_KERNEL);
-        if(commit) {
-            commit->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_COMMIT;
-            commit->header.prio = PCN_KMSG_PRIO_NORMAL;
-            commit->tgroup_home_id = current->tgroup_home_id;
-            commit->tgroup_home_cpu = current->tgroup_home_cpu;
-            commit->address = address;
-            for(i = 0; i < NR_CPUS; i++) {
-                if(i == _cpu) continue;
-                pcn_kmsg_send(i,(struct pcn_kmsg_message*)commit);
-            }
+    // Wait until everybody has responded
+    while(1) {
+        PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+        if(entry->expected_responses == entry->responses) {
+            PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+            goto responses_acquired;
         }
-        goto exit;
+        PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+        schedule();
     }
-    
+responses_acquired:
 
-    // otherwise, remove entry, and go to the beginning
-    PS_SPIN_LOCK(&_fault_barrier_lock);
-    remove_data_entry_from(entry,&_fault_barrier_head);
-    PS_SPIN_UNLOCK(&_fault_barrier_lock);
-    goto retry;
+    // Wait until "entry" is at the front of the queue
+    while(1) {
+        PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+        if(entry == queue->queue) {
+            PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+            goto lock_acquired;
+        }
+        PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+        schedule();
+    } 
+lock_acquired:
 
-exit:
-    return;
+    return 0;
 }
 
 /**
  *
  */
 void process_server_release_fault_lock(unsigned long address) {
-    fault_barrier_release_t* message;
-    int i;
+    fault_barrier_queue_t* queue = NULL;
+    fault_barrier_release_t* release = NULL;
     fault_barrier_entry_t* entry = NULL;
-    if(!current->tgroup_distributed) {
-        goto exit;
-    }
+    int i;
+    int free_queue = 0;
+    unsigned long long timestamp = 0;
+
+
+    if(!current->tgroup_distributed) return;
+
     address &= PAGE_MASK;
-    message = kmalloc(sizeof(fault_barrier_release_t),GFP_KERNEL);
-    if(message) {
-        message->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RELEASE;
-        message->header.prio = PCN_KMSG_PRIO_NORMAL;
-        message->tgroup_home_id = current->tgroup_home_id;
-        message->tgroup_home_cpu = current->tgroup_home_cpu;
-        message->address = address;
-        for(i = 0; i < NR_CPUS; i++) {
-            if(i == _cpu) continue;
-            pcn_kmsg_send(i, (struct pcn_kmsg_message*)message);
-        }
-    }
+    release = kmalloc(sizeof(fault_barrier_release_t),
+                        GFP_KERNEL);
 
-    PS_SPIN_LOCK(&_fault_barrier_lock);
-    entry = find_fault_barrier_entry(current->tgroup_home_cpu,
+    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+
+    // find queue
+    queue = find_fault_barrier_queue(current->tgroup_home_cpu,
                                      current->tgroup_home_id,
-                                     address,
-                                     _cpu);
-    if(entry) {
-        remove_data_entry_from(entry,&_fault_barrier_head);
-        kfree(entry);
-    }
-    PS_SPIN_UNLOCK(&_fault_barrier_lock);
+                                     address);
+    if(queue) {
 
-exit:
-    return;
+        entry = queue->queue;
+        if(entry) {
+            timestamp = entry->timestamp;
+        }
+
+        // remove entry from queue
+        remove_data_entry_from(queue->queue,&queue->queue);
+
+        // garbage collect the queue if necessary
+        if(!queue->queue) {
+            remove_data_entry_from(queue,&_fault_barrier_queue_head);
+            free_queue = 1;
+        }
+    
+    }
+
+    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+
+    if(free_queue) kfree(queue);
+
+    // Send release
+    release->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RELEASE;
+    release->header.prio = PCN_KMSG_PRIO_NORMAL;
+    release->tgroup_home_cpu = current->tgroup_home_cpu;
+    release->tgroup_home_id  = current->tgroup_home_id;
+    release->timestamp = timestamp;
+    release->address = address;
+    for(i = 0; i < NR_CPUS; i++) {
+        if(i == _cpu) continue;
+        pcn_kmsg_send(i,(struct pcn_kmsg_message*)release);
+    }
+
+    kfree(release);
 }
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
@@ -7854,8 +7799,6 @@ static int __init process_server_init(void) {
             handle_fault_barrier_request);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RESPONSE,
             handle_fault_barrier_response);
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_COMMIT,
-            handle_fault_barrier_commit);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RELEASE,
             handle_fault_barrier_release);
 
