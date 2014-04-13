@@ -1091,12 +1091,12 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	}
 
     vma = find_vma(mm, address);
-    process_server_acquire_fault_lock(address);
+    if(-1 == process_server_acquire_fault_lock(address)) return;
 	if (unlikely(!vma)) {
         // Multikernel - see if another member of the thread group has mapped
         // this vma
         if(process_server_try_handle_mm_fault(mm,NULL,address,flags,&vma,error_code)) {
-            return;
+            goto ret;
         }
 		if(!vma) {
             bad_area(regs, error_code, address);
@@ -1138,21 +1138,6 @@ retry:
 		 */
 		might_sleep();
 	}
-
-	/*vma = find_vma(mm, address);
-	if (unlikely(!vma)) {
-        // Multikernel - see if another member of the thread group has mapped
-        // this vma
-        if(process_server_try_handle_mm_fault(mm,NULL,address,flags,&vma)) {
-            return;
-        }
-		if(!vma) {
-            bad_area(regs, error_code, address);
-		    return;
-        }
-	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags,&vma)) {
-        return;
-    }*/
 
 	if (likely(vma->vm_start <= address))
 		goto good_area;

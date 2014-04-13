@@ -1117,6 +1117,7 @@ typedef enum _proc_data_index{
     PS_PROC_DATA_IMPORT_TASK_TIME,
     PS_PROC_DATA_COUNT_REMOTE_THREADS_PROCESSING_TIME,
     PS_PROC_DATA_MK_PAGE_WRITABLE,
+    PS_PROC_DATA_WAITING_FOR_LAMPORT_LOCK,
     PS_PROC_DATA_MAX
 } proc_data_index_t;
 proc_data_t _proc_data[NR_CPUS][PS_PROC_DATA_MAX];
@@ -2518,8 +2519,8 @@ static void add_fault_entry_to_queue(fault_barrier_entry_t* entry,
     // Next take care of the scenario where we have to replace
     // the first entry
     if(queue->queue->timestamp > entry->timestamp) {
-        queue->queue->header.prev = entry;
-        entry->header.next = queue->queue;
+        queue->queue->header.prev = (data_header_t*)entry;
+        entry->header.next = (data_header_t*)queue->queue;
         queue->queue = entry;
         return;
     }
@@ -2528,37 +2529,38 @@ static void add_fault_entry_to_queue(fault_barrier_entry_t* entry,
     // have to change the value of queue->queue.
     while(curr) {
         if(curr->timestamp > entry->timestamp) {
-            curr->header.prev->next = entry;
+            curr->header.prev->next = (data_header_t*)entry;
             entry->header.prev = curr->header.prev;
-            curr->header.prev = entry;
-            entry->header.next = curr;
+            curr->header.prev = (data_header_t*)entry;
+            entry->header.next = (data_header_t*)curr;
             return;
         }
         last = curr;
-        curr = curr->header.next;
+        curr = (fault_barrier_entry_t*)curr->header.next;
     }
 
     // It must be the last entry then
     if(last) {
-        last->header.next = entry;
-        entry->header.prev = last;
+        last->header.next = (data_header_t*)entry;
+        entry->header.prev = (data_header_t*)last;
     }
 
 }
+
 
 /**
  * @brief Find a fault barrier data entry.
  * @return Either a data entry, or NULL if one does 
  * not exist that satisfies the parameter requirements.
  */
-static fault_barrier_entry_t* find_fault_barrier_queue(int tgroup_home_cpu, 
+static fault_barrier_queue_t* find_fault_barrier_queue(int tgroup_home_cpu, 
         int tgroup_home_id, unsigned long address) {
 
     data_header_t* curr = NULL;
     fault_barrier_queue_t* entry = NULL;
     fault_barrier_queue_t* ret = NULL;
 
-    curr = _fault_barrier_queue_head;
+    curr = (data_header_t*)_fault_barrier_queue_head;
     while(curr) {
         entry = (fault_barrier_queue_t*)curr;
         if(entry->tgroup_home_cpu == tgroup_home_cpu &&
@@ -2570,6 +2572,33 @@ static fault_barrier_entry_t* find_fault_barrier_queue(int tgroup_home_cpu,
         curr = curr->next;
     }
 
+    return ret;
+}
+
+static fault_barrier_entry_t* find_fault_barrier_entry(int cpu,
+        int tgroup_home_cpu,
+        int tgroup_home_id, 
+        unsigned long address)
+{
+    fault_barrier_queue_t* queue = find_fault_barrier_queue(
+                                        tgroup_home_cpu,
+                                        tgroup_home_id,
+                                        address);
+    if(!queue) {
+        goto exit;
+    }
+
+    fault_barrier_entry_t* curr = NULL;
+    fault_barrier_entry_t* ret = NULL;
+    curr = queue->queue;
+    while(curr) {
+        if(curr->cpu == cpu) {
+            ret = curr;
+            goto exit;
+        }
+        curr = curr->header.next;
+    }
+exit:
     return ret;
 }
 
@@ -2838,7 +2867,6 @@ static int dump_page_walk_pte_entry_callback(pte_t *pte, unsigned long start,
  */
 static void dump_mm(struct mm_struct* mm) {
     struct vm_area_struct * curr;
-    char buf[256];
     struct mm_walk walk = {
         .pte_entry = dump_page_walk_pte_entry_callback,
         .mm = mm,
@@ -4119,6 +4147,7 @@ void process_fault_barrier_request(struct work_struct* work) {
         queue->tgroup_home_id  = w->tgroup_home_id;
         queue->address = w->address;
         queue->queue = NULL;
+        queue->active_timestamp = 0;
         add_data_entry_to(queue,NULL,&_fault_barrier_queue_head);
     }
 
@@ -4200,7 +4229,7 @@ void process_fault_barrier_release(struct work_struct* work) {
         while(curr) {
             if(curr->cpu == w->from_cpu &&
                curr->timestamp == w->timestamp) {
-                remove_data_entry_from(curr,&queue->queue);
+                remove_data_entry_from(curr,(data_header_t**)&queue->queue);
                 free_curr = 1;
                 break;
             }
@@ -5255,8 +5284,10 @@ int process_server_import_address_space(unsigned long* ip,
         struct pt_regs* regs) {
     clone_data_t* clone_data = NULL;
     struct file* f = NULL;
+#ifdef PROCESS_SERVER_USE_KMOD
     struct vm_area_struct* vma = NULL;
     int munmap_ret = 0;
+#endif
     struct mm_struct* thread_mm = NULL;
     struct task_struct* thread_task = NULL;
     mm_data_t* used_saved_mm = NULL;
@@ -6717,7 +6748,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         }
         if(vma && paddr_present) { 
             int remap_pfn_range_err = 0;
-            unsigned long cow_addr;
             pte_provided = 1;
 
             for(i = 0; i < MAX_MAPPINGS; i++) {
@@ -6738,7 +6768,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 
             // Check remap_pfn_range success
             if(remap_pfn_range_err) {
-                printk(KERN_ALERT"ERROR: Failed to remap_pfn_range %d\n",err);
+                printk(KERN_ALERT"ERROR: Failed to remap_pfn_range %lx\n",err);
             } else {
                 PSPRINTK("remap_pfn_range succeeded\n");
                 ret = 1;
@@ -7305,7 +7335,12 @@ int process_server_acquire_fault_lock(unsigned long address) {
     fault_barrier_request_t* request = NULL;
     fault_barrier_entry_t* entry = NULL;
     fault_barrier_queue_t* queue = NULL;
-    int i,s;
+    int i,s,already_resolving = 0;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long end_time = 0;
+    unsigned long long total_time = 0;
+    unsigned long long start_time = native_read_tsc();
+#endif
 
     if(!current->tgroup_distributed) return 0;
  
@@ -7348,12 +7383,48 @@ int process_server_acquire_fault_lock(unsigned long address) {
         queue->active_timestamp = 0;
         queue->queue = NULL;
         add_data_entry_to(queue,NULL,&_fault_barrier_queue_head);
+    } else {
+        // find the fault entry in the queue.  If there is one for
+        // this CPU, then we do not want to add another.  Instead,
+        // we will wait for it to complete, then return directly
+        // to userspace, since another thread is going to handle 
+        // the mapping.
+        fault_barrier_entry_t* search_entry = find_fault_barrier_entry(_cpu,
+                                                current->tgroup_home_cpu,
+                                                current->tgroup_home_id,
+                                                address);
+     
+        if(search_entry) {
+            already_resolving = 1;
+        }
     }
 
     // Add entry to queue
-    add_fault_entry_to_queue(entry,queue);
+    if(!already_resolving)
+        add_fault_entry_to_queue(entry,queue);
 
     PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+
+    // Here is where we wait for an existing critical region on
+    // this virtual page to wait.  This is for the case where
+    // another thread on this CPU is already mapping the virtual
+    // page that this thread needs, or is waiting to.
+    if(already_resolving) kfree(entry);
+    while(already_resolving) {
+        fault_barrier_entry_t* search_entry;
+        PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+        search_entry = find_fault_barrier_entry(_cpu,
+                                current->tgroup_home_cpu,
+                                current->tgroup_home_id,
+                                address);
+        PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+        if(search_entry) schedule();
+        else {
+            printk("Stopped concurrent mapping request on address %lx on task %d\n",address,current->pid);
+            // Check to see if the other mapping request was successful
+            return -1;
+        }
+    }
     
     // Send out request to everybody
     for(i = 0; i < NR_CPUS; i++) {
@@ -7393,6 +7464,11 @@ responses_acquired:
         schedule();
     } 
 lock_acquired:
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    end_time = native_read_tsc();
+    total_time = end_time - start_time;
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_WAITING_FOR_LAMPORT_LOCK,total_time);
+#endif
 
     return 0;
 }
@@ -7437,7 +7513,7 @@ void process_server_release_fault_lock(unsigned long address) {
         queue->active_timestamp = 0;
         
         // remove entry from queue
-        remove_data_entry_from(queue->queue,&queue->queue);
+        remove_data_entry_from((data_header_t*)entry,(data_header_t**)&queue->queue);
 
 
         // garbage collect the queue if necessary
@@ -7673,6 +7749,8 @@ static void proc_data_init() {
                 "Count remote threads processing time");
         sprintf(_proc_data[j][PS_PROC_DATA_MK_PAGE_WRITABLE].name,
                 "Make page writable processing time");
+        sprintf(_proc_data[j][PS_PROC_DATA_WAITING_FOR_LAMPORT_LOCK].name,
+                "Waiting for Lamport lock on virtual page");
     }
 }
 #endif
