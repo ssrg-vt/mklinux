@@ -455,6 +455,7 @@ typedef struct _fault_barrier_queue {
     int tgroup_home_cpu;
     int tgroup_home_id;
     unsigned long address;
+    unsigned long long active_timestamp;
     fault_barrier_entry_t* queue;
 } fault_barrier_queue_t;
 
@@ -4152,6 +4153,9 @@ void process_fault_barrier_response(struct work_struct* work) {
     queue = find_fault_barrier_queue(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
                                      w->address);
+
+    BUG_ON(!queue);
+
     if(queue) {
         curr = queue->queue;
         while(curr) {
@@ -4188,6 +4192,8 @@ void process_fault_barrier_release(struct work_struct* work) {
                                      w->tgroup_home_id,
                                      w->address);
 
+    BUG_ON(!queue);
+
     if(queue) {
         // find the specific entry
         curr = queue->queue;
@@ -4200,7 +4206,7 @@ void process_fault_barrier_release(struct work_struct* work) {
             }
         }
         if(!queue->queue) {
-            remove_data_entry_from(queue,_fault_barrier_queue_head);
+            remove_data_entry_from(queue,&_fault_barrier_queue_head);
             free_queue = 1;
         }
     }
@@ -7339,6 +7345,7 @@ int process_server_acquire_fault_lock(unsigned long address) {
         queue->tgroup_home_cpu = current->tgroup_home_cpu;
         queue->tgroup_home_id  = current->tgroup_home_id;
         queue->address = address;
+        queue->active_timestamp = 0;
         queue->queue = NULL;
         add_data_entry_to(queue,NULL,&_fault_barrier_queue_head);
     }
@@ -7378,6 +7385,7 @@ responses_acquired:
     while(1) {
         PS_SPIN_LOCK(&_fault_barrier_queue_lock);
         if(entry == queue->queue) {
+            queue->active_timestamp = entry->timestamp;
             PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
             goto lock_acquired;
         }
@@ -7420,10 +7428,13 @@ void process_server_release_fault_lock(unsigned long address) {
 
         BUG_ON(!queue->queue);
         BUG_ON(queue->queue->cpu != _cpu);
-
+        
         entry = queue->queue;
         
+        BUG_ON(entry->timestamp != queue->active_timestamp);
+
         timestamp = entry->timestamp;
+        queue->active_timestamp = 0;
         
         // remove entry from queue
         remove_data_entry_from(queue->queue,&queue->queue);
