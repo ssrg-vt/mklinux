@@ -4221,7 +4221,7 @@ void process_fault_barrier_release(struct work_struct* work) {
                                      w->tgroup_home_id,
                                      w->address);
 
-    BUG_ON(!queue);
+    //BUG_ON(!queue);
 
     if(queue) {
         // find the specific entry
@@ -7420,11 +7420,7 @@ int process_server_acquire_fault_lock(unsigned long address) {
                                 address);
         PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
         if(search_entry) schedule();
-        else {
-            printk("Stopped concurrent mapping request on address %lx on task %d\n",address,current->pid);
-            // Check to see if the other mapping request was successful
-            return -1;
-        }
+        else return -1;
     }
     
     // Send out request to everybody
@@ -7499,7 +7495,7 @@ void process_server_release_fault_lock(unsigned long address) {
                                      current->tgroup_home_id,
                                      address);
 
-    BUG_ON(!queue);
+    //BUG_ON(!queue);
 
     if(queue) {
 
