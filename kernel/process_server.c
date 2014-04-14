@@ -4233,6 +4233,7 @@ void process_fault_barrier_release(struct work_struct* work) {
                 free_curr = 1;
                 break;
             }
+            curr = curr->header.next;
         }
         if(!queue->queue) {
             remove_data_entry_from(queue,&_fault_barrier_queue_head);
