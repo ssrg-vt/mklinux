@@ -982,7 +982,26 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	/* Obtain the address to map to. we verify (or select) it and ensure
 	 * that it represents a valid section of the address space.
 	 */
-	addr = get_unmapped_area(file, addr, len, pgoff, flags);
+    if(addr) {
+        addr = get_unmapped_area(file, addr, len, pgoff, flags);
+    } else {
+        int pserv_conflict = 0;
+        do {
+            int fault_ret;
+            struct vm_area_struct* vma_out = NULL;
+            addr = get_unmapped_area(file, addr, len, pgoff, flags);
+            while(-1 == process_server_acquire_fault_lock(addr));
+            fault_ret = process_server_try_handle_mm_fault(mm,
+                                                           NULL,
+                                                           addr,
+                                                           0,
+                                                           &vma_out,
+                                                           0);
+            if(fault_ret) pserv_conflict = 1;
+            else pserv_conflict = 0;    
+            process_server_release_fault_lock(addr);
+        } while(pserv_conflict);
+    }
 	if (addr & ~PAGE_MASK)
 		return addr;
 
