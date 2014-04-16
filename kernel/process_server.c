@@ -1282,7 +1282,7 @@ static struct vm_area_struct* find_vma_checked(struct mm_struct* mm, unsigned lo
     return ret;
 
 }*/
-/* Antonio's Version
+// Antonio's Version
 static int is_mapped(struct mm_struct* mm, unsigned vaddr)
 {
     pte_t* pte = NULL;
@@ -1304,7 +1304,7 @@ static int is_mapped(struct mm_struct* mm, unsigned vaddr)
       }                                                                          
     }
     return 0;                                                                                  }
-*/
+
 
 /**
  * @brief Find the mm_struct for a given distributed thread.  
@@ -1510,6 +1510,7 @@ static int vm_search_page_walk_pte_entry_callback(pte_t *pte, unsigned long star
     unsigned long* resolved_addr = (unsigned long*)walk->private;
 
     if (pte == NULL || pte_none(*pte) || !pte_present(*pte)) {
+        *resolved_addr = 0;
         return 0;
     }
 
@@ -2039,7 +2040,8 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
     for(vaddr_curr = vaddr_start; 
         vaddr_curr < vaddr_start + sz; 
         vaddr_curr += PAGE_SIZE) {
-        if( !(val = is_vaddr_mapped(mm,vaddr_curr)) ) {
+        //if( !(val = is_vaddr_mapped(mm,vaddr_curr)) ) {
+        if(!is_mapped(mm,vaddr_curr)) {
             //PSPRINTK("%s: mapping vaddr{%lx} paddr{%lx}\n",__func__,vaddr_curr,paddr_curr);
             // not mapped - map it
             err = remap_pfn_range(vma,
@@ -2057,10 +2059,10 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
             }
 
             if( err != 0 ) ret = err;
+        } else {
+  	        PSPRINTK("%s: is_vaddr_mapped %d, star:%lx end:%lx\n",
+	  	        __func__, val, vma->vm_start, vma->vm_end);
         }
-	else
-  	    PSPRINTK("%s: is_vaddr_mapped %d, star:%lx end:%lx\n",
-	  	    __func__, val, vma->vm_start, vma->vm_end);
 
         paddr_curr += PAGE_SIZE;
     }
