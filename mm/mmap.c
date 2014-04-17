@@ -989,7 +989,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
         do {
             int fault_ret;
             struct vm_area_struct* vma_out = NULL;
-            addr = get_unmapped_area(file, addr, len, pgoff, flags);
+            addr = get_unmapped_area(file, NULL, len, pgoff, flags);
             while(-1 == process_server_acquire_fault_lock(addr));
             fault_ret = process_server_try_handle_mm_fault(mm,
                                                            NULL,
