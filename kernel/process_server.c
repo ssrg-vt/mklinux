@@ -73,7 +73,7 @@ unsigned long get_percpu_old_rsp(void);
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -1292,18 +1292,21 @@ static int is_mapped(struct mm_struct* mm, unsigned vaddr)
 
     pgd = pgd_offset(mm, vaddr);                                                   
     if (pgd && !pgd_none(*pgd) && likely(!pgd_bad(*pgd)) && pgd_present(*pgd)) {
-      pud = pud_offset(pgd,vaddr);                                               
-      if (pud && !pud_none(*pud) && likely(!pud_bad(*pud)) && pud_present(*pud)) {
-	pmd = pmd_offset(pud,vaddr);
-        if(pmd && !pmd_none(*pmd) && likely(!pmd_bad(*pmd)) && pmd_present(*pmd)) {                      pte = pte_offset_map(pmd,vaddr);                                   
-	  if(pte && !pte_none(*pte) && pte_present(*pte)) { 
+        pud = pud_offset(pgd,vaddr);                                               
+        if (pud && !pud_none(*pud) && likely(!pud_bad(*pud)) && pud_present(*pud)) {
+
+            pmd = pmd_offset(pud,vaddr);
+            if(pmd && !pmd_none(*pmd) && likely(!pmd_bad(*pmd)) && pmd_present(*pmd)) {             
+                pte = pte_offset_map(pmd,vaddr);                                   
+                if(pte && !pte_none(*pte) && pte_present(*pte)) { 
                    // It exists!                                                  
                     return 1;
-          }                                                                  
-        }                                                                      
-      }                                                                          
+                }                                                                  
+            }                                                                      
+        }                                                                          
     }
-    return 0;                                                                                  }
+    return 0;
+}
 
 
 /**
@@ -2041,7 +2044,7 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
         vaddr_curr < vaddr_start + sz; 
         vaddr_curr += PAGE_SIZE) {
         //if( !(val = is_vaddr_mapped(mm,vaddr_curr)) ) {
-        if(!is_mapped(mm,vaddr_curr)) {
+        if(!is_vaddr_mapped(mm,vaddr_curr)) {
             //PSPRINTK("%s: mapping vaddr{%lx} paddr{%lx}\n",__func__,vaddr_curr,paddr_curr);
             // not mapped - map it
             err = remap_pfn_range(vma,
@@ -2050,6 +2053,8 @@ int remap_pfn_range_remaining(struct mm_struct* mm,
                                   PAGE_SIZE,
                                   prot);
             if(err == 0) {
+                PSPRINTK("%s: succesfully mapped vaddr{%lx} to paddr{%lx}\n",
+                            __func__,vaddr_curr,paddr_curr);
                 if(make_writable && vma->vm_flags & VM_WRITE) {
                     mk_page_writable(mm, vma, vaddr_curr);
                 }
@@ -2874,6 +2879,7 @@ static void dump_mm(struct mm_struct* mm) {
         .mm = mm,
         .private = NULL
         };
+    char buf[256];
 
     if(NULL == mm) {
         PSPRINTK("MM IS NULL!\n");
