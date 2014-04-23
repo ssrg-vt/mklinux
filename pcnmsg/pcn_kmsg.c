@@ -37,8 +37,13 @@
 #define KMSG_PRINTK(...) ;
 #endif
 
+/*
+ * MAX_LOOPS must be calibrated on each architecture. Is difficult to give a
+ * good estimation for this parameter. Worst case must be equal or inferior to
+ * the minimum time we will be blocked for a call to schedule_timeout
+ */
 #define MAX_LOOPS 12345
-#define MAX_LOOPS_JIFFIES 123
+#define MAX_LOOPS_JIFFIES (MAX_SCHEDULE_TIMEOUT)
 
 #define MCAST_VERBOSE 0
 
@@ -115,7 +120,7 @@ unsigned int large_message_count[(SIZE_RANGES +1)];
 unsigned int type_message_count[PCN_KMSG_TYPE_MAX];
 
 /* From Wikipedia page "Fetch and add", modified to work for u64 */
-static inline unsigned long fetch_and_add(volatile unsigned long * variable, 
+/*static inline unsigned long fetch_and_add(volatile unsigned long * variable, 
 					  unsigned long value)
 {
 	asm volatile( 
@@ -124,7 +129,8 @@ static inline unsigned long fetch_and_add(volatile unsigned long * variable,
 		     : "a" (value), "m" (*variable)  //Input
 		     :"memory" );
 	return value;
-}
+}*/
+#define fetch_and_add xadd_sync
 
 static inline unsigned long win_inuse(struct pcn_kmsg_window *win) 
 {
@@ -163,16 +169,18 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	  != (ticket - PCN_KMSG_RBUF_SIZE)) ) {
 		//pcn_cpu_relax();
 		//msleep(1);
-		if ( !(loop++ % MAX_LOOPS) )
+		if ( !(++loop % MAX_LOOPS) )
 			schedule_timeout(MAX_LOOPS_JIFFIES);
 	}
-	loop=0;
+	/* the following it is always false because add is after ready=0*/
+	//loop=0;
 	while( win->buffer[ticket%PCN_KMSG_RBUF_SIZE].ready!=0 ) {
-		//pcn_cpu_relax();
+		pcn_cpu_relax();
 		//msleep(1);
-		if ( !(loop++ % MAX_LOOPS) )
-			schedule_timeout(MAX_LOOPS_JIFFIES);
+		//if ( !(++loop % MAX_LOOPS) )
+		//	schedule_timeout(MAX_LOOPS_JIFFIES);
 	}
+	
 	/* insert item */
 	memcpy(&win->buffer[ticket%PCN_KMSG_RBUF_SIZE].payload,
 	       &msg->payload, PCN_KMSG_PAYLOAD_SIZE);
@@ -205,49 +213,39 @@ static inline int win_get(struct pcn_kmsg_window *win,
 			  struct pcn_kmsg_reverse_message **msg) 
 {
 	struct pcn_kmsg_reverse_message *rcvd;
+	unsigned long loop;
 
 	if (!win_inuse(win)) {
-
 		KMSG_PRINTK("nothing in buffer, returning...\n");
 		return -1;
 	}
 
-	KMSG_PRINTK("reached win_get, head %lu, tail %lu\n", 
-		    win->head, win->tail);	
+	KMSG_PRINTK("reached win_get, head %lu, tail %lu\n", win->head, win->tail);
+	rcvd =(struct pcn_kmsg_reverse_message*) &(win->buffer[win->tail % PCN_KMSG_RBUF_SIZE]);
 
 	/* spin until entry.ready at end of cache line is set */
-	rcvd =(struct pcn_kmsg_reverse_message*) &(win->buffer[win->tail % PCN_KMSG_RBUF_SIZE]);
-	//KMSG_PRINTK("%s: Ready bit: %u\n", __func__, rcvd->hdr.ready);
-
-
+	loop=0;
 	while (!rcvd->ready) {
-
 		//pcn_cpu_relax();
-		msleep(1);
-
+		//msleep(1);
+		if ( !(++loop % MAX_LOOPS) )
+			schedule_timeout(MAX_LOOPS_JIFFIES);
 	}
 
-	// barrier here?
-	pcn_barrier();
-
-	//log_receive[log_r_index%LOGLEN]=rcvd->hdr;
-	memcpy(&(log_receive[log_r_index%LOGLEN]),&(rcvd->hdr),sizeof(struct pcn_kmsg_hdr));
+	/* statistics */
+	memcpy(&(log_receive[log_r_index%LOGLEN]),
+	       &(rcvd->hdr),
+	       sizeof(struct pcn_kmsg_hdr));
 	log_r_index++;
+	msg_get++;
 
-	//rcvd->hdr.ready = 0;
-
-	*msg = rcvd;	
-msg_get++;
-
-
-
+	*msg = rcvd;
 	return 0;
 }
 
-static inline void win_advance_tail(struct pcn_kmsg_window *win) 
-{
-	win->tail++;
-}
+/*static inline void win_advance_tail(struct pcn_kmsg_window *win) 
+{ win->tail++; }
+*/
 
 /* win_enable_int
  * win_disable_int
@@ -1108,18 +1106,19 @@ static int process_small_message(struct pcn_kmsg_reverse_message *msg)
 	return work_done;
 }
 
+static int poll_handler_check=0;
 static int pcn_kmsg_poll_handler(void)
 {
 	struct pcn_kmsg_reverse_message *msg;
 	struct pcn_kmsg_window *win = rkvirt[my_cpu]; // TODO this will not work for clustering
 	int work_done = 0;
 
-	KMSG_PRINTK("called\n");
+	poll_handler_check++;
+	if (poll_handler_check >1)
+		printk("poll_hanlder_check %d concurrent calls not supported\n", poll_handler_check);
 
 pull_msg:
 	/* Get messages out of the buffer first */
-//#define PCN_KMSG_BUDGET 128
-	//while ((work_done < PCN_KMSG_BUDGET) && (!win_get(rkvirt[my_cpu], &msg))) {
 	while (! win_get(win, &msg) ) {
 		KMSG_PRINTK("got a message!\n");
 
@@ -1131,10 +1130,16 @@ pull_msg:
 			KMSG_PRINTK("message is a small message!\n");
 			work_done += process_small_message(msg);
 		}
-		pcn_barrier();
+
 		msg->ready = 0;
-		//win_advance_tail(win);
-		fetch_and_add(&win->tail, 1);
+		pcn_barrier();
+		
+		fetch_and_add(&win->tail, 1); //win_advance_tail(win);
+		
+		// NOTE
+		// why you need the ready bit if you are incrementing the tail?
+		// can we increment the tail before signaling the ready bit?
+		// in that way we can support multiple calls to this function
 	}
 
 	win_enable_int(win);
@@ -1143,6 +1148,7 @@ pull_msg:
 		goto pull_msg;
 	}
 
+	poll_handler_check--;
 	return work_done;
 }
 
