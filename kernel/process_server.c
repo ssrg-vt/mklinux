@@ -448,6 +448,10 @@ typedef struct _fault_barrier_entry {
     int expected_responses;
     int allow_responses;
     int cpu;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long lock_acquired;
+    unsigned long long lock_released;
+#endif
 } fault_barrier_entry_t;
 
 typedef struct _fault_barrier_queue {
@@ -1118,6 +1122,7 @@ typedef enum _proc_data_index{
     PS_PROC_DATA_COUNT_REMOTE_THREADS_PROCESSING_TIME,
     PS_PROC_DATA_MK_PAGE_WRITABLE,
     PS_PROC_DATA_WAITING_FOR_LAMPORT_LOCK,
+    PS_PROC_DATA_LAMPORT_LOCK_HELD,
     PS_PROC_DATA_MAX
 } proc_data_index_t;
 proc_data_t _proc_data[NR_CPUS][PS_PROC_DATA_MAX];
@@ -7471,6 +7476,7 @@ responses_acquired:
 lock_acquired:
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     end_time = native_read_tsc();
+    entry->lock_acquired = end_time;
     total_time = end_time - start_time;
     PS_PROC_DATA_TRACK(PS_PROC_DATA_WAITING_FOR_LAMPORT_LOCK,total_time);
 #endif
@@ -7513,7 +7519,11 @@ void process_server_release_fault_lock(unsigned long address) {
         entry = queue->queue;
         
         BUG_ON(entry->timestamp != queue->active_timestamp);
-
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+        entry->lock_released = native_read_tsc();
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_LAMPORT_LOCK_HELD,
+                                entry->lock_released - entry->lock_acquired);
+#endif
         timestamp = entry->timestamp;
         queue->active_timestamp = 0;
         
@@ -7756,6 +7766,8 @@ static void proc_data_init() {
                 "Make page writable processing time");
         sprintf(_proc_data[j][PS_PROC_DATA_WAITING_FOR_LAMPORT_LOCK].name,
                 "Waiting for Lamport lock on virtual page");
+        sprintf(_proc_data[j][PS_PROC_DATA_LAMPORT_LOCK_HELD].name,
+                "Lamport lock held");
     }
 }
 #endif
