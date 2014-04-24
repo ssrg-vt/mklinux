@@ -591,9 +591,10 @@ struct _mapping_request {
     int tgroup_home_id;         // 4
     int requester_pid;          // 4
     unsigned long address;      // 8
+    char send_path;             // 1
                                 // ---
-                                // 20 -> 40 bytes of padding needed
-    char pad[40];
+                                // 21 -> 39 bytes of padding needed
+    char pad[39];
 
 } __attribute__((packed)) __attribute__((aligned(64)));
 
@@ -869,6 +870,7 @@ typedef struct {
     int tgroup_home_id;
     int requester_pid;
     unsigned long address;
+    char send_path;
     int from_cpu;
 } mapping_request_work_t;
 
@@ -3526,7 +3528,7 @@ changed_can_be_cow:
             response.vaddr_size = vma->vm_end - vma->vm_start;
             response.prot = vma->vm_page_prot;
             response.vm_flags = vma->vm_flags;
-            if(vma->vm_file == NULL) {
+            if(vma->vm_file == NULL || !w->send_path) {
                 response.path[0] = '\0';
             } else {    
          
@@ -3583,7 +3585,7 @@ changed_can_be_cow:
             response.vaddr_size = vma->vm_end - vma->vm_start;
             response.prot = vma->vm_page_prot;
             response.vm_flags = vma->vm_flags;
-             if(vma->vm_file == NULL) {
+             if(vma->vm_file == NULL || !w->send_path) {
                  response.path[0] = '\0';
              } else {    
                  plpath = d_path(&vma->vm_file->f_path,lpath,512);
@@ -4754,6 +4756,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->address = msg->address;
         work->requester_pid = msg->requester_pid;
+        work->send_path = msg->send_path;
         work->from_cpu = msg->header.from_cpu;
         queue_work(mapping_wq, (struct work_struct*)work);
     }
@@ -6457,7 +6460,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     unsigned long prot = 0;
     unsigned char started_outside_vma = 0;
     unsigned char did_early_removal = 0;
-    char path[512];
     
     // for perf
     unsigned char pte_provided = 0;
@@ -6532,14 +6534,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     }
 #endif
     
-    if(vma) {
-        if(!vma->vm_file) {
-            path[0] = '\0';
-        }
-
-        //PSPRINTK("working with provided vma: start{%lx}, end{%lx}, path{%s}\n",vma->vm_start,vma->vm_end,path);
-    }
-
     // The vma that's passed in might not always be correct.  find_vma fails by returning the wrong
     // vma when the vma is not present.  How ugly...
     if(vma && (vma->vm_start > address || vma->vm_end <= address)) {
@@ -6575,6 +6569,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         data->mappings[j].sz = 0;
     }
 
+
     // Make data entry visible to handler.
     add_data_entry_to(data,
                       &_mapping_request_data_head_lock,
@@ -6589,6 +6584,18 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
     request.requester_pid = current->pid;
+    request.send_path = vma? 0 : 1; // Optimization, do not bother
+                                    // sending the vma path if a local
+                                    // vma is already installed, since
+                                    // we know that a do_mmap_pgoff will
+                                    // not be needed in this case.
+    // Part of send_path optimization.  Just record the path in the
+    // data structure since we know it in advance, and since the
+    // resolving kernel instance is no longer responsible for providing
+    // it in this case.
+    if(!request.send_path && vma->vm_file) {
+        d_path(&vma->vm_file->f_path,data->path,sizeof(data->path));
+    }
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     mapping_request_send_start = native_read_tsc();
