@@ -3577,7 +3577,12 @@ changed_can_be_cow:
         response.path[0] = '\0';
 
         // Handle case where vma was present but no pte.
-        if(vma) {
+        // Optimization, if no pte, and it is specified not to
+        // send the path, we can instead report that the mapping
+        // was not found at all.  This will result in sending a 
+        // nonpresent_mapping_response_t, which is much smaller
+        // than a mapping_response_t.
+        if(vma && w->send_path) {
             //PSPRINTK("But vma present\n");
             found_vma = 1;
             response.present = 1;
