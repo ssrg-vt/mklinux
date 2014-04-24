@@ -14,7 +14,7 @@
 
 #include <linux/smp.h>
 #include <linux/cpu.h>
-//#include <linux/cpumask.h>
+#include <linux/cpumask.h>
 
 
 #include <linux/kthread.h>
@@ -24,12 +24,13 @@
 #include <linux/pcn_kmsg.h>
 #include <linux/delay.h>
 #include <linux/string.h>
+#include <linux/jhash.h>
 #include <linux/cpufreq.h>
 
 #include <popcorn/cpuinfo.h>
 #include <linux/bootmem.h>
 #include <popcorn/remote_pfn.h>
-//#include <linux/multikernel.h>
+
 
 extern unsigned long orig_boot_params;
 #define max_nodes 1 << 8
@@ -66,6 +67,17 @@ early_param("kernel_init", popcorn_kernel_init);
 /*
  *  Variables
  */
+
+
+typedef enum allVendors {
+	    AuthenticAMD,
+	    GenuineIntel,
+	    unknown
+} vendor;
+
+
+
+
 static int wait_cpu_list = -1;
 
 static DECLARE_WAIT_QUEUE_HEAD( wq_cpu);
@@ -339,14 +351,27 @@ void popcorn_init(void)
 	printk("POP_INIT:Virt add : 0x%p --- shm kernel id address: 0x%lx\n",token_bucket,bucket_phys_addr);
 	}
 
-	/*int apicid, apicid_1;
-    for (i = 0; i < NR_CPUS; i++) {
-	apicid_1 = per_cpu(x86_bios_cpu_apicid, i);
-	apicid = apic->cpu_present_to_apicid(i);
-	printk("POP_INIT: The CPU is not present in the current present_mask (OK to continue), apicid = %d, apicid_1 = %d\n", apicid, apicid_1);
-    }*/
+
+	int cnt=0;
+	int vendor_id=0;
+	printk("POP_INIT:first_online_node{%d} cpumask_first{%d} \n",first_online_node,cpumask_first(cpu_present_mask));
+	struct cpuinfo_x86 *c = &boot_cpu_data;
+	
+
+	if(!strcmp(((const char *) c->x86_vendor_id),((const char *)"AuthenticAMD"))){
+		vendor amd = AuthenticAMD;
+		vendor_id = amd;
+	}
+	else if(!strcmp(((const char *) c->x86_vendor_id),((const char *) "GenuineIntel"))){
+		vendor intel = GenuineIntel;
+		vendor_id = intel;
+	}
+	printk("POP_INIT:vendor{%s} cpufam{%d} model{%u} cpucnt{%d} jhas{%u}\n",c->x86_vendor_id[0] ? c->x86_vendor_id : "unknown",c->x86,c->x86_model,vendor_id, jhash_2words((u32)vendor_id,cpumask_first(cpu_present_mask), JHASH_INITVAL));
+	
+	
 	Kernel_Id=smp_processor_id();;
-    printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
+
+    	printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
     printk("POP_INIT: kernel start add is 0x%lx",kernel_start_addr);
     printk("POP_INIT:max_low_pfn id is 0x%lx\n",PFN_PHYS(max_low_pfn));
     printk("POP_INIT:min_low_pfn id is 0x%lx\n",PFN_PHYS(min_low_pfn));

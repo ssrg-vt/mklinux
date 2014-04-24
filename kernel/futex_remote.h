@@ -8,13 +8,13 @@
 #ifndef FUTEX_REMOTE_H_
 #define FUTEX_REMOTE_H_
 
+union futex_key;
 
 
 #define _FUTEX_HASHBITS (CONFIG_BASE_SMALL ? 4 : 8)
 
 #define FLAGS_SHARED		0x01
 #define FLAGS_DESTROY		0x100
-
 
 /*
  * Priority Inheritance state:
@@ -93,18 +93,25 @@ struct futex_q * query_q(struct task_struct *t);
 
 
 int
-get_futex_key_remote(u32 __user *uaddr, int fshared, union futex_key *key, int rw);
-int
-get_set_remote_key(u32 __user *uaddr, unsigned int val, int fshared, union futex_key *key, int rw);
+get_set_remote_key(u32 __user *uaddr, unsigned int val, int fshared, union futex_key *key, int rw, unsigned int fn_flag,u32 bitset);
 
-int remote_futex_wakeup(u32 __user *uaddr,unsigned int flags, int nr_wake, u32 bitset,union futex_key *key ,int rflag );
+int remote_futex_wakeup(u32 __user  *uaddr,unsigned int flags, int nr_wake, u32 bitset,union futex_key *key, int rflag,
+		unsigned int fn_flags, u32 __user *uaddr2,  int nr_requeue, int cmpval);
 
 extern struct futex_hash_bucket futex_queues[1<<_FUTEX_HASHBITS];
 
 extern void get_futex_key_refs(union futex_key *key);
 
 extern int
-futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset);
+futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset,unsigned int fn_flags);
+
+extern int futex_requeue(u32 __user *uaddr1, unsigned int flags,
+			 u32 __user *uaddr2, int nr_wake, int nr_requeue,
+			 u32 *cmpval, int requeue_pi,unsigned int fn_flags);
+extern int futex_wake_op(u32 __user *uaddr1, unsigned int flags, u32 __user *uaddr2,
+	      int nr_wake, int nr_wake2, int op,unsigned int fn_flags);
+extern int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
+		      ktime_t *abs_time, u32 bitset, unsigned int fn_flag);
 
 extern const struct futex_q futex_q_init ;
 
@@ -117,26 +124,14 @@ extern void wake_futex(struct futex_q *q);
 extern void put_futex_key(union futex_key *key);
 extern void __unqueue_futex(struct futex_q *q);
 
+pte_t *do_page_walk(unsigned long address);
 
-/*
-struct _global_futex_key {
-	unsigned int address;
-	int pid[10];
-	struct list_head list_member;
-};
+int find_kernel_for_pfn(unsigned long addr, struct list_head *head);
 
-//typedef struct _global_futex_key _global_futex_key_t;
-struct kernel_robust_list_head * add_key(int pid,int address, struct list_head *head) ;
-
-_global_futex_key_t * find_key(int address, struct list_head *head);
-int find_and_delete_key(int address, struct list_head *head) ;*/
 
 int get_futex_value_locked(u32 *dest, u32 __user *from);
 
 extern struct list_head fq_head;
-
-
-
 
 struct kernel_robust_list {
 	struct kernel_robust_list *next;
@@ -150,7 +145,16 @@ struct kernel_robust_list_head {
 
 	struct kernel_robust_list  *list_op_pending;
 };
+// for fn_flags
+#define FLAGS_WAKECALL		64
+#define FLAGS_REQCALL		128
+#define FLAGS_WAKEOPCALL	256
 
+#define FLAGS_SYSCALL		8
+#define FLAGS_REMOTECALL	16
+#define FLAGS_ORIGINCALL	32
+
+extern struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr);
 
 
 #endif /* FUTEX_REMOTE_H_ */
