@@ -4008,7 +4008,7 @@ found:
 
     if(to_munmap != NULL) {
         //PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
-        do_mprotect(NULL,to_munmap,start,len,prot,0);
+        do_mprotect(NULL,to_munmap->mm,start,len,prot,0);
         //current->enable_distributed_munmap = 0;
         //do_munmap(to_munmap->mm, start, len);
         //current->enable_distributed_munmap = 1;
