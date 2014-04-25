@@ -3977,9 +3977,10 @@ done:
 
     if(mm_to_munmap) {
         PS_DOWN_WRITE(&mm_to_munmap->mmap_sem);
-        current->enable_distributed_munmap = 0;
-        do_munmap(mm_to_munmap, start, len);
-        current->enable_distributed_munmap = 1;
+        do_mprotect(task,start,len,prot,0);
+        //current->enable_distributed_munmap = 0;
+        //do_munmap(mm_to_munmap, start, len);
+        //current->enable_distributed_munmap = 1;
         PS_UP_WRITE(&mm_to_munmap->mmap_sem);
     }
 
