@@ -6711,7 +6711,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 */                current->enable_distributed_munmap = 1;
                 current->enable_do_mmap_pgoff_hook = 1;
             } else {
-                unsigned char used_existing;
+                //unsigned char used_existing;
                 PSPRINTK("opening file to map\n");
                 is_anonymous = 0;
 
@@ -6725,13 +6725,13 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     data->path[9] = '\0';
                 }
                
-                if(vma && vma->vm_file) {
-                    used_existing = 0;
-                    f = vma->vm_file;
-                } else {
-                    used_existing = 1;
+                //if(vma && vma->vm_file) {
+                //    used_existing = 0;
+                //    f = fget(fileno(vma->vm_file));
+                //} else {
+                //    used_existing = 1;
                     f = filp_open(data->path, (data->vm_flags & VM_SHARED)? O_RDWR:O_RDONLY, 0);
-                }
+                //}
 
                 if(f) {
                     PSPRINTK("mapping file %s, %lx, %lx, %lx\n",data->path,
@@ -6756,11 +6756,11 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     current->enable_distributed_munmap = 1;
                     current->enable_do_mmap_pgoff_hook = 1;
 
-                    if(used_existing) {
-
-                    } else {
+                    //if(used_existing) {
+                    //    fput(f);
+                    //} else {
                         filp_close(f,NULL);
-                    }
+                    //}
                 }
             }
             if(err != data->vaddr_start) {
