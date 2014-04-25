@@ -3982,6 +3982,7 @@ done:
         //do_munmap(mm_to_munmap, start, len);
         //current->enable_distributed_munmap = 1;
         PS_UP_WRITE(&mm_to_munmap->mmap_sem);
+        goto early_exit;
     }
 
     // munmap the specified region in any saved mm's as well.
@@ -4013,7 +4014,7 @@ found:
         PS_UP_WRITE(&to_munmap->mm->mmap_sem);
     }
 
-    
+early_exit: 
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MPROTECT_RESPONSE;
     response.header.prio = PCN_KMSG_PRIO_NORMAL;
