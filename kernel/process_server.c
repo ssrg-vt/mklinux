@@ -591,7 +591,7 @@ struct _mapping_request {
     int tgroup_home_id;         // 4
     int requester_pid;          // 4
     unsigned long address;      // 8
-    char send_path;             // 1
+    char need_vma;              // 1
                                 // ---
                                 // 21 -> 39 bytes of padding needed
     char pad[39];
@@ -619,13 +619,13 @@ typedef struct _thread_group_exited_notification thread_group_exited_notificatio
  */
 struct _mapping_response {
     struct pcn_kmsg_hdr header;
-    int tgroup_home_cpu;        
-    int tgroup_home_id; 
-    int requester_pid;
-    unsigned char present;      
-    unsigned char from_saved_mm;
-    unsigned long address;      
-    unsigned long vaddr_start;
+    int tgroup_home_cpu;                                    // 4 
+    int tgroup_home_id;                                     // 4
+    int requester_pid;                                      // 4
+    unsigned char present;                                  // 1
+    unsigned char from_saved_mm;                            // 1
+    unsigned long address;                                  // 8
+    unsigned long vaddr_start;                              // 8
     unsigned long vaddr_size;
     contiguous_physical_mapping_t mappings[MAX_MAPPINGS];
     pgprot_t prot;              
@@ -870,7 +870,7 @@ typedef struct {
     int tgroup_home_id;
     int requester_pid;
     unsigned long address;
-    char send_path;
+    char need_vma;
     int from_cpu;
 } mapping_request_work_t;
 
@@ -3528,7 +3528,7 @@ changed_can_be_cow:
             response.vaddr_size = vma->vm_end - vma->vm_start;
             response.prot = vma->vm_page_prot;
             response.vm_flags = vma->vm_flags;
-            if(vma->vm_file == NULL || !w->send_path) {
+            if(vma->vm_file == NULL || !w->need_vma) {
                 response.path[0] = '\0';
             } else {    
          
@@ -3582,7 +3582,7 @@ changed_can_be_cow:
         // was not found at all.  This will result in sending a 
         // nonpresent_mapping_response_t, which is much smaller
         // than a mapping_response_t.
-        if(vma && w->send_path) {
+        if(vma && w->need_vma) {
             //PSPRINTK("But vma present\n");
             found_vma = 1;
             response.present = 1;
@@ -3590,7 +3590,7 @@ changed_can_be_cow:
             response.vaddr_size = vma->vm_end - vma->vm_start;
             response.prot = vma->vm_page_prot;
             response.vm_flags = vma->vm_flags;
-             if(vma->vm_file == NULL || !w->send_path) {
+             if(vma->vm_file == NULL || !w->need_vma) {
                  response.path[0] = '\0';
              } else {    
                  plpath = d_path(&vma->vm_file->f_path,lpath,512);
@@ -4761,7 +4761,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->address = msg->address;
         work->requester_pid = msg->requester_pid;
-        work->send_path = msg->send_path;
+        work->need_vma = msg->need_vma;
         work->from_cpu = msg->header.from_cpu;
         queue_work(mapping_wq, (struct work_struct*)work);
     }
@@ -6589,16 +6589,16 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     request.tgroup_home_cpu = current->tgroup_home_cpu;
     request.tgroup_home_id  = current->tgroup_home_id;
     request.requester_pid = current->pid;
-    request.send_path = vma? 0 : 1; // Optimization, do not bother
+    request.need_vma = vma? 0 : 1; // Optimization, do not bother
                                     // sending the vma path if a local
                                     // vma is already installed, since
                                     // we know that a do_mmap_pgoff will
                                     // not be needed in this case.
-    // Part of send_path optimization.  Just record the path in the
+    // Part of need_vma optimization.  Just record the path in the
     // data structure since we know it in advance, and since the
     // resolving kernel instance is no longer responsible for providing
     // it in this case.
-    if(!request.send_path && vma->vm_file) {
+    if(!request.need_vma && vma->vm_file) {
         d_path(&vma->vm_file->f_path,data->path,sizeof(data->path));
     }
 
@@ -6709,6 +6709,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 */                current->enable_distributed_munmap = 1;
                 current->enable_do_mmap_pgoff_hook = 1;
             } else {
+                unsigned char used_existing;
                 PSPRINTK("opening file to map\n");
                 is_anonymous = 0;
 
@@ -6721,8 +6722,15 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                 if( !strncmp( "/dev/zero (deleted)", data->path, strlen("/dev/zero (deleted)")+1 )) {
                     data->path[9] = '\0';
                 }
-                
-                f = filp_open(data->path, (data->vm_flags & VM_SHARED)? O_RDWR:O_RDONLY, 0);
+               
+                if(vma && vma->vm_file) {
+                    used_existing = 0;
+                    f = vma->vm_file;
+                } else {
+                    used_existing = 1;
+                    f = filp_open(data->path, (data->vm_flags & VM_SHARED)? O_RDWR:O_RDONLY, 0);
+                }
+
                 if(f) {
                     PSPRINTK("mapping file %s, %lx, %lx, %lx\n",data->path,
                             data->vaddr_start, 
@@ -6745,7 +6753,12 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     current->enable_distributed_munmap = 1;
                     current->enable_do_mmap_pgoff_hook = 1;
-                    filp_close(f,NULL);
+
+                    if(used_existing) {
+
+                    } else {
+                        filp_close(f,NULL);
+                    }
                 }
             }
             if(err != data->vaddr_start) {
