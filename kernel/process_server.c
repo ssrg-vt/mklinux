@@ -1052,7 +1052,7 @@ static void dump_stk(struct thread_struct* thread, unsigned long stack_ptr);
 int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
                unsigned long address, pte_t *page_table, pmd_t *pmd,
                spinlock_t *ptl, pte_t orig_pte);
-int do_mprotect(struct task_struct* task, unsigned long start, size_t len, unsigned long prot, int do_remote);
+int do_mprotect(struct task_struct* task, struct mm_struct* mm, unsigned long start, size_t len, unsigned long prot, int do_remote);
 #ifndef PROCESS_SERVER_USE_KMOD
 extern int exec_mmap(struct mm_struct* mm);
 extern void start_remote_thread(struct pt_regs* regs);
@@ -3976,12 +3976,12 @@ done:
     read_unlock(&tasklist_lock);
 
     if(mm_to_munmap) {
-        PS_DOWN_WRITE(&mm_to_munmap->mmap_sem);
-        do_mprotect(task,start,len,prot,0);
+        //PS_DOWN_WRITE(&mm_to_munmap->mmap_sem);
+        do_mprotect(task,mm_to_munmap,start,len,prot,0);
         //current->enable_distributed_munmap = 0;
         //do_munmap(mm_to_munmap, start, len);
         //current->enable_distributed_munmap = 1;
-        PS_UP_WRITE(&mm_to_munmap->mmap_sem);
+        //PS_UP_WRITE(&mm_to_munmap->mmap_sem);
         goto early_exit;
     }
 
@@ -4007,11 +4007,12 @@ found:
     PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
     if(to_munmap != NULL) {
-        PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
-        current->enable_distributed_munmap = 0;
-        do_munmap(to_munmap->mm, start, len);
-        current->enable_distributed_munmap = 1;
-        PS_UP_WRITE(&to_munmap->mm->mmap_sem);
+        //PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
+        do_mprotect(NULL,to_munmap,start,len,prot,0);
+        //current->enable_distributed_munmap = 0;
+        //do_munmap(to_munmap->mm, start, len);
+        //current->enable_distributed_munmap = 1;
+        //PS_UP_WRITE(&to_munmap->mm->mmap_sem);
     }
 
 early_exit: 
