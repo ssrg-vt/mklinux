@@ -598,7 +598,12 @@ struct _mapping_request {
     char need_vma;              // 1
                                 // ---
                                 // 21 -> 39 bytes of padding needed
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long send_time;
+    char pad[31];
+#else
     char pad[39];
+#endif
 
 } __attribute__((packed)) __attribute__((aligned(64)));
 
@@ -635,6 +640,9 @@ struct _mapping_response {
     pgprot_t prot;              
     unsigned long vm_flags;     
     unsigned long pgoff;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long send_time;
+#endif
     char path[512]; // save to last so we can cut
                     // off data when possible.
 };
@@ -648,13 +656,18 @@ typedef struct _mapping_response mapping_response_t;
  */
 struct _nonpresent_mapping_response {
     struct pcn_kmsg_hdr header;
-    int tgroup_home_cpu;        // 4
-    int tgroup_home_id;         // 4
-    int requester_pid;            // 4
-    unsigned long address;      // 8
-                                // ---
-                                // 20 -> 40 bytes of padding needed
+    int tgroup_home_cpu;            // 4
+    int tgroup_home_id;             // 4
+    int requester_pid;              // 4
+    unsigned long address;          // 8
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long send_time;   // 8
+                                    // ---
+                                    // 28 -> 32 bytes of padding needed
+    char pad[32];
+#else
     char pad[40];
+#endif
 
 } __attribute__((packed)) __attribute__((aligned(64)));
 typedef struct _nonpresent_mapping_response nonpresent_mapping_response_t;
@@ -1105,6 +1118,8 @@ typedef enum _proc_data_index{
     PS_PROC_DATA_MAPPING_POST_WAIT_TIME_RESUME,
     PS_PROC_DATA_MAPPING_REQUEST_SEND_TIME,
     PS_PROC_DATA_MAPPING_RESPONSE_SEND_TIME,
+    PS_PROC_DATA_MAPPING_REQUEST_DELIVERY_TIME,
+    PS_PROC_DATA_MAPPING_RESPONSE_DELIVERY_TIME,
     PS_PROC_DATA_MAPPING_REQUEST_PROCESSING_TIME,
     PS_PROC_DATA_BREAK_COW_TIME,
     PS_PROC_DATA_FAULT_PROCESSING_TIME,
@@ -3609,6 +3624,7 @@ changed_can_be_cow:
     if(response.present) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
         mapping_response_send_time_start = native_read_tsc();
+        response.send_time = mapping_response_send_time_start;
 #endif
         DO_UNTIL_SUCCESS(pcn_kmsg_send_long(w->from_cpu,
                             (struct pcn_kmsg_long_message*)(&response),
@@ -3631,6 +3647,7 @@ changed_can_be_cow:
         nonpresent_response.address = w->address;
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
         mapping_response_send_time_start = native_read_tsc();
+        nonpresent_response.send_time = mapping_response_send_time_start;
 #endif
 
         DO_UNTIL_SUCCESS(pcn_kmsg_send(w->from_cpu,(struct pcn_kmsg_message*)(&nonpresent_response)));
@@ -4534,6 +4551,9 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
     nonpresent_mapping_response_t* msg = (nonpresent_mapping_response_t*)inc_msg;
     mapping_request_data_t* data;
     unsigned long lockflags1,lockflags2;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long received_time = native_read_tsc();
+#endif
 
     //PSPRINTK("%s: entered\n",__func__);
 
@@ -4549,6 +4569,11 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
         //printk("%s: ERROR null mapping request data\n",__func__);
         goto exit;
     }
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MAPPING_RESPONSE_DELIVERY_TIME,
+                        received_time - msg->send_time);
+#endif
 
     PSPRINTK("Nonpresent mapping response received for %lx from %d\n",
             msg->address,
@@ -4588,6 +4613,9 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     unsigned char data_paddr_present = 0;
     unsigned char response_paddr_present = 0;
     int i = 0;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long received_time = native_read_tsc();
+#endif
 
     PSPRINTK("%s: entered\n",__func__);
 
@@ -4609,6 +4637,10 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
     if(data == NULL) {
         goto out_err;
     }
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MAPPING_RESPONSE_DELIVERY_TIME,
+                        received_time - msg->send_time);
+#endif
 
     spin_lock_irqsave(&data->lock,lockflags);
 
@@ -4775,6 +4807,11 @@ out_err:
 static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
     mapping_request_t* msg = (mapping_request_t*)inc_msg;
     mapping_request_work_t* work;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long receive_time = native_read_tsc();
+    PS_PROC_DATA_TRACK(PS_PROC_DATA_MAPPING_REQUEST_DELIVERY_TIME,
+                        receive_time - msg->send_time);
+#endif
 
     int perf = PERF_MEASURE_START(&perf_handle_mapping_request);
 
@@ -6647,6 +6684,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         i = objPtr->_data._processor;
 #endif
         // Send the request to this cpu.
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+        request.send_time = native_read_tsc();
+#endif
         s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&request));
         if(!s) {
             // A successful send operation, increase the number
@@ -7776,6 +7816,10 @@ static void proc_data_init() {
                 "Mapping request send time");
         sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_RESPONSE_SEND_TIME].name,
                 "Mapping response send time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_REQUEST_DELIVERY_TIME].name,
+                "Mapping request delivery time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_RESPONSE_DELIVERY_TIME].name,
+                "Mapping response delivery time");
         sprintf(_proc_data[j][PS_PROC_DATA_BREAK_COW_TIME].name,
                 "Break cow time");
         sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_REQUEST_PROCESSING_TIME].name,
