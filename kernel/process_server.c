@@ -389,6 +389,10 @@ typedef struct _mapping_request_data {
     unsigned long pgoff;
     spinlock_t lock;
     char path[512];
+    struct semaphore wait_sem;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    unsigned long long wait_time_concluded;
+#endif
 } mapping_request_data_t;
 
 /**
@@ -1098,10 +1102,11 @@ typedef struct _proc_data {
 } proc_data_t;
 typedef enum _proc_data_index{
     PS_PROC_DATA_MAPPING_WAIT_TIME=0,
+    PS_PROC_DATA_MAPPING_POST_WAIT_TIME_RESUME,
     PS_PROC_DATA_MAPPING_REQUEST_SEND_TIME,
     PS_PROC_DATA_MAPPING_RESPONSE_SEND_TIME,
-    PS_PROC_DATA_BREAK_COW_TIME,
     PS_PROC_DATA_MAPPING_REQUEST_PROCESSING_TIME,
+    PS_PROC_DATA_BREAK_COW_TIME,
     PS_PROC_DATA_FAULT_PROCESSING_TIME,
     PS_PROC_DATA_ADJUSTED_PERMISSIONS,
     PS_PROC_DATA_NEWVMA_ANONYMOUS_PTE,
@@ -4550,6 +4555,14 @@ static int handle_nonpresent_mapping_response(struct pcn_kmsg_message* inc_msg) 
             msg->header.from_cpu);
 
     spin_lock_irqsave(&data->lock,lockflags1);
+
+ #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    if (!data->wait_time_concluded && (data->responses+1) == data->expected_responses) {
+        data->wait_time_concluded = native_read_tsc();
+    }
+    mb();
+#endif
+
     data->responses++;
     spin_unlock_irqrestore(&data->lock,lockflags1);
 exit:
@@ -4729,18 +4742,26 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 
 
 out:
+
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    if (!data->wait_time_concluded && ((data->responses+1) == data->expected_responses) || data->complete) {
+        data->wait_time_concluded = native_read_tsc();
+    }
+    mb();
+#endif
     // Account for this cpu's response.
     data->responses++;
 
     PSPRINTK("After changing data\n");
     dump_mapping_request_data(data);
-    
+
+
     spin_unlock_irqrestore(&data->lock,lockflags);
 
 out_err:
 
     spin_unlock_irqrestore(&_mapping_request_data_head_lock,lockflags2);
-    
+
     pcn_kmsg_free_msg(inc_msg);
 
     return 0;
@@ -6570,6 +6591,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     data->tgroup_home_cpu = current->tgroup_home_cpu;
     data->tgroup_home_id = current->tgroup_home_id;
     data->requester_pid = current->pid;
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+    data->wait_time_concluded = 0;
+#endif
     for(j = 0; j < MAX_MAPPINGS; j++) {
         data->mappings[j].present = 0;
         data->mappings[j].vaddr = 0;
@@ -6665,6 +6689,10 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     mapping_wait_end = native_read_tsc();
     PS_PROC_DATA_TRACK(PS_PROC_DATA_MAPPING_WAIT_TIME,
                         mapping_wait_end - mapping_wait_start);
+    if(data->wait_time_concluded) {
+        PS_PROC_DATA_TRACK(PS_PROC_DATA_MAPPING_POST_WAIT_TIME_RESUME,
+                            mapping_wait_end - data->wait_time_concluded);
+    }
 #endif
     
     // Handle successful response.
@@ -7742,6 +7770,8 @@ static void proc_data_init() {
     for(j = 0; j < NR_CPUS; j++) {
         sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_WAIT_TIME].name,
                 "Mapping wait time");
+        sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_POST_WAIT_TIME_RESUME].name,
+                "Time after all mapping responses are in and when the fault handler resumes");
         sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_REQUEST_SEND_TIME].name,
                 "Mapping request send time");
         sprintf(_proc_data[j][PS_PROC_DATA_MAPPING_RESPONSE_SEND_TIME].name,
