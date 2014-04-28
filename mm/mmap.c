@@ -950,6 +950,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	int error;
     unsigned long ret,a;
 	unsigned long reqprot = prot;
+    int original_enable_distributed_munmap = current->enable_distributed_munmap;
 
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC?
@@ -1011,6 +1012,8 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
             process_server_acquire_page_lock(a);
         }
     }
+
+    current->enable_distributed_munmap = 0;
 
 	/* Do simple checking here so the lower-level routines won't have
 	 * to. we assume access permissions have been handled by the open
@@ -1122,9 +1125,13 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
     /*
      * Multikernel do_mmap_pgoff hook
      */
+    current->enable_distributed_munmap = original_enable_distributed_munmap;
     process_server_do_mmap_pgoff(file, addr, len, flags, vm_flags, pgoff);
+    current->enable_distributed_munmap = 0;
 
     ret = mmap_region(file, addr, len, flags, vm_flags, pgoff);
+
+    current->enable_distributed_munmap = original_enable_distributed_munmap;
 
     if(current->enable_do_mmap_pgoff_hook) {
         for(a = addr & PAGE_MASK; a < addr + len; a += PAGE_SIZE) {
@@ -1135,6 +1142,9 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	return ret;
 
 err:
+
+    current->enable_distributed_munmap = original_enable_distributed_munmap;
+
     if(current->enable_do_mmap_pgoff_hook) {
         for(a = addr & PAGE_MASK; a < addr + len; a += PAGE_SIZE) {
             process_server_release_page_lock(a);
