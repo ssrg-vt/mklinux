@@ -1091,7 +1091,7 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	}
 
     vma = find_vma(mm, address);
-    if(-1 == process_server_acquire_fault_lock(address)) return;
+    if(-1 == process_server_acquire_page_lock(address)) return;
 	if (unlikely(!vma)) {
         // Multikernel - see if another member of the thread group has mapped
         // this vma
@@ -1212,6 +1212,6 @@ good_area:
 	up_read(&mm->mmap_sem);
 
 ret:
-    process_server_release_fault_lock(address);
+    process_server_release_page_lock(address);
     return;
 }

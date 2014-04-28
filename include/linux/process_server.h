@@ -63,6 +63,6 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task);
 unsigned long process_server_do_mmap_pgoff(struct file *file, unsigned long addr,
                                            unsigned long len, unsigned long prot,
                                            unsigned long flags, unsigned long pgoff);
-int process_server_acquire_fault_lock(unsigned long address);
-void process_server_release_fault_lock(unsigned long address);
+int process_server_acquire_page_lock(unsigned long address);
+void process_server_release_page_lock(unsigned long address);
 #endif // _PROCESS_SERVER_H

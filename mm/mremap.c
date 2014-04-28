@@ -432,6 +432,24 @@ unsigned long do_mremap(unsigned long addr,
 	struct vm_area_struct *vma;
 	unsigned long ret = -EINVAL;
 	unsigned long charged = 0;
+    int original_enable_distributed_munmap = current->enable_distributed_munmap;
+    unsigned long a;
+    current->enable_distributed_munmap = 0;
+
+    // This is kind of tricky.  We have to lock the old range
+    // and the new range.
+    // Also, recursion is not an issue for mremap, since 
+    // process_server does not ever attempt to do distributed
+    // remaps, it is naughty, and just does a distributed
+    // munmap (except locally).  That should probably change.
+    for(a = addr & PAGE_MASK; a < addr + old_len; a += PAGE_SIZE) {
+        process_server_acquire_page_lock(a);
+    }
+    for(a = new_addr & PAGE_MASK; 
+            a < new_addr + new_len && 
+            (a < addr || a >= addr + old_len); a += PAGE_SIZE) {
+        process_server_acquire_page_lock(a);
+    }
 
 	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
 		goto out;
@@ -533,12 +551,26 @@ unsigned long do_mremap(unsigned long addr,
          * operation, and notify all remotes of a munmap.  If they want to access
          * the new space, they will fault and re-acquire the mapping.
          */
+        current->enable_distributed_munmap = original_enable_distributed_munmap;
         process_server_do_munmap(mm, addr, old_len);
+        current->enable_distributed_munmap = 0;
 
 	}
 out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
+
+    for(a = addr & PAGE_MASK; a < addr + old_len; a += PAGE_SIZE) {
+        process_server_release_page_lock(a);
+    }
+    for(a = new_addr & PAGE_MASK; 
+            a < new_addr + new_len && 
+            (a < addr || a >= addr + old_len); a += PAGE_SIZE) {
+        process_server_release_page_lock(a);
+    }
+
+    current->enable_distributed_munmap = original_enable_distributed_munmap;
+
 	return ret;
 }
 

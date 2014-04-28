@@ -243,6 +243,7 @@ int do_mprotect(struct task_struct* task, struct mm_struct* mm, unsigned long st
 	struct vm_area_struct *vma, *prev;
     struct mm_struct* task_mm = task? task->mm : mm;
 	int error = -EINVAL;
+    unsigned long a;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
@@ -258,6 +259,12 @@ int do_mprotect(struct task_struct* task, struct mm_struct* mm, unsigned long st
 		return -ENOMEM;
 	if (!arch_validate_prot(prot))
 		return -EINVAL;
+
+    if(do_remote) {
+        for(a = start & PAGE_MASK; a < start + len; a += PAGE_SIZE) {
+            process_server_acquire_page_lock(a);
+        }
+    }
 
 	reqprot = prot;
 	/*
@@ -339,6 +346,12 @@ out:
      */
     if(!error && do_remote && task) {
         process_server_do_mprotect(task,start,len,prot);
+    }
+
+    if(do_remote) {
+        for(a = start & PAGE_MASK; a < start + len; a += PAGE_SIZE) {
+            process_server_release_page_lock(a);
+        }
     }
 
 	return error;

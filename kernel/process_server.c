@@ -123,7 +123,7 @@ unsigned long get_percpu_old_rsp(void);
 #define PROCESS_SERVER_MM_DATA_TYPE 6
 #define PROCESS_SERVER_THREAD_COUNT_REQUEST_DATA_TYPE 7
 #define PROCESS_SERVER_MPROTECT_DATA_TYPE 8
-#define PROCESS_SERVER_FAULT_BARRIER_DATA_TYPE 9
+#define PROCESS_SERVER_LAMPORT_BARRIER_DATA_TYPE 9
 #define PROCESS_SERVER_STATS_DATA_TYPE 10
 
 /**
@@ -259,11 +259,11 @@ static void perf_init(void) {
 /**
  * Enums
  */
-typedef enum _fault_barrier_state {
-    FAULT_ENTRY_OWNED,
-    FAULT_ENTRY_OFF_LIMITS,
-    FAULT_ENTRY_CONTENDED
-} fault_barrier_state_t;
+typedef enum _lamport_barrier_state {
+    LAMPORT_ENTRY_OWNED,
+    LAMPORT_ENTRY_OFF_LIMITS,
+    LAMPORT_ENTRY_CONTENDED
+} lamport_barrier_state_t;
 
 
 /**
@@ -445,7 +445,7 @@ typedef struct _mprotect_data {
     spinlock_t lock;
 } mprotect_data_t;
 
-typedef struct _fault_barrier_entry {
+typedef struct _lamport_barrier_entry {
     data_header_t header;
     unsigned long long timestamp;
     int responses;
@@ -456,16 +456,16 @@ typedef struct _fault_barrier_entry {
     unsigned long long lock_acquired;
     unsigned long long lock_released;
 #endif
-} fault_barrier_entry_t;
+} lamport_barrier_entry_t;
 
-typedef struct _fault_barrier_queue {
+typedef struct _lamport_barrier_queue {
     data_header_t header;
     int tgroup_home_cpu;
     int tgroup_home_id;
     unsigned long address;
     unsigned long long active_timestamp;
-    fault_barrier_entry_t* queue;
-} fault_barrier_queue_t;
+    lamport_barrier_entry_t* queue;
+} lamport_barrier_queue_t;
 
 /**
  * This message is sent to a remote cpu in order to 
@@ -788,7 +788,7 @@ typedef struct _back_migration {
 /**
  *
  */
-struct _fault_barrier_request{
+struct _lamport_barrier_request{
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;            // 4
     int tgroup_home_id;             // 4
@@ -798,12 +798,12 @@ struct _fault_barrier_request{
                                     // 16 -> 44 bytes of padding needed
     char pad[44];
 } __attribute__((packed)) __attribute__((aligned(64)));
-typedef struct _fault_barrier_request fault_barrier_request_t;
+typedef struct _lamport_barrier_request lamport_barrier_request_t;
 
 /**
  *
  */
-struct _fault_barrier_response {
+struct _lamport_barrier_response {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;            // 4
     int tgroup_home_id;             // 4
@@ -813,12 +813,12 @@ struct _fault_barrier_response {
                                     // 32 -> 28 bytes of padding needed
     char pad[28];
 } __attribute__((packed)) __attribute__((aligned(64)));
-typedef struct _fault_barrier_response fault_barrier_response_t;
+typedef struct _lamport_barrier_response lamport_barrier_response_t;
 
 /**
  *
  */
-struct _fault_barrier_release {
+struct _lamport_barrier_release {
     struct pcn_kmsg_hdr header;
     int tgroup_home_cpu;            // 4
     int tgroup_home_id;             // 4
@@ -828,7 +828,7 @@ struct _fault_barrier_release {
                                     // 32 -> 28 bytes of padding needed
     char pad[28];
 } __attribute__((packed)) __attribute__((aligned(64)));
-typedef struct _fault_barrier_release fault_barrier_release_t;
+typedef struct _lamport_barrier_release lamport_barrier_release_t;
 
 /**
  *
@@ -1015,7 +1015,7 @@ typedef struct {
     int from_cpu;
     unsigned long address;
     unsigned long long timestamp;
-} fault_barrier_request_work_t;
+} lamport_barrier_request_work_t;
 
 /**
  *
@@ -1027,7 +1027,7 @@ typedef struct {
     int from_cpu;
     unsigned long address;
     unsigned long long timestamp;
-} fault_barrier_response_work_t;
+} lamport_barrier_response_work_t;
 
 
 /**
@@ -1040,7 +1040,7 @@ typedef struct {
     int from_cpu;
     unsigned long address;
     unsigned long long timestamp
-} fault_barrier_release_work_t;
+} lamport_barrier_release_work_t;
 
 /**
  * Prototypes
@@ -1099,8 +1099,8 @@ DEFINE_SPINLOCK(_vma_id_lock);                    // Lock for _vma_id
 DEFINE_SPINLOCK(_clone_request_id_lock);          // Lock for _clone_request_id
 struct rw_semaphore _import_sem;
 DEFINE_SPINLOCK(_remap_lock);
-data_header_t* _fault_barrier_queue_head = NULL;
-DEFINE_SPINLOCK(_fault_barrier_queue_lock);
+data_header_t* _lamport_barrier_queue_head = NULL;
+DEFINE_SPINLOCK(_lamport_barrier_queue_lock);
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
 struct proc_dir_entry *_proc_entry = NULL;
@@ -2535,11 +2535,11 @@ static stats_query_data_t* find_stats_query_data(pid_t pid) {
 /**
  * Queue lock must already be held.
  */
-static void add_fault_entry_to_queue(fault_barrier_entry_t* entry,
-                                     fault_barrier_queue_t* queue)
+static void add_fault_entry_to_queue(lamport_barrier_entry_t* entry,
+                                     lamport_barrier_queue_t* queue)
 {
-    fault_barrier_entry_t* curr = queue->queue;
-    fault_barrier_entry_t* last = NULL;
+    lamport_barrier_entry_t* curr = queue->queue;
+    lamport_barrier_entry_t* last = NULL;
 
     entry->header.next = NULL;
     entry->header.prev = NULL;
@@ -2570,7 +2570,7 @@ static void add_fault_entry_to_queue(fault_barrier_entry_t* entry,
             return;
         }
         last = curr;
-        curr = (fault_barrier_entry_t*)curr->header.next;
+        curr = (lamport_barrier_entry_t*)curr->header.next;
     }
 
     // It must be the last entry then
@@ -2587,16 +2587,16 @@ static void add_fault_entry_to_queue(fault_barrier_entry_t* entry,
  * @return Either a data entry, or NULL if one does 
  * not exist that satisfies the parameter requirements.
  */
-static fault_barrier_queue_t* find_fault_barrier_queue(int tgroup_home_cpu, 
+static lamport_barrier_queue_t* find_lamport_barrier_queue(int tgroup_home_cpu, 
         int tgroup_home_id, unsigned long address) {
 
     data_header_t* curr = NULL;
-    fault_barrier_queue_t* entry = NULL;
-    fault_barrier_queue_t* ret = NULL;
+    lamport_barrier_queue_t* entry = NULL;
+    lamport_barrier_queue_t* ret = NULL;
 
-    curr = (data_header_t*)_fault_barrier_queue_head;
+    curr = (data_header_t*)_lamport_barrier_queue_head;
     while(curr) {
-        entry = (fault_barrier_queue_t*)curr;
+        entry = (lamport_barrier_queue_t*)curr;
         if(entry->tgroup_home_cpu == tgroup_home_cpu &&
            entry->tgroup_home_id == tgroup_home_id &&
            entry->address == address) {
@@ -2609,12 +2609,12 @@ static fault_barrier_queue_t* find_fault_barrier_queue(int tgroup_home_cpu,
     return ret;
 }
 
-static fault_barrier_entry_t* find_fault_barrier_entry(int cpu,
+static lamport_barrier_entry_t* find_lamport_barrier_entry(int cpu,
         int tgroup_home_cpu,
         int tgroup_home_id, 
         unsigned long address)
 {
-    fault_barrier_queue_t* queue = find_fault_barrier_queue(
+    lamport_barrier_queue_t* queue = find_lamport_barrier_queue(
                                         tgroup_home_cpu,
                                         tgroup_home_id,
                                         address);
@@ -2622,8 +2622,8 @@ static fault_barrier_entry_t* find_fault_barrier_entry(int cpu,
         goto exit;
     }
 
-    fault_barrier_entry_t* curr = NULL;
-    fault_barrier_entry_t* ret = NULL;
+    lamport_barrier_entry_t* curr = NULL;
+    lamport_barrier_entry_t* ret = NULL;
     curr = queue->queue;
     while(curr) {
         if(curr->cpu == cpu) {
@@ -4165,12 +4165,12 @@ exit:
 /**
  *
  */
-void process_fault_barrier_request(struct work_struct* work) {
-    fault_barrier_request_work_t* w = (fault_barrier_request_work_t*)work;
-    fault_barrier_response_t* response = NULL;
-    fault_barrier_entry_t* entry = kmalloc(sizeof(fault_barrier_entry_t),
+void process_lamport_barrier_request(struct work_struct* work) {
+    lamport_barrier_request_work_t* w = (lamport_barrier_request_work_t*)work;
+    lamport_barrier_response_t* response = NULL;
+    lamport_barrier_entry_t* entry = kmalloc(sizeof(lamport_barrier_entry_t),
                                             GFP_KERNEL);
-    fault_barrier_queue_t* queue = NULL;
+    lamport_barrier_queue_t* queue = NULL;
 
     entry->timestamp = w->timestamp;
     entry->responses = 0;
@@ -4178,32 +4178,32 @@ void process_fault_barrier_request(struct work_struct* work) {
     entry->allow_responses = 0;
     entry->cpu = w->from_cpu;
 
-    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+    PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
 
     // Find queue, if it exists
-    queue = find_fault_barrier_queue(w->tgroup_home_cpu,
+    queue = find_lamport_barrier_queue(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
                                      w->address);
 
     // If we cannot find one, make one
     if(!queue) {
-        queue = kmalloc(sizeof(fault_barrier_queue_t),GFP_ATOMIC);
+        queue = kmalloc(sizeof(lamport_barrier_queue_t),GFP_ATOMIC);
         queue->tgroup_home_cpu = w->tgroup_home_cpu;
         queue->tgroup_home_id  = w->tgroup_home_id;
         queue->address = w->address;
         queue->queue = NULL;
         queue->active_timestamp = 0;
-        add_data_entry_to(queue,NULL,&_fault_barrier_queue_head);
+        add_data_entry_to(queue,NULL,&_lamport_barrier_queue_head);
     }
 
     // Add entry to queue
     add_fault_entry_to_queue(entry,queue);
 
-    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+    PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
 
     // Reply
-    response = kmalloc(sizeof(fault_barrier_response_t),GFP_KERNEL);
-    response->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RESPONSE;
+    response = kmalloc(sizeof(lamport_barrier_response_t),GFP_KERNEL);
+    response->header.type = PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_RESPONSE;
     response->header.prio = PCN_KMSG_PRIO_NORMAL;
     response->tgroup_home_cpu = w->tgroup_home_cpu;
     response->tgroup_home_id  = w->tgroup_home_id;
@@ -4218,13 +4218,13 @@ void process_fault_barrier_request(struct work_struct* work) {
 /**
  *
  */
-void process_fault_barrier_response(struct work_struct* work) {
-    fault_barrier_response_work_t* w = (fault_barrier_response_work_t*)work;
-    fault_barrier_queue_t* queue = NULL;
-    fault_barrier_entry_t* curr = NULL;
+void process_lamport_barrier_response(struct work_struct* work) {
+    lamport_barrier_response_work_t* w = (lamport_barrier_response_work_t*)work;
+    lamport_barrier_queue_t* queue = NULL;
+    lamport_barrier_entry_t* curr = NULL;
 
-    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
-    queue = find_fault_barrier_queue(w->tgroup_home_cpu,
+    PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
+    queue = find_lamport_barrier_queue(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
                                      w->address);
 
@@ -4243,7 +4243,7 @@ void process_fault_barrier_response(struct work_struct* work) {
     }
 accounted_for:
 
-    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+    PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
 
     kfree(work);
 }
@@ -4253,16 +4253,16 @@ accounted_for:
 /**
  *
  */
-void process_fault_barrier_release(struct work_struct* work) {
-    fault_barrier_release_work_t* w = (fault_barrier_release_work_t*)work;
-    fault_barrier_queue_t* queue = NULL;
-    fault_barrier_entry_t* curr = NULL;
+void process_lamport_barrier_release(struct work_struct* work) {
+    lamport_barrier_release_work_t* w = (lamport_barrier_release_work_t*)work;
+    lamport_barrier_queue_t* queue = NULL;
+    lamport_barrier_entry_t* curr = NULL;
     int free_curr = 0;
     int free_queue = 0;
 
-    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+    PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
 
-    queue = find_fault_barrier_queue(w->tgroup_home_cpu,
+    queue = find_lamport_barrier_queue(w->tgroup_home_cpu,
                                      w->tgroup_home_id,
                                      w->address);
 
@@ -4281,13 +4281,13 @@ void process_fault_barrier_release(struct work_struct* work) {
             curr = curr->header.next;
         }
         if(!queue->queue) {
-            remove_data_entry_from(queue,&_fault_barrier_queue_head);
+            remove_data_entry_from(queue,&_lamport_barrier_queue_head);
             free_queue = 1;
         }
     }
 
 
-    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+    PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
 
     if(free_curr) kfree(curr);
     if(free_queue) kfree(queue);
@@ -5289,13 +5289,13 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg) {
     return 0;
 }
 
-static int handle_fault_barrier_request(struct pcn_kmsg_message* inc_msg) {
-    fault_barrier_request_t* msg = (fault_barrier_request_t*)inc_msg;
-    fault_barrier_request_work_t* work;
+static int handle_lamport_barrier_request(struct pcn_kmsg_message* inc_msg) {
+    lamport_barrier_request_t* msg = (lamport_barrier_request_t*)inc_msg;
+    lamport_barrier_request_work_t* work;
 
-    work = kmalloc(sizeof(fault_barrier_request_work_t),GFP_ATOMIC);
+    work = kmalloc(sizeof(lamport_barrier_request_work_t),GFP_ATOMIC);
     if(work) {
-        INIT_WORK( (struct work_struct*)work, process_fault_barrier_request);
+        INIT_WORK( (struct work_struct*)work, process_lamport_barrier_request);
         work->tgroup_home_cpu = msg->tgroup_home_cpu;
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->from_cpu = msg->header.from_cpu;
@@ -5309,13 +5309,13 @@ static int handle_fault_barrier_request(struct pcn_kmsg_message* inc_msg) {
     return 0;
 }
 
-static int handle_fault_barrier_response(struct pcn_kmsg_message* inc_msg) {
-    fault_barrier_response_t* msg = (fault_barrier_response_t*)inc_msg;
-    fault_barrier_response_work_t* work;
+static int handle_lamport_barrier_response(struct pcn_kmsg_message* inc_msg) {
+    lamport_barrier_response_t* msg = (lamport_barrier_response_t*)inc_msg;
+    lamport_barrier_response_work_t* work;
 
-    work = kmalloc(sizeof(fault_barrier_response_work_t),GFP_ATOMIC);
+    work = kmalloc(sizeof(lamport_barrier_response_work_t),GFP_ATOMIC);
     if(work) {
-        INIT_WORK( (struct work_struct*)work, process_fault_barrier_response);
+        INIT_WORK( (struct work_struct*)work, process_lamport_barrier_response);
         work->tgroup_home_cpu = msg->tgroup_home_cpu;
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->from_cpu = msg->header.from_cpu;
@@ -5329,13 +5329,13 @@ static int handle_fault_barrier_response(struct pcn_kmsg_message* inc_msg) {
     return 0;
 }
 
-static int handle_fault_barrier_release(struct pcn_kmsg_message* inc_msg) {
-    fault_barrier_release_t* msg = (fault_barrier_release_t*)inc_msg;
-    fault_barrier_release_work_t* work;
+static int handle_lamport_barrier_release(struct pcn_kmsg_message* inc_msg) {
+    lamport_barrier_release_t* msg = (lamport_barrier_release_t*)inc_msg;
+    lamport_barrier_release_work_t* work;
 
-    work = kmalloc(sizeof(fault_barrier_release_work_t),GFP_ATOMIC);
+    work = kmalloc(sizeof(lamport_barrier_release_work_t),GFP_ATOMIC);
     if(work) {
-        INIT_WORK( (struct work_struct*)work, process_fault_barrier_release);
+        INIT_WORK( (struct work_struct*)work, process_lamport_barrier_release);
         work->tgroup_home_cpu = msg->tgroup_home_cpu;
         work->tgroup_home_id  = msg->tgroup_home_id;
         work->from_cpu = msg->header.from_cpu;
@@ -7441,10 +7441,10 @@ void process_server_do_return_disposition(void) {
 /**
  *
  */
-int process_server_acquire_fault_lock(unsigned long address) {
-    fault_barrier_request_t* request = NULL;
-    fault_barrier_entry_t* entry = NULL;
-    fault_barrier_queue_t* queue = NULL;
+int process_server_acquire_page_lock(unsigned long address) {
+    lamport_barrier_request_t* request = NULL;
+    lamport_barrier_entry_t* entry = NULL;
+    lamport_barrier_queue_t* queue = NULL;
     int i,s,already_resolving = 0;
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     unsigned long long end_time = 0;
@@ -7454,21 +7454,21 @@ int process_server_acquire_fault_lock(unsigned long address) {
 
     if(!current->tgroup_distributed) return 0;
  
-    request = kmalloc(sizeof(fault_barrier_request_t), GFP_KERNEL);
-    entry = kmalloc(sizeof(fault_barrier_entry_t),GFP_KERNEL);
+    request = kmalloc(sizeof(lamport_barrier_request_t), GFP_KERNEL);
+    entry = kmalloc(sizeof(lamport_barrier_entry_t),GFP_KERNEL);
   
     BUG_ON(!request);
     BUG_ON(!entry);
 
     address &= PAGE_MASK;
-    request->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_REQUEST;
+    request->header.type = PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_REQUEST;
     request->header.prio = PCN_KMSG_PRIO_NORMAL;
     request->address = address;
     request->tgroup_home_cpu = current->tgroup_home_cpu;
     request->tgroup_home_id =  current->tgroup_home_id;
 
     // Grab the fault barrier queue lock
-    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+    PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
     
     // create timestamp
     request->timestamp = native_read_tsc();
@@ -7481,25 +7481,25 @@ int process_server_acquire_fault_lock(unsigned long address) {
     entry->cpu = _cpu;
    
     // find queue if it exists
-    queue = find_fault_barrier_queue(current->tgroup_home_cpu,
+    queue = find_lamport_barrier_queue(current->tgroup_home_cpu,
                                      current->tgroup_home_id,
                                      address);
     // If no queue exists, create one
     if(!queue) {
-        queue = kmalloc(sizeof(fault_barrier_queue_t),GFP_ATOMIC);
+        queue = kmalloc(sizeof(lamport_barrier_queue_t),GFP_ATOMIC);
         queue->tgroup_home_cpu = current->tgroup_home_cpu;
         queue->tgroup_home_id  = current->tgroup_home_id;
         queue->address = address;
         queue->active_timestamp = 0;
         queue->queue = NULL;
-        add_data_entry_to(queue,NULL,&_fault_barrier_queue_head);
+        add_data_entry_to(queue,NULL,&_lamport_barrier_queue_head);
     } else {
         // find the fault entry in the queue.  If there is one for
         // this CPU, then we do not want to add another.  Instead,
         // we will wait for it to complete, then return directly
         // to userspace, since another thread is going to handle 
         // the mapping.
-        fault_barrier_entry_t* search_entry = find_fault_barrier_entry(_cpu,
+        lamport_barrier_entry_t* search_entry = find_lamport_barrier_entry(_cpu,
                                                 current->tgroup_home_cpu,
                                                 current->tgroup_home_id,
                                                 address);
@@ -7513,7 +7513,7 @@ int process_server_acquire_fault_lock(unsigned long address) {
     if(!already_resolving)
         add_fault_entry_to_queue(entry,queue);
 
-    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+    PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
 
     // Here is where we wait for an existing critical region on
     // this virtual page to wait.  This is for the case where
@@ -7521,13 +7521,13 @@ int process_server_acquire_fault_lock(unsigned long address) {
     // page that this thread needs, or is waiting to.
     if(already_resolving) kfree(entry);
     while(already_resolving) {
-        fault_barrier_entry_t* search_entry;
-        PS_SPIN_LOCK(&_fault_barrier_queue_lock);
-        search_entry = find_fault_barrier_entry(_cpu,
+        lamport_barrier_entry_t* search_entry;
+        PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
+        search_entry = find_lamport_barrier_entry(_cpu,
                                 current->tgroup_home_cpu,
                                 current->tgroup_home_id,
                                 address);
-        PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+        PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
         if(search_entry) schedule();
         else return -1;
     }
@@ -7548,25 +7548,25 @@ int process_server_acquire_fault_lock(unsigned long address) {
 
     // Wait until everybody has responded
     while(1) {
-        PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+        PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
         if(entry->expected_responses == entry->responses) {
-            PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+            PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
             goto responses_acquired;
         }
-        PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+        PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
         schedule();
     }
 responses_acquired:
 
     // Wait until "entry" is at the front of the queue
     while(1) {
-        PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+        PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
         if(entry == queue->queue) {
             queue->active_timestamp = entry->timestamp;
-            PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+            PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
             goto lock_acquired;
         }
-        PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+        PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
         schedule();
     } 
 lock_acquired:
@@ -7583,10 +7583,10 @@ lock_acquired:
 /**
  *
  */
-void process_server_release_fault_lock(unsigned long address) {
-    fault_barrier_queue_t* queue = NULL;
-    fault_barrier_release_t* release = NULL;
-    fault_barrier_entry_t* entry = NULL;
+void process_server_release_page_lock(unsigned long address) {
+    lamport_barrier_queue_t* queue = NULL;
+    lamport_barrier_release_t* release = NULL;
+    lamport_barrier_entry_t* entry = NULL;
     int i;
     int free_queue = 0;
     unsigned long long timestamp = 0;
@@ -7595,13 +7595,13 @@ void process_server_release_fault_lock(unsigned long address) {
     if(!current->tgroup_distributed) return;
 
     address &= PAGE_MASK;
-    release = kmalloc(sizeof(fault_barrier_release_t),
+    release = kmalloc(sizeof(lamport_barrier_release_t),
                         GFP_KERNEL);
 
-    PS_SPIN_LOCK(&_fault_barrier_queue_lock);
+    PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
 
     // find queue
-    queue = find_fault_barrier_queue(current->tgroup_home_cpu,
+    queue = find_lamport_barrier_queue(current->tgroup_home_cpu,
                                      current->tgroup_home_id,
                                      address);
 
@@ -7629,18 +7629,18 @@ void process_server_release_fault_lock(unsigned long address) {
 
         // garbage collect the queue if necessary
         if(!queue->queue) {
-            remove_data_entry_from(queue,&_fault_barrier_queue_head);
+            remove_data_entry_from(queue,&_lamport_barrier_queue_head);
             free_queue = 1;
         }
     
     }
 
-    PS_SPIN_UNLOCK(&_fault_barrier_queue_lock);
+    PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
 
     if(free_queue) kfree(queue);
 
     // Send release
-    release->header.type = PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RELEASE;
+    release->header.type = PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_RELEASE;
     release->header.prio = PCN_KMSG_PRIO_NORMAL;
     release->tgroup_home_cpu = current->tgroup_home_cpu;
     release->tgroup_home_id  = current->tgroup_home_id;
@@ -8013,12 +8013,12 @@ static int __init process_server_init(void) {
             handle_mprotect_response);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_BACK_MIGRATION,
             handle_back_migration);
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_REQUEST,
-            handle_fault_barrier_request);
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RESPONSE,
-            handle_fault_barrier_response);
-    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_FAULT_BARRIER_RELEASE,
-            handle_fault_barrier_release);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_REQUEST,
+            handle_lamport_barrier_request);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_RESPONSE,
+            handle_lamport_barrier_response);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_RELEASE,
+            handle_lamport_barrier_release);
 
     // stats messages
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
