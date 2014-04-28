@@ -96,6 +96,11 @@ struct workqueue_struct *messaging_wq;
 #define PCN_WARN(...) ;
 #define PCN_ERROR(...) printk(__VA_ARGS__)
 
+unsigned long long total_sleep_win_put = 0;
+unsigned int sleep_win_put_count = 0;
+unsigned long long total_sleep_win_get = 0;
+unsigned int sleep_win_get_count = 0;
+
 struct pcn_kmsg_hdr log_receive[LOGLEN];
 struct pcn_kmsg_hdr log_send[LOGLEN];
 int log_r_index=0;
@@ -128,6 +133,7 @@ static inline int win_put(struct pcn_kmsg_window *win,
 			  int no_block) 
 {
 	unsigned long ticket;
+    unsigned long long sleep_start;
 
 	/* if we can't block and the queue is already really long, 
 	   return EAGAIN */
@@ -148,6 +154,7 @@ static inline int win_put(struct pcn_kmsg_window *win,
 	/* spin until there's a spot free for me */
 	//while (win_inuse(win) >= RB_SIZE) {}
 	//if(ticket>=PCN_KMSG_RBUF_SIZE){
+    sleep_start = native_read_tsc();
 		while((win->buffer[ticket%PCN_KMSG_RBUF_SIZE].last_ticket != ticket-PCN_KMSG_RBUF_SIZE)) {
 			//pcn_cpu_relax();
 			//msleep(1);
@@ -156,6 +163,8 @@ static inline int win_put(struct pcn_kmsg_window *win,
 			//pcn_cpu_relax();
 			//msleep(1);
 		}
+    total_sleep_win_put += native_read_tsc() - sleep_start;
+    sleep_win_put_count++;
 	//}
 	/* insert item */
 	memcpy(&win->buffer[ticket%PCN_KMSG_RBUF_SIZE].payload,
@@ -189,6 +198,7 @@ static inline int win_get(struct pcn_kmsg_window *win,
 			  struct pcn_kmsg_reverse_message **msg) 
 {
 	struct pcn_kmsg_reverse_message *rcvd;
+    unsigned long long sleep_start;
 
 	if (!win_inuse(win)) {
 
@@ -203,13 +213,15 @@ static inline int win_get(struct pcn_kmsg_window *win,
 	rcvd =(struct pcn_kmsg_reverse_message*) &(win->buffer[win->tail % PCN_KMSG_RBUF_SIZE]);
 	//KMSG_PRINTK("%s: Ready bit: %u\n", __func__, rcvd->hdr.ready);
 
-
+    sleep_start = native_read_tsc();
 	while (!rcvd->ready) {
 
 		//pcn_cpu_relax();
 		//msleep(1);
 
 	}
+    total_sleep_win_get += native_read_tsc() - sleep_start;
+    sleep_win_get_count++;
 
 	// barrier here?
 	pcn_barrier();
@@ -458,6 +470,15 @@ static int pcn_read_proc(char *page, char **start, off_t off, int count, int *eo
 {
 	char *p= page;
     int len, i, idx;
+
+    p += sprintf(p, "Sleep in win_put[total,count,avg] = [%llx,%lx,%llx]\n",
+                    total_sleep_win_put,
+                    sleep_win_put_count,
+                    sleep_win_put_count? total_sleep_win_put/sleep_win_put_count:0);
+    p += sprintf(p, "Sleep in win_get[total,count,avg] = [%llx,%lx,%llx]\n",
+                    total_sleep_win_get,
+                    sleep_win_get_count,
+                    sleep_win_get_count? total_sleep_win_get/sleep_win_get_count:0);
 
 	p += sprintf(p, "messages get: %ld\n", msg_get);
         p += sprintf(p, "messages put: %ld\n", msg_put);
