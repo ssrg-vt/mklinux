@@ -442,6 +442,7 @@ unsigned long do_mremap(unsigned long addr,
     // process_server does not ever attempt to do distributed
     // remaps, it is naughty, and just does a distributed
     // munmap (except locally).  That should probably change.
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     for(a = addr & PAGE_MASK; a < addr + old_len; a += PAGE_SIZE) {
         process_server_acquire_page_lock(a);
     }
@@ -450,6 +451,7 @@ unsigned long do_mremap(unsigned long addr,
             (a < addr || a >= addr + old_len); a += PAGE_SIZE) {
         process_server_acquire_page_lock(a);
     }
+#endif
 
 	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
 		goto out;
@@ -559,7 +561,7 @@ unsigned long do_mremap(unsigned long addr,
 out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
-
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     for(a = addr & PAGE_MASK; a < addr + old_len; a += PAGE_SIZE) {
         process_server_release_page_lock(a);
     }
@@ -568,6 +570,7 @@ out:
             (a < addr || a >= addr + old_len); a += PAGE_SIZE) {
         process_server_release_page_lock(a);
     }
+#endif
 
     current->enable_distributed_munmap = original_enable_distributed_munmap;
 

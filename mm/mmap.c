@@ -1007,11 +1007,13 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	if (addr & ~PAGE_MASK)
 		return addr;
 
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook) {
         for(a = addr & PAGE_MASK; a < addr + len; a += PAGE_SIZE) {
             process_server_acquire_page_lock(a);
         }
     }
+#endif
 
     current->enable_distributed_munmap = 0;
 
@@ -1132,24 +1134,26 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
     ret = mmap_region(file, addr, len, flags, vm_flags, pgoff);
 
     current->enable_distributed_munmap = original_enable_distributed_munmap;
-
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook) {
         for(a = addr & PAGE_MASK; a < addr + len; a += PAGE_SIZE) {
             process_server_release_page_lock(a);
         }
     }
+#endif
 
 	return ret;
 
 err:
 
     current->enable_distributed_munmap = original_enable_distributed_munmap;
-
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook) {
         for(a = addr & PAGE_MASK; a < addr + len; a += PAGE_SIZE) {
             process_server_release_page_lock(a);
         }
     }
+#endif
 
     return error;
 }
@@ -2125,11 +2129,13 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	if (vma->vm_start >= end)
 		return 0;
 
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_distributed_munmap) {
         for(a = start & PAGE_MASK; a < start + len; a += PAGE_SIZE) {
             process_server_acquire_page_lock(a);
         }
     }
+#endif
 	
     /*
 	 * If we need to split any vma, do it now to save pain later.
@@ -2199,11 +2205,14 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
     error = 0;
 
 err:
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_distributed_munmap) {
         for(a = start & PAGE_MASK; a < start + len; a += PAGE_SIZE) {
             process_server_release_page_lock(a);
         }
     }
+#endif
+
     return error;
 }
 
