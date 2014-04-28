@@ -3421,6 +3421,9 @@ void process_mapping_request(struct work_struct* work) {
     // Perf start
     int perf = PERF_MEASURE_START(&perf_process_mapping_request);
 
+    current->enable_distributed_munmap = 0;
+    current->enable_do_mmap_pgoff_hook = 0;
+
     //PSPRINTK("%s: entered\n",__func__);
     PSPRINTK("received mapping request from {%d} address{%lx}, cpu{%d}, id{%d}\n",
             w->from_cpu,
@@ -3694,6 +3697,9 @@ changed_can_be_cow:
     } else {
         PERF_MEASURE_STOP(&perf_process_mapping_request,"ERR",perf);
     }
+
+    current->enable_distributed_munmap = 1;
+    current->enable_do_mmap_pgoff_hook = 1;
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     {
