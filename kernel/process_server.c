@@ -3853,6 +3853,9 @@ void process_munmap_request(struct work_struct* work) {
 
     PSPRINTK("%s: entered\n",__func__);
 
+    current->enable_distributed_munmap = 0;
+    current->enable_do_mmap_pgoff_hook = 0;
+
     // munmap the specified region in the specified thread group
     read_lock(&tasklist_lock);
     do_each_thread(g,task) {
@@ -3879,9 +3882,7 @@ done:
 
     if(mm_to_munmap) {
         PS_DOWN_WRITE(&mm_to_munmap->mmap_sem);
-        current->enable_distributed_munmap = 0;
         do_munmap(mm_to_munmap, w->vaddr_start, w->vaddr_size);
-        current->enable_distributed_munmap = 1;
         PS_UP_WRITE(&mm_to_munmap->mmap_sem);
     }
 
@@ -3909,9 +3910,7 @@ found:
 
     if (to_munmap && to_munmap->mm) {
         PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
-        current->enable_distributed_munmap = 0;
         do_munmap(to_munmap->mm, w->vaddr_start, w->vaddr_size);
-        current->enable_distributed_munmap = 1;
         if (to_munmap && to_munmap->mm)
             PS_UP_WRITE(&to_munmap->mm->mmap_sem);
         else
@@ -3933,6 +3932,9 @@ found:
     DO_UNTIL_SUCCESS(pcn_kmsg_send(w->from_cpu,
                         (struct pcn_kmsg_message*)(&response)));
 
+    current->enable_distributed_munmap = 1;
+    current->enable_do_mmap_pgoff_hook = 1;
+    
     kfree(work);
     
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
@@ -3972,7 +3974,10 @@ void process_mprotect_item(struct work_struct* work) {
     unsigned long long total_time;
     unsigned long long start_time = native_read_tsc();
 #endif
-    
+   
+    current->enable_distributed_munmap = 0;
+    current->enable_do_mmap_pgoff_hook = 0;
+
     // Find the task
     read_lock(&tasklist_lock);
     do_each_thread(g,task) {
@@ -3998,12 +4003,7 @@ done:
     read_unlock(&tasklist_lock);
 
     if(mm_to_munmap) {
-        //PS_DOWN_WRITE(&mm_to_munmap->mmap_sem);
         do_mprotect(task,mm_to_munmap,start,len,prot,0);
-        //current->enable_distributed_munmap = 0;
-        //do_munmap(mm_to_munmap, start, len);
-        //current->enable_distributed_munmap = 1;
-        //PS_UP_WRITE(&mm_to_munmap->mmap_sem);
         goto early_exit;
     }
 
@@ -4029,12 +4029,7 @@ found:
     PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
     if(to_munmap != NULL) {
-        //PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
         do_mprotect(NULL,to_munmap->mm,start,len,prot,0);
-        //current->enable_distributed_munmap = 0;
-        //do_munmap(to_munmap->mm, start, len);
-        //current->enable_distributed_munmap = 1;
-        //PS_UP_WRITE(&to_munmap->mm->mmap_sem);
     }
 
 early_exit: 
@@ -4050,6 +4045,9 @@ early_exit:
     DO_UNTIL_SUCCESS(pcn_kmsg_send(w->from_cpu,
                         (struct pcn_kmsg_message*)(&response)));
 
+    current->enable_distributed_munmap = 0;
+    current->enable_do_mmap_pgoff_hook = 0;
+    
     kfree(work);
 
     PERF_MEASURE_STOP(&perf_process_mprotect_item," ",perf);
@@ -6545,6 +6543,9 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
     unsigned long long fault_processing_time = 0;
 #endif
 
+    current->enable_distributed_munmap = 0;
+    current->enable_do_mmap_pgoff_hook = 0;
+
     // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
         goto not_handled_no_perf;
@@ -6757,8 +6758,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
                 is_anonymous = 1;
-                current->enable_distributed_munmap = 0;
-                current->enable_do_mmap_pgoff_hook = 0;
                 // mmap parts that are missing, while leaving the existing
                 // parts untouched.
                 PS_DOWN_WRITE(&current->mm->mmap_sem);
@@ -6776,9 +6775,7 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
 		if ( data->vm_flags & VM_NORESERVE )
 			printk(KERN_ALERT"MAPPING ANONYMOUS %p %p data: %lx vma: %lx {%lx-%lx} ret%lx\n",
 				__func__, data->mappings[i].vaddr, data->mappings[i].paddr, 
-				data->vm_flags, vma?vma->vm_flags:0, vma?vma->vm_start:0, vma?vma->vm_end:0, err);
-*/                current->enable_distributed_munmap = 1;
-                current->enable_do_mmap_pgoff_hook = 1;
+				data->vm_flags, vma?vma->vm_flags:0, vma?vma->vm_start:0, vma?vma->vm_end:0, err);*/
             } else {
                 //unsigned char used_existing;
                 PSPRINTK("opening file to map\n");
@@ -6807,8 +6804,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
-                    current->enable_distributed_munmap = 0;
-                    current->enable_do_mmap_pgoff_hook = 0;
                     // mmap parts that are missing, while leaving the existing
                     // parts untouched.
                     PS_DOWN_WRITE(&current->mm->mmap_sem);
@@ -6822,8 +6817,6 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
                             ((data->vm_flags & VM_SHARED)?MAP_SHARED:MAP_PRIVATE),
                             data->pgoff << PAGE_SHIFT, (data->vm_flags & VM_NORESERVE) ?1:0);
                     PS_UP_WRITE(&current->mm->mmap_sem);
-                    current->enable_distributed_munmap = 1;
-                    current->enable_do_mmap_pgoff_hook = 1;
 
                     //if(used_existing) {
                     //    fput(f);
@@ -6971,6 +6964,9 @@ not_handled:
     } else {
         PERF_MEASURE_STOP(&perf_process_server_try_handle_mm_fault,"test",perf);
     }
+
+    current->enable_distributed_munmap = 1;
+    current->enable_do_mmap_pgoff_hook = 1;
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     fault_processing_time_end = native_read_tsc();
