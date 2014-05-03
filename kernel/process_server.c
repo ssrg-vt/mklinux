@@ -6578,7 +6578,11 @@ int process_server_try_handle_mm_fault(struct mm_struct *mm,
         // should this thing be writable?  if so, set it and exit
         // This is a security hole, and is VERY bad.
         // It will also probably cause problems for genuine COW mappings..
-        if(vma->vm_flags & VM_WRITE && 
+        if(!vma) {
+            vma = find_vma_checked(mm, address & PAGE_MASK);
+        }
+        if(vma && 
+                vma->vm_flags & VM_WRITE && 
                 0 == is_page_writable(mm, vma, address & PAGE_MASK)) {
             PSPRINTK("Touching up write setting\n");
             mk_page_writable(mm,vma,address & PAGE_MASK);

@@ -453,6 +453,18 @@ unsigned long do_mremap(unsigned long addr,
     }
 #endif
 
+    // Pull in all remote mappings so nothing is lost later.
+    for(a = addr & PAGE_MASK; a < addr + old_len; a+= PAGE_SIZE) {
+        struct vm_area_struct *vma_out = NULL;
+        process_server_try_handle_mm_fault(current->mm,
+                                           NULL,
+                                           a,
+                                           NULL,
+                                           &vma_out,
+                                           NULL);
+
+    }
+
 	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
 		goto out;
 
@@ -555,6 +567,7 @@ unsigned long do_mremap(unsigned long addr,
          */
         current->enable_distributed_munmap = original_enable_distributed_munmap;
         process_server_do_munmap(mm, addr, old_len);
+        process_server_do_munmap(mm, new_addr, new_len);
         current->enable_distributed_munmap = 0;
 
 	}
