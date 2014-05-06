@@ -443,13 +443,20 @@ unsigned long do_mremap(unsigned long addr,
     // remaps, it is naughty, and just does a distributed
     // munmap (except locally).  That should probably change.
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
-    for(a = addr & PAGE_MASK; a < addr + old_len; a += PAGE_SIZE) {
-        process_server_acquire_page_lock(a);
+    {
+    unsigned long old_start = addr;
+    unsigned long old_end   = addr + old_len;
+    unsigned long new_start = new_addr;
+    unsigned long new_end   = new_addr + new_len;
+    if(old_end <= new_start || new_end <= old_start) {
+        process_server_acquire_page_lock_range(old_start,old_len);
+        process_server_acquire_page_lock_range(new_start,new_len);
+    } else {
+        unsigned long min_start = old_start < new_start? old_start : new_start;
+        unsigned long max_end   = old_end > new_end? old_end : new_end;
+        process_server_acquire_page_lock_range(min_start,max_end - min_start);
     }
-    for(a = new_addr & PAGE_MASK; 
-            a < new_addr + new_len && 
-            (a < addr || a >= addr + old_len); a += PAGE_SIZE) {
-        process_server_acquire_page_lock(a);
+
     }
 #endif
 
@@ -575,13 +582,20 @@ out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
-    for(a = addr & PAGE_MASK; a < addr + old_len; a += PAGE_SIZE) {
-        process_server_release_page_lock(a);
+    {
+    unsigned long old_start = addr;
+    unsigned long old_end   = addr + old_len;
+    unsigned long new_start = new_addr;
+    unsigned long new_end   = new_addr + new_len;
+    if(old_end <= new_start || new_end <= old_start) {
+        process_server_release_page_lock_range(old_start,old_len);
+        process_server_release_page_lock_range(new_start,new_len);
+    } else {
+        unsigned long min_start = old_start < new_start? old_start : new_start;
+        unsigned long max_end   = old_end > new_end? old_end : new_end;
+        process_server_release_page_lock_range(min_start,max_end - min_start);
     }
-    for(a = new_addr & PAGE_MASK; 
-            a < new_addr + new_len && 
-            (a < addr || a >= addr + old_len); a += PAGE_SIZE) {
-        process_server_release_page_lock(a);
+
     }
 #endif
 

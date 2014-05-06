@@ -262,9 +262,7 @@ int do_mprotect(struct task_struct* task, struct mm_struct* mm, unsigned long st
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(do_remote) {
-        for(a = start & PAGE_MASK; a < start + len; a += PAGE_SIZE) {
-            process_server_acquire_page_lock(a);
-        }
+        process_server_acquire_page_lock_range(start,len);
     }
 #endif
 
@@ -352,9 +350,7 @@ out:
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(do_remote) {
-        for(a = start & PAGE_MASK; a < start + len; a += PAGE_SIZE) {
-            process_server_release_page_lock(a);
-        }
+        process_server_release_page_lock_range(start,len);
     }
 #endif
 

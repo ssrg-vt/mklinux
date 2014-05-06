@@ -26,8 +26,8 @@
 //#define PROCESS_SERVER_USE_KMOD
 #undef PROCESS_SERVER_USE_KMOD
 
-//#define PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
-#undef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+#define PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+//#undef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
 
 /*
  * Migration hook.
@@ -67,5 +67,7 @@ unsigned long process_server_do_mmap_pgoff(struct file *file, unsigned long addr
                                            unsigned long len, unsigned long prot,
                                            unsigned long flags, unsigned long pgoff);
 int process_server_acquire_page_lock(unsigned long address);
+int process_server_acquire_page_lock_range(unsigned long address, size_t sz);
 void process_server_release_page_lock(unsigned long address);
+void process_server_release_page_lock_range(unsigned long address, size_t sz);
 #endif // _PROCESS_SERVER_H

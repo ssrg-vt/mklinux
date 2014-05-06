@@ -992,7 +992,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
             int fault_ret;
             struct vm_area_struct* vma_out = NULL;
             addr = get_unmapped_area(file, NULL, len, pgoff, flags);
-            while(-1 == process_server_acquire_page_lock(addr));
+            process_server_acquire_page_lock_range(addr,len);
             fault_ret = process_server_try_handle_mm_fault(mm,
                                                            NULL,
                                                            addr,
@@ -1001,7 +1001,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
                                                            0);
             if(fault_ret) pserv_conflict = 1;
             else pserv_conflict = 0;    
-            process_server_release_page_lock(addr);
+            process_server_release_page_lock_range(addr,len);
         } while(pserv_conflict);
     }
 	if (addr & ~PAGE_MASK)
@@ -1009,9 +1009,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook) {
-        for(a = addr & PAGE_MASK; a < addr + len; a += PAGE_SIZE) {
-            process_server_acquire_page_lock(a);
-        }
+        process_server_acquire_page_lock_range(addr,len);
     }
 #endif
 
@@ -1136,9 +1134,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
     current->enable_distributed_munmap = original_enable_distributed_munmap;
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook) {
-        for(a = addr & PAGE_MASK; a < addr + len; a += PAGE_SIZE) {
-            process_server_release_page_lock(a);
-        }
+        process_server_release_page_lock_range(addr,len);
     }
 #endif
 
@@ -2131,9 +2127,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_distributed_munmap) {
-        for(a = start & PAGE_MASK; a < start + len; a += PAGE_SIZE) {
-            process_server_acquire_page_lock(a);
-        }
+        process_server_acquire_page_lock_range(start,len);
     }
 #endif
 	
@@ -2207,9 +2201,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 err:
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_distributed_munmap) {
-        for(a = start & PAGE_MASK; a < start + len; a += PAGE_SIZE) {
-            process_server_release_page_lock(a);
-        }
+        process_server_release_page_lock_range(start,len);
     }
 #endif
 
