@@ -1145,9 +1145,7 @@ err:
     current->enable_distributed_munmap = original_enable_distributed_munmap;
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook) {
-        for(a = addr & PAGE_MASK; a < addr + len; a += PAGE_SIZE) {
-            process_server_release_page_lock(a);
-        }
+        process_server_release_page_lock_range(addr,len);
     }
 #endif
 

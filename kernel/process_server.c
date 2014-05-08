@@ -4476,7 +4476,7 @@ void process_lamport_barrier_release_range(struct work_struct* work) {
     for(i = 0; i < page_count; i++) {
         register_lamport_barrier_release(w->tgroup_home_cpu,
                                          w->tgroup_home_id,
-                                         w->address,
+                                         w->address + (i * PAGE_SIZE),
                                          w->timestamp,
                                          w->from_cpu);
     }
