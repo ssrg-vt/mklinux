@@ -992,7 +992,9 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
             int fault_ret;
             struct vm_area_struct* vma_out = NULL;
             addr = get_unmapped_area(file, NULL, len, pgoff, flags);
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
             process_server_acquire_page_lock_range(addr,len);
+#endif
             fault_ret = process_server_try_handle_mm_fault(mm,
                                                            NULL,
                                                            addr,
@@ -1001,7 +1003,9 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
                                                            0);
             if(fault_ret) pserv_conflict = 1;
             else pserv_conflict = 0;    
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
             process_server_release_page_lock_range(addr,len);
+#endif
         } while(pserv_conflict);
     }
 	if (addr & ~PAGE_MASK)
