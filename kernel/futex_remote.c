@@ -444,10 +444,14 @@ static int handle_remote_futex_token_request(struct pcn_kmsg_message* inc_msg) {
 	getKey(msg->uaddr, &sk,p->tgroup_home_id);
 	_spin_value *value = hashspinkey(&sk);
 	// update the local value status to has ticket
-	cmpxchg(&value->_st, INITIAL_STATE, HAS_TICKET);
+	//cmpxchg(&value->_st, INITIAL_STATE, HAS_TICKET);
+	if(value->_st == INITIAL_STATE){
+		value->_st = HAS_TICKET;
+	}
 	FRPRINTK(KERN_ALERT"%s:  value {%d}  p->tgroup_home_id{%d}  \n",
 					__func__, value->_st,p->tgroup_home_id);
 	smp_wmb();
+	set_task_state(p,TASK_INTERRUPTIBLE);
 	wake_up_process(p);
 
 	put_task_struct(p);
@@ -499,7 +503,7 @@ void global_worher_fn(struct work_struct* work) {
 					}
 				}
 				else
-					FRPRINTK(KERN_ALERT"%s: --current msg pid \n", __func__,msg->pid);
+					FRPRINTK(KERN_ALERT"%s:wake--current msg pid{%} token_status{%d} \n", __func__,msg->pid,token_status);
 
 				if(msg->ticket == 1 && value->_st == HAS_TICKET){ //for wake the replication and release lock are done using same request
 
@@ -599,7 +603,7 @@ mm_exit:
 					goto retry;
 					}
 				}else
-					FRPRINTK(KERN_ALERT"%s: --current msg pid \n", __func__,msg->pid);
+					FRPRINTK(KERN_ALERT"%s:wait --current msg pid{%d} token_status{%d} \n", __func__,msg->pid,token_status);
 
 				if(msg->ticket == 1 && value->_st == HAS_TICKET){// perform replication activity
 				tsk = gettask(msg->origin_pid, msg->tghid);

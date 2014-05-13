@@ -20,9 +20,14 @@ union futex_key; //forward decl for futex_remote.h
 #define FLAGS_REMOTECALL	16
 #define FLAGS_ORIGINCALL	32
 
+#define GET_TOKEN 0
+#define WAIT_RELEASE_TOKEN 2
+
  _spin_value spin_bucket[1<<_SPIN_HASHBITS];
 
  _global_value global_bucket[1<<_SPIN_HASHBITS];
+
+ DEFINE_SPINLOCK(_pcn_lock);
 
  extern struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr);
  extern pte_t *do_page_walk(unsigned long address);
@@ -74,6 +79,7 @@ int global_spinlock(unsigned long uaddr,unsigned int fn_flag){
 	int localticket_value;
 	int res = 0;
 	int cpu=0;
+	unsigned int flgs;
 
 	 struct spin_key sk;
 	 spin_key_init(&sk);
@@ -97,11 +103,11 @@ int global_spinlock(unsigned long uaddr,unsigned int fn_flag){
 	request->flags = 0;
 	request->uaddr =(unsigned long)uaddr;
 	request->pid = current->pid;
-	request->origin_pid = current->origin_pid;
+	//request->origin_pid = current->origin_pid;
 	request->tghid = current->tgroup_home_id;
 	request->fn_flags = fn_flag;
 
-	request->ticket = 0; //set the request has no ticket
+	request->ticket = GET_TOKEN; //set the request has no ticket
 
 	unsigned long pfn;
 	pte_t pte;
@@ -110,30 +116,31 @@ int global_spinlock(unsigned long uaddr,unsigned int fn_flag){
 	pfn = pte_pfn(pte);
 	printk(KERN_ALERT"%s pte pfn : 0x{%lx}\n",__func__,pfn);
 
+	spin_lock_irqsave(&_pcn_lock,flgs);
 	//TODO: for error check need to sequentialize
 	localticket_value = xadd_sync(&value->_ticket, 1);
     if(1){
     	//pcn_kmsg and wait
     	if (vma->vm_flags & VM_PFNMAP) {
-    			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1)
-    					{
-    				printk(KERN_ALERT"%s: sending to origin pfn cpu: 0x{%d}\n",__func__,cpu);
+    		printk(KERN_ALERT"%s: sending to origin pfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,request->ticket);
+    			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
     				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
     			}
-    		} else if ((fn_flag & FLAGS_ORIGINCALL)) {
-    			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1)
-    					{
-    				printk(KERN_ALERT"%s: sending to origin pfn cpu: 0x{%d}\n",__func__,cpu);
+    		} else { //if ((fn_flag & FLAGS_ORIGINCALL)) {
+    			printk(KERN_ALERT"%s: sending to origin pfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,request->ticket);
+    			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
     				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
     			}
     		}
+    	spin_unlock_irqrestore(&_pcn_lock,flgs);
     	//TODO: add to local lrq as the head
-    	printk(KERN_ALERT"%s:goto sleep after ticket request: 0x{%d}\n",__func__,cpu);
 
     	//check if it has acquired valid ticket
     	while(!(value->_st == HAS_TICKET)){
+    		printk(KERN_ALERT"%s:goto sleep after ticket request: 0x{%d}\n",__func__,cpu);
+    		set_task_state(current,TASK_UNINTERRUPTIBLE);
     		schedule();
-    		printk(KERN_ALERT"%s:after wake up process: 0x{%d} {%lx}\n",__func__,cpu,value->_st);
+    		printk(KERN_ALERT"%s:after wake up process: 0x{%d} {%lx} task woken{%d}\n",__func__,cpu,value->_st,current->pid);
     	}
     }
 
@@ -174,11 +181,11 @@ int global_spinunlock(unsigned long uaddr,unsigned int fn_flag){
 		request->flags = 0;
 		request->uaddr =(unsigned long)uaddr;
 		request->pid = current->pid;
-		request->origin_pid = current->origin_pid;
+		//request->origin_pid = current->origin_pid;
 		request->tghid = current->tgroup_home_id;
 		request->fn_flags = fn_flag;
 
-		request->ticket = 2; //set the request to release lock
+		request->ticket = WAIT_RELEASE_TOKEN; //set the request to release lock
 
 		unsigned long pfn;
 		pte_t pte;
@@ -189,23 +196,24 @@ int global_spinunlock(unsigned long uaddr,unsigned int fn_flag){
 
 
 		localticket_value = xadd_sync(&value->_ticket, 1);
-	    if(localticket_value){
+	    if(1){
 	    	//pcn_kmsg and wait
 	    	if (vma->vm_flags & VM_PFNMAP) {
 	    			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1)
 	    					{
-	    				printk(KERN_ALERT"%s: sending to origin pfn cpu: 0x{%d}\n",__func__,cpu);
+	    				printk(KERN_ALERT"%s: sending to origin pfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,request->ticket);
 	    				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
 	    			}
-	    		} else if ((fn_flag & FLAGS_ORIGINCALL)) {
+	    		} else {//if ((fn_flag & FLAGS_ORIGINCALL)) {
 	    			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1)
 	    					{
-	    				printk(KERN_ALERT"%s: sending to origin pfn cpu: 0x{%d}\n",__func__,cpu);
+	    				printk(KERN_ALERT"%s: sending to origin pfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,request->ticket);
 	    				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
 	    			}
 	    		}
 	    	//check if it has acquired valid ticket
-	    	if((value->_st == HAS_TICKET)){
+	    	if((value->_st == HAS_TICKET) && !(value->lock_st)){
+	    		printk(KERN_ALERT"%s: rel lock in remote \n",__func__);
 	    		cmpxchg(&value->_st, HAS_TICKET, INITIAL_STATE);// release lock in remote node
 	    	}
 	    }
@@ -223,13 +231,15 @@ static int __init global_spinlock_init(void)
 		spin_lock_init(&spin_bucket[i]._sp);
 		spin_bucket[i]._st = 0;
 		spin_bucket[i]._ticket = 0;
+		spin_bucket[i].lock_st = 0;
 
 		INIT_LIST_HEAD(&spin_bucket[i]._lrq_head);
 	}
 
 	for (i = 0; i < ARRAY_SIZE(global_bucket); i++) {
-			spin_lock_init(&global_bucket[i].lock);
+			raw_spin_lock_init(&global_bucket[i].lock);
 			global_bucket[i].thread_group_leader = NULL;
+			global_bucket[i].worker_task=NULL;
 			global_bucket[i].global_wq = NULL;
 			plist_head_init(&global_bucket[i]._grq_head);
 			global_bucket[i].free = 0;
@@ -242,7 +252,6 @@ static void __exit global_spinlock_exit(void)
 {
 
 	int i=0;
-
 
 }
 __initcall(global_spinlock_init);

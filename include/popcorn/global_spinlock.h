@@ -3,7 +3,7 @@
 
 #include <linux/workqueue.h>
 #include	<linux/hash.h>
-
+#include <linux/spinlock.h>
 #include "request_data.h"
 
 #define _SPIN_HASHBITS 8
@@ -14,9 +14,9 @@
 #define GLOBAL_STATE 2
 #define HAS_TICKET 3
 
-#define NORMAL_Q_PRIORITY 10
-#define HIGH_Q_PRIORITY 100
-#define HIGH1_Q_PRIORITY 100
+#define NORMAL_Q_PRIORITY 100
+#define HIGH_Q_PRIORITY 10
+#define HIGH1_Q_PRIORITY 50
 
 
 #define sp_hashfn(uaddr, pid)      \
@@ -39,35 +39,42 @@ typedef struct spin_key {
 	int offset;
 } _spin_key;
 
-typedef struct local_request_queue {
+struct local_request_queue {
 	struct task_struct *task;
 	unsigned long _uaddr;
 	struct list_head lrq_member;
-} _local_rq;
+} __attribute__((packed));
+typedef struct local_request_queue _local_rq;
 
-typedef struct global_request_queue {
-	struct plist_node list;
+struct global_request_queue {
+	volatile struct plist_node list;
 	_remote_wakeup_request_t wakeup;
 	_remote_key_request_t wait;
+	int cnt;
 	unsigned int ops:1; //0-wait 1-wake
-	unsigned int token:1; //1
-} _global_rq;
+}__attribute__((packed));
+typedef struct global_request_queue _global_rq;
 
-typedef struct spin_value {
+struct spin_value {
 	spinlock_t _sp;
-	volatile unsigned int _st; //:_BITS_FOR_STATUS;
+	volatile unsigned int _st; //token status
+	volatile unsigned int lock_st; // lock is global or local
 	volatile unsigned long _ticket;
 	struct list_head _lrq_head;
-} _spin_value;
+};
+typedef struct spin_value  _spin_value;
 
-typedef struct global_value {
+struct global_value {
 	spinlock_t lock;
-	struct plist_head _grq_head;
+	volatile struct plist_head _grq_head;
 	struct workqueue_struct *global_wq;
 	struct task_struct *thread_group_leader;
-	char name[32];
+	struct task_struct *worker_task;
+	volatile unsigned int _is_alive;
 	unsigned int free :1;
-} _global_value;
+	char name[32];
+};
+typedef struct global_value _global_value;
 
 
 

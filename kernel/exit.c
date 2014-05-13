@@ -60,6 +60,7 @@
 #include <asm/mmu_context.h>
 
 #include "futex_remote.h"
+#include <popcorn/global_spinlock.h>
 
 static void exit_mm(struct task_struct * tsk);
 
@@ -1004,6 +1005,21 @@ NORET_TYPE void do_exit(long code)
 				current->comm, task_pid_nr(current),
 				preempt_count());
 
+	//cleanup global worker thread.
+	if(tsk->tgroup_distributed){
+	_global_value * gvp = hashgroup(tsk);
+	printk(KERN_INFO "GVP EXISTS{%s} tgid{%d} pid{%d} \n",tsk->comm,tsk->tgroup_home_id,tsk->pid);
+
+	/*if(gvp != NULL){
+		gvp->global_wq = NULL;// create_singlethread_workqueue(gvp->name);
+		gvp->thread_group_leader = NULL;
+		gvp->free = 0;
+		gvp->_is_alive = 0;
+		//wake_up_process((struct task_struct *)gvp->worker_task);
+		gvp->worker_task =NULL;
+	}
+	smp_mb();*/
+	}
 	acct_update_integrals(tsk);
 	/* sync mm's RSS info before statistics gathering */
 	if (tsk->mm)

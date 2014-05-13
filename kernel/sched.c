@@ -5624,7 +5624,7 @@ extern struct list_head rlist_head;
             ret =process_server_do_migration(p,i);
             put_task_struct(p);
             put_online_cpus();
-            printk(KERN_ALERT"sched_setaffinity tsk{%p} state{%d} on run q{%d} RET{%d} current{%s} \n",p,p->state,p->on_rq,ret,current->comm);
+            printk(KERN_ALERT"sched_setaffinity tsk{%d} state{%d} on run q{%d} RET{%d} current{%s} \n",p->pid,p->state,p->on_rq,ret,current->comm);
             schedule(); // this will save us from death
 
             // We are here because of either the task is exiting,

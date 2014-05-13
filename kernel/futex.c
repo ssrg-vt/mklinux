@@ -963,7 +963,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset,unsign
 	unsigned long bp = stack_frame(current,NULL);
 
 
-	FPRINTK(KERN_ALERT " FUTEX_WAKE:entry{%pB} uaddr {%lx} get_user{%d} loaddr{%lx}  lockval{%d} fn_flags{%u}\n",(void*) &bp,uaddr,x,uaddr-1,y,fn_flags);
+	FPRINTK(KERN_ALERT " FUTEX_WAKE:entry{%pB} uaddr {%lx} get_user{%d} loaddr{%lx}  lockval{%d} fn_flags{%d} cpu{%d} \n",(void*) &bp,uaddr,x,uaddr-1,y,fn_flags,smp_processor_id());
 
 	fn_flags |= FLAGS_WAKECALL;
 
@@ -1701,7 +1701,7 @@ global_queue_unlock(struct futex_q *q, struct futex_hash_bucket *hb,unsigned int
 	//release the actual spinlock : Not necessary as we are alone
 	spin_unlock(&hb->lock);
 	//replacing the spin unlock call with global spin unlock
-	global_spinunlock(q->key.private.address,fn_flag);
+	global_spinunlock(q->key.private.address+q->key.private.offset,fn_flag);
 }
 
 /**
@@ -1734,10 +1734,10 @@ static inline void queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
 	plist_node_init(&q->list, prio);
 	plist_add(&q->list, &hb->chain);
 	q->task = current;
-	if(!current->tgroup_distributed)
-		spin_unlock(&hb->lock);
-	else
-		global_spinunlock(q,FLAGS_SYSCALL);
+	spin_unlock(&hb->lock);
+
+	if(current->tgroup_distributed)
+		global_spinunlock((unsigned long)q->key.private.address+q->key.private.offset,FLAGS_SYSCALL);
 
 }
 
@@ -2241,7 +2241,7 @@ int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 	struct pt_regs * regs;
 	unsigned long bp = stack_frame(current,NULL);
 
-	FPRINTK(KERN_ALERT "FUTEX_WAIT:entry {%pB} pid{%d} uaddr{%lx} get_user{%d} louaddr{%lx} lockval{%d} \n",(void*) &bp,current->pid,uaddr,x,uaddr-1,y);
+	FPRINTK(KERN_ALERT "FUTEX_WAIT:entry {%pB} pid{%d} uaddr{%lx} get_user{%d} louaddr{%lx}  syscall{%d} cpu{%d}\n",(void*) &bp,current->pid,uaddr,x,uaddr-1,fn_flag,smp_processor_id());
 
 //	printPTE(uaddr);
 	if (!bitset)

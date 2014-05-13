@@ -15,6 +15,10 @@
 struct workqueue_struct;
 
 struct work_struct;
+
+struct worker;
+struct global_cwq;
+
 typedef void (*work_func_t)(struct work_struct *work);
 
 /*
