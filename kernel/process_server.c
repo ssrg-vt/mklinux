@@ -5773,12 +5773,12 @@ int process_server_import_address_space(unsigned long* ip,
         {
         struct vm_area_struct* vma_out = NULL;
         // fetch stack
-        process_server_try_handle_mm_fault(current->mm,
-                                           NULL,
-                                           clone_data->stack_start,
-                                           NULL,
-                                           &vma_out,
-                                           NULL);
+        process_server_pull_remote_mappings(current->mm,
+                                            NULL,
+                                            clone_data->stack_start,
+                                            NULL,
+                                            &vma_out,
+                                            NULL);
 
         }
 #else // Copying address space with migration
@@ -6761,7 +6761,7 @@ not_handled_no_perf:
  *
  * <MEASURED perf_process_server_try_handle_mm_fault>
  */
-int process_server_try_handle_mm_fault(struct mm_struct *mm, 
+int process_server_pull_remote_mappings(struct mm_struct *mm, 
                                        struct vm_area_struct *vma,
                                        unsigned long address, 
                                        unsigned int flags, 
@@ -7768,70 +7768,8 @@ void add_entry_to_lamport_queue(unsigned long address,
     add_fault_entry_to_queue(*entry,*queue);
 }
 
-/**
- *
- */
-int process_server_acquire_page_lock(unsigned long address) {
-    lamport_barrier_request_t* request = NULL;
-    lamport_barrier_entry_t* entry = NULL;
-    lamport_barrier_queue_t* queue = NULL;
-    int i,s;
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    unsigned long long end_time = 0;
-    unsigned long long total_time = 0;
-    unsigned long long start_time = native_read_tsc();
-#endif
 
-    if(!current->tgroup_distributed) return 0;
- 
-    request = kmalloc(sizeof(lamport_barrier_request_t), GFP_KERNEL);
-  
-    BUG_ON(!request);
 
-    address &= PAGE_MASK;
-    request->header.type = PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_REQUEST;
-    request->header.prio = PCN_KMSG_PRIO_NORMAL;
-    request->address = address;
-    request->tgroup_home_cpu = current->tgroup_home_cpu;
-    request->tgroup_home_id =  current->tgroup_home_id;
-
-    // Grab the fault barrier queue lock
-    PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
-    
-    // create timestamp
-    request->timestamp = native_read_tsc();
-
-    add_entry_to_lamport_queue(address,request->timestamp,&entry,&queue);
-
-    PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
-
-    // Send out request to everybody
-    for(i = 0; i < NR_CPUS; i++) {
-        if(i == _cpu) continue;
-        s = pcn_kmsg_send(i,(struct pcn_kmsg_message*)request);
-        if(!s) {
-            entry->expected_responses++;
-        }
-    }
-
-    mb();
-    entry->allow_responses = 1;
-
-    kfree(request);
-
-    wait_for_all_lamport_request_responses(entry);
-
-    wait_for_lamport_lock_acquisition(queue,entry);
-
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    end_time = native_read_tsc();
-    entry->lock_acquired = end_time;
-    total_time = end_time - start_time;
-    PS_PROC_DATA_TRACK(PS_PROC_DATA_WAITING_FOR_LAMPORT_LOCK,total_time);
-#endif
-
-    return 0;
-}
 
 /**
  *
@@ -7919,6 +7857,20 @@ int process_server_acquire_page_lock_range(unsigned long address,size_t sz) {
     return 0;
 }
 
+/**
+ *
+ */
+int process_server_acquire_page_lock(unsigned long address) {
+    return process_server_acquire_page_lock_range(address,PAGE_SIZE);
+}
+
+/**
+ *
+ */
+int process_server_acquire_heavy_lock() {
+    return process_server_acquire_page_lock_range(0,PAGE_SIZE);
+}
+
 void release_local_lamport_lock(unsigned long address,
                                 unsigned long long* timestamp) {
     lamport_barrier_queue_t* queue = NULL;
@@ -7962,42 +7914,6 @@ void release_local_lamport_lock(unsigned long address,
 
 }
 
-/**
- *
- */
-void process_server_release_page_lock(unsigned long address) {
-    lamport_barrier_release_t* release = NULL;
-    int i;
-    unsigned long long timestamp = 0;
-    unsigned long long tmp_ts = 0;
-
-
-    if(!current->tgroup_distributed) return;
-
-    address &= PAGE_MASK;
-    release = kmalloc(sizeof(lamport_barrier_release_t),
-                        GFP_KERNEL);
-
-    PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
-    release_local_lamport_lock(address,
-                               &tmp_ts);
-    if(tmp_ts && !timestamp) timestamp = tmp_ts;
-    PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
-
-    // Send release
-    release->header.type = PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_RELEASE;
-    release->header.prio = PCN_KMSG_PRIO_NORMAL;
-    release->tgroup_home_cpu = current->tgroup_home_cpu;
-    release->tgroup_home_id  = current->tgroup_home_id;
-    release->timestamp = timestamp;
-    release->address = address;
-    for(i = 0; i < NR_CPUS; i++) {
-        if(i == _cpu) continue;
-        pcn_kmsg_send(i,(struct pcn_kmsg_message*)release);
-    }
-
-    kfree(release);
-}
 
 /**
  *
@@ -8038,6 +7954,20 @@ void process_server_release_page_lock_range(unsigned long address,size_t sz) {
     }
 
     kfree(release);
+}
+
+/**
+ *
+ */
+void process_server_release_page_lock(unsigned long address) {
+    process_server_release_page_lock_range(address,PAGE_SIZE);
+}
+
+/**
+ *
+ */
+void process_server_release_heavy_lock() {
+    process_server_release_page_lock_range(0,PAGE_SIZE);
 }
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY

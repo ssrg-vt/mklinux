@@ -993,18 +993,26 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
             struct vm_area_struct* vma_out = NULL;
             addr = get_unmapped_area(file, NULL, len, pgoff, flags);
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+            process_server_acquire_heavy_lock();
+#else
             process_server_acquire_page_lock_range(addr,len);
 #endif
-            fault_ret = process_server_try_handle_mm_fault(mm,
-                                                           NULL,
-                                                           addr,
-                                                           0,
-                                                           &vma_out,
-                                                           0);
+#endif
+            fault_ret = process_server_pull_remote_mappings(mm,
+                                                            NULL,
+                                                            addr,
+                                                            0,
+                                                            &vma_out,
+                                                            0);
             if(fault_ret) pserv_conflict = 1;
             else pserv_conflict = 0;    
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+            process_server_use_heavy_lock();
+#else
             process_server_release_page_lock_range(addr,len);
+#endif
 #endif
         } while(pserv_conflict);
     }
@@ -1013,7 +1021,11 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_acquire_heavy_lock();
+#else
         process_server_acquire_page_lock_range(addr,len);
+#endif
     }
 #endif
 
@@ -1138,7 +1150,11 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
     current->enable_distributed_munmap = original_enable_distributed_munmap;
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_release_heavy_lock();
+#else
         process_server_release_page_lock_range(addr,len);
+#endif
     }
 #endif
 
@@ -1149,7 +1165,11 @@ err:
     current->enable_distributed_munmap = original_enable_distributed_munmap;
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_release_heavy_lock();
+#else
         process_server_release_page_lock_range(addr,len);
+#endif
     }
 #endif
 
@@ -2129,7 +2149,11 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_distributed_munmap) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_acquire_heavy_lock();
+#else
         process_server_acquire_page_lock_range(start,len);
+#endif
     }
 #endif
 	
@@ -2203,7 +2227,11 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 err:
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_distributed_munmap) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_release_heavy_lock();
+#else
         process_server_release_page_lock_range(start,len);
+#endif
     }
 #endif
 

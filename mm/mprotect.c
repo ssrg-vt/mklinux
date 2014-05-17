@@ -262,7 +262,11 @@ int do_mprotect(struct task_struct* task, struct mm_struct* mm, unsigned long st
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(do_remote) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_acquire_heavy_lock();
+#else
         process_server_acquire_page_lock_range(start,len);
+#endif
     }
 #endif
 
@@ -350,7 +354,11 @@ out:
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(do_remote) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_release_heavy_lock();
+#else
         process_server_release_page_lock_range(start,len);
+#endif
     }
 #endif
 

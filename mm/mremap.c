@@ -443,6 +443,9 @@ unsigned long do_mremap(unsigned long addr,
     // remaps, it is naughty, and just does a distributed
     // munmap (except locally).  That should probably change.
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+    process_server_acquire_heavy_lock();
+#else 
     {
     unsigned long old_start = addr;
     unsigned long old_end   = addr + old_len;
@@ -456,19 +459,19 @@ unsigned long do_mremap(unsigned long addr,
         unsigned long max_end   = old_end > new_end? old_end : new_end;
         process_server_acquire_page_lock_range(min_start,max_end - min_start);
     }
-
     }
+#endif
 #endif
 
     // Pull in all remote mappings so nothing is lost later.
     for(a = addr & PAGE_MASK; a < addr + old_len; a+= PAGE_SIZE) {
         struct vm_area_struct *vma_out = NULL;
-        process_server_try_handle_mm_fault(current->mm,
-                                           NULL,
-                                           a,
-                                           NULL,
-                                           &vma_out,
-                                           NULL);
+        process_server_pull_remote_mappings(current->mm,
+                                            NULL,
+                                            a,
+                                            NULL,
+                                            &vma_out,
+                                            NULL);
 
     }
 
@@ -582,6 +585,9 @@ out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+    process_server_release_heavy_lock();
+#else
     {
     unsigned long old_start = addr;
     unsigned long old_end   = addr + old_len;
@@ -597,6 +603,7 @@ out:
     }
 
     }
+#endif
 #endif
 
     current->enable_distributed_munmap = original_enable_distributed_munmap;

@@ -1091,18 +1091,22 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	}
 
     vma = find_vma(mm, address);
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+    process_server_acquire_heavy_lock();
+#else
     process_server_acquire_page_lock(address);
+#endif
 	if (unlikely(!vma)) {
         // Multikernel - see if another member of the thread group has mapped
         // this vma
-        if(process_server_try_handle_mm_fault(mm,NULL,address,flags,&vma,error_code)) {
+        if(process_server_pull_remote_mappings(mm,NULL,address,flags,&vma,error_code)) {
             goto ret;
         }
 		if(!vma) {
             bad_area(regs, error_code, address);
 		    goto ret;
         }
-	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags,&vma,error_code)) {
+	} else if(process_server_pull_remote_mappings(mm,vma,address,flags,&vma,error_code)) {
         goto ret;
     }
 
@@ -1212,6 +1216,10 @@ good_area:
 	up_read(&mm->mmap_sem);
 
 ret:
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+    process_server_release_heavy_lock();
+#else
     process_server_release_page_lock(address);
+#endif
     return;
 }
