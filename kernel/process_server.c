@@ -445,6 +445,12 @@ typedef struct _mprotect_data {
     spinlock_t lock;
 } mprotect_data_t;
 
+typedef struct _get_counter_phys_data {
+    data_header_t header;
+    int response_received;
+    unsigned long resp;
+} get_counter_phys_data_t;
+
 typedef struct _lamport_barrier_entry {
     data_header_t header;
     unsigned long long timestamp;
@@ -881,6 +887,26 @@ typedef struct _lamport_barrier_release_range lamport_barrier_release_range_t;
 /**
  *
  */
+struct _get_counter_phys_request {
+    struct pcn_kmsg_hdr header;
+    char pad[60];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _get_counter_phys_request get_counter_phys_request_t;
+
+/**
+ *
+ */
+struct _get_counter_phys_response {
+    struct pcn_kmsg_hdr header;
+    unsigned long resp;
+    char pad[58];
+} __attribute__((packed)) __attribute__((aligned(64)));
+typedef struct _get_counter_phys_response get_counter_phys_response_t;
+
+
+/**
+ *
+ */
 typedef struct _deconstruction_data {
     int clone_request_id;
     int vma_id;
@@ -1161,6 +1187,7 @@ extern int exec_mmap(struct mm_struct* mm);
 extern void start_remote_thread(struct pt_regs* regs);
 extern void flush_old_files(struct files_struct * files);
 #endif
+static unsigned long get_next_ts_value(void);
 
 /**
  * Module variables
@@ -1187,6 +1214,8 @@ struct rw_semaphore _import_sem;
 DEFINE_SPINLOCK(_remap_lock);
 data_header_t* _lamport_barrier_queue_head = NULL;
 DEFINE_SPINLOCK(_lamport_barrier_queue_lock);
+unsigned long* ts_counter = NULL;
+get_counter_phys_data_t* get_counter_phys_data = NULL;
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
 struct proc_dir_entry *_proc_entry = NULL;
@@ -5602,6 +5631,36 @@ static int handle_lamport_barrier_release_range(struct pcn_kmsg_message* inc_msg
 
     return 0;
 }
+
+/**
+ *
+ */
+static int handle_get_counter_phys_request(struct pcn_kmsg_message* inc_msg) {
+    get_counter_phys_response_t resp;
+    resp.header.type = PCN_KMSG_TYPE_PROC_SRV_GET_COUNTER_PHYS_RESPONSE;
+    resp.header.prio = PCN_KMSG_PRIO_NORMAL;
+    resp.resp = virt_to_phys(ts_counter);
+    pcn_kmsg_send(inc_msg->hdr.from_cpu,(struct pcn_kmsg_message*)&resp);
+    pcn_kmsg_free_msg(inc_msg);
+    return 0;
+}
+
+/**
+ *
+ */
+static int handle_get_counter_phys_response(struct pcn_kmsg_message* inc_msg) {
+    get_counter_phys_response_t* msg = (get_counter_phys_response_t*)inc_msg;
+
+    if(get_counter_phys_data) {
+        get_counter_phys_data->resp = msg->resp;
+        get_counter_phys_data->response_received = 1;
+    }
+
+    pcn_kmsg_free_msg(inc_msg);
+    
+    return 0;
+}
+
 /**
  *
  * Public API
@@ -7810,7 +7869,7 @@ int process_server_acquire_page_lock_range(unsigned long address,size_t sz) {
     PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
     
     // create timestamp
-    request->timestamp = native_read_tsc();
+    request->timestamp = get_next_ts_value(); /*native_read_tsc();*/
 
     index = 0;
     for(addr = address; addr < address + sz; addr += PAGE_SIZE) {
@@ -8262,6 +8321,72 @@ static int handle_stats_response(struct pcn_kmsg_message* inc_msg) {
 }
 #endif
 
+/* From Wikipedia page "Fetch and add", modified to work for u64 */
+/**
+ *
+ */
+static inline unsigned long fetch_and_add(volatile unsigned long * variable, 
+                      unsigned long value) {
+    asm volatile( 
+             "lock; xaddq %%rax, %2;"
+             :"=a" (value)                   //Output
+             : "a" (value), "m" (*variable)  //Input
+             :"memory" );
+    return value;
+}
+
+/**
+ *
+ */
+static unsigned long get_next_ts_value() {
+    return fetch_and_add(ts_counter,1);
+}
+
+/**
+ *
+ */
+static unsigned long* get_master_ts_counter_address() {
+    unsigned long phys = 0;
+    get_counter_phys_request_t request;
+    request.header.type = PCN_KMSG_TYPE_PROC_SRV_GET_COUNTER_PHYS_REQUEST;
+    request.header.prio = PCN_KMSG_PRIO_NORMAL;
+
+    if(!get_counter_phys_data)
+        get_counter_phys_data = kmalloc(sizeof(get_counter_phys_data_t),GFP_KERNEL);
+
+    get_counter_phys_data->resp = 0;
+    get_counter_phys_data->response_received = 0;
+
+    pcn_kmsg_send(0,(struct pcn_kmsg_message*)&request);
+
+    while(!get_counter_phys_data->response_received)
+        schedule();
+     
+    return (unsigned long long*)get_counter_phys_data->resp;
+}
+
+/**
+ *
+ */
+static void init_shared_counter(void) {
+    if(!_cpu) {
+        // Master allocs space, then shares it
+        void* pg = kmalloc(PAGE_SIZE,GFP_KERNEL);
+        ts_counter = pg;
+        *ts_counter = 0;
+        get_next_ts_value();
+        printk("%s: ts_counter{%lx},*ts_counter{%lx}\n",__func__,
+                ts_counter,
+                get_next_ts_value());
+    } else {
+        // ask for physical address of master's ts_counter
+        ts_counter = ioremap_cache(get_master_ts_counter_address(), PAGE_SIZE);
+        printk("%s: ts_counter{%lx},*ts_counter{%lx}\n",__func__,
+                ts_counter,
+                get_next_ts_value());
+    }
+}
+
 
 /**
  * @brief Initialize this module
@@ -8291,6 +8416,7 @@ static int __init process_server_init(void) {
      * Proc entry to publish information
      */
     PS_PROC_DATA_INIT();
+
 
     /*
      * Register to receive relevant incomming messages.
@@ -8341,6 +8467,10 @@ static int __init process_server_init(void) {
             handle_lamport_barrier_response_range);
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_RELEASE_RANGE,
             handle_lamport_barrier_release_range);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_GET_COUNTER_PHYS_REQUEST,
+            handle_get_counter_phys_request);
+    pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_GET_COUNTER_PHYS_RESPONSE,
+            handle_get_counter_phys_response);
 
     // stats messages
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
@@ -8351,6 +8481,11 @@ static int __init process_server_init(void) {
     pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_STATS_RESPONSE,
             handle_stats_response);
 #endif
+
+    /*
+     *  
+     */
+   init_shared_counter(); 
 
     PERF_INIT(); 
     return 0;
