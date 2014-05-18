@@ -951,6 +951,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
     unsigned long ret,a;
 	unsigned long reqprot = prot;
     int original_enable_distributed_munmap = current->enable_distributed_munmap;
+    int range_locked = 0;
 
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC?
@@ -1005,22 +1006,28 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
                                                             0,
                                                             &vma_out,
                                                             0);
-            if(fault_ret) pserv_conflict = 1;
-            else pserv_conflict = 0;    
-#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+            if(fault_ret) {
+                pserv_conflict = 1;
+ #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
-            process_server_use_heavy_lock();
+                process_server_use_heavy_lock();
 #else
-            process_server_release_page_lock_range(addr,len);
+                process_server_release_page_lock_range(addr,len);
 #endif
 #endif
+          
+            }
+            else {
+                pserv_conflict = 0;    
+                range_locked = 1;
+            }
         } while(pserv_conflict);
     }
 	if (addr & ~PAGE_MASK)
 		return addr;
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
-    if(current->enable_do_mmap_pgoff_hook) {
+    if(current->enable_do_mmap_pgoff_hook && !range_locked) {
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_acquire_heavy_lock();
 #else
