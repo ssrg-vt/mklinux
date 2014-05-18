@@ -1008,9 +1008,9 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
                                                             0);
             if(fault_ret) {
                 pserv_conflict = 1;
- #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
-                process_server_use_heavy_lock();
+                process_server_release_heavy_lock();
 #else
                 process_server_release_page_lock_range(addr,len);
 #endif
@@ -1023,8 +1023,17 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
             }
         } while(pserv_conflict);
     }
-	if (addr & ~PAGE_MASK)
+	if (addr & ~PAGE_MASK) {
+        if(range_locked) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+            process_server_release_heavy_lock();
+#else  
+            process_server_release_page_lock_range(addr,len);
+#endif
+
+        }
 		return addr;
+    }
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook && !range_locked) {

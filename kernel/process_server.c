@@ -6859,14 +6859,15 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
     unsigned long long fault_processing_time = 0;
 #endif
 
-    current->enable_distributed_munmap = 0;
-    current->enable_do_mmap_pgoff_hook = 0;
 
     // Nothing to do for a thread group that's not distributed.
     if(!current->tgroup_distributed) {
         goto not_handled_no_perf;
     }
 
+    current->enable_distributed_munmap = 0;
+    current->enable_do_mmap_pgoff_hook = 0;
+    
     perf = PERF_MEASURE_START(&perf_process_server_try_handle_mm_fault);
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
@@ -7298,7 +7299,7 @@ not_handled:
     return ret;
 
 not_handled_no_perf:
-
+    
     return 0;
 }
 
