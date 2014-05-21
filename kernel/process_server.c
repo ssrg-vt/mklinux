@@ -1510,6 +1510,8 @@ out:
     return mm;
 }
 
+
+
 /**
  * @brief A best effort at making a page writable
  * @return void
@@ -1558,6 +1560,21 @@ out:
     PS_PROC_DATA_TRACK(PS_PROC_DATA_MK_PAGE_WRITABLE,total_time);
 #endif
     return;
+}
+
+/**
+ *
+ */
+static void mk_page_writable_lookupvma(struct mm_struct*mm,
+                             unsigned long addr) {
+    struct vm_area_struct* curr = mm->mmap;
+    while(curr) {
+        if(curr->vm_start <= addr && curr->vm_end > addr) {
+            mk_page_writable(mm,curr,addr);
+            break;
+        }
+        curr = curr->vm_next;
+    }
 }
 
 /**
@@ -1795,7 +1812,7 @@ static int break_cow(struct mm_struct *mm, struct vm_area_struct* vma, unsigned 
     ptl = pte_lockptr(mm,pmd);
     PS_SPIN_LOCK(ptl);
    
-    PSPRINTK("%s: proceeding\n",__func__);
+    PSPRINTK("%s: proceeding on address %lx\n",__func__,address);
     do_wp_page(mm,vma,address,ptep,pmd,ptl,pte);
 
 
@@ -7306,7 +7323,7 @@ not_handled_no_perf:
 /**
  *  
  */
-void break_all_cow_pages(struct task_struct* task) {
+void break_all_cow_pages(struct task_struct* task, struct task_struct* orig) {
     struct mm_struct* mm = task->mm;
     struct vm_area_struct* curr = mm->mmap;
     unsigned long i,start, end;
@@ -7315,7 +7332,9 @@ void break_all_cow_pages(struct task_struct* task) {
             start = curr->vm_start;
             end = curr->vm_end;
             for(i = start; i < end; i += PAGE_SIZE) {
-                break_cow(mm,curr,i);
+                if(break_cow(mm,curr,i)) {
+                    mk_page_writable_lookupvma(orig->mm,i);
+                }
             }
         }
         curr = curr->vm_next;
@@ -7374,14 +7393,14 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
 
         // COW problem fix, necessary for coherency.
         if(orig->tgroup_distributed) {
-            break_all_cow_pages(task);
+            break_all_cow_pages(task,orig);
         }
 
         return 1;
     }
 
     // Inherit the list of known cpus with mms for this thread group 
-    // once we know that the task is int he same tgid.
+    // once we know that the task is in the same tgid.
     task->known_cpu_with_tgroup_mm = orig->known_cpu_with_tgroup_mm;
 
     // This is important.  We want to make sure to keep an accurate record
