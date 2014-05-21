@@ -5810,10 +5810,12 @@ int process_server_import_address_space(unsigned long* ip,
  
         // import exe_file
         f = filp_open(clone_data->exe_path,O_RDONLY | O_LARGEFILE, 0);
-        if(f) {
+        if(!IS_ERR(f)) {
             get_file(f);
             current->mm->exe_file = f;
             filp_close(f,NULL);
+        } else {
+            printk("%s: Error opening file %s\n",__func__,clone_data->exe_path);
         }
        
 #else
@@ -5829,7 +5831,7 @@ int process_server_import_address_space(unsigned long* ip,
                 set_mm_exe_file(mm,f);
                 filp_close(f,NULL);
             } else {
-                printk("Error opening executable file\n");
+                printk("%s: Error opening executable file\n",__func__);
             }
             mm->task_size = TASK_SIZE;
             mm->token_priority = 0;
@@ -5874,7 +5876,7 @@ int process_server_import_address_space(unsigned long* ip,
                 f = filp_open(vma_curr->path,
                                 O_RDONLY | O_LARGEFILE,
                                 0);
-                if(f) {
+                if(!IS_ERR(f)) {
                     PS_DOWN_WRITE(&current->mm->mmap_sem);
                     vma_curr->mmapping_in_progress = 1;
                     current->enable_do_mmap_pgoff_hook = 0;
@@ -5893,6 +5895,8 @@ int process_server_import_address_space(unsigned long* ip,
                         PSPRINTK("Fault - do_mmap failed to map %lx with error %lx\n",
                                 vma_curr->start,err);
                     }
+                } else {
+                    printk("%s: error opening file %s\n",__func__,vma_curr->path);
                 }
             } else {
                 mmap_flags = MAP_UNINITIALIZED|MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE;
@@ -7137,7 +7141,7 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
                     f = filp_open(data->path, (data->vm_flags & VM_SHARED)? O_RDWR:O_RDONLY, 0);
                 //}
 
-                if(f) {
+                if(!IS_ERR(f)) {
                     PSPRINTK("mapping file %s, %lx, %lx, %lx\n",data->path,
                             data->vaddr_start, 
                             data->vaddr_size,
@@ -7161,6 +7165,8 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
                     //} else {
                         filp_close(f,NULL);
                     //}
+                } else {
+                    printk("Error opening file %s\n",data->path);
                 }
             }
             if(err != data->vaddr_start) {
