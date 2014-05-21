@@ -985,7 +985,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	/* Obtain the address to map to. we verify (or select) it and ensure
 	 * that it represents a valid section of the address space.
 	 */
-    if(addr) {
+    if(addr || !current->enable_do_mmap_pgoff_hook) {
         addr = get_unmapped_area(file, addr, len, pgoff, flags);
     } else {
         int pserv_conflict = 0;
@@ -1024,7 +1024,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
         } while(pserv_conflict);
     }
 	if (addr & ~PAGE_MASK) {
-        if(range_locked) {
+        if(range_locked && current->enable_do_mmap_pgoff_hook) {
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
             process_server_release_heavy_lock();
 #else  

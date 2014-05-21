@@ -7304,6 +7304,25 @@ not_handled_no_perf:
 }
 
 /**
+ *  
+ */
+void break_all_cow_pages(struct task_struct* task) {
+    struct mm_struct* mm = task->mm;
+    struct vm_area_struct* curr = mm->mmap;
+    unsigned long i,start, end;
+    while(curr) {
+        if(is_maybe_cow(curr)) {
+            start = curr->vm_start;
+            end = curr->vm_end;
+            for(i = start; i < end; i += PAGE_SIZE) {
+                break_cow(mm,curr,i);
+            }
+        }
+        curr = curr->vm_next;
+    }
+}
+
+/**
  * @brief Propagate origin thread group to children, and initialize other 
  * task members.  If the parent was member of a remote thread group,
  * store the thread group info.
@@ -7352,6 +7371,12 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
         task->tgroup_home_cpu = home_kernel;
         task->tgroup_home_id = task->tgid;
         task->tgroup_distributed = 0;
+
+        // COW problem fix, necessary for coherency.
+        if(orig->tgroup_distributed) {
+            break_all_cow_pages(task);
+        }
+
         return 1;
     }
 
