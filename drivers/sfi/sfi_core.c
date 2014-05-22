@@ -68,6 +68,7 @@
 #include <linux/init.h>
 #include <linux/sfi.h>
 #include <linux/slab.h>
+#include <asm/pgalloc.h>
 
 #include "sfi_core.h"
 
@@ -97,6 +98,8 @@ static u32 sfi_use_ioremap __read_mostly;
  */
 static void __iomem * __ref sfi_map_memory(u64 phys, u32 size)
 {
+	pr_emerg("Entering sfi_map_memory, phys = %llx, size = %d\n", phys, size);
+
 	if (!phys || !size)
 		return NULL;
 
@@ -166,10 +169,14 @@ struct sfi_table_header *sfi_map_table(u64 pa)
 	struct sfi_table_header *th;
 	u32 length;
 
+	pr_emerg("Entering sfi_map_table, pa = %llx\n", pa);
+
 	if (!TABLE_ON_PAGE(syst_pa, pa, sizeof(struct sfi_table_header)))
 		th = sfi_map_memory(pa, sizeof(struct sfi_table_header));
 	else
 		th = (void *)syst_va + (pa - syst_pa);
+
+	pr_emerg("sfi_map_table, th = %llx\n", (u64)th);
 
 	 /* If table fits on same page as its header, we are done */
 	if (TABLE_ON_PAGE(th, th, th->len))
@@ -509,6 +516,9 @@ void __init sfi_init_late(void)
 
 	/* Use ioremap now after it is ready */
 	sfi_use_ioremap = 1;
+#ifdef CONFIG_X86_EARLYMIC
+	SetPageReserved(pfn_to_page(0x92)); // STH hack to allow booting
+#endif
 	syst_va = sfi_map_memory(syst_pa, length);
 
 	sfi_acpi_init();
@@ -518,4 +528,6 @@ void __init sfi_init_late(void)
  * The reason we put it here because we need wait till the /sys/firmware
  * is setup, then our interface can be registered in /sys/firmware/sfi
  */
+#ifndef CONFIG_X86_EARLYMIC	// STH fails if no ACPI
 core_initcall(sfi_sysfs_init);
+#endif

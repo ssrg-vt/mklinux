@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the
+* Intel product codenamed: Knights Corner, and are not backward compatible
+* with other Intel products. Additionally, Intel will NOT support the codes
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is
+* also not obligated to provide any updates, enhancements or extensions.  Intel
+* specifically disclaims any warranty of merchantability, non-infringement,
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 /*
  * This only handles 32bit MTRR on 32bit hosts. This is strictly wrong
  * because MTRRs can span up to 40 bits (36bits on most modern x86)
@@ -459,9 +483,11 @@ void __init mtrr_state_warn(void)
 void mtrr_wrmsr(unsigned msr, unsigned a, unsigned b)
 {
 	if (wrmsr_safe(msr, a, b) < 0) {
+#ifndef CONFIG_X86_EARLYMIC
 		printk(KERN_ERR
 			"MTRR: CPU %u: Writing MSR %x to %x:%x failed\n",
 			smp_processor_id(), msr, a, b);
+#endif
 	}
 }
 
@@ -623,7 +649,11 @@ static u32 deftype_lo, deftype_hi;
  * NOTE: The CPU must already be in a safe state for MTRR changes.
  * RETURNS: 0 if no changes made, else a mask indicating what was changed.
  */
+#ifndef CONFIG_MK1OM
 static unsigned long set_mtrr_state(void)
+#else
+unsigned long set_mtrr_state(void)
+#endif
 {
 	unsigned long change_mask = 0;
 	unsigned int i;

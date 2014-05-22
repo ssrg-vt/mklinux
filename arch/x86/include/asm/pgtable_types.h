@@ -23,6 +23,9 @@
 #define _PAGE_BIT_SPECIAL	_PAGE_BIT_UNUSED1
 #define _PAGE_BIT_CPA_TEST	_PAGE_BIT_UNUSED1
 #define _PAGE_BIT_SPLITTING	_PAGE_BIT_UNUSED1 /* only valid on a PSE pmd */
+#ifdef CONFIG_X86_EARLYMIC
+#define _PAGE_BIT_64K		51
+#endif
 #define _PAGE_BIT_NX           63       /* No execute: only valid after cpuid check */
 
 /* If _PAGE_BIT_PRESENT is clear, we use these: */
@@ -59,6 +62,10 @@
 #define _PAGE_NX	(_AT(pteval_t, 1) << _PAGE_BIT_NX)
 #else
 #define _PAGE_NX	(_AT(pteval_t, 0))
+#endif
+
+#ifdef CONFIG_X86_EARLYMIC
+#define _PAGE_SIZE_64K	(_AT(pteval_t, 1) << _PAGE_BIT_64K)
 #endif
 
 #define _PAGE_FILE	(_AT(pteval_t, 1) << _PAGE_BIT_FILE)

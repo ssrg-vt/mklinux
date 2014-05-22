@@ -1,3 +1,26 @@
+/* * Copyright (c) 2010 - 2012 Intel Corporation.
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
 #ifndef _KDB_H
 #define _KDB_H
 
@@ -151,12 +174,20 @@ extern int kdb_register_repeat(char *, kdb_func_t, char *, char *,
 			       short, kdb_repeat_t);
 extern int kdb_unregister(char *);
 #else /* ! CONFIG_KGDB_KDB */
+
+#ifndef CONFIG_KDB
 #define kdb_printf(...)
 #define kdb_init(x)
 #define kdb_register(...)
 #define kdb_register_repeat(...)
 #define kdb_uregister(x)
+#endif	/* CONFIG_KDB */
 #endif	/* CONFIG_KGDB_KDB */
+
+#ifdef CONFIG_KDB
+#include <linux/kdb-old.h>
+#else /* ! CONFIG_KDB */
+
 enum {
 	KDB_NOT_INITIALIZED,
 	KDB_INIT_EARLY,
@@ -166,4 +197,5 @@ enum {
 extern int kdbgetintenv(const char *, int *);
 extern int kdb_set(int, const char **);
 
+#endif	/* CONFIG_KDB */
 #endif	/* !_KDB_H */

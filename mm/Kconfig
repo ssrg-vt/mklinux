@@ -351,6 +351,37 @@ config NEED_PER_CPU_KM
 	bool
 	default y
 
+config PRECOMPUTE_WAITQ_HEAD
+	bool
+	default n
+	help
+	  Enables static computation of hash for page wait queue head lookup.
+	  This is an optimization to add a page_wait_queue head bit in the
+	  page structure. The hash value for this bit is assigned at boot time.
+	  The downside of enabling this configuration is that the size of the page
+	  structure will increase.
+
+config PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+	bool
+	default y
+	help
+	  Uses higher order page allocation to populate the radix tree for a file.
+	  The routine falls back to a single page allocation if the higher order
+	  page allocation fails. Enabling this option will reduce the overhead of
+	  page allocation by allocating a higher order page upto order 10, i.e.
+	  a 4MB compound page and later splitting them into individual 4K pages.
+	  The downside of this option is that if the memory is fragmented, then
+	  the slab allocator will fail as it will not be able to find a higher
+	  order page and will fall back to single page allocation.
+
+config PAGE_CACHE_DMA
+	bool
+	depends on PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+	default y
+	help
+	  Enables the VFS layer to use DMA for copying buffers locally instead
+	  of cpu memcpy.
+
 config CLEANCACHE
 	bool "Enable cleancache driver to cache clean pages if tmem is present"
 	default n

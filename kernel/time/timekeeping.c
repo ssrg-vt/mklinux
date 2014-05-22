@@ -20,7 +20,9 @@
 #include <linux/time.h>
 #include <linux/tick.h>
 #include <linux/stop_machine.h>
-
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+#include <asm/mic_def.h>
+#endif
 /* Structure holding internal timekeeping values. */
 struct timekeeper {
 	/* Current clocksource used for timekeeping. */
@@ -231,7 +233,6 @@ void getnstimeofday(struct timespec *ts)
 		nsecs += arch_gettimeoffset();
 
 	} while (read_seqretry(&xtime_lock, seq));
-
 	timespec_add_ns(ts, nsecs);
 }
 
@@ -435,7 +436,6 @@ EXPORT_SYMBOL(timekeeping_inject_offset);
 static int change_clocksource(void *data)
 {
 	struct clocksource *new, *old;
-
 	new = (struct clocksource *) data;
 
 	timekeeping_forward_now();
@@ -445,6 +445,8 @@ static int change_clocksource(void *data)
 		if (old->disable)
 			old->disable(old);
 	}
+	ntp_clear();
+	update_vsyscall(&xtime, &wall_to_monotonic, timekeeper.clock, timekeeper.mult);
 	return 0;
 }
 
@@ -599,6 +601,115 @@ void __init timekeeping_init(void)
 /* time in seconds when suspend began */
 static struct timespec timekeeping_suspend_time;
 
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+#define ELAPSED_TIME_THRESHOLD	5000	// If the diff between tsc and etc 
+					// elapsed times (timestamp between 
+					// resume and suspend) is less than this
+					// then do not adjust xtime because we 
+					// could not have gone into a package state.
+static cycle_t etc_cycles_suspend;
+static cycle_t tsc_cycles_suspend;
+static int suspended=0;
+/* Resume timekeeping after power state
+ * Add etc_resume - etc_suspend - (tsc_resume - tsc_suspend) to xtime
+ * Note that there is still a possibility that user sees incorrect time if the
+ * user's call of gettime() races ahead of wakeup_timer on two different cpus.
+ */
+void timekeeping_resume(void)
+{
+	cycle_t etc_cycles, rdtsc_cycles;
+	struct timespec ts1, ts2;
+	struct clocksource *tsc;
+	unsigned long flags;
+		
+	write_seqlock_irqsave(&xtime_lock, flags);
+	if (!suspended || (timekeeper.clock == &clocksource_micetc)) goto out;
+	
+	tsc = timekeeper.clock;
+	etc_cycles = clocksource_micetc.read(&clocksource_micetc);
+	rdtscll(rdtsc_cycles);
+	pr_debug("Resume: etc_cycles = %llx rdtsc_cycles = %llx\n",etc_cycles,rdtsc_cycles);
+#if 0	
+	if (rdtsc_cycles > tsc_cycles_suspend) {
+		if(abs64(clocksource_cyc2ns(etc_cycles-etc_cycles_suspend,
+			clocksource_micetc.mult,clocksource_micetc.shift)-
+			clocksource_cyc2ns(rdtsc_cycles-tsc_cycles_suspend,
+			tsc->mult,tsc->shift)) < ELAPSED_TIME_THRESHOLD)
+				goto out;
+	}
+#endif
+	if (etc_cycles > etc_cycles_suspend) {
+		cycle_t max_etc_cycles;
+		u64 shifted_ns = 0;
+		max_etc_cycles = 1ULL << ((sizeof(cycle_t) * 8) - 1 - ilog2(clocksource_micetc.mult) - 1);
+		etc_cycles -= etc_cycles_suspend;
+		ts1.tv_sec = 0;
+		ts1.tv_nsec = 0;
+		/* We need to do this so that there is no overflow
+		 * Find the max number of clockcycles that can be accumulated
+		 * at once. Do it over and over
+		 * TODO: Look at logarithmic accumulation
+		 */
+		while (etc_cycles > max_etc_cycles) {
+			ts1 = timespec_add_safe(ts1,
+				ns_to_timespec(clocksource_cyc2ns(
+				max_etc_cycles,
+				clocksource_micetc.mult,
+				clocksource_micetc.shift)));
+			etc_cycles -= max_etc_cycles;
+			shifted_ns += max_etc_cycles * clocksource_micetc.mult
+					& ((1 << clocksource_micetc.shift) - 1);
+		}
+		if (etc_cycles) {
+			ts1 = timespec_add_safe(ts1,
+				ns_to_timespec(clocksource_cyc2ns(
+				etc_cycles,
+				clocksource_micetc.mult,
+				clocksource_micetc.shift)));
+			shifted_ns += etc_cycles * clocksource_micetc.mult
+					& ((1 << clocksource_micetc.shift) - 1);
+		}
+		if (shifted_ns >> clocksource_micetc.shift) {
+			ts1 = timespec_add_safe(ts1,
+				ns_to_timespec(shifted_ns >>
+				clocksource_micetc.shift));
+		}
+	} else {
+		panic("etc_cycles(0x%llx) <= etc_cycles_suspend(0x%llx)\n"
+						"This is NOT possible\n",
+					etc_cycles, etc_cycles_suspend);
+	}
+	if (rdtsc_cycles > tsc_cycles_suspend) {
+#if 0
+		ts2 = ns_to_timespec(clocksource_cyc2ns(
+			rdtsc_cycles - tsc_cycles_suspend,
+			tsc->mult, tsc->shift));
+		ts1 = timespec_sub(ts1, ts2);
+#endif
+	}
+	timekeeper.clock->cycle_last=rdtsc_cycles;
+	smp_wmb();
+	xtime = timespec_add_safe(xtime, ts1);
+	raw_time = timespec_add_safe(raw_time, ts1);
+	pr_debug("xtime delta(%d,%llu). xtime (%llu,%llu)\n",
+		ts1.tv_sec,ts1.tv_nsec,xtime.tv_sec,xtime.tv_nsec);
+	/* Commenting it out as this causes loss of jiffies
+	 * wall_to_monotonic = timespec_sub(wall_to_monotonic, ts1);
+	 */
+	total_sleep_time = timespec_add_safe(total_sleep_time, ts1);
+	touch_softlockup_watchdog();
+	timekeeper.ntp_error = 0;
+	/* If we let the timer interrupt update the time in vsyscall page
+	 * user time would be off (compare this with etc as clocksource)
+	 */
+	update_vsyscall(&xtime, &wall_to_monotonic, timekeeper.clock, timekeeper.mult);
+out:
+	suspended=0;
+	write_sequnlock_irqrestore(&xtime_lock, flags);
+		
+}
+EXPORT_SYMBOL(timekeeping_resume);
+#else
 /**
  * __timekeeping_inject_sleeptime - Internal function to add sleep interval
  * @delta: pointer to a timespec delta value
@@ -692,7 +803,31 @@ static void timekeeping_resume(void)
 	/* Resume hrtimers */
 	hrtimers_resume();
 }
+#endif
 
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+/* We are not really suspending timekeeping.
+ * We are just preparing for package state
+ */
+void timekeeping_suspend(void)
+{
+	unsigned long flags;
+ 
+	write_seqlock_irqsave(&xtime_lock, flags);
+	/* This is required mainly for TSC as the clocksource, because TSC will reset
+	 * on PC6 and we will lose the time accumulated in cycle_last if we do not
+	 * bring it up to date.
+	 */   
+	timekeeping_forward_now();
+	etc_cycles_suspend = clocksource_micetc.read(&clocksource_micetc);
+	rdtscll(tsc_cycles_suspend);
+	pr_debug("etc_suspend=%llx tsc_suspend= %llx xtime(%llu,llu)\n",
+	etc_cycles_suspend,tsc_cycles_suspend,xtime.tv_sec,xtime.tv_nsec);
+	suspended=1;
+	write_sequnlock_irqrestore(&xtime_lock, flags);
+}
+EXPORT_SYMBOL(timekeeping_suspend);
+#else
 static int timekeeping_suspend(void)
 {
 	unsigned long flags;
@@ -731,6 +866,7 @@ static int timekeeping_suspend(void)
 
 	return 0;
 }
+#endif
 
 /* sysfs resume/suspend bits for timekeeping */
 static struct syscore_ops timekeeping_syscore_ops = {
@@ -966,7 +1102,6 @@ static cycle_t logarithmic_accumulation(cycle_t offset, int shift)
 	return offset;
 }
 
-
 /**
  * update_wall_time - Uses the current clocksource to increment the wall time
  *
@@ -979,6 +1114,10 @@ static void update_wall_time(void)
 	int shift = 0, maxshift;
 
 	/* Make sure we're fully resumed: */
+	#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+	if(suspended)
+		return;
+	#endif
 	if (unlikely(timekeeping_suspended))
 		return;
 

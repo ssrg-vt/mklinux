@@ -55,12 +55,15 @@
 #include <linux/compaction.h>
 #include <trace/events/kmem.h>
 #include <linux/ftrace_event.h>
+#include <linux/hash.h>
 #include <linux/memcontrol.h>
 #include <linux/prefetch.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
 #include "internal.h"
+
+extern int vfs_optimization;
 
 #ifdef CONFIG_USE_PERCPU_NUMA_NODE_ID
 DEFINE_PER_CPU(int, numa_node);
@@ -3498,6 +3501,9 @@ void __meminit memmap_init_zone(unsigned long size, int nid, unsigned long zone,
 		/* The shift won't overflow because ZONE_NORMAL is below 4G. */
 		if (!is_highmem_idx(zone))
 			set_page_address(page, __va(pfn << PAGE_SHIFT));
+#endif
+#ifdef CONFIG_PRECOMPUTE_WAITQ_HEAD
+			page->wq = &(z->wait_table[hash_ptr(page, z->wait_table_bits)]);
 #endif
 	}
 }

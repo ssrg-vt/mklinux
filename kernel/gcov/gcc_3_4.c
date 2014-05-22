@@ -1,3 +1,26 @@
+/* * Copyright (c) 2010 - 2012 Intel Corporation.
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
 /*
  *  This code provides functions to handle gcc's profiling data format
  *  introduced with gcc 3.4. Future versions of gcc may change the gcov
@@ -297,16 +320,17 @@ void gcov_iter_start(struct gcov_iterator *iter)
 }
 
 /* Mapping of logical record number to actual file content. */
-#define RECORD_FILE_MAGIC	0
-#define RECORD_GCOV_VERSION	1
-#define RECORD_TIME_STAMP	2
-#define RECORD_FUNCTION_TAG	3
-#define RECORD_FUNCTON_TAG_LEN	4
-#define RECORD_FUNCTION_IDENT	5
-#define RECORD_FUNCTION_CHECK	6
-#define RECORD_COUNT_TAG	7
-#define RECORD_COUNT_LEN	8
-#define RECORD_COUNT		9
+#define RECORD_FILE_MAGIC		0
+#define RECORD_GCOV_VERSION		1
+#define RECORD_TIME_STAMP		2
+#define RECORD_FUNCTION_TAG		3
+#define RECORD_FUNCTON_TAG_LEN		4
+#define RECORD_FUNCTION_IDENT		5
+#define RECORD_FUNCTION_CHECK_LINE	6
+#define RECORD_FUNCTION_CHECK_CFG	7
+#define RECORD_COUNT_TAG		8
+#define RECORD_COUNT_LEN		9
+#define RECORD_COUNT			10
 
 /**
  * gcov_iter_next - advance file iterator to next logical record
@@ -323,6 +347,7 @@ int gcov_iter_next(struct gcov_iterator *iter)
 	case RECORD_FUNCTON_TAG_LEN:
 	case RECORD_FUNCTION_IDENT:
 	case RECORD_COUNT_TAG:
+	case RECORD_FUNCTION_CHECK_LINE:
 		/* Advance to next record */
 		iter->record++;
 		break;
@@ -332,7 +357,7 @@ int gcov_iter_next(struct gcov_iterator *iter)
 		/* fall through */
 	case RECORD_COUNT_LEN:
 		if (iter->count < get_func(iter)->n_ctrs[iter->type]) {
-			iter->record = 9;
+			iter->record = 10;
 			break;
 		}
 		/* Advance to next counter type */
@@ -340,9 +365,9 @@ int gcov_iter_next(struct gcov_iterator *iter)
 		iter->count = 0;
 		iter->type++;
 		/* fall through */
-	case RECORD_FUNCTION_CHECK:
+	case RECORD_FUNCTION_CHECK_CFG:
 		if (iter->type < iter->num_types) {
-			iter->record = 7;
+			iter->record = 8;
 			break;
 		}
 		/* Advance to next function */
@@ -421,13 +446,16 @@ int gcov_iter_write(struct gcov_iterator *iter, struct seq_file *seq)
 		rc = seq_write_gcov_u32(seq, GCOV_TAG_FUNCTION);
 		break;
 	case RECORD_FUNCTON_TAG_LEN:
-		rc = seq_write_gcov_u32(seq, 2);
+		rc = seq_write_gcov_u32(seq, 3);
 		break;
 	case RECORD_FUNCTION_IDENT:
 		rc = seq_write_gcov_u32(seq, get_func(iter)->ident);
 		break;
-	case RECORD_FUNCTION_CHECK:
-		rc = seq_write_gcov_u32(seq, get_func(iter)->checksum);
+	case RECORD_FUNCTION_CHECK_LINE:
+		rc = seq_write_gcov_u32(seq, get_func(iter)->lineno_checksum);
+		break;
+	case RECORD_FUNCTION_CHECK_CFG:
+		rc = seq_write_gcov_u32(seq, get_func(iter)->cfg_checksum);
 		break;
 	case RECORD_COUNT_TAG:
 		rc = seq_write_gcov_u32(seq,

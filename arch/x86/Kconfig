@@ -1,7 +1,7 @@
 # Select 32 or 64 bit
 config 64BIT
 	bool "64-bit kernel" if ARCH = "x86"
-	default ARCH = "x86_64"
+	default ARCH = "x86_64" || ARCH = "l1om" || ARCH = "k1om"
 	---help---
 	  Say yes to build a 64-bit kernel - formerly known as x86_64
 	  Say no to build a 32-bit kernel - formerly known as i386
@@ -82,11 +82,15 @@ config INSTRUCTION_DECODER
 config OUTPUT_FORMAT
 	string
 	default "elf32-i386" if X86_32
+	default "elf64-l1om" if ARCH = "l1om"
+	default "elf64-k1om" if ARCH = "k1om"
 	default "elf64-x86-64" if X86_64
 
 config ARCH_DEFCONFIG
 	string
 	default "arch/x86/configs/i386_defconfig" if X86_32
+	default "arch/x86/configs/l1om_defconfig" if ARCH = "l1om"
+	default "arch/x86/configs/k1om_defconfig" if ARCH = "k1om"
 	default "arch/x86/configs/x86_64_defconfig" if X86_64
 
 config GENERIC_CMOS_UPDATE
@@ -343,6 +347,7 @@ config X86_EXTENDED_PLATFORM
 
 	  If you enable this option then you'll be able to select support
 	  for the following (non-PC) 64 bit x86 platforms:
+		Intel MIC PCIe coprocessor
 		ScaleMP vSMP
 		SGI Ultraviolet
 
@@ -351,6 +356,34 @@ config X86_EXTENDED_PLATFORM
 endif
 # This is an alphabetically sorted list of 64 bit extended platforms
 # Please maintain the alphabetic order if and when there are additions
+
+config X86_MICPCI
+	bool "Intel MIC PCIe coprocessor"
+	depends on X86_64
+	depends on X86_EXTENDED_PLATFORM
+	select ML1OM if ARCH = "l1om"
+	select MK1OM if ARCH = "k1om"
+	select X86_LOCAL_APIC
+	select MMU_NOTIFIER
+	---help---
+	  Support for Intel Many Integrated Core (Intel MIC) SoC's in a
+	  PCIe coprocessor form factor.
+
+config X86_MIC_EMULATION
+	bool "EMULATION"
+	depends on X86_MICPCI
+	---help---
+	  Select this to enable hacks for running on emulated silicon
+	  instead of the real thing. Useless unless you work for Intel.
+
+config K1OM_TEST
+	bool "Test K1OM power management on L1OM"
+	depends on ML1OM
+	depends on MIC_PM
+	---help---
+	  Select this if you want to test MK1OM PM code on ML1OM by
+	  using some unused ML1OM H/W registers as stand-ins for the
+	  relevant K1OM registers. This is for testing purposes only.
 
 config X86_VSMP
 	bool "ScaleMP vSMP"
@@ -405,7 +438,7 @@ config X86_INTEL_MID
 	bool
 
 config X86_MRST
-       bool "Moorestown MID platform"
+        bool "Moorestown MID platform"
 	depends on PCI
 	depends on PCI_GOANY
 	depends on X86_IO_APIC
@@ -1276,6 +1309,13 @@ config ILLEGAL_POINTER_VALUE
 
 source "mm/Kconfig"
 
+config VECTOR_MEMCPY
+	bool
+	depends on MK1OM && PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+	default y
+	---help---
+	Memcopy that uses streaming stores instructions with vector registers.
+
 config HIGHPTE
 	bool "Allocate 3rd-level pagetables from highmem"
 	depends on HIGHMEM
@@ -1551,7 +1591,7 @@ config KEXEC_JUMP
 	  code in physical address mode via KEXEC
 
 config PHYSICAL_START
-	hex "Physical address where the kernel is loaded" if (EXPERT || CRASH_DUMP)
+	hex "Physical address where the kernel is loaded" if (EXPERT || CRASH_DUMP || X86_MIC_EMULATION)
 	default "0x1000000"
 	---help---
 	  This gives the physical address where the kernel is loaded.
@@ -1614,7 +1654,7 @@ config X86_NEED_RELOCS
 	depends on X86_32 && RELOCATABLE
 
 config PHYSICAL_ALIGN
-	hex "Alignment value to which kernel should be aligned" if X86_32
+	hex "Alignment value to which kernel should be aligned" if (X86_32 || X86_MIC_EMULATION)
 	default "0x1000000"
 	range 0x2000 0x1000000
 	---help---
@@ -2151,7 +2191,6 @@ config KEYS_COMPAT
 
 endmenu
 
-
 config HAVE_ATOMIC_IOMAP
 	def_bool y
 	depends on X86_32
@@ -2159,6 +2198,31 @@ config HAVE_ATOMIC_IOMAP
 config HAVE_TEXT_POKE_SMP
 	bool
 	select STOP_MACHINE if SMP
+
+config SPINLOCK_SCALABLE
+	def_bool y
+	depends on MK1OM
+	---help---
+	  This option enables scalable ticket spin locks in the
+	  kernel.  This is recommended for better locking
+	  performance on multi-threaded systems.  When there is
+	  high contention, this option limits the maximum
+	  number of threads, SPINLOCK_QUEUE_LENGTH, spinning on
+	  cache line while other threads delay execution for
+	  (ticket-SPINLOCK_QUEUE_LENGTH)*SPINLOCK_QUEUE_DELAY
+	  cycles.
+
+config SPINLOCK_QUEUE_LENGTH
+	int
+	range 0 255
+	default 10
+	depends on SPINLOCK_SCALABLE
+
+config SPINLOCK_QUEUE_DELAY
+	int
+	range 0 10000000
+	default 1000
+	depends on SPINLOCK_SCALABLE
 
 source "net/Kconfig"
 

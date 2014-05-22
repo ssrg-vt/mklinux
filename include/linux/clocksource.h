@@ -326,6 +326,12 @@ clocksource_calc_mult_shift(struct clocksource *cs, u32 freq, u32 minsec)
 				      NSEC_PER_SEC, minsec);
 }
 
+void clocksource_switch(char *override);
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+void watchdog_tsc_enable(void);
+void watchdog_tsc_disable(void);
+struct clocksource* get_curr_clocksource(void);
+#endif
 #ifdef CONFIG_GENERIC_TIME_VSYSCALL
 extern void
 update_vsyscall(struct timespec *ts, struct timespec *wtm,

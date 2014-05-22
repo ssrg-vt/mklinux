@@ -381,6 +381,123 @@ out:
 	return err;
 }
 
+/* Requires cpu_add_remove_lock to be held */
+static int __cpuinit _cpu_up_parallel(unsigned int cpu, int tasks_frozen)
+{
+	int ret, nr_calls = 0;
+	void *hcpu = (void *)(long)cpu;
+	unsigned long mod = tasks_frozen ? CPU_TASKS_FROZEN : 0;
+
+	if (cpu_online(cpu) || !cpu_present(cpu))
+		return -EINVAL;
+
+	cpu_hotplug_begin();
+	ret = __cpu_notify(CPU_UP_PREPARE | mod, hcpu, -1, &nr_calls);
+	if (ret) {
+		nr_calls--;
+		printk("%s: attempt to bring up CPU %u failed\n",
+				__func__, cpu);
+		goto out_notify;
+	}
+
+	/* Arch-specific enabling code. */
+	ret = __cpu_up(cpu);
+
+out_notify:
+	if (ret != 0)
+		__cpu_notify(CPU_UP_CANCELED | mod, hcpu, nr_calls, NULL);
+	cpu_hotplug_done();
+
+	return ret;
+}
+
+static void __cpuinit _map_cpu_active(unsigned int cpu, int tasks_frozen)
+{
+	void *hcpu = (void *)(long)cpu;
+	unsigned long mod = tasks_frozen ? CPU_TASKS_FROZEN : 0;
+
+	cpu_hotplug_begin();
+
+	BUG_ON(!cpu_online(cpu));
+
+	/* Now call notifier in preparation. */
+	cpu_notify(CPU_ONLINE | mod, hcpu);
+
+	cpu_hotplug_done();
+
+	return;
+}
+
+int __cpuinit cpu_up_parallel(unsigned int cpu)
+{
+	int err = 0;
+
+#ifdef	CONFIG_MEMORY_HOTPLUG
+	int nid;
+	pg_data_t	*pgdat;
+#endif
+
+	if (!cpu_possible(cpu)) {
+		printk(KERN_ERR "can't online cpu %d because it is not "
+			"configured as may-hotadd at boot time\n", cpu);
+#if defined(CONFIG_IA64)
+		printk(KERN_ERR "please check additional_cpus= boot "
+				"parameter\n");
+#endif
+		return -EINVAL;
+	}
+
+#ifdef	CONFIG_MEMORY_HOTPLUG
+	nid = cpu_to_node(cpu);
+	if (!node_online(nid)) {
+		err = mem_online_node(nid);
+		if (err)
+			return err;
+	}
+
+	pgdat = NODE_DATA(nid);
+	if (!pgdat) {
+		printk(KERN_ERR
+			"Can't online cpu %d due to NULL pgdat\n", cpu);
+		return -ENOMEM;
+	}
+
+	if (pgdat->node_zonelists->_zonerefs->zone == NULL) {
+		mutex_lock(&zonelists_mutex);
+		build_all_zonelists(NULL);
+		mutex_unlock(&zonelists_mutex);
+	}
+#endif
+
+	cpu_maps_update_begin();
+
+	if (cpu_hotplug_disabled) {
+		err = -EBUSY;
+		goto out;
+	}
+
+	err = _cpu_up_parallel(cpu, 0);
+
+out:
+	cpu_maps_update_done();
+	return err;
+}
+
+void __cpuinit map_cpu_active(unsigned int cpu)
+{
+	if (!cpu_possible(cpu))
+		printk(KERN_ERR "can't online cpu %d because it is not "
+			"configured as may-hotadd at boot time\n", cpu);
+
+	cpu_maps_update_begin();
+
+	_map_cpu_active(cpu, 0);
+
+	cpu_maps_update_done();
+
+	return;
+}
+
 #ifdef CONFIG_PM_SLEEP_SMP
 static cpumask_var_t frozen_cpus;
 

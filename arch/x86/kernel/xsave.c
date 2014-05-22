@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 /*
  * xsave/xrstor support.
  *
@@ -186,6 +210,33 @@ int save_i387_xstate(void __user *buf)
 
 	clear_used_math(); /* trigger finit */
 
+#ifdef CONFIG_X86_EARLYMIC
+	/* Simulate FPU DNA */
+	/*
+	 * No error return is possible since FPU state was already 
+	 * allocated, fix the code so that we call a different function
+	 * to init the thread's xstate ?
+	 */
+	err = init_fpu(current);
+
+	if (err) {
+		set_used_math();
+		clts();
+		task_thread_info(tsk)->status |= TS_USEDFPU;
+		return err;
+	}
+
+	preempt_disable();
+	clts();
+#ifdef CONFIG_ML1OM
+	__math_state_restore();
+#else
+	restore_mask_regs();
+	stts();
+#endif
+	preempt_enable();
+#endif
+
 	if (use_xsave()) {
 		struct _fpstate __user *fx = buf;
 		struct _xstate __user *x = buf;
@@ -305,6 +356,24 @@ int restore_i387_xstate(void __user *buf)
 clear:
 		clear_fpu(tsk);
 		clear_used_math();
+#ifdef CONFIG_X86_EARLYMIC
+		/* Simulate FPU DNA */
+		if (!init_fpu(current)) {
+			preempt_disable();
+			clts();
+#ifdef CONFIG_ML1OM
+			__math_state_restore();
+#else
+			restore_mask_regs();
+			stts();
+#endif
+			preempt_enable();
+		} else {
+			set_used_math();
+			clts();
+	 		task_thread_info(tsk)->status |= TS_USEDFPU;
+		}
+#endif
 	}
 	return err;
 }
@@ -350,8 +419,10 @@ unsigned int sig_xstate_size = sizeof(struct _fpstate);
  */
 static inline void xstate_enable(void)
 {
+#ifndef CONFIG_X86_EARLYMIC
 	set_in_cr4(X86_CR4_OSXSAVE);
 	xsetbv(XCR_XFEATURE_ENABLED_MASK, pcntxt_mask);
+#endif
 }
 
 /*
@@ -393,6 +464,10 @@ static void __init setup_xstate_init(void)
 	init_xstate_buf = alloc_bootmem_align(xstate_size,
 					      __alignof__(struct xsave_struct));
 	init_xstate_buf->i387.mxcsr = MXCSR_DEFAULT;
+#ifdef CONFIG_X86_EARLYMIC
+	init_xstate_buf->vpu.vxcsr = VXCSR_DEFAULT;
+	return;
+#endif
 
 	clts();
 	/*
@@ -412,6 +487,7 @@ static void __init setup_xstate_init(void)
  */
 static void __init xstate_enable_boot_cpu(void)
 {
+#ifndef CONFIG_X86_EARLYMIC
 	unsigned int eax, ebx, ecx, edx;
 
 	if (boot_cpu_data.cpuid_level < XSTATE_CPUID) {
@@ -421,6 +497,9 @@ static void __init xstate_enable_boot_cpu(void)
 
 	cpuid_count(XSTATE_CPUID, 0, &eax, &ebx, &ecx, &edx);
 	pcntxt_mask = eax + ((u64)edx << 32);
+#else
+	pcntxt_mask = XSTATE_FP | XSTATE_SSE | XSTATE_YMM | XSTATE_ZMM;
+#endif
 
 	if ((pcntxt_mask & XSTATE_FPSSE) != XSTATE_FPSSE) {
 		printk(KERN_ERR "FP/SSE not shown under xsave features 0x%llx\n",
@@ -434,12 +513,15 @@ static void __init xstate_enable_boot_cpu(void)
 	pcntxt_mask = pcntxt_mask & XCNTXT_MASK;
 
 	xstate_enable();
-
+#ifndef CONFIG_X86_EARLYMIC
 	/*
 	 * Recompute the context size for enabled features
 	 */
 	cpuid_count(XSTATE_CPUID, 0, &eax, &ebx, &ecx, &edx);
 	xstate_size = ebx;
+#else
+	xstate_size = sizeof(struct _xstate);
+#endif
 
 	update_regset_xstate_info(xstate_size, pcntxt_mask);
 	prepare_fx_sw_frame();
@@ -463,8 +545,10 @@ void __cpuinit xsave_init(void)
 	static __refdata void (*next_func)(void) = xstate_enable_boot_cpu;
 	void (*this_func)(void);
 
+#ifndef CONFIG_X86_EARLYMIC
 	if (!cpu_has_xsave)
 		return;
+#endif
 
 	this_func = next_func;
 	next_func = xstate_enable;

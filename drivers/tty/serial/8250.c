@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 /*
  *  Driver for 8250/16550-type serial ports
  *
@@ -43,10 +67,25 @@
 #include <asm/irq.h>
 
 #include "8250.h"
-
 #ifdef CONFIG_SPARC
 #include "suncore.h"
 #endif
+
+#ifdef	CONFIG_KDB
+#include <linux/kdb.h>
+/*
+ * kdb_serial_line records the serial line number of the first serial console.
+ * NOTE: The kernel ignores characters on the serial line unless a user space
+ * program has opened the line first.  To enter kdb before user space has opened
+ * the serial line, you can use the 'kdb=early' flag to lilo and set the
+ * appropriate breakpoints.
+ */
+
+int  kdb_serial_line = -1;
+static const char *kdb_serial_ptr = kdb_serial_str;
+#else
+#define KDB_8250() 0
+#endif	/* CONFIG_KDB */
 
 /*
  * Configuration:
@@ -478,7 +517,7 @@ static void set_io_from_upio(struct uart_port *p)
 		p->serial_in = mem_serial_in;
 		p->serial_out = mem_serial_out;
 		break;
-
+	
 	case UPIO_RM9000:
 	case UPIO_MEM32:
 		p->serial_in = mem32_serial_in;
@@ -1421,6 +1460,20 @@ receive_chars(struct uart_8250_port *up, unsigned int *status)
 			 * just force the read character to be 0
 			 */
 			ch = 0;
+#ifdef CONFIG_KDB
+		if ((up->port.line == kdb_serial_line) && kdb_on == 1) {
+		    if (ch == *kdb_serial_ptr) {
+			if (!(*++kdb_serial_ptr)) {
+				atomic_inc(&kdb_8250);
+				kdb(KDB_REASON_KEYBOARD, 0, get_irq_regs());
+				atomic_dec(&kdb_8250);
+				kdb_serial_ptr = kdb_serial_str;
+				break;
+			}
+		    } else
+			kdb_serial_ptr = kdb_serial_str;
+		}
+#endif /* CONFIG_KDB */
 
 		flag = TTY_NORMAL;
 		up->port.icount.rx++;
@@ -1766,12 +1819,20 @@ static void serial8250_timeout(unsigned long data)
 	mod_timer(&up->timer, jiffies + uart_poll_timeout(&up->port));
 }
 
+#ifdef	CONFIG_KDB
+extern struct uart_8250_port *kdb_serial_port;
+#endif
+
 static void serial8250_backup_timeout(unsigned long data)
 {
 	struct uart_8250_port *up = (struct uart_8250_port *)data;
 	unsigned int iir, ier = 0, lsr;
 	unsigned long flags;
 
+#ifdef	CONFIG_KDB
+	kdb_serial_port = up;
+#endif	
+	
 	spin_lock_irqsave(&up->port.lock, flags);
 
 	/*
@@ -1810,7 +1871,7 @@ static void serial8250_backup_timeout(unsigned long data)
 
 	/* Standard timer interval plus 0.2s to keep the port running */
 	mod_timer(&up->timer,
-		jiffies + uart_poll_timeout(&up->port) + HZ / 5);
+		jiffies + uart_poll_timeout(&up->port));
 }
 
 static unsigned int serial8250_tx_empty(struct uart_port *port)
@@ -2095,6 +2156,9 @@ static int serial8250_startup(struct uart_port *port)
 		}
 	}
 
+	printk(KERN_INFO "Fix UART hangs by setting BUG_THRE\n");
+	up->bugs |= UART_BUG_THRE;
+
 	/*
 	 * The above check will only give an accurate result the first time
 	 * the port is opened so this value needs to be preserved.
@@ -2103,7 +2167,7 @@ static int serial8250_startup(struct uart_port *port)
 		up->timer.function = serial8250_backup_timeout;
 		up->timer.data = (unsigned long)up;
 		mod_timer(&up->timer, jiffies +
-			uart_poll_timeout(port) + HZ / 5);
+			uart_poll_timeout(port));
 	}
 
 	/*
@@ -2660,7 +2724,6 @@ static void serial8250_config_port(struct uart_port *port, int flags)
 
 	if (up->port.iotype != up->cur_iotype)
 		set_io_from_upio(port);
-
 	if (flags & UART_CONFIG_TYPE)
 		autoconfig(up, probeflags);
 
@@ -2734,6 +2797,7 @@ void serial8250_set_isa_configurator(
 	serial8250_isa_config = v;
 }
 EXPORT_SYMBOL(serial8250_set_isa_configurator);
+
 
 static void __init serial8250_isa_init_ports(void)
 {
@@ -2850,7 +2914,7 @@ serial8250_console_write(struct console *co, const char *s, unsigned int count)
 	if (up->port.sysrq) {
 		/* serial8250_handle_port() already took the lock */
 		locked = 0;
-	} else if (oops_in_progress) {
+	} else if (oops_in_progress || KDB_8250()) {
 		locked = spin_trylock(&up->port.lock);
 	} else
 		spin_lock(&up->port.lock);
@@ -2907,6 +2971,35 @@ static int __init serial8250_console_setup(struct console *co, char *options)
 	port = &serial8250_ports[co->index].port;
 	if (!port->iobase && !port->membase)
 		return -ENODEV;
+#ifdef	CONFIG_KDB
+	/*
+	 * Remember the line number of the first serial
+	 * console.  We'll make this the kdb serial console too.
+	 */
+//	printk("Configuring KDB\n");
+
+	if (co && kdb_serial_line == -1) {
+		kdb_serial_line = co->index;
+		kdb_serial.io_type = port->iotype;
+		switch (port->iotype) {
+		case SERIAL_IO_MEM:
+#ifdef  SERIAL_IO_MEM32
+		case SERIAL_IO_MEM32:
+#endif
+			kdb_serial.iobase = (unsigned long)(port->membase);
+			kdb_serial.ioreg_shift = port->regshift;
+			break;
+		default:
+			kdb_serial.iobase = port->iobase;
+			kdb_serial.ioreg_shift = 0;
+			break;
+		}
+//		printk("  kdb_serial_line = %d\n", kdb_serial_line);
+//		printk("  kdb_serial.io_type = %d\n", kdb_serial.io_type);
+//		printk("  kdb_serial.iobase = 0x%lx\n", kdb_serial.iobase);
+//		printk("  kdb_serial.ioreg_shift = %ld\n", kdb_serial.ioreg_shift);
+	}
+#endif	/* CONFIG_KDB */
 
 	if (options)
 		uart_parse_options(options, &baud, &parity, &bits, &flow);

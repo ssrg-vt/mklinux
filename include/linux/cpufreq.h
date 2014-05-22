@@ -106,6 +106,9 @@ struct cpufreq_policy {
 
 	struct kobject		kobj;
 	struct completion	kobj_unregister;
+#ifdef CONFIG_CPUFREQ_KNC		 /* Knights Corner specific variables to support turbo mode */
+	unsigned int		tdpfreq; /* TDP frequency (corresponding to P1 state) for KNC in kHz */
+#endif         
 };
 
 #define CPUFREQ_ADJUST		(0)
@@ -363,7 +366,11 @@ extern struct cpufreq_governor cpufreq_gov_ondemand;
 #elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_CONSERVATIVE)
 extern struct cpufreq_governor cpufreq_gov_conservative;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_conservative)
-#endif
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_KNC)
+extern struct cpufreq_governor cpufreq_gov_knc;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_knc)
+#endif     
+
 
 
 /*********************************************************************

@@ -1,3 +1,26 @@
+/* * Copyright (c) 2010 - 2012 Intel Corporation.
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
 /*
  * Early serial console for 8250/16550 devices
  *
@@ -39,6 +62,11 @@
 #include <asm/pgtable.h>
 #include <asm/fixmap.h>
 #endif
+
+#ifdef	CONFIG_KDB
+#include <linux/kdb.h>
+static int  kdb_serial_line = -1;
+#endif	/* CONFIG_KDB */
 
 struct early_serial8250_device {
 	struct uart_port port;
@@ -257,6 +285,30 @@ int __init setup_early_serial8250_console(char *cmdline)
 		return err;
 
 	register_console(&early_serial8250_console);
+
+#ifdef	CONFIG_KDB
+	/*
+	 * Remember the line number of the first serial
+	 * console.  We'll make this the kdb serial console too.
+	 */
+	if (kdb_serial_line == -1) {
+		kdb_serial_line = early_serial8250_console.index;
+		kdb_serial.io_type = early_device.port.iotype;
+		switch (early_device.port.iotype) {
+		case SERIAL_IO_MEM:
+#ifdef  SERIAL_IO_MEM32
+		case SERIAL_IO_MEM32:
+#endif
+			kdb_serial.iobase = (unsigned long)(early_device.port.membase);
+			kdb_serial.ioreg_shift = early_device.port.regshift;
+			break;
+		default:
+			kdb_serial.iobase = early_device.port.iobase;
+			kdb_serial.ioreg_shift = 0;
+			break;
+		}
+	}
+#endif	/* CONFIG_KDB */
 
 	return 0;
 }

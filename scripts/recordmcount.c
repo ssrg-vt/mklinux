@@ -348,6 +348,8 @@ do_file(char const *const fname)
 	case EM_SH:	 reltype = R_SH_DIR32;                 break;
 	case EM_SPARCV9: reltype = R_SPARC_64;     gpfx = '_'; break;
 	case EM_X86_64:
+	case 180: // EM_L1OM:
+	case 181: // EM_K1OM:
 		make_nop = make_nop_x86;
 		ideal_nop = ideal_nop5_x86_64;
 		reltype = R_X86_64_64;

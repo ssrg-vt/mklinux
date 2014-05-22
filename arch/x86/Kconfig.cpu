@@ -277,6 +277,37 @@ config MATOM
 	  accordingly optimized code. Use a recent GCC with specific Atom
 	  support in order to fully benefit from selecting this option.
 
+config ML1OM
+	bool "Intel Aubrey Isle"
+	depends on X86_MICPCI
+	---help---
+
+	  Select this for the CPU used in the Intel Many Integrated Core
+	  (Intel MIC) Software Development Vehicle code-named Knights
+	  Ferry. The CPU is an in-order, 4-way SMT design that is mostly
+	  x86-64 compatible but has a different vector unit. The
+	  differences from x86-64 (and Knights Corner) force
+	  incompatible calling conventions, so GCC and binutils assign
+	  it a unique ELF machine type: EM_L1OM.
+
+	  Future Intel products will be part of the x86 ecosystem, *not*
+	  derivatives of this incompatible offshoot.
+
+config MK1OM
+	bool "Intel Knights Corner"
+	depends on X86_MICPCI
+	---help---
+
+	  Select this for the CPU used in the Intel Many Integrated Core
+	  (Intel MIC) products code-named Knights Corner. The CPU is an
+	  in-order, 4-way SMT design that is mostly x86-64 compatible
+	  but has a different vector unit. The differences from x86-64
+	  force incompatible calling conventions, so GCC and binutils
+	  assign it a unique ELF machine type: EM_K1OM.
+
+	  Future Intel products will be part of the x86 ecosystem, *not*
+	  derivatives of this incompatible offshoot.
+
 config GENERIC_CPU
 	bool "Generic-x86-64"
 	depends on X86_64
@@ -318,7 +349,7 @@ config CMPXCHG_DOUBLE
 config X86_L1_CACHE_SHIFT
 	int
 	default "7" if MPENTIUM4 || MPSC
-	default "6" if MK7 || MK8 || MPENTIUMM || MCORE2 || MATOM || MVIAC7 || X86_GENERIC || GENERIC_CPU
+	default "6" if MK7 || MK8 || MPENTIUMM || MCORE2 || MATOM || MVIAC7 || ML1OM || MK1OM || X86_GENERIC || GENERIC_CPU
 	default "4" if MELAN || M486 || M386 || MGEODEGX1
 	default "5" if MWINCHIP3D || MWINCHIPC6 || MCRUSOE || MEFFICEON || MCYRIXIII || MK6 || MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || M586 || MVIAC3_2 || MGEODE_LX
 
@@ -391,12 +422,13 @@ config X86_OOSTORE
 # does not understand them.
 #
 # As a result, disallow these if we're not compiling for X86_64 (these
-# NOPs do work on all x86-64 capable chips); the list of processors in
-# the right-hand clause are the cores that benefit from this optimization.
+# NOPs work on all x86-64 capable chips except ML1OM); the list of
+# processors in the right-hand clause are the cores that benefit from
+# this optimization.
 #
 config X86_P6_NOP
 	def_bool y
-	depends on X86_64
+	depends on X86_64 && !ML1OM
 	depends on (MCORE2 || MPENTIUM4 || MPSC)
 
 config X86_TSC
@@ -411,7 +443,7 @@ config X86_CMPXCHG64
 # generates cmov.
 config X86_CMOV
 	def_bool y
-	depends on (MK8 || MK7 || MCORE2 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MVIAC3_2 || MVIAC7 || MCRUSOE || MEFFICEON || X86_64 || MATOM || MGEODE_LX)
+	depends on MK8 || MK7 || MCORE2 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MVIAC3_2 || MVIAC7 || MPSC || MCRUSOE || MEFFICEON || MATOM || MGEODE_LX || GENERIC_CPU
 
 config X86_MINIMUM_CPU_FAMILY
 	int
@@ -424,6 +456,23 @@ config X86_MINIMUM_CPU_FAMILY
 config X86_DEBUGCTLMSR
 	def_bool y
 	depends on !(MK6 || MWINCHIPC6 || MWINCHIP3D || MCYRIXIII || M586MMX || M586TSC || M586 || M486 || M386) && !UML
+
+# not-X86_64 wierdness shared by ML1OM and MK1OM
+config X86_EARLYMIC
+       def_bool y
+       depends on ML1OM || MK1OM
+
+config PARALLEL_AP_BOOT
+    bool "Parallel Boot of Secondary CPUs"
+    default y
+    depends on ML1OM || MK1OM
+    ---help---
+    This enables parallel secondary processor bringup on ML1OM
+    and MK1OM processors. This greatly reduces boot time, but is
+    still EXPERIMENTAL.
+
+    If unsure, say N.
+       
 
 menuconfig PROCESSOR_SELECT
 	bool "Supported processor vendors" if EXPERT

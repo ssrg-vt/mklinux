@@ -267,7 +267,23 @@ static notrace __kprobes void
 unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 {
 	int handled;
+#ifdef CONFIG_KDB
+	static int controlling_cpu = -1;
+	static DEFINE_SPINLOCK(kdb_nmi_lock);
+	unsigned long flags;
 
+	spin_lock_irqsave(&kdb_nmi_lock, flags);
+	if (controlling_cpu == -1) {
+		controlling_cpu = smp_processor_id();
+		spin_unlock_irqrestore(&kdb_nmi_lock, flags);
+		(void)kdb(KDB_REASON_NMI, reason, regs);
+		controlling_cpu = -1;
+	} else {
+		spin_unlock_irqrestore(&kdb_nmi_lock, flags);
+		(void)kdb(KDB_REASON_ENTER_SLAVE, reason, regs);
+	}
+	return;
+#else
 	/*
 	 * Use 'false' as back-to-back NMIs are dealt with one level up.
 	 * Of course this makes having multiple 'unknown' handlers useless
@@ -300,6 +316,7 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 		panic("NMI: Not continuing");
 
 	pr_emerg("Dazed and confused, but trying to continue\n");
+#endif /* CONFIG_KDB */	
 }
 
 static DEFINE_PER_CPU(bool, swallow_nmi);
@@ -310,6 +327,36 @@ static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 	unsigned char reason = 0;
 	int handled;
 	bool b2b = false;
+	int cpu;
+
+ 	cpu = smp_processor_id();
+ 
+#ifdef CONFIG_X86_EARLYMIC
+	/*
+	 * If RAS hook in use then let it have first pass on the NMI.
+	 * Any non-zero return means that source was an un-core MC
+	 * event that has been handled by the RAS module.
+	 * No need for nmi_reassert(), MIC is 64-bit only.
+	 * There is a collision possibility in this because both the
+	 * un-core MC events and injected core MC events use NMIs
+	 * for distribution and theoretically both can try to do
+	 * their respective system lock-downs at the same time.
+	 * Therefore, avoid calling the un-core handler if it
+	 * is _known_ that an mce-injection is ongoing.
+	 */
+	if (!atomic_read(&mca_inject) && mca_nmi && mca_nmi(cpu))
+	  return;
+#endif
+
+#if defined(CONFIG_SMP) && defined(CONFIG_KDB)
+	/*
+	 * Call the kernel debugger to see if this NMI is due
+	 * to an KDB requested IPI.  If so, kdb will handle it.
+	 */
+	if (kdb_ipi(regs, NULL)) {
+		return;
+	}
+#endif /* defined(CONFIG_SMP) && defined(CONFIG_KDB) */
 
 	/*
 	 * CPU-specific NMI must be processed before non-CPU-specific

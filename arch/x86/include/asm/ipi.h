@@ -119,6 +119,32 @@ static inline void
 	native_apic_mem_write(APIC_ICR, cfg);
 }
 
+#ifdef CONFIG_X86_EARLYMIC
+/*
+ * Use this to send IPI shorthand notation, with safe wait for ICR
+ * on NMI vectors. Very similar to __default_send_IPI_shortcut(), it will
+ * not try the set ICR destination field at all, i.e. shortcut
+ * has to be non-zero (check for that?).
+ */
+
+static inline void
+__default_send_IPI_shortcut_safe(unsigned int shortcut, int vector, unsigned int dest)
+{
+  unsigned int cfg;
+
+  if (unlikely(vector == NMI_VECTOR))
+	safe_apic_wait_icr_idle();
+  else
+	__xapic_wait_icr_idle();
+
+  cfg = __prepare_ICR(shortcut, vector, dest);
+  native_apic_mem_write(APIC_ICR, cfg);
+}
+
+extern void default_send_IPI_all_phys(int vector);
+extern void default_send_IPI_allbutself_phys(int vector);
+#endif
+
 extern void default_send_IPI_mask_sequence_phys(const struct cpumask *mask,
 						 int vector);
 extern void default_send_IPI_mask_allbutself_phys(const struct cpumask *mask,

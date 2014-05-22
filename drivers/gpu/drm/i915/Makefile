@@ -22,7 +22,6 @@ i915-y := i915_drv.o i915_dma.o i915_irq.o i915_mem.o \
 	  intel_sdvo.o \
 	  intel_modes.o \
 	  intel_panel.o \
-	  intel_i2c.o \
 	  intel_fb.o \
 	  intel_tv.o \
 	  intel_dvo.o \
@@ -40,5 +39,5 @@ i915-$(CONFIG_COMPAT)   += i915_ioc32.o
 i915-$(CONFIG_ACPI)	+= intel_acpi.o
 
 obj-$(CONFIG_DRM_I915)  += i915.o
-
+obj-$(CONFIG_I2C_I915_GMBUS) += intel_i2c.o
 CFLAGS_i915_trace_points.o := -I$(src)

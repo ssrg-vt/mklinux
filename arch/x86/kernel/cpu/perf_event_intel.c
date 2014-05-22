@@ -252,7 +252,7 @@ static __initconst const u64 snb_hw_cache_event_ids
 
 };
 
-static __initconst const u64 westmere_hw_cache_event_ids
+static const u64 westmere_hw_cache_event_ids
 				[PERF_COUNT_HW_CACHE_MAX]
 				[PERF_COUNT_HW_CACHE_OP_MAX]
 				[PERF_COUNT_HW_CACHE_RESULT_MAX] =
@@ -435,7 +435,7 @@ static __initconst const u64 nehalem_hw_cache_extra_regs
  },
 };
 
-static __initconst const u64 nehalem_hw_cache_event_ids
+static const u64 nehalem_hw_cache_event_ids
 				[PERF_COUNT_HW_CACHE_MAX]
 				[PERF_COUNT_HW_CACHE_OP_MAX]
 				[PERF_COUNT_HW_CACHE_RESULT_MAX] =
@@ -550,7 +550,7 @@ static __initconst const u64 nehalem_hw_cache_event_ids
  },
 };
 
-static __initconst const u64 core2_hw_cache_event_ids
+static const u64 core2_hw_cache_event_ids
 				[PERF_COUNT_HW_CACHE_MAX]
 				[PERF_COUNT_HW_CACHE_OP_MAX]
 				[PERF_COUNT_HW_CACHE_RESULT_MAX] =
@@ -641,7 +641,7 @@ static __initconst const u64 core2_hw_cache_event_ids
  },
 };
 
-static __initconst const u64 atom_hw_cache_event_ids
+static const u64 atom_hw_cache_event_ids
 				[PERF_COUNT_HW_CACHE_MAX]
 				[PERF_COUNT_HW_CACHE_OP_MAX]
 				[PERF_COUNT_HW_CACHE_RESULT_MAX] =
@@ -1565,6 +1565,8 @@ __init int intel_pmu_init(void)
 		switch (boot_cpu_data.x86) {
 		case 0x6:
 			return p6_pmu_init();
+		case 0xb:
+			return knc_pmu_init();
 		case 0xf:
 			return p4_pmu_init();
 		}

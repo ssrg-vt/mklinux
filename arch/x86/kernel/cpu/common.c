@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 #include <linux/bootmem.h>
 #include <linux/linkage.h>
 #include <linux/bitops.h>
@@ -477,10 +501,20 @@ void __cpuinit detect_ht(struct cpuinfo_x86 *c)
 
 	if (smp_num_siblings <= 1)
 		goto out;
+	
+#if !defined(CONFIG_X86_EARLYMIC) || defined(CONFIG_X86_MIC_EMULATION)
+	if (smp_num_siblings > nr_cpu_ids) {
+		pr_warning("CPU: Unsupported number of siblings %d",
+			   smp_num_siblings);
+		smp_num_siblings = 1;
+		return;
+	}
+#endif
 
 	index_msb = get_count_order(smp_num_siblings);
 	c->phys_proc_id = apic->phys_pkg_id(c->initial_apicid, index_msb);
 
+	/* MICBUGBUG: bootstrap reports threads_per_core, for now 128/32 = 4 */
 	smp_num_siblings = smp_num_siblings / c->x86_max_cores;
 
 	index_msb = get_count_order(smp_num_siblings);
@@ -807,6 +841,15 @@ static void __cpuinit identify_cpu(struct cpuinfo_x86 *c)
 
 	generic_identify(c);
 
+#ifdef CONFIG_X86_EARLYMIC
+	/*
+	 * Hardware does not set this bit, presumably because not all
+	 * expected features are present; thus a zero prevents mishaps.
+	 */
+	set_cpu_cap(c, X86_FEATURE_MCA);
+	set_cpu_cap(c, X86_FEATURE_MCE);
+#endif
+
 	if (this_cpu->c_identify)
 		this_cpu->c_identify(c);
 
@@ -1071,7 +1114,9 @@ void syscall_init(void)
 	 */
 	wrmsrl(MSR_STAR,  ((u64)__USER32_CS)<<48  | ((u64)__KERNEL_CS)<<32);
 	wrmsrl(MSR_LSTAR, system_call);
+#ifndef CONFIG_X86_EARLYMIC
 	wrmsrl(MSR_CSTAR, ignore_sysret);
+#endif
 
 #ifdef CONFIG_IA32_EMULATION
 	syscall32_cpu_init();
@@ -1168,8 +1213,6 @@ void __cpuinit cpu_init(void)
 		set_numa_node(early_cpu_to_node(cpu));
 #endif
 
-	me = current;
-
 	if (cpumask_test_and_set_cpu(cpu, cpu_initialized_mask))
 		panic("CPU#%d already initialized!\n", cpu);
 
@@ -1184,6 +1227,14 @@ void __cpuinit cpu_init(void)
 
 	switch_to_new_gdt(cpu);
 	loadsegment(fs, 0);
+
+	/* 
+	 * When booting in parallel, we need to get the current 
+	 * task after we switch to the new gdt to make sure we 
+	 * are pointing at the real per cpu area.
+	 */
+	wmb();
+	me = current;
 
 	load_idt((const struct desc_ptr *)&idt_descr);
 
@@ -1230,11 +1281,30 @@ void __cpuinit cpu_init(void)
 	load_TR_desc();
 	load_LDT(&init_mm.context);
 
+#ifdef CONFIG_KGDB
+	/*
+	 * If the kgdb is connected no debug regs should be altered.  This
+	 * is only applicable when KGDB and a KGDB I/O module are built
+	 * into the kernel and you are using early debugging with
+	 * kgdbwait. KGDB will control the kernel HW breakpoint registers.
+	 */
+	if (kgdb_connected && arch_kgdb_ops.correct_hw_break)
+		arch_kgdb_ops.correct_hw_break();
+	else
+#endif
+
+#ifndef CONFIG_X86_EARLYMIC
+	/* rm: We found that on emulation, this was hampering our ability to set HW breakpoints
+	 * via ITP. So don't do it for now. What's so bad about leaving it this way?
+	 */
 	clear_all_debug_regs();
+#endif
 	dbg_restore_debug_regs();
 
 	fpu_init();
 	xsave_init();
+
+	BUG_ON(! xstate_size);
 
 	raw_local_save_flags(kernel_eflags);
 

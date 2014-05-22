@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 #ifndef _ASM_X86_IRQ_VECTORS_H
 #define _ASM_X86_IRQ_VECTORS_H
 
@@ -50,6 +74,7 @@
 #ifdef CONFIG_X86_32
 # define SYSCALL_VECTOR			0x80
 #endif
+#define KDBENTER_VECTOR 	0x81
 
 /*
  * Vectors 0x30-0x3f are used for ISA interrupts.
@@ -113,12 +138,32 @@
 #define XEN_HVM_EVTCHN_CALLBACK		0xf3
 
 /*
+ * KDB_VECTOR will take over vector 0xfe when it is needed, as in theory
+ * it should not be used anyway.
+ */
+//intel: #define KDB_VECTOR			0xfe
+#define KDB_VECTOR			0xf0
+
+/*
  * Local APIC timer IRQ vector is on a different priority level,
  * to work around the 'lost local interrupt if more than 2 IRQ
  * sources per level' errata.
  */
 #define LOCAL_TIMER_VECTOR		0xef
 
+#ifdef CONFIG_X86_EARLYMIC
+/*
+ * For the P6 family and Pentium processors, the IRR and ISR registers
+ * can queue no more than two interrupts per priority level, and will
+ * reject other interrupts that are received within the same priority
+ * level.
+ */
+//intel: #define INVALIDATE_TLB_VECTOR_END	0xd1
+#define INVALIDATE_TLB_VECTOR_END	(0xee)
+//intel: #define INVALIDATE_TLB_VECTOR_START	0xd0
+#define INVALIDATE_TLB_VECTOR_START	(0xed)
+#define NUM_INVALIDATE_TLB_VECTORS	   2
+#else /* CONFIG_X86_EARLYMIC */
 /* up to 32 vectors used for spreading out TLB flushes: */
 #if NR_CPUS <= 32
 # define NUM_INVALIDATE_TLB_VECTORS	(NR_CPUS)
@@ -129,6 +174,7 @@
 #define INVALIDATE_TLB_VECTOR_END	(0xee)
 #define INVALIDATE_TLB_VECTOR_START	\
 	(INVALIDATE_TLB_VECTOR_END-NUM_INVALIDATE_TLB_VECTORS+1)
+#endif /* !CONFIG_X86_EARLYMIC */
 
 #define NR_VECTORS			 256
 

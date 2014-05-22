@@ -117,6 +117,9 @@ int huge_pmd_unshare(struct mm_struct *mm, unsigned long *addr, pte_t *ptep)
 	pgd_t *pgd = pgd_offset(mm, *addr);
 	pud_t *pud = pud_offset(pgd, *addr);
 
+	if (pte_64k(*ptep))
+		return 0;
+
 	BUG_ON(page_count(virt_to_page(ptep)) == 0);
 	if (page_count(virt_to_page(ptep)) == 1)
 		return 0;
@@ -132,6 +135,7 @@ pte_t *huge_pte_alloc(struct mm_struct *mm,
 {
 	pgd_t *pgd;
 	pud_t *pud;
+	pmd_t *pmd;
 	pte_t *pte = NULL;
 
 	pgd = pgd_offset(mm, addr);
@@ -140,13 +144,18 @@ pte_t *huge_pte_alloc(struct mm_struct *mm,
 		if (sz == PUD_SIZE) {
 			pte = (pte_t *)pud;
 		} else {
-			BUG_ON(sz != PMD_SIZE);
-			if (pud_none(*pud))
-				huge_pmd_share(mm, addr, pud);
-			pte = (pte_t *) pmd_alloc(mm, pud, addr);
+			BUG_ON(sz != PMD_SIZE && sz != 0x10000);
+			if (sz == PMD_SIZE) {
+				if (pud_none(*pud))
+					huge_pmd_share(mm, addr, pud);
+				pte = (pte_t *) pmd_alloc(mm, pud, addr);
+			} else if ((pmd = pmd_alloc(mm, pud, addr))) {
+				addr = round_down(addr, 0x10000);
+				pte = pte_alloc_map(mm, NULL, pmd, addr);
+			}
 		}
 	}
-	BUG_ON(pte && !pte_none(*pte) && !pte_huge(*pte));
+	BUG_ON(pte && !pte_none(*pte) && !pte_huge(*pte) && !pte_64k(*pte));
 
 	return pte;
 }
@@ -155,6 +164,7 @@ pte_t *huge_pte_offset(struct mm_struct *mm, unsigned long addr)
 {
 	pgd_t *pgd;
 	pud_t *pud;
+	pte_t *pte;
 	pmd_t *pmd = NULL;
 
 	pgd = pgd_offset(mm, addr);
@@ -164,6 +174,10 @@ pte_t *huge_pte_offset(struct mm_struct *mm, unsigned long addr)
 			if (pud_large(*pud))
 				return (pte_t *)pud;
 			pmd = pmd_offset(pud, addr);
+			if (pmd && pmd_present(*pmd) && !pmd_large(*pmd)) {
+				pte = pte_offset_map(pmd, round_down(addr, 0x10000));
+				return pte;
+			}
 		}
 	}
 	return (pte_t *) pmd;
@@ -436,6 +450,10 @@ static __init int setup_hugepagesz(char *opt)
 		hugetlb_add_hstate(PMD_SHIFT - PAGE_SHIFT);
 	} else if (ps == PUD_SIZE && cpu_has_gbpages) {
 		hugetlb_add_hstate(PUD_SHIFT - PAGE_SHIFT);
+#ifdef CONFIG_X86_EARLYMIC
+	} else if (ps == 0x10000) {
+		hugetlb_add_hstate(__ffs(ps) - PAGE_SHIFT);
+#endif
 	} else {
 		printk(KERN_ERR "hugepagesz: Unsupported page size %lu M\n",
 			ps >> 20);

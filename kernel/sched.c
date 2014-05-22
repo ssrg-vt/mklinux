@@ -1,3 +1,26 @@
+/* * Copyright (c) 2010 - 2012 Intel Corporation.
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
 /*
  *  kernel/sched.c
  *
@@ -2928,7 +2951,8 @@ out:
  */
 int wake_up_process(struct task_struct *p)
 {
-	return try_to_wake_up(p, TASK_ALL, 0);
+	WARN_ON(task_is_stopped_or_traced(p));
+	return try_to_wake_up(p, TASK_NORMAL, 0);
 }
 EXPORT_SYMBOL(wake_up_process);
 
@@ -8472,7 +8496,7 @@ void normalize_rt_tasks(void)
 
 #endif /* CONFIG_MAGIC_SYSRQ */
 
-#if defined(CONFIG_IA64) || defined(CONFIG_KGDB_KDB)
+#if defined(CONFIG_IA64) || defined(CONFIG_KGDB_KDB) || defined(CONFIG_KDB)
 /*
  * These functions are only useful for the IA64 MCA handling, or kdb.
  *
@@ -9783,3 +9807,110 @@ struct cgroup_subsys cpuacct_subsys = {
 	.subsys_id = cpuacct_subsys_id,
 };
 #endif	/* CONFIG_CGROUP_CPUACCT */
+
+#ifdef	CONFIG_KDB
+#include <linux/kdb.h>
+
+static void
+kdb_prio(char *name, struct rt_prio_array *array, kdb_printf_t xxx_printf,
+	unsigned int cpu)
+{
+	int pri, printed_header = 0;
+	struct task_struct *p;
+
+	xxx_printf(" %s rt bitmap: 0x%lx 0x%lx 0x%lx\n",
+		name,
+		array->bitmap[0], array->bitmap[1], array->bitmap[2]);
+
+	pri = sched_find_first_bit(array->bitmap);
+	if (pri < MAX_RT_PRIO) {
+		xxx_printf("   rt bitmap priorities:");
+		while (pri < MAX_RT_PRIO) {
+			xxx_printf(" %d", pri);
+			pri++;
+			pri = find_next_bit(array->bitmap, MAX_RT_PRIO, pri);
+		}
+		xxx_printf("\n");
+	}
+
+	for (pri = 0; pri < MAX_RT_PRIO; pri++) {
+		int printed_hdr = 0;
+		struct list_head *head, *curr;
+
+		head = array->queue + pri;
+		curr = head->next;
+		while(curr != head) {
+			struct task_struct *task;
+			if (!printed_hdr) {
+				xxx_printf("   queue at priority=%d\n", pri);
+				printed_hdr = 1;
+			}
+			task = list_entry(curr, struct task_struct, rt.run_list);
+			if (task)
+				xxx_printf("    0x%p %d %s  time_slice:%d\n",
+				   task, task->pid, task->comm,
+				   task->rt.time_slice);
+			curr = curr->next;
+		}
+	}
+	for_each_process(p) {
+		if (p->se.on_rq && (task_cpu(p) == cpu) &&
+		   (p->policy == SCHED_NORMAL)) {
+			if (!printed_header) {
+				xxx_printf("  sched_normal queue:\n");
+				printed_header = 1;
+			}
+			xxx_printf("    0x%p %d %s pri:%d spri:%d npri:%d\n",
+				p, p->pid, p->comm, p->prio,
+				p->static_prio, p->normal_prio);
+		}
+	}
+}
+
+/* This code must be in sched.c because struct rq is only defined in this
+ * source.  To allow most of kdb to be modular, this code cannot call any kdb
+ * functions directly, any external functions that it needs must be passed in
+ * as parameters.
+ */
+
+void
+kdb_runqueue(unsigned long cpu, kdb_printf_t xxx_printf)
+{
+	int i;
+	struct rq *rq;
+
+	rq = cpu_rq(cpu);
+
+	xxx_printf("CPU%ld lock:%s curr:0x%p(%d)(%s)",
+		   cpu, (spin_is_locked(&rq->lock))?"LOCKED":"free",
+		   rq->curr, rq->curr->pid, rq->curr->comm);
+	if (rq->curr == rq->idle)
+		xxx_printf(" is idle");
+	xxx_printf("\n");
+
+	xxx_printf(" nr_running:%ld ", rq->nr_running);
+	xxx_printf(" nr_uninterruptible:%ld ", rq->nr_uninterruptible);
+
+	xxx_printf(" nr_switches:%llu ", (long long)rq->nr_switches);
+	xxx_printf(" nr_iowait:%u ", atomic_read(&rq->nr_iowait));
+	xxx_printf(" next_balance:%lu\n", rq->next_balance);
+
+#ifdef CONFIG_SMP
+	xxx_printf(" active_balance:%u ", rq->active_balance);
+	xxx_printf(" idle_at_tick:%u\n", rq->idle_at_tick);
+
+	xxx_printf(" push_cpu:%u ", rq->push_cpu);
+	xxx_printf(" cpu:%u ", rq->cpu);
+	xxx_printf(" online:%u\n", rq->online);
+#endif
+
+	xxx_printf(" cpu_load:");
+	for (i=0; i<CPU_LOAD_IDX_MAX; i++)
+		xxx_printf(" %lu", rq->cpu_load[i]);
+	xxx_printf("\n");
+	kdb_prio("active", &rq->rt.active, xxx_printf, (unsigned int)cpu);
+}
+EXPORT_SYMBOL(kdb_runqueue);
+
+#endif	/* CONFIG_KDB */
+

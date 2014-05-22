@@ -33,6 +33,7 @@
 #include <asm/alternative.h>
 
 #include "perf_event.h"
+#include "perf_event_knc.c"
 
 #if 0
 #undef wrmsrl

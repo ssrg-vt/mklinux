@@ -1,3 +1,26 @@
+/* * Copyright (c) 2010 - 2012 Intel Corporation.
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
 #ifndef _ASM_X86_PGTABLE_64_H
 #define _ASM_X86_PGTABLE_64_H
 
@@ -46,12 +69,44 @@ void set_pte_vaddr_pud(pud_t *pud_page, unsigned long vaddr, pte_t new_pte);
 static inline void native_pte_clear(struct mm_struct *mm, unsigned long addr,
 				    pte_t *ptep)
 {
-	*ptep = native_make_pte(0);
+	int i;
+	if (pte_64k(*ptep)) {
+		BUG_ON(PTR_ALIGN(ptep, 0x40) != ptep);
+		for (i = 0; i < 16; i++)
+			*ptep++ = native_make_pte(0);
+	} else {
+		*ptep = native_make_pte(0);
+	}
+}
+
+#ifdef CONFIG_X86_EARLYMIC
+void mic_flush_icache_nx(pte_t *ptep, pte_t pte);
+#endif
+
+static inline void _native_set_pte(pte_t *ptep, pte_t pte)
+{
+	*ptep = pte;
 }
 
 static inline void native_set_pte(pte_t *ptep, pte_t pte)
 {
-	*ptep = pte;
+	int i;
+	unsigned long pfn;
+	pteval_t val;
+
+#ifdef CONFIG_X86_EARLYMIC
+	mic_flush_icache_nx(ptep, pte);
+#endif
+	if (pte_64k(pte)) {
+		BUG_ON(PTR_ALIGN(ptep, 0x40) != ptep);
+		pfn = pte_pfn(pte);
+		for (i = 0; i < 16; i++) {
+			val = ((pfn + i) << PAGE_SHIFT) | pte_flags(pte);
+			_native_set_pte(ptep + i, native_make_pte(val));
+		}
+	} else {
+		_native_set_pte(ptep, pte);
+	}
 }
 
 static inline void native_set_pte_atomic(pte_t *ptep, pte_t pte)
@@ -71,13 +126,32 @@ static inline void native_pmd_clear(pmd_t *pmd)
 
 static inline pte_t native_ptep_get_and_clear(pte_t *xp)
 {
+	int i;
+	pteval_t flags = 0;
+	pte_t pte;
+
 #ifdef CONFIG_SMP
-	return native_make_pte(xchg(&xp->pte, 0));
+	if (pte_64k(*xp)) {
+		BUG_ON(PTR_ALIGN(xp, 0x40) != xp);
+		for (i = 1; i < 16; i++) {
+			pte = native_make_pte(xchg(&xp->pte + i, 0));
+			flags |= pte_flags(pte);
+		}
+		return native_make_pte(xchg(&xp->pte, 0) | flags);
+	} else {
+		return native_make_pte(xchg(&xp->pte, 0));
+	}
 #else
 	/* native_local_ptep_get_and_clear,
 	   but duplicated because of cyclic dependency */
 	pte_t ret = *xp;
-	native_pte_clear(NULL, 0, xp);
+	if (pte_64k(*xp)) {
+		BUG_ON(PTR_ALIGN(xp, 0x40) != xp);
+		for (i = 1; i < 16; i++) {
+			ret |= pte_flags(*(xp + i));
+			native_pte_clear(NULL, 0, xp + i);
+		}
+	native_pte_clear(NULL, 0 , xp);
 	return ret;
 #endif
 }

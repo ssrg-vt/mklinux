@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 /*
  *  Copyright (C) 1991, 1992  Linus Torvalds
  *  Copyright (C) 2000, 2001, 2002 Andi Kleen, SuSE Labs
@@ -44,6 +68,10 @@
 #if defined(CONFIG_EDAC)
 #include <linux/edac.h>
 #endif
+
+#ifdef CONFIG_KDB
+#include <linux/kdb.h>
+#endif /* CONFIG_KDB */
 
 #include <asm/kmemcheck.h>
 #include <asm/stacktrace.h>
@@ -301,6 +329,10 @@ gp_in_kernel:
 /* May run on IST stack. */
 dotraplinkage void __kprobes do_int3(struct pt_regs *regs, long error_code)
 {
+#ifdef CONFIG_KDB
+	if (kdb(KDB_REASON_BREAK, error_code, regs))
+		return;
+#endif
 #ifdef CONFIG_KGDB_LOW_LEVEL_TRAP
 	if (kgdb_ll_trap(DIE_INT3, "int3", regs, error_code, 3, SIGTRAP)
 			== NOTIFY_STOP)
@@ -396,9 +428,10 @@ dotraplinkage void __kprobes do_debug(struct pt_regs *regs, long error_code)
 	if ((dr6 & DR_STEP) && kmemcheck_trap(regs))
 		return;
 
+#ifndef  CONFIG_KDB
 	/* DR6 may or may not be cleared by the CPU */
 	set_debugreg(0, 6);
-
+#endif
 	/*
 	 * The processor cleared BTF, so don't mark that we need it set.
 	 */
@@ -406,6 +439,14 @@ dotraplinkage void __kprobes do_debug(struct pt_regs *regs, long error_code)
 
 	/* Store the virtualized DR6 value */
 	tsk->thread.debugreg6 = dr6;
+
+#ifdef  CONFIG_KDB
+	if (kdb(KDB_REASON_DEBUG, error_code, regs))
+		return;
+
+	/* DR6 may or may not be cleared by the CPU */
+	set_debugreg(0, 6);
+#endif  /* CONFIG_KDB */
 
 	if (notify_die(DIE_DEBUG, "debug", regs, PTR_ERR(&dr6), error_code,
 							SIGTRAP) == NOTIFY_STOP)
@@ -560,6 +601,20 @@ asmlinkage void __attribute__((weak)) smp_thermal_interrupt(void)
 asmlinkage void __attribute__((weak)) smp_threshold_interrupt(void)
 {
 }
+
+#ifdef CONFIG_MK1OM
+void restore_mask_regs(void)
+{
+	struct thread_info *thread = current_thread_info();
+	struct task_struct *tsk = thread->task;
+
+	if(unlikely(mic_restore_mask_regs(tsk))) {
+		force_sig(SIGSEGV, tsk);
+		return;
+	}
+}
+EXPORT_SYMBOL_GPL(restore_mask_regs);
+#endif
 
 /*
  * This gets called with the process already owning the
@@ -733,3 +788,15 @@ void __init trap_init(void)
 
 	x86_init.irqs.trap_init();
 }
+
+#ifdef CONFIG_X86_EARLYMIC
+/*
+ * Intercept hook for RAS module
+ */
+int (*mca_nmi)(int);
+EXPORT_SYMBOL_GPL(mca_nmi);
+
+atomic_t mca_inject;
+EXPORT_SYMBOL_GPL(mca_inject);
+#endif
+

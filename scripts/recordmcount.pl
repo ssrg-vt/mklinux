@@ -219,16 +219,20 @@ $section_type = '@progbits';
 $mcount_adjust = 0;
 $type = ".long";
 
-if ($arch eq "x86_64") {
+if ($arch eq "x86_64" or $arch =~ m/[lk]1om/ ) {
     $mcount_regex = "^\\s*([0-9a-fA-F]+):.*\\smcount([+-]0x[0-9a-zA-Z]+)?\$";
     $type = ".quad";
     $alignment = 8;
     $mcount_adjust = -1;
 
+    # map x86_64 into x86-64
+    my $dash = $arch;
+    $dash =~ tr/_/-/;
+
     # force flags for this arch
-    $ld .= " -m elf_x86_64";
-    $objdump .= " -M x86-64";
-    $objcopy .= " -O elf64-x86-64";
+    $ld .= " -m elf_$arch";
+    $objdump .= " -M $dash";
+    $objcopy .= " -O elf64-$dash";
     $cc .= " -m64";
 
 } elsif ($arch eq "i386") {

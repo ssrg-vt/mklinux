@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 /*
  *  Copyright (C) 1994 Linus Torvalds
  *
@@ -56,6 +80,16 @@ void __cpuinit mxcsr_feature_mask_init(void)
 		if (mask == 0)
 			mask = 0x0000ffbf;
 	}
+
+#ifdef CONFIG_MK1OM
+	/* Must set DUE (bit 21) to avoid GP# on vector register access. */
+	{
+		unsigned int vxcsr = 1u << 21;
+		asm volatile ("ldmxcsr %0" :: "m" (*&vxcsr));
+		mask |= vxcsr;	// Make it part of the default mask
+	}
+#endif
+
 	mxcsr_feature_mask &= mask;
 	stts();
 }
@@ -77,6 +111,11 @@ static void __cpuinit init_thread_xstate(void)
 		xstate_size = sizeof(struct i387_soft_struct);
 		return;
 	}
+#ifdef CONFIG_X86_EARLYMIC
+	xstate_size = sizeof(struct _xstate);
+	xsave_init();
+	return;
+#endif
 
 	if (cpu_has_fxsr)
 		xstate_size = sizeof(struct i387_fxsave_struct);
@@ -92,6 +131,9 @@ static void __cpuinit init_thread_xstate(void)
 void __cpuinit fpu_init(void)
 {
 	unsigned long cr0;
+
+	/* ABR does not support SSE */
+#ifndef CONFIG_X86_EARLYMIC
 	unsigned long cr4_mask = 0;
 
 	if (cpu_has_fxsr)
@@ -100,6 +142,7 @@ void __cpuinit fpu_init(void)
 		cr4_mask |= X86_CR4_OSXMMEXCPT;
 	if (cr4_mask)
 		set_in_cr4(cr4_mask);
+#endif
 
 	cr0 = read_cr0();
 	cr0 &= ~(X86_CR0_TS|X86_CR0_EM); /* clear TS and EM */
@@ -125,9 +168,23 @@ void fpu_finit(struct fpu *fpu)
 
 	if (cpu_has_fxsr) {
 		struct i387_fxsave_struct *fx = &fpu->state->fxsave;
+#ifdef CONFIG_X86_EARLYMIC
+		struct vpustate_struct *vpu =  &fpu->state->xsave.vpu;
+#endif
 
 		memset(fx, 0, xstate_size);
 		fx->cwd = 0x37f;
+#ifdef CONFIG_X86_EARLYMIC
+		vpu->vxcsr = VXCSR_DEFAULT;
+#ifdef CONFIG_MK1OM
+		/*
+		 * default for K1OM bit 21 i.e DUE (Disable unmasked
+		 * Exception) bit must be set. Otherwise any future
+		 * fxstore will result in GP fault
+		 */
+		fx->mxcsr = 0x1 << 21;
+#endif
+#endif
 		if (cpu_has_xmm)
 			fx->mxcsr = MXCSR_DEFAULT;
 	} else {
@@ -244,8 +301,10 @@ int xstateregs_get(struct task_struct *target, const struct user_regset *regset,
 {
 	int ret;
 
+#ifndef CONFIG_X86_EARLYMIC
 	if (!cpu_has_xsave)
 		return -ENODEV;
+#endif
 
 	ret = init_fpu(target);
 	if (ret)
@@ -274,8 +333,10 @@ int xstateregs_set(struct task_struct *target, const struct user_regset *regset,
 	int ret;
 	struct xsave_hdr_struct *xsave_hdr;
 
+#ifndef CONFIG_X86_EARLYMIC
 	if (!cpu_has_xsave)
 		return -ENODEV;
+#endif
 
 	ret = init_fpu(target);
 	if (ret)

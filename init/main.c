@@ -1,3 +1,26 @@
+/* * Copyright (c) 2010 - 2012 Intel Corporation.
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
 /*
  *  linux/init/main.c
  *
@@ -75,6 +98,18 @@
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
 
+#ifdef CONFIG_X86_MIC_EMULATION
+static void *____sbox;
+static inline void PROFILE_AWAY(uint32_t v)
+{
+	if (____sbox == NULL)  /* map the SBOX MMIO page */
+		____sbox = ioremap_nocache(0x08007D0000ul, 0x10000u);
+	writel(v, ____sbox + 0xAB58u);  /* SCRATCH14 */
+}
+#else
+#define PROFILE_AWAY(v)
+#endif
+
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/smp.h>
 #endif
@@ -107,6 +142,10 @@ bool early_boot_irqs_disabled __read_mostly;
 
 enum system_states system_state __read_mostly;
 EXPORT_SYMBOL(system_state);
+
+#ifdef	CONFIG_KDB
+#include <linux/kdb.h>
+#endif	/* CONFIG_KDB */
 
 /*
  * Boot command-line arguments
@@ -154,6 +193,26 @@ const char * envp_init[MAX_INIT_ENVS+2] = { "HOME=/", "TERM=linux", NULL, };
 static const char *panic_later, *panic_param;
 
 extern const struct obs_kernel_param __setup_start[], __setup_end[];
+
+#ifdef	CONFIG_KDB
+static int __init kdb_setup(char *str)
+{
+	if (strcmp(str, "on") == 0) {
+		kdb_on = 1;
+	} else if (strcmp(str, "on-nokey") == 0) {
+		kdb_on = 2;
+	} else if (strcmp(str, "off") == 0) {
+		kdb_on = 0;
+	} else if (strcmp(str, "early") == 0) {
+		kdb_on = 1;
+		kdb_flags |= KDB_FLAG_EARLYKDB;
+	} else
+		printk("kdb flag %s not recognised\n", str);
+	return 0;
+}
+
+__setup("kdb=", kdb_setup);
+#endif	/* CONFIG_KDB */
 
 static int __init obsolete_checksetup(char *line)
 {
@@ -608,6 +667,14 @@ asmlinkage void __init start_kernel(void)
 	calibrate_delay();
 	pidmap_init();
 	anon_vma_init();
+
+#ifdef	CONFIG_KDB
+	kdb_init();
+	if (KDB_FLAG(EARLYKDB)) {
+		KDB_ENTER();
+	}
+#endif	/* CONFIG_KDB */
+
 #ifdef CONFIG_X86
 	if (efi_enabled)
 		efi_enter_virtual_mode();
@@ -681,6 +748,12 @@ int __init_or_module do_one_initcall(initcall_t fn)
 {
 	int count = preempt_count();
 	int ret;
+
+#ifdef CONFIG_X86_MIC_EMULATION
+	static uint32_t unique = 0xc0de0050;
+	printk("calling  %pF @ %i\n", fn, unique++);
+	PROFILE_AWAY((uint32_t)fn);
+#endif
 
 	if (initcall_debug)
 		ret = do_one_initcall_debug(fn);
@@ -758,7 +831,9 @@ static noinline int init_post(void)
 {
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
+#ifndef CONFIG_X86_MIC_EMULATION  /* skip to save time */
 	free_initmem();
+#endif
 	mark_rodata_ro();
 	system_state = SYSTEM_RUNNING;
 	numa_default_policy();
@@ -798,6 +873,7 @@ static int __init kernel_init(void * unused)
 	 * Wait until kthreadd is all set-up.
 	 */
 	wait_for_completion(&kthreadd_done);
+	PROFILE_AWAY(0xC0DE0001);
 	/*
 	 * init can allocate pages on any node
 	 */
@@ -808,6 +884,7 @@ static int __init kernel_init(void * unused)
 	set_cpus_allowed_ptr(current, cpu_all_mask);
 
 	cad_pid = task_pid(current);
+	PROFILE_AWAY(0xC0DE0002);
 
 	smp_prepare_cpus(setup_max_cpus);
 
@@ -815,9 +892,11 @@ static int __init kernel_init(void * unused)
 	lockup_detector_init();
 
 	smp_init();
+	PROFILE_AWAY(0xC0DE0003);
 	sched_init_smp();
 
 	do_basic_setup();
+	PROFILE_AWAY(0xC0DE0004);
 
 	/* Open the /dev/console on the rootfs, this should never fail */
 	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)
@@ -825,6 +904,7 @@ static int __init kernel_init(void * unused)
 
 	(void) sys_dup(0);
 	(void) sys_dup(0);
+	PROFILE_AWAY(0xC0DE0005);
 	/*
 	 * check if there is an early userspace init.  If yes, let it do all
 	 * the work
@@ -844,6 +924,8 @@ static int __init kernel_init(void * unused)
 	 * initmem segments and start the user-mode stuff..
 	 */
 
+	PROFILE_AWAY(0xC0DE0006);
 	init_post();
+	PROFILE_AWAY(0xC0DE0007);
 	return 0;
 }

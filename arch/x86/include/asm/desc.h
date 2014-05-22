@@ -343,6 +343,7 @@ static inline void alloc_system_vector(int vector)
 		if (first_system_vector > vector)
 			first_system_vector = vector;
 	} else {
+		printk("Vector used: %d\n", vector); // STH
 		BUG();
 	}
 }

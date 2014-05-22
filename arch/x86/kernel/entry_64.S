@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 /*
  *  linux/arch/x86_64/entry.S
  *
@@ -58,7 +82,13 @@
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
 #include <linux/elf-em.h>
+#if defined(CONFIG_ML1OM)
+#define AUDIT_ARCH_X86_64	(EM_L1OM|__AUDIT_ARCH_64BIT|__AUDIT_ARCH_LE)
+#elif defined(CONFIG_MK1OM)
+#define AUDIT_ARCH_X86_64	(EM_K1OM|__AUDIT_ARCH_64BIT|__AUDIT_ARCH_LE)
+#else
 #define AUDIT_ARCH_X86_64	(EM_X86_64|__AUDIT_ARCH_64BIT|__AUDIT_ARCH_LE)
+#endif
 #define __AUDIT_ARCH_64BIT 0x80000000
 #define __AUDIT_ARCH_LE	   0x40000000
 
@@ -1126,7 +1156,9 @@ ENTRY(native_load_gs_index)
 	SWAPGS
 gs_change:
 	movl %edi,%gs
+#ifndef CONFIG_X86_EARLYMIC
 2:	mfence		/* workaround */
+#endif
 	SWAPGS
 	popfq_cfi
 	ret
@@ -1200,7 +1232,13 @@ ENTRY(call_softirq)
 	mov  %rsp,%rbp
 	CFI_DEF_CFA_REGISTER rbp
 	incl PER_CPU_VAR(irq_count)
+#ifdef CONFIG_X86_EARLYMIC
+	jne 1f
+	movq PER_CPU_VAR(irq_stack_ptr),%rsp
+1:
+#else
 	cmove PER_CPU_VAR(irq_stack_ptr),%rsp
+#endif
 	push  %rbp			# backlink for old unwinder
 	call __do_softirq
 	leaveq
@@ -1313,6 +1351,33 @@ apicinterrupt XEN_HVM_EVTCHN_CALLBACK \
 	xen_hvm_callback_vector xen_evtchn_do_upcall
 
 #endif /* CONFIG_XEN */
+
+#ifdef	CONFIG_KDB
+
+#ifdef CONFIG_SMP
+apicinterrupt KDB_VECTOR \
+	kdb_interrupt, smp_kdb_interrupt
+#endif	/* CONFIG_SMP */
+
+ENTRY(kdb_call)
+	INTR_FRAME
+	cld
+	pushq $-1			# orig_eax
+	CFI_ADJUST_CFA_OFFSET 8
+	SAVE_ALL
+	movq $1,%rdi			# KDB_REASON_ENTER
+	movq $0,%rsi			# error_code
+	movq %rsp,%rdx			# struct pt_regs
+	call kdb
+	RESTORE_ALL
+	addq $8,%rsp			# forget orig_eax
+	CFI_ADJUST_CFA_OFFSET -8
+	iretq
+	CFI_ENDPROC
+END(kdb_call)
+
+#endif	/* CONFIG_KDB */
+
 
 /*
  * Some functions should be protected against kprobes

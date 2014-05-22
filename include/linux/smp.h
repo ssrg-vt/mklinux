@@ -62,6 +62,7 @@ extern void smp_prepare_cpus(unsigned int max_cpus);
  * Bring a CPU up
  */
 extern int __cpu_up(unsigned int cpunum);
+extern int __cpu_up_parallel(unsigned int cpunum);
 
 /*
  * Final polishing of CPUs

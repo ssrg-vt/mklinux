@@ -142,6 +142,12 @@ struct page {
 	unsigned long debug_flags;	/* Use atomic bitops on this */
 #endif
 
+#ifdef CONFIG_PRECOMPUTE_WAITQ_HEAD
+	wait_queue_head_t *wq;		/* Points to the wait queue list head
+					* that stores the list of waiters for
+					* this page. */
+#endif
+
 #ifdef CONFIG_KMEMCHECK
 	/*
 	 * kmemcheck wants to track the status of each byte in a page; this

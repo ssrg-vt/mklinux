@@ -11,10 +11,10 @@ config CPU_IDLE
 
 config CPU_IDLE_GOV_LADDER
 	bool
-	depends on CPU_IDLE
+	depends on CPU_IDLE && !MIC_PM
 	default y
 
 config CPU_IDLE_GOV_MENU
 	bool
-	depends on CPU_IDLE && NO_HZ
+	depends on CPU_IDLE && NO_HZ && !MIC_PM
 	default y

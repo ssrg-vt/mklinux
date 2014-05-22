@@ -511,7 +511,7 @@ static struct p4_event_bind p4_event_bind_map[] = {
 	p4_config_pack_cccr(metric					| \
 			    P4_CCCR_ESEL(P4_OPCODE_ESEL(P4_OPCODE(event))))
 
-static __initconst const u64 p4_hw_cache_event_ids
+static const u64 p4_hw_cache_event_ids
 				[PERF_COUNT_HW_CACHE_MAX]
 				[PERF_COUNT_HW_CACHE_OP_MAX]
 				[PERF_COUNT_HW_CACHE_RESULT_MAX] =

@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 /*
  * Copyright 2004 James Cleverdon, IBM.
  * Subject to the GNU Public License, v.2
@@ -71,7 +95,16 @@ static void flat_init_apic_ldr(void)
 	id = 1UL << num;
 	apic_write(APIC_DFR, APIC_DFR_FLAT);
 	val = apic_read(APIC_LDR) & ~APIC_LDR_MASK;
-	val |= SET_APIC_LOGICAL_ID(id);
+#ifdef CONFIG_X86_EARLYMIC
+	/* KNF pre-si bug with Logical destination mode (2760804)
+	 * bits 27:25 of the LDR (bits 11:9 of logical APIC ID are being
+	 * factored inot the physical ID match for accepting the interrupt
+	 */
+	if (apic != &apic_physflat)
+		val |= SET_APIC_LOGICAL_ID(id);
+#else
+	val |= SET_APIC_LOGICAL_ID(id); 
+#endif
 	apic_write(APIC_LDR, val);
 }
 
@@ -139,17 +172,22 @@ static void flat_send_IPI_all(int vector)
 static unsigned int flat_get_apic_id(unsigned long x)
 {
 	unsigned int id;
-
+#ifdef CONFIG_X86_EARLYMIC
+	id = (((x)>>23) & 0x1FFu);
+#else
 	id = (((x)>>24) & 0xFFu);
-
+#endif
 	return id;
 }
 
 static unsigned long set_apic_id(unsigned int id)
 {
 	unsigned long x;
-
+#ifdef CONFIG_X86_EARLYMIC
+	x = ((id & 0x1FFu)<<23);
+#else
 	x = ((id & 0xFFu)<<24);
+#endif
 	return x;
 }
 
@@ -202,7 +240,12 @@ static struct apic apic_flat =  {
 
 	.get_apic_id			= flat_get_apic_id,
 	.set_apic_id			= set_apic_id,
+
+#ifdef CONFIG_X86_EARLYMIC
+	.apic_id_mask			= 0x1FFu << 23,
+#else
 	.apic_id_mask			= 0xFFu << 24,
+#endif
 
 	.cpu_mask_to_apicid		= default_cpu_mask_to_apicid,
 	.cpu_mask_to_apicid_and		= default_cpu_mask_to_apicid_and,
@@ -279,11 +322,29 @@ static void physflat_send_IPI_mask_allbutself(const struct cpumask *cpumask,
 
 static void physflat_send_IPI_allbutself(int vector)
 {
+#ifdef CONFIG_X86_EARLYMIC
+	/*
+	 * We can use APIC shorthand on MIC, way faster than looping.
+	 * For safety, keep using loops if NMI and offline CPUs. 
+	 */
+	if (vector != NMI_VECTOR || cpumask_equal(cpu_online_mask, cpu_present_mask))
+		default_send_IPI_allbutself_phys(vector);
+	else
+#endif
 	default_send_IPI_mask_allbutself_phys(cpu_online_mask, vector);
 }
 
 static void physflat_send_IPI_all(int vector)
 {
+#ifdef CONFIG_X86_EARLYMIC
+	/*
+	 * We can use APIC shorthand on MIC, way faster than looping.
+	 * For safety, keep using loops if NMI and offline CPUs. 
+	 */
+	if (vector != NMI_VECTOR || cpumask_equal(cpu_online_mask, cpu_present_mask))
+		default_send_IPI_all_phys(vector);
+	else
+#endif
 	physflat_send_IPI_mask(cpu_online_mask, vector);
 }
 
@@ -360,7 +421,12 @@ static struct apic apic_physflat =  {
 
 	.get_apic_id			= flat_get_apic_id,
 	.set_apic_id			= set_apic_id,
+
+#ifdef CONFIG_X86_EARLYMIC
+	.apic_id_mask			= 0x1FFu << 23,
+#else
 	.apic_id_mask			= 0xFFu << 24,
+#endif
 
 	.cpu_mask_to_apicid		= physflat_cpu_mask_to_apicid,
 	.cpu_mask_to_apicid_and		= physflat_cpu_mask_to_apicid_and,

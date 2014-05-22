@@ -499,6 +499,13 @@ config I2C_OCORES
 	  This driver can also be built as a module.  If so, the module
 	  will be called i2c-ocores.
 
+config I2C_I915_GMBUS
+	tristate "GMBUS driven I2C"
+	select I2C_ALGOBIT
+	help
+	  This is an I2C driver for the GMBUS HW engine. GMBUS is present in
+	  the I915 hardware, but also reused in MIC.
+
 config I2C_OMAP
 	tristate "OMAP I2C adapter"
 	depends on ARCH_OMAP
@@ -558,7 +565,8 @@ config I2C_PUV3
 
 config I2C_PXA
 	tristate "Intel PXA2XX I2C adapter"
-	depends on ARCH_PXA || ARCH_MMP || (X86_32 && PCI && OF)
+#	depends on ARCH_PXA || ARCH_MMP || (X86_32 && PCI && OF) 
+	depends on ARCH_PXA || ARCH_MMP || (X86_32 && PCI && OF) || ML1OM || MK1OM
 	help
 	  If you have devices in the PXA I2C bus, say yes to this option.
 	  This driver can also be built as a module.  If so, the module

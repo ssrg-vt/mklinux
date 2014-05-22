@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 #ifndef _ASM_X86_SYSTEM_H
 #define _ASM_X86_SYSTEM_H
 
@@ -387,7 +411,21 @@ static inline void clts(void)
 
 static inline void clflush(volatile void *__p)
 {
+#if defined(CONFIG_ML1OM)
+	/*
+	 * MICBUGBUG:
+	 * I am not sure if the functionality is same as clflush.
+	 * eas-???ni manual says this abt clevict-
+	 *	"unlike CLFLUSH, the invalidation is not broadcasted
+	 *	throughout the cache coherence domain".
+	 */
+	asm volatile("clevict1 %0" : "+m" (*(volatile char __force *)__p));
+	asm volatile("clevict2 %0" : "+m" (*(volatile char __force *)__p));
+#elif defined(CONFIG_MK1OM)
+	/* MICBUGBUG: What is the necessary procedure on K1OM? */
+#else
 	asm volatile("clflush %0" : "+m" (*(volatile char __force *)__p));
+#endif
 }
 
 #define nop() asm volatile ("nop")
@@ -410,7 +448,7 @@ void stop_this_cpu(void *dummy);
  * And yes, this is required on UP too when we're talking
  * to devices.
  */
-#ifdef CONFIG_X86_32
+#if defined(CONFIG_X86_32)
 /*
  * Some non-Intel clones support out of order store. wmb() ceases to be a
  * nop for these.
@@ -418,10 +456,14 @@ void stop_this_cpu(void *dummy);
 #define mb() alternative("lock; addl $0,0(%%esp)", "mfence", X86_FEATURE_XMM2)
 #define rmb() alternative("lock; addl $0,0(%%esp)", "lfence", X86_FEATURE_XMM2)
 #define wmb() alternative("lock; addl $0,0(%%esp)", "sfence", X86_FEATURE_XMM)
+#elif defined(CONFIG_X86_EARLYMIC)
+#define mb() asm volatile ("lock; addl $0,0(%%rsp)" ::: "memory")
+#define rmb() asm volatile ("lock; addl $0,0(%%rsp)" ::: "memory")
+#define wmb() asm volatile ("lock; addl $0,0(%%rsp)" ::: "memory")
 #else
-#define mb() 	asm volatile("mfence":::"memory")
-#define rmb()	asm volatile("lfence":::"memory")
-#define wmb()	asm volatile("sfence" ::: "memory")
+#define mb() asm volatile ("mfence" ::: "memory")
+#define rmb() asm volatile ("lfence" ::: "memory")
+#define wmb() asm volatile ("sfence" ::: "memory")
 #endif
 
 /**
@@ -509,8 +551,10 @@ void stop_this_cpu(void *dummy);
  */
 static __always_inline void rdtsc_barrier(void)
 {
+#ifndef CONFIG_X86_EARLYMIC
 	alternative(ASM_NOP3, "mfence", X86_FEATURE_MFENCE_RDTSC);
 	alternative(ASM_NOP3, "lfence", X86_FEATURE_LFENCE_RDTSC);
+#endif
 }
 
 /*

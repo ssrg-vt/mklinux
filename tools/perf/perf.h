@@ -14,7 +14,11 @@ void get_term_dimensions(struct winsize *ws);
 
 #if defined(__x86_64__)
 #include "../../arch/x86/include/asm/unistd.h"
+#if defined(__KNC__)
+#define rmb() asm volatile ("lock; addl $0,0(%%rsp)" ::: "memory")
+#else
 #define rmb()		asm volatile("lfence" ::: "memory")
+#endif
 #define cpu_relax()	asm volatile("rep; nop" ::: "memory");
 #define CPUINFO_PROC	"model name"
 #endif

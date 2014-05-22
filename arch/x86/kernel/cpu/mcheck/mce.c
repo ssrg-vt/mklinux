@@ -1,3 +1,26 @@
+/* * Copyright (c) 2010 - 2012 Intel Corporation.
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
 /*
  * Machine check handler.
  *
@@ -62,6 +85,7 @@ int mce_disabled __read_mostly;
 #define SPINUNIT 100	/* 100ns */
 
 atomic_t mce_entry;
+EXPORT_SYMBOL_GPL(mce_entry);
 
 DEFINE_PER_CPU(unsigned, mce_exception_count);
 
@@ -80,7 +104,7 @@ static int			monarch_timeout		__read_mostly = -1;
 static int			mce_panic_timeout	__read_mostly;
 static int			mce_dont_log_ce		__read_mostly;
 int				mce_cmci_disabled	__read_mostly;
-int				mce_ignore_ce		__read_mostly;
+int				mce_ignore_ce		__read_mostly;	/* BEAM: set to 1 */
 int				mce_ser			__read_mostly;
 
 struct mce_bank                *mce_banks		__read_mostly;
@@ -94,6 +118,123 @@ static DECLARE_WAIT_QUEUE_HEAD(mce_chrdev_wait);
 
 static DEFINE_PER_CPU(struct mce, mces_seen);
 static int			cpu_missing;
+
+#ifdef CONFIG_X86_EARLYMIC
+/*
+ * Intercept hooks for RAS module
+ */
+void (*mca_poll)(struct mce *, uint64_t, int);
+void (*mca_exc_flt)(struct mce *, uint64_t, int);
+void (*mca_exc_entry)(struct mce *, int, int, int, char *);
+void (*mca_exc_log)(struct mce *, uint64_t, int, int, char *, int, int);
+void (*mca_exc_panic)(struct mce *, char *, char *, int);
+void (*mca_exc_exit)(struct mce *, int, int, int, int);
+int  (*mca_print)(char *, ...) __attribute__((format(printf, 1, 2)));
+
+/*
+ * Intercept hooks exported for GPL
+ */
+EXPORT_SYMBOL_GPL(mca_poll);
+EXPORT_SYMBOL_GPL(mca_exc_flt);
+EXPORT_SYMBOL_GPL(mca_exc_entry);
+EXPORT_SYMBOL_GPL(mca_exc_log);
+EXPORT_SYMBOL_GPL(mca_exc_panic);
+EXPORT_SYMBOL_GPL(mca_exc_exit);
+EXPORT_SYMBOL_GPL(mca_print);
+
+/*
+ * Call-out functions
+ * The RAS module wants the CTL bank register corresponding to
+ * reported MC events, something the generic handler ignores.
+ */
+
+static u64 mce_rdmsrl(u32);
+
+#define __do_mca_callout(which, ...)	\
+	if (which)			\
+		which(__VA_ARGS__);	\
+
+#define do_mca_exc_entry(...) __do_mca_callout(mca_exc_entry, __VA_ARGS__)
+#define do_mca_exc_panic(...) __do_mca_callout(mca_exc_panic, __VA_ARGS__)
+#define do_mca_exc_exit(...)  __do_mca_callout(mca_exc_exit,  __VA_ARGS__)
+#define do_mca_print(...)     __do_mca_callout(mca_print,     __VA_ARGS__)
+
+static inline void
+do_mca_exc_flt(struct mce * mce, int fake)
+{
+	u64 ctl;
+
+	if (mca_exc_flt) {
+		ctl = mce_rdmsrl(MSR_IA32_MCx_CTL(mce->bank));
+		if (mce->status & MCI_STATUS_MISCV)
+			mce->misc = mce_rdmsrl(MSR_IA32_MCx_MISC(mce->bank));
+		if (mce->status & MCI_STATUS_ADDRV)
+			mce->addr = mce_rdmsrl(MSR_IA32_MCx_ADDR(mce->bank));
+		mca_exc_flt(mce, ctl, fake);
+	}
+}
+
+static inline void
+do_mca_poll(struct mce * mce, int fake)
+{
+	u64 ctl;
+
+	if (mca_poll) {
+		ctl = mce_rdmsrl(MSR_IA32_MCx_CTL(mce->bank));
+		mca_poll(mce, ctl, fake);
+	}
+}
+
+static inline void
+do_mca_exc_log(struct mce * mce, int fake,
+		int nwo, char * msg, int bad, int worst)
+{
+	u64 ctl;
+
+	if (mca_exc_log) {
+		ctl = mce_rdmsrl(MSR_IA32_MCx_CTL(mce->bank));
+		mca_exc_log(mce, ctl, fake, nwo, msg, bad, worst);
+	}
+}
+
+/*
+ * Use our own version of ndelay() which is
+ * more precise than the standard version from
+ * arch/x86/include/asm/delay.h
+ */
+#define MAX_DELAY       250
+
+#ifdef ndelay
+#undef ndelay
+#endif
+static void
+ndelay(unsigned long nsecs) {
+  uint64_t      clks, tick;
+
+  clks = (nsecs * tsc_khz) / 1000000;
+  if (clks <= MAX_DELAY)
+    __asm__ __volatile__("delay %0"::"r"(clks):"memory");
+  else {
+    for(tick = MAX_DELAY; clks > tick; clks -= tick)
+      __asm__ __volatile__("delay %0"::"r"(tick):"memory");
+    __asm__ __volatile__("delay %0"::"r"(clks):"memory");
+  }
+}
+
+#else
+
+/*
+ * Make all MIC intercepts just go away
+ */
+#define do_mca_poll(...)
+#define do_mca_exc_flt(...)
+#define do_mca_exc_entry(...)
+#define do_mca_exc_log(...)
+#define do_mca_exc_panic(...)
+#define do_mca_exc_exit(...)
+#define do_mca_print(...)
+
+#endif
 
 /*
  * CPU/chipset specific EDAC code can register a notifier call here to print
@@ -123,7 +264,11 @@ void mce_setup(struct mce *m)
 	m->socketid = cpu_data(m->extcpu).phys_proc_id;
 #endif
 	m->apicid = cpu_data(m->extcpu).initial_apicid;
+#ifdef CONFIG_ML1OM
+	m->mcgcap = 3 | MCG_CTL_P;
+#else
 	rdmsrl(MSR_IA32_MCG_CAP, m->mcgcap);
+#endif
 }
 
 DEFINE_PER_CPU(struct mce, injectm);
@@ -140,6 +285,12 @@ static struct mce_log mcelog = {
 	.len		= MCE_LOG_LEN,
 	.recordlen	= sizeof(struct mce),
 };
+
+#ifdef CONFIG_X86_EARLYMIC
+EXPORT_SYMBOL_GPL(mcelog);
+EXPORT_SYMBOL_GPL(mce_read_mutex);
+EXPORT_SYMBOL_GPL(mce_disabled);
+#endif
 
 void mce_log(struct mce *mce)
 {
@@ -258,6 +409,7 @@ static void mce_panic(char *msg, struct mce *final, char *exp)
 {
 	int i, apei_err = 0;
 
+	do_mca_print("mce: cpu %d, mce_panic %s\n", smp_processor_id(), msg);
 	if (!fake_panic) {
 		/*
 		 * Make sure only one CPU runs in machine check panic
@@ -309,6 +461,7 @@ static void mce_panic(char *msg, struct mce *final, char *exp)
 	if (!fake_panic) {
 		if (panic_timeout == 0)
 			panic_timeout = mce_panic_timeout;
+		do_mca_exc_panic(final, msg, exp, fake_panic);
 		panic(msg);
 	} else
 		pr_emerg(HW_ERR "Fake kernel panic: %s\n", msg);
@@ -346,6 +499,33 @@ static u64 mce_rdmsrl(u32 msr)
 		return *(u64 *)((char *)&__get_cpu_var(injectm) + offset);
 	}
 
+#ifdef CONFIG_ML1OM
+	/*
+	 * L1OM doesn't have MCG_STATUS and MCG_CAP registers, both
+	 * being read in the path of MCA exceptions. Instead of patching
+	 * uses of these registers it seems emulation of them would be
+	 * an acceptable solution.
+	 *
+	 * MSR_IA32_MCG_STATUS register:
+	 * Fake a read with what a p54C core would return during a 
+	 * machine check.
+	 *   bit  [0]	RIPV, 1 (have to assume this)
+	 *   bit  [1]   EIPV, 0 (we have no idea)
+	 *   bit  [2]	MCIP, 1	(assume this is inside the MC handler)
+	 */
+	if (msr == MSR_IA32_MCG_STATUS)
+		return MCG_STATUS_RIPV | MCG_STATUS_MCIP;
+
+	/*
+	 * MSR_IA32_MCG_CAP register:
+	 * Fake a read with what we know is supported on KnF:
+	 *   bits [7:0]  Reporting banks, 3
+	 *   bit  [8]    MCG_CTL_P flag, 1
+	 */
+	if (msr == MSR_IA32_MCG_CAP)
+		return 3 | MCG_CTL_P;
+#endif
+
 	if (rdmsrl_safe(msr, &v)) {
 		WARN_ONCE(1, "mce: Unable to read msr %d!\n", msr);
 		/*
@@ -355,6 +535,15 @@ static u64 mce_rdmsrl(u32 msr)
 		 */
 		v = 0;
 	}
+
+#ifdef CONFIG_MK1OM
+	/*
+	 * K1OM doesn't set RIPV or EIPV ever (errata: ??)
+	 * Pretend RIPV is set.
+	 */
+	if (msr == MSR_IA32_MCG_STATUS)
+	  	v |= MCG_STATUS_RIPV;
+#endif
 
 	return v;
 }
@@ -368,6 +557,13 @@ static void mce_wrmsrl(u32 msr, u64 v)
 			*(u64 *)((char *)&__get_cpu_var(injectm) + offset) = v;
 		return;
 	}
+#ifdef CONFIG_ML1OM
+	/*
+	 * L1OM doesn't have these registers
+	 */
+	if (msr == MSR_IA32_MCG_STATUS || msr == MSR_IA32_MCG_CAP)
+		return;
+#endif
 	wrmsrl(msr, v);
 }
 
@@ -532,6 +728,10 @@ void machine_check_poll(enum mcp_flags flags, mce_banks_t *b)
 		if (!(m.status & MCI_STATUS_VAL))
 			continue;
 
+		do_mca_print("mce: poll %d: status %016llx, uc %d\n",
+			smp_processor_id(), m.status,
+			(m.status & MCI_STATUS_UC) != 0);
+
 		/*
 		 * Uncorrected or signalled events are handled by the exception
 		 * handler when it is enabled, so don't process those here.
@@ -553,8 +753,10 @@ void machine_check_poll(enum mcp_flags flags, mce_banks_t *b)
 		 * Don't get the IP here because it's unlikely to
 		 * have anything to do with the actual error location.
 		 */
-		if (!(flags & MCP_DONTLOG) && !mce_dont_log_ce)
+		if (!(flags & MCP_DONTLOG) && !mce_dont_log_ce) {
 			mce_log(&m);
+			do_mca_poll(&m, __get_cpu_var(injectm).finished);
+		}
 
 		/*
 		 * Clear state for this bank.
@@ -713,7 +915,7 @@ static atomic_t global_nwo;
  * in the entry order.
  * TBD double check parallel CPU hotunplug
  */
-static int mce_start(int *no_way_out)
+static int mce_start(int *no_way_out, int fake)
 {
 	int order;
 	int cpus = num_online_cpus();
@@ -722,10 +924,38 @@ static int mce_start(int *no_way_out)
 	if (!timeout)
 		return -1;
 
-	atomic_add(*no_way_out, &global_nwo);
+#ifdef CONFIG_X86_EARLYMIC
+	if (!(fake || (*no_way_out && mca_exc_entry))) {
+		/*
+		 * MIC KnF and KnC does not broadcast MC to all CPUs.
+		 * If the RAS module is loaded, it can emulate this
+		 * standard behaviour. However, if RAS is not loaded
+		 * we'd end up waiting here a long time for the other
+		 * CPUs that won't be entering the rendez-vouz below.
+		 * Simplest workaround: pretend the timeout was 0.
+		 * 
+		 * Injected errors gets broadcast by the injector,
+		 * and will be coralled by the standard methods.
+		 *
+		 * This also applies for corrected errors. Coralling
+		 * all CPU's through here via IPI's is expensive and
+		 * if no_way_out is MCE_NO_SEVERITY (0) then it is
+		 * not necessary since the reporting is left to the
+		 * poller.
+		 *
+		 * Note: This causes mce_reign() not to be called,
+		 *       which is OK in both cases.
+		 */
+		do_mca_print("mce_start: mostly harmless, cpu %d, nwo %d\n",
+				smp_processor_id(), *no_way_out);
+		return -1;
+	}
+#endif
+
 	/*
 	 * global_nwo should be updated before mce_callin
 	 */
+	atomic_add(*no_way_out, &global_nwo);
 	smp_wmb();
 	order = atomic_inc_return(&mce_callin);
 
@@ -834,6 +1064,16 @@ reset:
 	atomic_set(&mce_callin, 0);
 	barrier();
 
+#ifdef CONFIG_X86_EARLYMIC
+	/*
+	 * If no MC broadcast IPI happenend, mce_reign() has not been
+	 * called and therefore local mces_seen has not been cleared.
+	 * Better do so now, such that later MCs don't pick it up.
+	 */
+	if (ret < 0)
+		memset(&__get_cpu_var(mces_seen), 0, sizeof(struct mce));
+#endif
+
 	/*
 	 * Let others run again.
 	 */
@@ -868,6 +1108,77 @@ static void mce_clear_state(unsigned long *toclear)
 	}
 }
 
+#if 0	/* BEAM */
+/*
+ * Simplistic machine check handler for beam test.
+ * It reads the MC banks, and report any valid events
+ * to the RAS module and clear the STATUS register.
+ * It does not interact with the mcelog, does not
+ * lock down all CPUs, does not kill processes or
+ * or cause panics, just reporting.
+ * Because RAS module entry expects calls to be made
+ * from the locked down mode, the handler is protected
+ * by a binary gate (exceptions are not recursive on
+ * the same CPU, but can happen simultaneously on
+ * other CPUs). Not sure about CPU's on the same core
+ * since they all share the same register bank, but in
+ * this case the first to get the lock reports and clears
+ * the MCA bank(s) and the following will see a false
+ * alarm when they get the lock.
+ */
+
+void do_machine_check(struct pt_regs *regs, long error_code)
+{
+	static atomic_t mce_lock = ATOMIC_INIT(0);
+	struct mce m;
+	int i, fake;
+
+	atomic_inc(&mce_entry);
+	mce_setup(&m);
+	__get_cpu_var(mce_exception_count)++;
+	m.mcgstatus = mce_rdmsrl(MSR_IA32_MCG_STATUS);
+
+	barrier();
+
+	fake = __get_cpu_var(injectm).finished;
+
+	while(atomic_xchg(&mce_lock, 1))
+		cpu_relax();
+
+	for(i = 0; i < banks; i++) {
+		if (!mce_banks[i].ctl)
+			continue;
+
+		m.misc = 0;
+		m.addr = 0;
+		m.bank = i;
+
+		m.status = mce_rdmsrl(MSR_IA32_MCx_STATUS(i));
+		if ((m.status & MCI_STATUS_VAL) == 0)
+			continue;
+
+		if ((m.status & MCI_STATUS_EN) == 0) {
+			mce_wrmsrl(MSR_IA32_MCx_STATUS(i), 0);
+			continue;
+		}
+
+		wbinvd();
+		if (m.status & MCI_STATUS_MISCV)
+			m.misc = mce_rdmsrl(MSR_IA32_MCx_MISC(i));
+		if (m.status & MCI_STATUS_ADDRV)
+			m.addr = mce_rdmsrl(MSR_IA32_MCx_ADDR(i));
+		mce_wrmsrl(MSR_IA32_MCx_STATUS(i), 0);
+
+		do_mca_exc_log(&m, fake, 0, 0, 0, 0);
+
+	}
+	mce_wrmsrl(MSR_IA32_MCG_STATUS, 0);
+
+	atomic_xchg(&mce_lock, 0);
+	atomic_dec(&mce_entry);
+	sync_core();
+}
+#else
 /*
  * The actual machine check handler. This only handles real
  * exceptions when something got corrupted coming in through int 18.
@@ -880,33 +1191,21 @@ static void mce_clear_state(unsigned long *toclear)
  * MCE broadcast. However some CPUs might be broken beyond repair,
  * so be always careful when synchronizing with others.
  */
+ 
 void do_machine_check(struct pt_regs *regs, long error_code)
 {
 	struct mce m, *final;
-	int i;
+	int i, entry, fake;
 	int worst = 0;
 	int severity;
-	/*
-	 * Establish sequential order between the CPUs entering the machine
-	 * check handler.
-	 */
-	int order;
-	/*
-	 * If no_way_out gets set, there is no safe way to recover from this
-	 * MCE.  If tolerant is cranked up, we'll try anyway.
-	 */
+	int order = 0;
 	int no_way_out = 0;
-	/*
-	 * If kill_it gets set, there might be a way to recover from this
-	 * error.
-	 */
 	int kill_it = 0;
 	DECLARE_BITMAP(toclear, MAX_NR_BANKS);
 	char *msg = "Unknown";
 
-	atomic_inc(&mce_entry);
-
-	percpu_inc(mce_exception_count);
+	entry = atomic_inc_return(&mce_entry);
+	__get_cpu_var(mce_exception_count)++;
 
 	if (!banks)
 		goto out;
@@ -916,22 +1215,35 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 	final = &__get_cpu_var(mces_seen);
 	*final = m;
 
+	/*
+	 * If no_way_out gets set, there is no safe way to recover from this
+	 * MCE.  If tolerant is cranked up, we'll try anyway.
+	 */
 	no_way_out = mce_no_way_out(&m, &msg);
 
 	barrier();
 
+	fake = __get_cpu_var(injectm).finished;
+	do_mca_exc_entry(&m, fake, no_way_out, entry, msg);
+
 	/*
-	 * When no restart IP must always kill or panic.
+	 * If kill_it gets set, there might be a way to recover from this
+	 * error.  When no restart IP must always kill or panic.
 	 */
 	if (!(m.mcgstatus & MCG_STATUS_RIPV))
 		kill_it = 1;
 
 	/*
-	 * Go through all the banks in exclusion of the other CPUs.
+         * Establish sequential order between the CPUs entering the machine
+         * check handler.
+         */
+	order = mce_start(&no_way_out, fake);
+
+	/*
+	 * Go through all the banks in exclusion of other CPUs.
 	 * This way we don't report duplicated events on shared banks
 	 * because the first one to see it will clear it.
 	 */
-	order = mce_start(&no_way_out);
 	for (i = 0; i < banks; i++) {
 		__clear_bit(i, toclear);
 		if (!mce_banks[i].ctl)
@@ -950,8 +1262,10 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 		 * machine_check_poll. Leave them alone, unless this panics.
 		 */
 		if (!(m.status & (mce_ser ? MCI_STATUS_S : MCI_STATUS_UC)) &&
-			!no_way_out)
+			!no_way_out) {
+			do_mca_exc_flt(&m, fake);
 			continue;
+		}
 
 		/*
 		 * Set taint even when machine check was not enabled.
@@ -997,6 +1311,7 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 			mce_ring_add(m.addr >> PAGE_SHIFT);
 
 		mce_log(&m);
+		do_mca_exc_log(&m, fake, no_way_out, msg, severity, worst);
 
 		if (severity > worst) {
 			*final = m;
@@ -1041,9 +1356,11 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 		mce_report_event(regs);
 	mce_wrmsrl(MSR_IA32_MCG_STATUS, 0);
 out:
+	do_mca_exc_exit(&m, no_way_out, worst, entry, order);
 	atomic_dec(&mce_entry);
 	sync_core();
 }
+#endif
 EXPORT_SYMBOL_GPL(do_machine_check);
 
 /* dummy to break dependency. actual code is in mm/memory-failure.c */
@@ -1210,8 +1527,11 @@ static int __cpuinit __mcheck_cpu_cap_init(void)
 	unsigned b;
 	u64 cap;
 
+#ifdef CONFIG_ML1OM
+	cap = 3 | MCG_CTL_P;
+#else
 	rdmsrl(MSR_IA32_MCG_CAP, cap);
-
+#endif
 	b = cap & MCG_BANKCNT_MASK;
 	if (!banks)
 		printk(KERN_INFO "mce: CPU supports %d MCE banks\n", b);
@@ -1253,13 +1573,43 @@ static void __mcheck_cpu_init_generic(void)
 	 * Log the machine checks left over from the previous reset.
 	 */
 	bitmap_fill(all_banks, MAX_NR_BANKS);
-	machine_check_poll(MCP_UC|(!mce_bootlog ? MCP_DONTLOG : 0), &all_banks);
+	machine_check_poll(MCP_UC | (!mce_bootlog ? MCP_DONTLOG : 0), &all_banks);
 
 	set_in_cr4(X86_CR4_MCE);
 
+#ifdef CONFIG_ML1OM
+	cap = 3 | MCG_CTL_P;
+#else
 	rdmsrl(MSR_IA32_MCG_CAP, cap);
+#endif
 	if (cap & MCG_CTL_P)
 		wrmsr(MSR_IA32_MCG_CTL, 0xffffffff, 0xffffffff);
+
+#ifdef CONFIG_X86_EARLYMIC
+	/*
+	 * Only clear MCA bank if on 1st among siblings
+	 */
+	{
+		int cpu, *n;
+
+		cpu = smp_processor_id();
+		n = &__get_cpu_var(mce_next_interval);
+		*n = 10;	 /* Start aggressively */
+#if 0
+		/*
+		 * Would be nice if siblings mask was valid
+		 */
+		if (cpumask_first(cpu_sibling_mask(cpu)) != cpu)
+			return;
+#else
+		/*
+		 * Pick HW thread 0 on every core instead
+		 */
+		if (!(cpu == 0 || ((cpu - 1) & 3) == 0) || cpu == (nr_cpu_ids - 3))
+			return;
+#endif
+	}
+#endif
 
 	for (i = 0; i < banks; i++) {
 		struct mce_bank *b = &mce_banks[i];
@@ -1267,6 +1617,7 @@ static void __mcheck_cpu_init_generic(void)
 		if (!b->init)
 			continue;
 		wrmsrl(MSR_IA32_MCx_CTL(i), b->ctl);
+		rdmsrl(MSR_IA32_MCx_CTL(i), b->ctl); 
 		wrmsrl(MSR_IA32_MCx_STATUS(i), 0);
 	}
 }
@@ -1383,9 +1734,48 @@ static void __mcheck_cpu_init_timer(void)
 	if (mce_ignore_ce)
 		return;
 
+#ifdef CONFIG_X86_EARLYMIC
+	{
+		/*
+		 * All threads on a MIC (KnF & KnC) core see the
+		 * same MC bank MSRs, so there is no point in running
+		 * the poller on more than one thread per core.
+		 *
+		 *Note: This 'feature' also mean that the code here
+		 *      really have no safe way to tell which of the
+		 *      threads triggered the event. Some events
+		 *      present the thread ID in either address or
+		 *      misc bank register, but not all of them do.
+		 */
+		int cpu = smp_processor_id();
+#if 0
+		/*
+		 * Would have been nice if siblings mask was valid
+		 */
+		if (cpumask_first(cpu_sibling_mask(cpu)) != cpu)
+			return;
+#else
+		/*
+		 * Check for HW thread 0 on every core instead.
+		 * Locating HW thread 0 is not a simple modulo 4,
+		 * due to the odd assignment of thread 0 on last
+		 * core as the boot processor.
+		 */
+		if (!(cpu == 0 || ((cpu - 1) & 3) == 0) || cpu == (nr_cpu_ids - 3))
+			return;
+#endif
+	}
+#endif
+
+
+#ifdef CONFIG_X86_EARLYMIC
+	*n = 10 * HZ;
+#else
 	*n = check_interval * HZ;
 	if (!*n)
 		return;
+#endif
+
 	t->expires = round_jiffies(jiffies + *n);
 	add_timer_on(t, smp_processor_id());
 }

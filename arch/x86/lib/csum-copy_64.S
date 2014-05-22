@@ -112,7 +112,9 @@ ENTRY(csum_partial_copy_generic)
 	movq  56(%rdi), %r13
 
 	ignore 2f
+#ifndef CONFIG_X86_EARLYMIC  /* MICBUGBUG */
 	prefetcht0 5*64(%rdi)
+#endif
 2:
 	adcq  %rbx, %rax
 	adcq  %r8, %rax

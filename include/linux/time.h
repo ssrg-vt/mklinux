@@ -256,6 +256,10 @@ static __always_inline void timespec_add_ns(struct timespec *a, u64 ns)
 	a->tv_sec += __iter_div_u64_rem(a->tv_nsec + ns, NSEC_PER_SEC, &ns);
 	a->tv_nsec = ns;
 }
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+extern void timekeeping_resume(void);
+extern void timekeeping_suspend(void);
+#endif
 #endif /* __KERNEL__ */
 
 #define NFDBITS			__NFDBITS

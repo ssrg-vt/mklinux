@@ -37,6 +37,42 @@
 # define UNLOCK_LOCK_PREFIX
 #endif
 
+#ifdef CONFIG_SPINLOCK_SCALABLE
+
+#define QLEN  CONFIG_SPINLOCK_QUEUE_LENGTH
+#define QWAIT CONFIG_SPINLOCK_QUEUE_DELAY
+
+static __always_inline void __ticket_spin_lock(arch_spinlock_t *lock)
+{
+	unsigned short inc = 0x0100;
+	/* current thread's ticket and dequeue ticket */
+	unsigned char my_ticket, dq_ticket;
+
+	asm volatile (
+		LOCK_PREFIX "xaddw %w0, %1\n"
+		: "+Q" (inc), "+m" (lock->slock)
+		:
+		: "memory", "cc");
+
+	dq_ticket = inc;
+	my_ticket = inc >> 8;
+
+	while (my_ticket != dq_ticket) {
+		unsigned char diff = my_ticket - dq_ticket;
+		unsigned int delay = (diff > QLEN) ? (diff * QWAIT) : 0;
+
+		asm volatile (
+			"delay %2\n\t"
+			"movb %1, %b0\n\t"
+			: "+Q" (inc), "+m" (lock->slock), "+r" (delay)
+			:
+			: "memory", "cc");
+
+		dq_ticket = inc;
+	}
+}
+
+#else
 /*
  * Ticket locks are conceptually two parts, one indicating the current head of
  * the queue, and the other indicating the current tail. The lock is acquired
@@ -64,6 +100,8 @@ static __always_inline void __ticket_spin_lock(arch_spinlock_t *lock)
 	}
 	barrier();		/* make sure nothing creeps before the lock is taken */
 }
+
+#endif
 
 static __always_inline int __ticket_spin_trylock(arch_spinlock_t *lock)
 {

@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 /*
  *	Local APIC handling, local APIC timers
  *
@@ -34,6 +58,7 @@
 #include <linux/dmi.h>
 #include <linux/smp.h>
 #include <linux/mm.h>
+#include <linux/clocksource.h>
 
 #include <asm/perf_event.h>
 #include <asm/x86_init.h>
@@ -489,7 +514,10 @@ static void lapic_timer_broadcast(const struct cpumask *mask)
 static struct clock_event_device lapic_clockevent = {
 	.name		= "lapic",
 	.features	= CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT
-			| CLOCK_EVT_FEAT_C3STOP | CLOCK_EVT_FEAT_DUMMY,
+#ifndef CONFIG_X86_EARLYMIC
+			| CLOCK_EVT_FEAT_C3STOP
+#endif
+			| CLOCK_EVT_FEAT_DUMMY,
 	.shift		= 32,
 	.set_mode	= lapic_timer_setup,
 	.set_next_event	= lapic_next_event,
@@ -512,7 +540,6 @@ static void __cpuinit setup_APIC_timer(void)
 		/* Make LAPIC timer preferrable over percpu HPET */
 		lapic_clockevent.rating = 150;
 	}
-
 	memcpy(levt, &lapic_clockevent, sizeof(*levt));
 	levt->cpumask = cpumask_of(smp_processor_id());
 
@@ -547,6 +574,41 @@ static __initdata long lapic_cal_t1, lapic_cal_t2;
 static __initdata unsigned long long lapic_cal_tsc1, lapic_cal_tsc2;
 static __initdata unsigned long lapic_cal_pm1, lapic_cal_pm2;
 static __initdata unsigned long lapic_cal_j1, lapic_cal_j2;
+
+#ifdef CONFIG_X86_EARLYMIC
+/*
+ * This is based on the assumption that lowest possible core frequency
+ * is 600MHz and the highest is 1.6GHz. We need two delays since the
+ * delay instruction is limited to 1023 cycles.
+ */
+const int delay_us_cycles = 500;
+int delay_us_cycles_extra = 0;
+
+static inline void delay_us(void)
+{
+#ifdef CONFIG_X86_MIC_EMULATION
+	/* at ~200KHz, 1 cycle is already more than 1us */
+	asm volatile ("delay %0" :: "r" (1) : "memory");
+#else
+	asm volatile ("delay %0" :: "r" (delay_us_cycles) : "memory");
+	asm volatile ("delay %0" :: "r" (delay_us_cycles_extra) : "memory");
+#endif
+}
+
+static inline void delay_ms(int cnt)
+{
+	int i, j;
+	for (i = 0; i < cnt; i++)
+		for (j = 0; j < 1000; j++)
+			delay_us();
+}
+
+void recalibrate_lapic(u_int div, u_int mult)
+{
+	uint64_t result = (uint64_t) lapic_clockevent.mult * (uint64_t) mult;
+	lapic_clockevent.mult =  (u32) (result / (uint64_t) div);
+}
+#endif
 
 /*
  * Temporary interrupt handler.
@@ -633,8 +695,10 @@ calibrate_by_pmtimer(long deltapm, long *delta, long *deltatsc)
 static int __init calibrate_APIC_clock(void)
 {
 	struct clock_event_device *levt = &__get_cpu_var(lapic_events);
+#ifndef CONFIG_X86_EARLYMIC	
 	void (*real_handler)(struct clock_event_device *dev);
 	unsigned long deltaj;
+#endif	
 	long delta, deltatsc;
 	int pm_referenced = 0;
 
@@ -659,16 +723,18 @@ static int __init calibrate_APIC_clock(void)
 
 	local_irq_disable();
 
+#ifndef CONFIG_X86_EARLYMIC
 	/* Replace the global interrupt handler */
 	real_handler = global_clock_event->event_handler;
 	global_clock_event->event_handler = lapic_cal_handler;
-
+#endif
 	/*
 	 * Setup the APIC counter to maximum. There is no way the lapic
 	 * can underflow in the 100ms detection time frame
 	 */
 	__setup_APIC_LVTT(0xffffffff, 0, 0);
 
+#ifndef CONFIG_X86_EARLYMIC	
 	/* Let the interrupts run */
 	local_irq_enable();
 
@@ -679,6 +745,13 @@ static int __init calibrate_APIC_clock(void)
 
 	/* Restore the real event handler */
 	global_clock_event->event_handler = real_handler;
+#else
+	lapic_cal_loops = 0;
+	lapic_cal_handler(NULL);
+	delay_ms((LAPIC_CAL_LOOPS * MSEC_PER_SEC) / HZ);
+	lapic_cal_loops = LAPIC_CAL_LOOPS;
+	lapic_cal_handler(NULL);
+#endif
 
 	/* Build delta t1-t2 as apic timer counts down */
 	delta = lapic_cal_t1 - lapic_cal_t2;
@@ -694,7 +767,7 @@ static int __init calibrate_APIC_clock(void)
 	lapic_clockevent.mult = div_sc(delta, TICK_NSEC * LAPIC_CAL_LOOPS,
 				       lapic_clockevent.shift);
 	lapic_clockevent.max_delta_ns =
-		clockevent_delta2ns(0x7FFFFFFF, &lapic_clockevent);
+		clockevent_delta2ns(0x7FFFFF, &lapic_clockevent);
 	lapic_clockevent.min_delta_ns =
 		clockevent_delta2ns(0xF, &lapic_clockevent);
 
@@ -728,6 +801,7 @@ static int __init calibrate_APIC_clock(void)
 
 	levt->features &= ~CLOCK_EVT_FEAT_DUMMY;
 
+#ifndef CONFIG_X86_EARLYMIC
 	/*
 	 * PM timer calibration failed or not turned on
 	 * so lets try APIC timer based calibration
@@ -762,6 +836,9 @@ static int __init calibrate_APIC_clock(void)
 			levt->features |= CLOCK_EVT_FEAT_DUMMY;
 	} else
 		local_irq_enable();
+#else
+	local_irq_enable();
+#endif
 
 	if (levt->features & CLOCK_EVT_FEAT_DUMMY) {
 		pr_warning("APIC timer disabled due to verification failure\n");
@@ -865,7 +942,7 @@ static void local_apic_timer_interrupt(void)
 void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
-
+	
 	/*
 	 * NOTE! We'd better ACK the irq immediately,
 	 * because timer handling can be slow.
@@ -1369,6 +1446,7 @@ void __cpuinit setup_local_APIC(void)
 	 * strictly necessary in pure symmetric-IO mode, but sometimes
 	 * we delegate interrupts to the 8259A.
 	 */
+#ifndef CONFIG_X86_EARLYMIC
 	/*
 	 * TODO: set up through-local-APIC from through-I/O-APIC? --macro
 	 */
@@ -1380,6 +1458,7 @@ void __cpuinit setup_local_APIC(void)
 		value = APIC_DM_EXTINT | APIC_LVT_MASKED;
 		apic_printk(APIC_VERBOSE, "masked ExtINT on CPU#%d\n", cpu);
 	}
+#endif
 	apic_write(APIC_LVT0, value);
 
 	/*

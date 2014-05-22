@@ -34,6 +34,7 @@
 #include <linux/hardirq.h> /* for BUG_ON(!in_atomic()) only */
 #include <linux/memcontrol.h>
 #include <linux/cleancache.h>
+#include <linux/prefetch.h>
 #include "internal.h"
 
 /*
@@ -42,6 +43,150 @@
 #include <linux/buffer_head.h> /* for try_to_free_buffers */
 
 #include <asm/mman.h>
+
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+#include <linux/mic_dma/mic_dma_local.h>
+#endif
+
+#ifdef CONFIG_PAGE_CACHE_DMA
+#include <linux/mic_dma/mic_dma_callback.h>
+#include <linux/jiffies.h>
+#define INSERT_SUD_AFTER_PAGES  16
+#define MAX_POLL_TIMEOUT 30
+#endif
+
+unsigned int vfs_optimization;
+EXPORT_SYMBOL_GPL(vfs_optimization);
+
+#ifdef CONFIG_PAGE_CACHE_DMA
+static void *mic_dma_handle;
+static const struct file_dma *fdma = NULL;
+
+/* Allows the DMA driver to call in and notify us about its presence */
+void register_dma_for_fast_copy(const struct file_dma *fdma_callback)
+{
+	if (!fdma) {
+		fdma = fdma_callback;
+		if (fdma->dmaops->open_dma_device(0, 0, &mic_dma_handle) < 0) {
+			printk(KERN_ERR "opening DMA device failed\n");
+			fdma = NULL;
+		}
+	}
+	printk(KERN_INFO "Registering fast copy for VFS\n");
+}
+EXPORT_SYMBOL_GPL(register_dma_for_fast_copy);
+
+/* TODO: have to make sure that no file IO activity is happening when this
+ * happens
+ */
+void unregister_dma_for_fast_copy(void)
+{
+	fdma->dmaops->close_dma_device(0, &mic_dma_handle);
+	fdma = NULL;
+}
+EXPORT_SYMBOL_GPL(unregister_dma_for_fast_copy);
+
+/* Request to allocate a DMA channel, returns false on failure */
+bool dma_copy_begin(struct dma_channel **chan)
+{
+	if (!fdma)
+		return false;
+
+	if (fdma->dmaops->allocate_dma_channel(mic_dma_handle, chan) < 0) {
+		return false;
+	}
+	return true;
+}
+
+/* Free the DMA channel and poll the channel for completion */
+int dma_copy_end(struct dma_channel *chan, int cookie)
+{
+	int ret = 0;
+	unsigned long start_time = jiffies;
+
+	fdma->dmaops->free_dma_channel(chan);
+	if (cookie >= 0) {
+		while (1 != fdma->dmaops->poll_dma_completion(cookie, chan)) {
+			cpu_relax();
+			if (jiffies_to_msecs(jiffies - start_time) > MAX_POLL_TIMEOUT) {
+				printk(KERN_ERR "DMA channel polling timeout\n");
+				ret = -1;
+			}
+		}
+	} else if (cookie < 0 && cookie != -2)
+		ret = cookie;
+
+	return ret;
+}
+
+/* Wait for DMA in flight for a read desc to finish, return errors in desc */
+int wait_for_dma_finish(struct dma_channel *chan, read_descriptor_t *desc)
+{
+	int cookie = -1, ret = 0;
+
+	if (chan != NULL) {
+		cookie = fdma->dmaops->do_dma(chan, fdma->dmaops->do_dma_polling,
+				0, 0, 0, NULL);
+		if (cookie < 0 && cookie != -2) {
+			desc->error = cookie;
+			desc->written = 0;
+		}
+
+		/* Poll only if dma is DMA was initiated and is in flight,
+		 * i.e. cookie >= 0. In all other cases dma_copy_end will only
+		 * free the dma channel.
+		 */
+		ret = dma_copy_end(chan, cookie);
+		if (ret) {
+			desc->error = ret;
+			desc->written = 0;
+		}
+
+		/* Release the read lock after successful read using DMA
+		 * this lock was acquired at the begining of DMA in
+		 * prepare_for_dma_read
+		 */
+		up_read(&current->mm->mmap_sem);
+	}
+
+	return 0;
+}
+#endif
+
+/*
+ * copy from src to page or the other way around depending on @write
+ * return the number of bytes left.
+ */
+int fast_copy(struct page *page, char *src, unsigned long offset,
+		unsigned long bytes_copied, unsigned long bytes_left, int write)
+{
+	int left;
+	char *kvaddr;
+
+	pagefault_disable();
+	kvaddr = kmap_atomic(page, KM_USER0);
+	if (write) {
+#ifdef CONFIG_VECTOR_MEMCPY
+		left = __copy_from_user_vector_inatomic(
+				kvaddr + offset + bytes_copied,
+				src + bytes_copied, bytes_left);
+#else
+		left = __copy_from_user_inatomic(kvaddr + offset +
+				bytes_copied, src + bytes_copied, bytes_left);
+#endif
+	} else {
+#ifdef CONFIG_VECTOR_MEMCPY
+		left = __copy_to_user_vector_inatomic(src + bytes_copied,
+				kvaddr + offset + bytes_copied, bytes_left);
+#else
+		left = __copy_to_user_inatomic(src + bytes_copied,
+				kvaddr + offset + bytes_copied, bytes_left);
+#endif
+	}
+	kunmap_atomic(kvaddr, KM_USER0);
+	pagefault_enable();
+	return left;
+}
 
 /*
  * Shared mappings implemented 30.11.1994. It's not fully working yet,
@@ -589,7 +734,13 @@ void unlock_page(struct page *page)
 	VM_BUG_ON(!PageLocked(page));
 	clear_bit_unlock(PG_locked, &page->flags);
 	smp_mb__after_clear_bit();
-	wake_up_page(page, PG_locked);
+#ifdef CONFIG_PRECOMPUTE_WAITQ_HEAD
+	if (vfs_optimization) {
+		if (page->wq && waitqueue_active(page->wq))
+			__wake_up_bit(page->wq,  &page->flags, PG_locked);
+	} else
+#endif
+		wake_up_page(page, PG_locked);
 }
 EXPORT_SYMBOL(unlock_page);
 
@@ -1075,6 +1226,213 @@ static void shrink_readahead_size_eio(struct file *filp,
 }
 
 /**
+ * prepare_for_dma_read - prepare the user buffer for DMA.
+ *
+ * @desc - the current user buffer descriptor
+ * @nrpages - number of pages, calculated earlier.
+ * @chan - handle to dma channel (can be NULL)
+ * @upages_pinned - returned number of pages pinned successully.
+ *
+ * returns: on success, an array of pinned down user pages. NULL otherwise.
+ * Also the size of the array via @upages_pinned
+ *
+ * The main role of this function is to pin down all the user pages describing
+ * the user buffer. Don't bother if this isn't a large enough transfer or DMA
+ * isn't available.
+ */
+#ifdef CONFIG_PAGE_CACHE_DMA
+struct page **prepare_for_dma_read(read_descriptor_t *desc, unsigned long nrpages,
+		struct dma_channel **chan, int *upages_pinned)
+{
+	struct page **upages = NULL;
+
+	if (desc->count <= PAGE_CACHE_SIZE)
+		goto no_dma;
+	if (dma_copy_begin(chan) != true)
+		goto no_dma;
+
+	/* start by pinning down all the user pages described by @desc */
+		upages = (struct page **)kmalloc(sizeof(struct page *) * nrpages,
+				GFP_KERNEL);
+		if (upages == NULL) {
+			printk("failed to allocate upages\n");
+			goto no_dma;
+		}
+		/* It is *advisable* not to fork before/during a write system call.
+		 * fork-ing after the pages have been pinned can cause CoW which
+		 * can result in DMA-ing to physical page that does no longer maps
+		 * the user buffer.
+		 *
+		 * acquire read lock to avoid CoW till DMA is complete.
+		 */
+		down_read(&current->mm->mmap_sem);
+		*upages_pinned = __get_user_pages_fast((unsigned long)desc->arg.buf,
+				nrpages, 1, upages);
+
+		/* gup fast failed? Try the slow route to pin pages for user buffer*/
+		if (*upages_pinned <= 0)
+			*upages_pinned = 0;
+		if (*upages_pinned != nrpages) {
+			/* pinned fewer pages? Try the slow route to pin remaining pages */
+			*upages_pinned += get_user_pages(current, current->mm,
+					(unsigned long)desc->arg.buf + (*upages_pinned * PAGE_SIZE),
+					nrpages - (*upages_pinned), 1, 0, &upages[*upages_pinned], NULL);
+
+			/*
+			 * If we are still short of total number of requested pages,
+			 * release read lock since DMA is not possible. read lock
+			 * is acquired before __get_user_pages_fast is called.
+			 */
+			if (*upages_pinned <= 0 || *upages_pinned != nrpages) {
+				up_read(&current->mm->mmap_sem);
+				goto no_dma;
+			}
+		}
+	return upages;
+no_dma:
+	if (*chan)
+		dma_copy_end(*chan, -1);
+	/* release any pages that were actually pinned */
+	if (*upages_pinned > 0) {
+		BUG_ON(!upages);
+		while (*upages_pinned > 0) {
+			page_cache_release(upages[*upages_pinned - 1]);
+			(*upages_pinned)--;
+		}
+	}
+	kfree(upages);
+	return NULL;
+}
+
+/**
+ * fast_copy_to_user - copy bytes from a page cache page to a user buffer
+ * using the fastest method. If DMA is available, handle all the alignment
+ * cases. If not, try to use a vectorized version of copy_to_user_inatomic().
+ *
+ * @desc - descriptor for user buffer
+ * @upages - list of pinned user pages.
+ * @uidx - index in the above array.
+ * @page - page cache page to copy from
+ * @offset - @page offset to copy from
+ * @size - bytes
+ * @chan - DMA channel to use, might be null.
+ *
+ * return the number of bytes that were actually copied.
+ *
+ * Note: On entry, @size is the number of "valid" bytes on the page.
+ */
+unsigned long fast_copy_to_user(read_descriptor_t *desc,
+		struct page **upages, unsigned long *uidx, struct page *page,
+		unsigned long offset, unsigned long size,
+		struct dma_channel *chan)
+{
+	char *src = desc->arg.buf;
+	uint64_t upage_pa, kpage_pa;
+	static int pages_programmed;
+	unsigned long src_cache_off, dst_cache_off; /* offset in cacheline */
+	loff_t src_off; /* offset in current user buf */
+	unsigned long bytes, head = 0, copied_in_loop = 0;
+	unsigned long left = 0, count = desc->count, ret = 0;
+	unsigned long cachelines, cacheline_bytes;
+	int cookie = -1;
+
+	size = min(desc->count, size);
+	while (size) {
+		src_off = (unsigned long)src & (PAGE_CACHE_SIZE - 1);
+		src_cache_off = (unsigned long)src & (L1_CACHE_BYTES - 1);
+		dst_cache_off = offset & (L1_CACHE_BYTES - 1);
+
+		/* same offsets in a cacheline, optimize away - do a head/body/tail */
+		if (chan && (src_cache_off == dst_cache_off)) {
+			/* how much of @size lives in the current user page */
+			bytes = min_t(unsigned long, size, PAGE_CACHE_SIZE - src_off);
+
+			/* "head": copy the rest of the first cacheline so we
+			 * are cacheline aligned and ready for DMA below.
+			 */
+			if (src_cache_off != 0)  {
+				head = L1_CACHE_BYTES - src_cache_off;
+				left = fast_copy(page, src, offset, 0, head, 0);
+				if (left)
+					goto short_copy;
+
+				copied_in_loop = head;
+				bytes -= head;
+			}
+
+			/* "body": DMA cachelines worth of bytes. */
+			cachelines = bytes / L1_CACHE_BYTES;
+			cacheline_bytes = cachelines * L1_CACHE_BYTES;
+
+			if (cacheline_bytes) {
+				upage_pa = page_to_phys(upages[*uidx]) +
+					src_off + copied_in_loop;
+				kpage_pa = page_to_phys(page) + offset + copied_in_loop;
+
+				/* Do not insert a stautus update descriptor (SUD) everytime.
+				 * Wait until we've programmed a few memcpy descriptors.
+				 */
+				if (pages_programmed >= INSERT_SUD_AFTER_PAGES) {
+					cookie = fdma->dmaops->do_dma(chan,
+							fdma->dmaops->do_dma_polling,
+							kpage_pa, upage_pa,
+							cacheline_bytes, NULL);
+					pages_programmed = 0;
+				} else {
+					cookie = fdma->dmaops->program_descriptors(chan,
+							kpage_pa, upage_pa, cacheline_bytes);
+					pages_programmed++;
+				}
+
+				if (cookie < 0 && cookie != -2)
+					goto short_copy;
+
+				copied_in_loop += cacheline_bytes;
+				bytes -= cacheline_bytes;
+			}
+
+			/* tail - copy the rest with "memcpy" */
+			if (bytes) {
+				left = fast_copy(page, src, offset, copied_in_loop, bytes, 0);
+				copied_in_loop += bytes - left;
+				if (left)
+					goto short_copy;
+				}
+
+			/* Are we done with this physical page for @desc */
+			if ((PAGE_CACHE_SIZE - src_off) == copied_in_loop)
+				(*uidx)++;
+		} else {
+			left = fast_copy(page, src, offset, 0, size, 0);
+			copied_in_loop = size;
+			if (left)
+				goto short_copy;
+			}
+
+		size -= copied_in_loop;
+		ret += copied_in_loop;
+		src += copied_in_loop;
+		offset += copied_in_loop;
+
+		copied_in_loop = 0;
+	}
+
+	/* success! */
+	BUG_ON(size);
+short_copy:
+	if (size != 0) {
+		ret += size - left;
+		desc->error = -EFAULT;
+	}
+
+	desc->count = count - ret;
+	desc->written += ret;
+	desc->arg.buf += ret;
+	return ret;
+}
+#endif
+
+/**
  * do_generic_file_read - generic file read routine
  * @filp:	the file to read
  * @ppos:	current file position
@@ -1100,12 +1458,46 @@ static void do_generic_file_read(struct file *filp, loff_t *ppos,
 	unsigned int prev_offset;
 	int error;
 
+#ifdef CONFIG_PAGE_CACHE_DMA
+	struct page **pages = NULL, **upages = NULL;
+	unsigned long nr_upages = 0, nr_kpages = 0, pidx = 0, uidx = 0;
+	struct dma_channel *chan = NULL;
+	int upages_pinned = 0, i;
+#endif
+
 	index = *ppos >> PAGE_CACHE_SHIFT;
 	prev_index = ra->prev_pos >> PAGE_CACHE_SHIFT;
-	prev_offset = ra->prev_pos & (PAGE_CACHE_SIZE-1);
-	last_index = (*ppos + desc->count + PAGE_CACHE_SIZE-1) >> PAGE_CACHE_SHIFT;
+	prev_offset = ra->prev_pos & (PAGE_CACHE_SIZE - 1);
+	last_index = (*ppos + desc->count + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 	offset = *ppos & ~PAGE_CACHE_MASK;
 
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+	if (vfs_opt_read_enabled(mapping->backing_dev_info)) {
+#ifdef CONFIG_PAGE_CACHE_DMA
+		/* how many buffer pages to pin down? */
+		nr_upages = calculate_pages(desc->count,
+				(unsigned long)desc->arg.buf & (PAGE_CACHE_SIZE - 1));
+
+		nr_kpages = calculate_pages(desc->count, offset);
+		pages = kmalloc(nr_kpages * sizeof(struct page *),
+				GFP_KERNEL);
+
+		if (pages) {
+			/* pin down user pages */
+			upages = prepare_for_dma_read(desc, nr_upages, &chan,
+					&upages_pinned);
+			if (unlikely(upages == NULL)) {
+				chan = NULL; /* no dma for now */
+				kfree(pages);
+				pages = NULL;
+			}
+		}
+#endif
+#ifdef CONFIG_VECTOR_MEMCPY
+		kernel_fpu_begin();
+#endif
+	}
+#endif
 	for (;;) {
 		struct page *page;
 		pgoff_t end_index;
@@ -1195,13 +1587,25 @@ page_ok:
 		 * "pos" here (the actor routine has to update the user buffer
 		 * pointers and the remaining count).
 		 */
-		ret = actor(desc, page, offset, nr);
+#ifdef CONFIG_PAGE_CACHE_DMA
+		if (vfs_opt_read_enabled(mapping->backing_dev_info) && chan) {
+			pages[pidx] = page;
+			pidx++;
+			ret = fast_copy_to_user(desc, upages, &uidx, page,
+						offset, nr, chan);
+		} else
+#endif
+			ret = actor(desc, page, offset, nr);
 		offset += ret;
 		index += offset >> PAGE_CACHE_SHIFT;
 		offset &= ~PAGE_CACHE_MASK;
 		prev_offset = offset;
 
-		page_cache_release(page);
+#ifdef CONFIG_PAGE_CACHE_DMA
+		if (!vfs_opt_read_enabled(mapping->backing_dev_info) || chan == NULL)
+#endif
+			page_cache_release(page);
+
 		if (ret == nr && desc->count)
 			continue;
 		goto out;
@@ -1295,7 +1699,35 @@ no_cached_page:
 		goto readpage;
 	}
 
+#ifdef CONFIG_VECTOR_MEMCPY
+	/* restore fpu state */
+	if (vfs_opt_read_enabled(mapping->backing_dev_info))
+		kernel_fpu_end();
+#endif
+
 out:
+#ifdef CONFIG_PAGE_CACHE_DMA
+	if (vfs_opt_read_enabled(mapping->backing_dev_info)) {
+		wait_for_dma_finish(chan, desc);
+
+		/* pinned user pages */
+		if (upages) {
+			for (i = 0; i < upages_pinned; i++)
+				page_cache_release(upages[i]);
+			kfree(upages);
+		}
+
+		/* kernel page cache pages */
+		if (pages) {
+			for (i = 0; i < pidx; i++) {
+				BUG_ON(!pages[i]);
+				page_cache_release(pages[i]);
+			}
+			kfree(pages);
+		}
+	}
+#endif
+
 	ra->prev_pos = prev_index;
 	ra->prev_pos <<= PAGE_CACHE_SHIFT;
 	ra->prev_pos |= prev_offset;
@@ -1312,15 +1744,19 @@ int file_read_actor(read_descriptor_t *desc, struct page *page,
 
 	if (size > count)
 		size = count;
-
 	/*
 	 * Faults on the destination of a read are common, so do it before
 	 * taking the kmap.
 	 */
 	if (!fault_in_pages_writeable(desc->arg.buf, size)) {
 		kaddr = kmap_atomic(page, KM_USER0);
-		left = __copy_to_user_inatomic(desc->arg.buf,
-						kaddr + offset, size);
+#ifdef CONFIG_VECTOR_MEMCPY
+		if (vfs_optimization & VFS_OPT_READ) {
+			left = __copy_to_user_vector_inatomic(desc->arg.buf, kaddr + offset, size);
+		} else
+#endif
+			left = __copy_to_user_inatomic(desc->arg.buf,
+					kaddr + offset, size);
 		kunmap_atomic(kaddr, KM_USER0);
 		if (left == 0)
 			goto success;
@@ -1536,7 +1972,7 @@ SYSCALL_ALIAS(sys_readahead, SyS_readahead);
 static int page_cache_read(struct file *file, pgoff_t offset)
 {
 	struct address_space *mapping = file->f_mapping;
-	struct page *page; 
+	struct page *page;
 	int ret;
 
 	do {
@@ -1553,7 +1989,7 @@ static int page_cache_read(struct file *file, pgoff_t offset)
 		page_cache_release(page);
 
 	} while (ret == AOP_TRUNCATED_PAGE);
-		
+
 	return ret;
 }
 
@@ -2049,11 +2485,18 @@ size_t iov_iter_copy_from_user_atomic(struct page *page,
 	if (likely(i->nr_segs == 1)) {
 		int left;
 		char __user *buf = i->iov->iov_base + i->iov_offset;
-		left = __copy_from_user_inatomic(kaddr + offset, buf, bytes);
+#ifdef CONFIG_VECTOR_MEMCPY
+		if (vfs_opt_write_enabled(page->mapping->backing_dev_info)) {
+			left = __copy_from_user_vector_inatomic(kaddr + offset,
+					buf, bytes);
+		} else
+#endif
+			left = __copy_from_user_inatomic(kaddr + offset,
+					buf, bytes);
 		copied = bytes - left;
 	} else {
 		copied = __iovec_copy_from_user_inatomic(kaddr + offset,
-						i->iov, i->iov_offset, bytes);
+				i->iov, i->iov_offset, bytes);
 	}
 	kunmap_atomic(kaddr, KM_USER0);
 
@@ -2363,6 +2806,818 @@ found:
 }
 EXPORT_SYMBOL(grab_cache_page_write_begin);
 
+/**
+ * calculate_pages - computes the total number of physical pages to cover @len
+ * bytes starting at offset @offset.
+ */
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+size_t calculate_pages(unsigned long len, unsigned long offset)
+{
+	ssize_t nrpages = 0;
+
+	if (unlikely(len == 0))
+		return 0;
+
+	if (len > PAGE_CACHE_SIZE - offset) {
+		if (offset) {
+			/* one for the first, potentially partial page */
+			len = len - (PAGE_CACHE_SIZE - offset);
+			nrpages++;
+		}
+
+		offset = len & (PAGE_CACHE_SIZE - 1);
+		/* middle pages */
+		nrpages += len >> PAGE_CACHE_SHIFT;
+		/* last partial page */
+		nrpages += (offset > 0) ? 1 : 0;
+	} else
+		nrpages = 1;
+
+	return nrpages;
+}
+
+/**
+ * clear_page_fast - use the fastest way to clear a page. Start with
+ * DMA (zero_page -> this page). If DMA isn't available (@chan == NULL),
+ * use vector_memcpy. If that's not available, do the usual clear_highpage().
+ *
+ * @page - the page that needs to be zero'd
+ * @chan - dma channel handle if it is available.
+ */
+#define ZERO_PA page_to_phys(ZERO_PAGE(0))
+static inline void clear_page_fast(struct page *page, struct dma_channel *chan)
+{
+	int ret = -1, left = 1;
+
+#ifdef CONFIG_PAGE_CACHE_DMA
+	static int pages_programmed;
+	unsigned long  dst_pa;
+
+	if (chan) {
+		dst_pa = page_to_phys(page);
+
+		/* do not insert a SUD after every memcpy desc */
+		if (pages_programmed >= INSERT_SUD_AFTER_PAGES) {
+			ret = fdma->dmaops->do_dma(chan,
+					fdma->dmaops->do_dma_polling, ZERO_PA,
+					dst_pa, PAGE_CACHE_SIZE, NULL);
+			pages_programmed = 0;
+		} else {
+			ret = fdma->dmaops->program_descriptors(chan,
+					ZERO_PA, dst_pa, PAGE_CACHE_SIZE);
+			pages_programmed++;
+		}
+	}
+#endif
+	if (ret < 0 && ret != -2) {
+#ifdef CONFIG_VECTOR_MEMCPY
+		char *kaddr;
+		pagefault_disable();
+		kaddr = kmap_atomic(page, KM_USER0);
+		left = __copy_from_user_vector_inatomic(kaddr,
+				empty_zero_page, PAGE_SIZE);
+		kunmap_atomic(kaddr, KM_USER0);
+		pagefault_enable();
+#endif
+		if (left)
+			clear_highpage(page);
+
+	}
+}
+
+/**
+ * add_to_page_array_lru - add a number of newly allocated pages to the page
+ * cache for mapping. The routine will start scanning for the first-needed
+ * page from "start_here" (can be 0).
+ *
+ * @page - list of original pages with some NULL slots needing pages.
+ * @nr_pages_needed - total count of pages needed in @page when we're all done.
+ * @alloc_pages - newly allocated pages - contiguous indices.
+ * @large_page - newly allocated array of virtually contiguous pages if higher order
+ * page allocation suceeded
+ * @allocated - number of pages in @alloc_pages
+ * @start_here - hint to start scanning @page from this index
+ * @starting_index - the page cache index for the first page in this write
+ * instance.
+ * @mappping - address_space mapping for this file.
+ * @gfp_notmask - clear out these bits from the gfp mask.
+ * @chan - if non_NULL, the DMA channel to use for zero operation.
+ *
+ * We have an array of pages just allocated (alloc_pages[0..allocated-1]).
+ * the page array has some slots that are NULL and in need of pages. We
+ * take a page from the bottom of alloc_pages and find the first slot
+ * in page[] that needs a page and compute the page-cache index. Then
+ * insert the page in the page-cache at the computed index and in the
+ * page[] array. finally zero out the page.
+ *
+ * This routine can certainly benefit from a batched-insertion into the
+ * page cache (radix-tree)
+ * TODO: should we flip the order, first zero then add?
+ */
+static inline int add_to_page_array_lru(struct page **pages, int nrpages_needed,
+		struct page **alloc_pages, struct page *large_page, unsigned long allocated,
+		int *start_here, unsigned long starting_index, struct address_space *mapping,
+		gfp_t gfp_notmask, struct dma_channel *chan)
+{
+	int status, i;
+	struct page *free_page;
+
+	/* grab a free (just allocated) page, find the next index where a page
+	 * is needed and add it at the desired index. "start_here" is a hint
+	 * (can be 0) and is the starting point to scan the array for where a
+	 * page is needed next.
+	 */
+	while (allocated) {
+		/* grab the first "free" page */
+		if (!large_page)
+			free_page = alloc_pages[allocated - 1];
+		else
+			free_page = large_page + (allocated - 1);
+		BUG_ON(!free_page);
+
+		/* start scanning for the next deserving index */
+		for (i = *start_here; i < nrpages_needed; i++) {
+			if (!pages[i]) {
+				status = add_to_page_cache_lru(free_page,
+						mapping,
+						starting_index + i,
+						GFP_KERNEL & ~gfp_notmask);
+				if (unlikely(status)) {
+					page_cache_release(free_page);
+					printk(KERN_ERR "add_to_lru index(%lu) failed (%d)\n",
+							starting_index + i, status);
+					return -ENOMEM;
+				}
+
+				pages[i] = free_page;
+				*start_here = i + 1;
+
+				/* since it is locked now, wipe it clean */
+				clear_page_fast(free_page, chan);
+				break;
+			}
+		}
+		allocated--;
+	}
+	return 0;
+}
+
+/**
+ * alloc_page_cache_high_order - allocates a higer order page, then splits it
+ * into order 0 pages. If excess_pages > 0, the bottom excess_pages are freed
+ * right away.
+ *
+ * @mapping_mask - address_space structure for the inode of interest.
+ * @order - number of pages (1 << order)
+ * @excess_pages - count of number of pages not needed from the 1 << order
+ * pages allocated.
+ * @large_page - returns an array of requested number of virtually
+ * contiguous pages.
+ */
+static inline struct page *alloc_page_cache_high_order(gfp_t mapping_mask,
+		int order, int excess_pages)
+{
+	struct page *large_page, *extra;
+	int loop;
+
+	/* Allocate a higer order page */
+	large_page = alloc_pages(mapping_mask, order);
+	if (!large_page)
+		goto failed_large_alloc;
+
+	/* Split the into order 0 pages */
+	split_page(large_page, order);
+
+	/* request to free the last few pages? */
+	if (excess_pages) {
+		/* get a pointer to the first page that needs to be freed and
+		 * free the rest from there on
+		 */
+		extra = large_page + ((1 << order) - excess_pages);
+
+		/* free, free, free ... */
+		for (loop = 0; loop < excess_pages; loop++)
+			__free_page(extra + loop);
+	}
+
+	return large_page;
+failed_large_alloc:
+	/* better luck with the slowpath routine */
+	return NULL;
+}
+
+/**
+ * alloc_page_cache_slowpath - allocate a total of 2^order pages.
+ *
+ * @mapping_mask - address_space structure for the inode of interest.
+ * @order - number of pages (1 << order)
+ * @excess_pages - count of number of pages not needed from the 1 << order
+ * pages allocated.
+ *
+ */
+static inline int alloc_page_cache_slowpath(gfp_t mapping_mask, int order,
+		int excess_pages, struct page **pages)
+{
+	int loop;
+	int nr_pages = (1 << order) - excess_pages;
+
+	for (loop = 0; loop < nr_pages; loop++) {
+		pages[loop] = __page_cache_alloc(mapping_mask|__GFP_COLD);
+		if (!pages[loop])
+			return -ENOMEM;
+	}
+	return 0;
+}
+
+/**
+ * build_tree	- populate the page cache with all the pages needed to perform
+ * a write starting from pos and writing len worth of bytes into the file.
+ * @mapping - address_space structure for the inode of interest.
+ * @pos - starting lseek position in file.
+ * @len - length of the write for this this tree needs to be built.
+ * @flags - allocation flags
+ * @npages_alloc: returns the number of pages allocated here.
+ *
+ * For use with a write routine like generic_perform_write() to pre-populate
+ * the page-cache with pages. The benefit of trying to build tree this way
+ * is that we can use high-order pages to obtain free pages from the buddy
+ * system, then split them and map them as order 0 pages. Additionally,
+ * this routine could also benefit from a batched insertion in the radix
+ * tree data structure in the future.
+ *
+ * This routine returns an array of struct page pointers needed to write
+ * [pos, pos + len) in the file. The pages are locked.
+ */
+static inline struct page **build_tree(struct address_space *mapping,
+		loff_t pos, unsigned long len, unsigned int flags,
+		unsigned long *nrpages_alloc)
+{
+	struct page **pages = NULL, **alloc_pages = NULL;
+	pgoff_t starting_index;
+	gfp_t gfp_notmask = 0;
+	unsigned int min_req_page_order, order;
+	unsigned int nr_loops, start_hint = 0;
+	unsigned long offset;
+	unsigned long nrpages_found = 0, nrpages_req, nrpages_needed, nrpages_per_loop;
+	unsigned long excess_pages;
+	int status, i, sud_req = 0;
+	struct dma_channel *chan = NULL;
+	int dma_cookie = -1;
+	struct page *large_page = NULL;
+
+	*nrpages_alloc = 0;
+	if (unlikely(len == 0))
+		goto done;
+
+	if (flags & AOP_FLAG_NOFS)
+		gfp_notmask = __GFP_FS;
+
+	starting_index = pos >> PAGE_CACHE_SHIFT;
+	offset = pos & (PAGE_CACHE_SIZE - 1);
+	nrpages_needed = calculate_pages(len, offset);
+
+	/* store existing and missing pages */
+	pages = kmalloc((nrpages_needed) * sizeof(struct page *), GFP_KERNEL);
+	if (unlikely(!pages))
+		goto done;
+
+	/* Generate a list of existing pages and missing pages by traversing
+	 * the page-cache. When done, pages[i] will either point to a locked
+	 * page or NULL.
+	 *
+	 * The first slot, i.e. page[0], will contain the page @ starting_index
+	 * in the file.
+	 */
+	for (i = 0; i < nrpages_needed; i++) {
+		pages[i] = find_lock_page(mapping, starting_index +  i);
+		if (pages[i])
+			nrpages_found++;
+	}
+
+	/*
+	 * Three scenarios exist:
+	 * 1. If no pages were found in the range [pos, pos + len), then we are
+	 * writing to a sequential hole in the file.
+	 * 2. If some pages were found, then we are in holes between [pos, pos + len)
+	 * 3. If all pages needed were found, then we're simply overwriting the range
+	 * [pos, pos + len)
+	 * But in all three scenarios, all we need to know is exactly how many pages
+	 * are needed, that's easy!
+	 */
+	nrpages_req = nrpages_needed - nrpages_found;
+	if (nrpages_req == 0) {
+		/* here, nrpages_found == nrpages_needed, so we'll not program any DMA
+		 * to zero out new pages since we don't need to allocate any!
+		 */
+		*nrpages_alloc = nrpages_needed;
+		goto done;
+	}
+
+	/* TODO:  If it is a total re-write, we will not be here - nrpages_req == 0.
+	 * but we can still avoid zeroing out pages in the middle. Why? because
+	 * we will be holding page_lock and we're going to fast copy soon on top of
+	 * zero'd out pages. I wish
+	 */
+#ifdef CONFIG_PAGE_CACHE_DMA
+	/* Allocate a new channel if DMA is enabled. */
+	if (dma_copy_begin(&chan) != true)
+		chan = NULL;
+#endif
+
+	/* so far this is what we got */
+	*nrpages_alloc = nrpages_found;
+
+	/* How big does the higer order allocation need to be to get all the
+	 * missing pages?
+	 */
+	min_req_page_order = get_order(nrpages_req << PAGE_CACHE_SHIFT);
+
+	/*
+	 * If we allocate pages using higer order pages, chances are the last
+	 * allocation will have extra pages that will need to be freed to avoid
+	 * a memory leak. Figure out what that is (might be 0) and keep it handy
+	 * to be freed in the last iteration below.
+	 */
+	if (min_req_page_order > (MAX_ORDER - 1))
+		order = MAX_ORDER - 1;
+	else
+		order = min_req_page_order;
+
+	/* pages allocated via higher order allocations per iteration */
+	nrpages_per_loop = 1UL << order;
+	nr_loops = nrpages_req/nrpages_per_loop;
+	if (nrpages_req % nrpages_per_loop)
+		nr_loops++;
+
+	/* store newly allocated pages here, note that we'll never ever allocate more
+	 * than nrpages_per_loop in any given loop below.
+	 */
+	alloc_pages = kmalloc((nrpages_per_loop) * sizeof(struct page *), GFP_KERNEL);
+	if (unlikely(!alloc_pages))
+		goto unlock_and_done;
+
+	/* start allocating page of order 'order' and add them to the page cache.
+	 * The last allocation might have excess pages at the end which will be freed
+	 */
+	for (i = 0; i < nr_loops; i++) {
+		/* last iteration? any excess pages need to be freed before we proceed? */
+		excess_pages = (i == (nr_loops - 1)) ?
+			(nrpages_per_loop * nr_loops - nrpages_req) : 0;
+
+		large_page = alloc_page_cache_high_order(mapping_gfp_mask(mapping),
+				order, excess_pages);
+
+		if (!large_page) {
+			/* Try allocating order 0 pages, if the above failed to get us
+			 * what we wanted
+			 */
+			printk(KERN_WARNING "high order allocation failed\n");
+			if (alloc_page_cache_slowpath(mapping_gfp_mask(mapping), order,
+						excess_pages, alloc_pages))
+				goto failed_add;
+		}
+
+		/* Add pages to pages_array and LRU list */
+		status = add_to_page_array_lru(pages, nrpages_needed,
+				alloc_pages, large_page,
+				nrpages_per_loop - excess_pages,
+				&start_hint, starting_index,
+				mapping, gfp_notmask, chan);
+		if (unlikely(status))
+			goto failed_add;
+
+		/* program SUD at the end? */
+		if (!sud_req)
+			sud_req = 1;
+
+		/* how many in this iteration? */
+		*nrpages_alloc += (nrpages_per_loop - excess_pages);
+	}
+
+	kfree(alloc_pages);
+	goto done;
+
+failed_add:
+	kfree(alloc_pages);
+
+unlock_and_done:
+	if (pages) {
+		/*TODO: Remove pages from radix tree. How to identify the indexes?*/
+		for (i = 0; i < nrpages_needed; i++)
+			if (pages[i])
+				unlock_page(pages[i]);
+		pages = NULL;
+	}
+	*nrpages_alloc = 0;
+
+done:
+#ifdef CONFIG_PAGE_CACHE_DMA
+	if (chan) {
+		/* Did we program even a single "page zero" operation w/ DMA? */
+		if (sud_req)
+			/* Adding a status descriptor*/
+			dma_cookie = fdma->dmaops->do_dma(chan, fdma->dmaops->do_dma_polling,
+					0, 0, 0, NULL);
+
+		/* Check to see if page zeroing has completed*/
+		dma_copy_end(chan, dma_cookie);
+	}
+#endif
+	/* @pages is freed in generic_perform_write */
+	return pages;
+}
+#endif
+
+/**
+ * prepare_for_dma_write - prepare the user buffer for DMA.
+ *
+ * @i - the current user buffer descriptor, potentially nr_seg > 1
+ * @pos - position to start writing to in the file
+ * @nr - returned number of pages pinned successully.
+ *
+ * returns: on success, an array of pinned down user pages. NULL otherwise.
+ *
+ * The main role of this function is to pin down all the user pages describing
+ * the user buffer. If the size of the copy is too little don't bother with
+ * generating the list of physical pages.
+ */
+#ifdef CONFIG_PAGE_CACHE_DMA
+struct page **prepare_for_dma_write(struct iov_iter *i, loff_t pos,
+		unsigned int *nr)
+{
+	const struct iovec *iov = i->iov;
+	struct page **upages;
+	unsigned long dst_cacheline_offset, src_cacheline_offset;
+	unsigned long left;
+	char __user *buf;
+	long count;
+	unsigned long page_count;
+	unsigned int ret = 0, req;
+	loff_t iov_off;
+
+	buf = iov->iov_base + i->iov_offset;
+	src_cacheline_offset = ((unsigned long)buf & (L1_CACHE_BYTES - 1));
+	dst_cacheline_offset = (pos & (L1_CACHE_BYTES - 1));
+
+	/* If we're copying a single segment (write/pwrite), and
+	 * we know that the cacheline aligned offsets are such that
+	 * we'll neve see alignment ever, just bail now.
+	 *
+	 * TODO: check whether any of the other segments can
+	 * benefit from DMA. otherwise return from here itself.
+	 */
+	if (i->nr_segs == 1 && dst_cacheline_offset != src_cacheline_offset)
+		return NULL;
+
+	/* Need this pre-loop because there is no single, one-step
+	 * way to calculate the total number of physcial pages backing
+	 * all the segs
+	 */
+	count = i->count;
+	iov_off = i->iov_offset;
+	page_count = 0;
+	while (count) {
+		buf = iov->iov_base + iov_off;
+		left = iov->iov_len - iov_off;
+
+		/* something left in this seg */
+		if (left) {
+			page_count += calculate_pages(left,
+					(unsigned long)buf & (PAGE_CACHE_SIZE - 1));
+			count -= left;
+			iov_off = 0; /* for the remaining segs */
+		}
+		iov++;
+	}
+
+	upages = kmalloc(sizeof(struct pages *) * page_count, GFP_KERNEL);
+	if (!upages)
+		goto fail;
+
+	/*
+	 * Iterate through each segment and pin the source pages.
+	 * If pinning fails, then return as short_copy
+	 */
+	iov = i->iov;
+	iov_off = i->iov_offset;
+
+	/* acquire read lock to avoid CoW till DMA is complete */
+	down_read(&current->mm->mmap_sem);
+	while (page_count) {
+		buf = iov->iov_base + iov_off;
+		left = iov->iov_len - iov_off;
+
+		/* skip 0 byte segments too */
+		if (left) {
+			req = calculate_pages(left,
+					(unsigned long)buf & (PAGE_CACHE_SIZE - 1));
+
+			/* It is *advisable* not to fork before/during a write system call.
+			 * fork-ing after the pages have been pinned can cause CoW which
+			 * can result in DMA-ing from physical page that does no longer maps
+			 * the user buffer or has some erroneous data.
+			 */
+			count = __get_user_pages_fast((unsigned long)buf,
+					req, 1, &upages[ret]);
+
+			if (count <= 0)
+				count = 0;
+
+			ret += count;
+			page_count -= count;
+
+			/*
+			 * pinned everything asked?
+			 * If not, free all pinned pages and return NULL.
+			 */
+
+			if (req != count) {
+				count += get_user_pages (current, current->mm,
+						(unsigned long)(buf + count * PAGE_CACHE_SIZE),
+						req - count, 1, 0, &upages[ret], NULL );
+
+				if (count != req || count <= 0) {
+					/*
+					 * release read lock since DMA is not possible.
+					 * read lock is grabbed outside of this loop.
+					 */
+					up_read(&current->mm->mmap_sem);
+					goto fail;
+				}
+			}
+			iov_off = 0; /* for the remaining segs */
+		}
+		iov++;
+	}
+
+	*nr = ret;
+	return upages;
+fail:
+	if (upages) {
+		while (ret) {
+			BUG_ON(!upages[ret - 1]);
+			page_cache_release(upages[ret - 1]);
+			ret--;
+		}
+		kfree(upages);
+	}
+	*nr = 0;
+	return NULL;
+}
+
+/**
+ * _perform_fast_copy - copy at most one page worth of data.
+ * Remember that the user buffer might be split across two physical
+ * pages - and this code needs to handle it!
+ *
+ * @src - user buffer to copy from
+ * @page - page to copy into
+ * @offset - offset in page to copy into
+ * @len - number of bytes to copy.
+ * @upages - pinned down list of physical user pages
+ * @uindex - index to be used to get the buffer to copy from. Updated in
+ *		 the routine.
+ * @chan - if non NULL, DMA channel to use.
+ *
+ * Given the current limitations of the DMA engine - i.e. descriptors can
+ * only be programmed if the src and dst are cacheline aligned addresses.
+ * Moreover the "length" in a copy descriptor can be specificed in multiples
+ * of cachelines only, Usually this boils down to a "head" + DMA + "tail"
+ * type of scenario.
+ *
+ * NOTE: The iov describing a single user segment might be split across two
+ * physical pages, but the @page is a single physically contiguous page.
+ *
+ * Returns: bytes that could not be copied (short copy).
+ */
+static inline int _perform_fast_copy_from_user(char __user *src,
+		struct page *page,	loff_t offset, unsigned long len,
+		struct page **upages, int *uindex, struct dma_channel *chan)
+{
+	struct page *upage;
+	static int pages_programmed = 0;
+	unsigned long src_cache_off, dst_cache_off; /* offset in cacheline */
+	uint64_t upage_pa, kpage_pa;
+	loff_t src_off; /* offset in current user buf */
+	unsigned long bytes, head = 0, copied_in_loop = 0;
+	unsigned long left = 0;
+	int cookie = -1;
+	unsigned long cachelines, cacheline_bytes;
+
+	BUG_ON(!page);
+	BUG_ON(len > PAGE_CACHE_SIZE);
+
+	/* @len can never be more than a single page (PAGE_CACHE_SIZE), given where
+	 * this is being called from and so we should never cross a single page
+	 * cache page.
+	 *
+	 * Handle @src carefeully though because it can still span two physical pages
+	 * for @len
+	 */
+	while (len) {
+		src_off = (unsigned long)src & (PAGE_CACHE_SIZE - 1);
+
+		src_cache_off = (unsigned long)src & (L1_CACHE_BYTES - 1);
+		dst_cache_off = offset & (L1_CACHE_BYTES - 1);
+
+		if ((src_cache_off == dst_cache_off) && chan) {
+
+			/* how much of @len lives in the current user page */
+			bytes = min_t(unsigned long, len, PAGE_CACHE_SIZE - src_off);
+
+			/* "head": copy the rest of the cacheline so we
+			 * are cacheline aligned and ready for DMA below.
+			 */
+			if (src_cache_off)  {
+				head = L1_CACHE_BYTES - src_cache_off;
+				left = fast_copy(page, src, offset, 0, head, 1);
+				copied_in_loop = head - left;
+				if (left)
+					goto short_copy;
+				bytes -= head;
+			}
+
+			/* "body": DMA cachelines worth of bytes. */
+			cachelines = bytes / L1_CACHE_BYTES;
+			cacheline_bytes = cachelines * L1_CACHE_BYTES;
+
+			if (cacheline_bytes) {
+				/* Shouldn't be here if upages couldn't be built */
+				BUG_ON(!upages);
+				upage = upages[*uindex];
+
+				upage_pa = page_to_phys(upage) + src_off + copied_in_loop;
+				kpage_pa = page_to_phys(page) + offset + copied_in_loop;
+				/* Do not insert a stautus update descriptor (SUD) everytime.
+				 * Wait until we've programmed a few memcpy descriptors.
+				 */
+				if (pages_programmed >= INSERT_SUD_AFTER_PAGES) {
+					cookie = fdma->dmaops->do_dma(chan,
+							fdma->dmaops->do_dma_polling,
+							upage_pa, kpage_pa,
+							cacheline_bytes, NULL);
+					pages_programmed = 0;
+				} else {
+					cookie = fdma->dmaops->program_descriptors(chan,
+							upage_pa, kpage_pa, cacheline_bytes);
+					pages_programmed++;
+				}
+
+				if (cookie < 0 && cookie != -2)
+					goto short_copy;
+				copied_in_loop += cacheline_bytes;
+				bytes -= cacheline_bytes;
+			}
+
+			/* tail - copy the rest with "memcpy" */
+			if (bytes) {
+				left = fast_copy(page, src, offset, copied_in_loop, bytes, 1);
+				copied_in_loop += bytes - left;
+				if (left)
+					goto short_copy;
+			}
+
+			if (copied_in_loop == (PAGE_CACHE_SIZE - src_off))
+				(*uindex)++;
+		} else {
+			left = fast_copy(page, src, offset, 0, len, 1);
+			copied_in_loop = len - left;
+
+			if (left)
+				goto short_copy;
+		}
+
+		len -= copied_in_loop;
+		src += copied_in_loop;
+		offset += copied_in_loop;
+
+		/* more to copy? */
+		copied_in_loop = 0;
+	}
+short_copy:
+	return len - copied_in_loop;
+}
+
+/**
+ * fast_copy_from_user	- Copy all the segments (i->nr_segs) of the user
+ * buffer to the pages at the right offsets using the fastest method possible.
+ *
+ * @i - iov_iter structure describing the user buffer
+ * @pos - starting position to copy in the file
+ * @pages - a list of sequentially indexed pages
+ * @nr_pages - size of the @pages array
+ *
+ * returns 0 on success (all bytes copied). > 0 indicates not everything was
+ * copied (short).
+ *
+ * Notes: The state of the iov_iter, @i, is kept upto-date. When we return, we
+ * can continue where this routine left off.
+ */
+inline size_t fast_copy_from_user(struct iov_iter *i, loff_t pos,
+				struct page **pages, int nr_pages)
+{
+	char __user *buf; /* user buf tracking iov_iter->i_iov */
+	struct page **upages = NULL;
+	struct page *page;
+	unsigned long offset;	/* Offset into pagecache page */
+	unsigned long bytes;	/* Bytes to write to page */
+	size_t copied;	/* Bytes copied from user */
+	int index = 0;		/* current page index in @pages[] */
+	int ret, left;
+	struct dma_channel *chan = NULL;
+	int uindex = 0;	/* current page index in the pinned source pages */
+
+	int cookie = -1, j;
+	unsigned int upages_pinned = 0;
+
+	if (dma_copy_begin(&chan) != true) {
+		chan = NULL; /* no DMA */
+		goto short_copy;
+	} else {
+		upages = prepare_for_dma_write(i, pos, &upages_pinned);
+		if (!upages) {
+			BUG_ON(upages_pinned);
+			dma_copy_end(chan, -1);
+			chan = NULL; /* no DMA */
+			goto short_copy;
+		}
+	}
+
+	/* March down the list of pages, (they should all be locked now for IO),
+	 * and copy the content of the user buffer into each page
+	 *
+	 * Note: it is possible build_tree was only able to build a few pages (not
+	 * enough for iov_iter_count(i)). We will stop copying when either the count
+	 * reaches 0 or we've run out of pages.
+	 */
+	while (iov_iter_count(i) && (index < nr_pages)) {
+		page = pages[index];
+
+		/* user buffer */
+		buf = i->iov->iov_base + i->iov_offset;
+
+		/* remaining bytes in page */
+		offset = (pos & (PAGE_CACHE_SIZE - 1));
+		bytes = PAGE_CACHE_SIZE - offset;
+
+		/* bytes left in current iov segment */
+		bytes = min(bytes, i->iov->iov_len - i->iov_offset);
+		if (fault_in_pages_readable(buf, bytes))
+			goto short_copy;
+
+		/* copy "bytes" worth of data from the current seg into the
+		 * current page at "offset"
+		 */
+		left = _perform_fast_copy_from_user(buf, page,
+				offset, bytes, upages, &uindex, chan);
+		copied = bytes - left;
+		iov_iter_advance(i, copied);
+		pos += copied;
+		if (copied < bytes)
+			goto short_copy;
+
+		/* done with this page? */
+		if ((PAGE_CACHE_SIZE - offset) == copied)
+			index++;
+
+		copied = 0;
+	}
+
+short_copy:
+
+	/* final SUD to "flush" the DMA channel if needed, i.e. chan != NULL */
+	if (chan) {
+		cookie = fdma->dmaops->do_dma(chan, fdma->dmaops->do_dma_polling,
+				0, 0, 0, NULL);
+
+		for (j = 0; j < upages_pinned; j++) {
+			BUG_ON(!upages[j]); /* can't be bad */
+			page_cache_release(upages[j]);
+		}
+
+		kfree(upages);
+		ret = dma_copy_end(chan, cookie);
+		if (ret) {
+			/* There are two possibilities - iov_iter_count(i) can be
+			 * either zero or non-zero. If iov_iter_count(i) is zero,
+			 * then we do not know if the dma on the last set of pages
+			 * (<= INSERT_SUD_AFTER_PAGES) succeeded or failed. If it
+			 * is non-zero, then we know for sure it is a short_copy.
+			 * In either case, we must treat it as a short copy return
+			 * a non-zero value in iov_iter_count(i).
+			 */
+			if (!iov_iter_count(i))
+				i->count = INSERT_SUD_AFTER_PAGES;
+		}
+		/* releasing read lock after succesful DMA
+		 * This lock was acquired in prepare_for_dma_write
+		 */
+		up_read(&current->mm->mmap_sem);
+	}
+	return iov_iter_count(i);
+}
+#endif
+
 static ssize_t generic_perform_write(struct file *file,
 				struct iov_iter *i, loff_t pos)
 {
@@ -2372,12 +3627,75 @@ static ssize_t generic_perform_write(struct file *file,
 	ssize_t written = 0;
 	unsigned int flags = 0;
 
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+	struct page **pages = NULL;
+	unsigned long nrpages = 0;
+	int j;
+	size_t ocount = i->count; /* original count */
+	size_t ooffset = i->iov_offset; /* original offset */
+#endif
+	size_t copied_short = 1; /* assume fast_copy didn't do anything */
+
 	/*
 	 * Copies from kernel address space cannot fail (NFSD is a big user).
 	 */
 	if (segment_eq(get_fs(), KERNEL_DS))
 		flags |= AOP_FLAG_UNINTERRUPTIBLE;
 
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+	if (vfs_opt_write_enabled(mapping->backing_dev_info)) {
+		/* Returns an array of locked and zeroed pages.
+		 * Note that pages might be null here if nrpages is zero.
+		 */
+		if (iov_iter_count(i) >  PAGE_CACHE_SIZE) {
+			pages = build_tree(mapping, pos, iov_iter_count(i),
+					flags, &nrpages);
+			if (nrpages)
+				BUG_ON(!pages);
+
+			/*
+			 * Attempt to copy pages fast. DMA (if avail) or vector memcpy
+			 * If DMA is not available, then dont bother.
+			 */
+#ifdef CONFIG_PAGE_CACHE_DMA
+			if (nrpages) {
+
+				copied_short = fast_copy_from_user(i, pos, pages, nrpages);
+				if (!copied_short)
+					BUG_ON(iov_iter_count(i));
+			}
+#endif
+			/* Unlock all the pages that were allocated and locked
+			 * in build_tree().
+			 */
+			if (pages)
+				for (j = 0; j < nrpages; j++) {
+					clear_bit_unlock(PG_locked, &(pages[j]->flags));
+					page_cache_release(pages[j]);
+				}
+		}
+
+		/* restore i back to how it was, the rest of the code will
+		 * avoid faulting in pages and the copy part if everything was done.
+		 *
+		 * If fast_copy() isn't able to copy everything, it will return
+		 * and we'll go the slow way in the loop below.
+		 *
+		 * Everything else will be as usual - i.e. write_begin/end,
+		 * PG_uptodate etc.
+		 */
+		i->count = ocount;
+		i->iov_offset = ooffset;
+
+		/* Prefetch if the fast copy didn't do its job completely */
+		if (copied_short) {
+			prefetch_dst(i->iov->iov_base + i->iov_offset, 64, 0);
+#ifdef CONFIG_VECTOR_MEMCPY
+			kernel_fpu_begin();
+#endif
+		}
+	}
+#endif
 	do {
 		struct page *page;
 		unsigned long offset;	/* Offset into pagecache page */
@@ -2400,9 +3718,16 @@ again:
 		 * to check that the address is actually valid, when atomic
 		 * usercopies are used, below.
 		 */
-		if (unlikely(iov_iter_fault_in_readable(i, bytes))) {
-			status = -EFAULT;
-			break;
+		if (copied_short) {
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+			/* prepare for copy */
+			prefetch_dst(i->iov->iov_base + i->iov_offset, 32,
+					PAGE_CACHE_SIZE);
+#endif
+			if (unlikely(iov_iter_fault_in_readable(i, bytes))) {
+				status = -EFAULT;
+				break;
+			}
 		}
 
 		status = a_ops->write_begin(file, mapping, pos, bytes, flags,
@@ -2413,9 +3738,16 @@ again:
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_page(page);
 
-		pagefault_disable();
-		copied = iov_iter_copy_from_user_atomic(page, i, offset, bytes);
-		pagefault_enable();
+		if (copied_short) {
+			pagefault_disable();
+			copied = iov_iter_copy_from_user_atomic(page, i,
+					offset, bytes);
+			pagefault_enable();
+		}
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+		else
+			copied = bytes; /* already done! */
+#endif
 		flush_dcache_page(page);
 
 		mark_page_accessed(page);
@@ -2426,6 +3758,12 @@ again:
 		copied = status;
 
 		cond_resched();
+
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+		if (copied_short)
+			prefetch_dst(i->iov->iov_base + i->iov_offset + 2048,
+					32, PAGE_CACHE_SIZE);
+#endif
 
 		iov_iter_advance(i, copied);
 		if (unlikely(copied == 0)) {
@@ -2451,6 +3789,15 @@ again:
 		}
 	} while (iov_iter_count(i));
 
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+	if (vfs_opt_write_enabled(mapping->backing_dev_info) && copied_short) {
+#ifdef CONFIG_VECTOR_MEMCPY
+		kernel_fpu_end();
+#endif
+	}
+	if (pages)
+		kfree(pages);
+#endif
 	return written ? written : status;
 }
 
@@ -2660,3 +4007,29 @@ int try_to_release_page(struct page *page, gfp_t gfp_mask)
 }
 
 EXPORT_SYMBOL(try_to_release_page);
+
+
+/*
+ * split read and write optimizations into individually controllable command
+ * line options.
+ */
+static int __init vfs_read_optimization_setup(char *str)
+{
+	if (strcmp(str, "on") == 0)
+		vfs_optimization |= VFS_OPT_READ;
+	else if (strcmp(str, "off") == 0)
+		vfs_optimization &= ~VFS_OPT_READ;
+	return 0;
+}
+__setup("vfs_read_optimization=", vfs_read_optimization_setup);
+
+
+static int __init vfs_write_optimization_setup(char *str)
+{
+	if (strcmp(str, "on") == 0)
+		vfs_optimization |= VFS_OPT_WRITE;
+	else if (strcmp(str, "off") == 0)
+		vfs_optimization &= ~VFS_OPT_WRITE;
+	return 0;
+}
+__setup("vfs_write_optimization=", vfs_write_optimization_setup);

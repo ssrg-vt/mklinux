@@ -56,6 +56,31 @@ void default_send_IPI_mask_allbutself_phys(const struct cpumask *mask,
 	local_irq_restore(flags);
 }
 
+#ifdef CONFIG_X86_EARLYMIC
+/*
+ * Puzzled by the implementation of physical 'all' and 'all-but-self' here.
+ * Anyways, there is no APIC clustering on MIC and no hot-plug CPUs either,
+ * which means that shorthand notation will work just fine.
+ */
+default_send_IPI_all_phys(int vector)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	__default_send_IPI_shortcut_safe(APIC_DEST_ALLINC, vector, APIC_DEST_PHYSICAL | APIC_INT_ASSERT);
+	local_irq_restore(flags);
+}
+
+default_send_IPI_allbutself_phys(int vector)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	__default_send_IPI_shortcut_safe(APIC_DEST_ALLBUT, vector, APIC_DEST_PHYSICAL | APIC_INT_ASSERT);
+	local_irq_restore(flags);
+}
+#endif
+
 #ifdef CONFIG_X86_32
 
 void default_send_IPI_mask_sequence_logical(const struct cpumask *mask,

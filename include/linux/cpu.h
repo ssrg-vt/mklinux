@@ -134,9 +134,11 @@ static inline void unregister_cpu_notifier(struct notifier_block *nb)
 #endif
 
 int cpu_up(unsigned int cpu);
+int cpu_up_parallel(unsigned int cpu);
 void notify_cpu_starting(unsigned int cpu);
 extern void cpu_maps_update_begin(void);
 extern void cpu_maps_update_done(void);
+void map_cpu_active(unsigned int cpu);
 
 #else	/* CONFIG_SMP */
 

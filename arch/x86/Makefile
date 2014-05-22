@@ -7,6 +7,24 @@ else
         KBUILD_DEFCONFIG := $(ARCH)_defconfig
 endif
 
+ifeq ($(ARCH),l1om)
+tool-archpref = x86_64-l1om
+else ifeq ($(ARCH),k1om)
+tool-archpref = x86_64-k1om
+endif
+
+# override top level makefile
+ifneq ($(SUBARCH),$(ARCH))
+        ifeq ($(CROSS_COMPILE),)
+                ifneq ($(tool-archpref),)
+                        CROSS_COMPILE := $(call cc-cross-prefix, \
+                                $(tool-archpref)-linux-gnu- \
+                                $(tool-archpref)-linux- \
+                                $(tool-archpref)-unknown-linux-gnu-)
+                endif
+        endif
+endif
+
 # BITS is used as extension for files which are available in a 32 bit
 # and a 64 bit version to simplify shared Makefiles.
 # e.g.: obj-y += foo_$(BITS).o
@@ -43,7 +61,7 @@ ifeq ($(CONFIG_X86_32),y)
         KBUILD_CFLAGS += -ffreestanding
 else
         BITS := 64
-        UTS_MACHINE := x86_64
+        UTS_MACHINE := $(ARCH)
         CHECKFLAGS += -D__x86_64__ -m64
 
         KBUILD_AFLAGS += -m64
@@ -103,7 +121,7 @@ asinstr := $(call as-instr,fxsaveq (%rax),-DCONFIG_AS_FXSAVEQ=1)
 KBUILD_AFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr)
 KBUILD_CFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr)
 
-LDFLAGS := -m elf_$(UTS_MACHINE)
+LDFLAGS := -m elf_$(UTS_MACHINE) --defsym=MIC_KERNEL_VERSION_20626=0
 
 # Speed up the build
 KBUILD_CFLAGS += -pipe
@@ -141,6 +159,9 @@ drivers-$(CONFIG_OPROFILE) += arch/x86/oprofile/
 drivers-$(CONFIG_PM) += arch/x86/power/
 
 drivers-$(CONFIG_FB) += arch/x86/video/
+
+# KDB support
+drivers-$(CONFIG_KDB) += arch/x86/kdb/
 
 ####
 # boot loader support. Several targets are kept for legacy purposes

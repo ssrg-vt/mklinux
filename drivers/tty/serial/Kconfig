@@ -102,6 +102,12 @@ config SERIAL_8250_HP300
 	depends on SERIAL_8250 && HP300
 	default SERIAL_8250
 
+config SERIAL_8250_SC16IS7XX
+	bool "Console on 8250 _SC16IS7XX"
+	default SERIAL_8250
+	help
+	Support for running 8250 console on SC16IS7XX
+
 config SERIAL_8250_CS
 	tristate "8250/16550 PCMCIA device support"
 	depends on PCMCIA && SERIAL_8250

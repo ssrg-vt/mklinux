@@ -206,6 +206,12 @@ endif
 ifeq ($(ARCH),x86_64)
         SRCARCH := x86
 endif
+ifeq ($(ARCH),l1om)
+        SRCARCH := x86
+endif
+ifeq ($(ARCH),k1om)
+        SRCARCH := x86
+endif
 
 # Additional ARCH settings for sparc
 ifeq ($(ARCH),sparc32)
@@ -579,6 +585,10 @@ endif
 # Use make W=1 to enable this warning (see scripts/Makefile.build)
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
 
+# This warning generated too much noise in a regular build.
+# Use make W=1 to enable this warning (see scripts/Makefile.build)
+KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
+
 ifdef CONFIG_FRAME_POINTER
 KBUILD_CFLAGS	+= -fno-omit-frame-pointer -fno-optimize-sibling-calls
 else
@@ -709,6 +719,7 @@ export mod_strip_cmd
 
 ifeq ($(KBUILD_EXTMOD),)
 core-y		+= kernel/ mm/ fs/ ipc/ security/ crypto/ block/
+core-$(CONFIG_KDB) += kdb/
 
 vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, $(init-y) $(init-m) \
 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \

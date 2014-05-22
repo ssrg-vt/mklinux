@@ -9,6 +9,7 @@
 #include <linux/clocksource.h>
 #include <linux/percpu.h>
 #include <linux/timex.h>
+#include <linux/clocksource.h>
 
 #include <asm/hpet.h>
 #include <asm/timer.h>
@@ -18,6 +19,7 @@
 #include <asm/hypervisor.h>
 #include <asm/nmi.h>
 #include <asm/x86_init.h>
+#include <asm/apic.h>
 
 unsigned int __read_mostly cpu_khz;	/* TSC clocks / usec, not used here */
 EXPORT_SYMBOL(cpu_khz);
@@ -667,6 +669,10 @@ void restore_sched_clock_state(void)
 	local_irq_restore(flags);
 }
 
+/* clocksource code */
+
+static struct clocksource clocksource_tsc;
+
 #ifdef CONFIG_CPU_FREQ
 
 /* Frequency scaling support. Adjust the TSC based timer when the cpu frequency
@@ -684,11 +690,17 @@ static unsigned int  ref_freq;
 static unsigned long loops_per_jiffy_ref;
 static unsigned long tsc_khz_ref;
 
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+static int switch_to_tsc;
+#endif
 static int time_cpufreq_notifier(struct notifier_block *nb, unsigned long val,
 				void *data)
 {
 	struct cpufreq_freqs *freq = data;
 	unsigned long *lpj;
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+	int cpu;
+#endif
 
 	if (cpu_has(&cpu_data(freq->cpu), X86_FEATURE_CONSTANT_TSC))
 		return 0;
@@ -704,18 +716,54 @@ static int time_cpufreq_notifier(struct notifier_block *nb, unsigned long val,
 		loops_per_jiffy_ref = *lpj;
 		tsc_khz_ref = tsc_khz;
 	}
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+	if (val == CPUFREQ_PRECHANGE) {
+		watchdog_tsc_disable();
+		if (get_curr_clocksource() == &clocksource_tsc) {
+			switch_to_tsc = 1;
+			clocksource_switch("micetc");
+		}
+	}
+#endif
 	if ((val == CPUFREQ_PRECHANGE  && freq->old < freq->new) ||
 			(val == CPUFREQ_POSTCHANGE && freq->old > freq->new) ||
 			(val == CPUFREQ_RESUMECHANGE)) {
 		*lpj = cpufreq_scale(loops_per_jiffy_ref, ref_freq, freq->new);
-
 		tsc_khz = cpufreq_scale(tsc_khz_ref, ref_freq, freq->new);
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+		/*
+		 * We don't need xtime_lock here as we aren't updating any
+		 * xtime related data. Remember that clocksource_tsc is not
+		 * used while we are here.
+		 */
+		cpu_khz = tsc_khz;
+		for_each_possible_cpu(cpu)
+			cpu_data(cpu).loops_per_jiffy = *lpj;
+		for_each_possible_cpu(cpu)
+			set_cyc2ns_scale(tsc_khz, cpu);
+		clocksource_tsc.mult = clocksource_khz2mult(tsc_khz,
+				clocksource_tsc.shift);
+		recalibrate_lapic(freq->old, freq->new);
+		/*
+		 * We are taking care of frequency change by switching the clocksources.
+		 * No need to mark tsc unstable.
+		 */
+#else
 		if (!(freq->flags & CPUFREQ_CONST_LOOPS))
 			mark_tsc_unstable("cpufreq changes");
+#endif
 	}
-
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+	if (val == CPUFREQ_POSTCHANGE) {
+		if (switch_to_tsc) {
+			switch_to_tsc = 0;
+			clocksource_switch("tsc");
+		}
+		watchdog_tsc_enable();
+	}
+#else
 	set_cyc2ns_scale(tsc_khz, freq->cpu);
-
+#endif
 	return 0;
 }
 
@@ -738,10 +786,6 @@ core_initcall(cpufreq_tsc);
 
 #endif /* CONFIG_CPU_FREQ */
 
-/* clocksource code */
-
-static struct clocksource clocksource_tsc;
-
 /*
  * We compare the TSC to the cycle_last value in the clocksource
  * structure to avoid a nasty time-warp. This can be observed in a
@@ -762,6 +806,24 @@ static cycle_t read_tsc(struct clocksource *cs)
 		ret : clocksource_tsc.cycle_last;
 }
 
+#if 0
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+void mic_cpuidle_tscswitch(struct clocksource *cs,int op);
+
+static int tsc_enable(struct clocksource *cs)
+{
+	/* Call into the cpuidle driver to getready for TSC as clocksource */
+	mic_cpuidle_tscswitch(cs,0);
+	return 0;
+}
+static int tsc_disable(struct clocksource *cs)
+{
+	mic_cpuidle_tscswitch(cs,1);
+	return 0;
+}
+#endif
+#endif
+
 static void resume_tsc(struct clocksource *cs)
 {
 	clocksource_tsc.cycle_last = 0;
@@ -772,6 +834,12 @@ static struct clocksource clocksource_tsc = {
 	.rating                 = 300,
 	.read                   = read_tsc,
 	.resume			= resume_tsc,
+#if 0
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+	.enable			= tsc_enable,
+	.disable		= tsc_disable,
+#endif
+#endif
 	.mask                   = CLOCKSOURCE_MASK(64),
 	.flags                  = CLOCK_SOURCE_IS_CONTINUOUS |
 				  CLOCK_SOURCE_MUST_VERIFY,

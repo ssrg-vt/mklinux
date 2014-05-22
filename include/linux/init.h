@@ -140,6 +140,10 @@ typedef void (*exitcall_t)(void);
 
 extern initcall_t __con_initcall_start[], __con_initcall_end[];
 extern initcall_t __security_initcall_start[], __security_initcall_end[];
+extern long smp_stack_pointer_map[];
+extern long smp_gs_map[];
+extern int ap_code;
+extern long apic_base_addr;
 
 /* Used for contructor calls. */
 typedef void (*ctor_fn_t)(void);

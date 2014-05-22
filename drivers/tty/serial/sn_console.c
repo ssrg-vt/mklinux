@@ -1,3 +1,26 @@
+/* * Copyright (c) 2010 - 2012 Intel Corporation.
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
 /*
  * C-Brick Serial Port (and console) driver for SGI Altix machines.
  *
@@ -49,6 +72,22 @@
 #include <linux/delay.h> /* for mdelay */
 #include <linux/miscdevice.h>
 #include <linux/serial_core.h>
+#ifdef CONFIG_KDB
+#include <linux/kdb.h>
+#include <linux/kdbprivate.h>
+#include <linux/serial_reg.h>
+/*
+ * kdb_serial_line records the serial line number of the first serial console.
+ * NOTE: The kernel ignores characters on the serial line unless a user space
+ * program has opened the line first.  To enter kdb before user space has opened
+ * the serial line, you can use the 'kdb=early' flag to lilo and set the
+ * appropriate breakpoints.
+ */
+
+static int  kdb_serial_line = -1;
+static char *kdb_serial_ptr = (char *)kdb_serial_str;
+#endif /* CONFIG_KDB */
+
 
 #include <asm/io.h>
 #include <asm/sn/simulator.h>
@@ -486,6 +525,26 @@ sn_receive_chars(struct sn_cons_port *port, unsigned long flags)
 			       "obtaining data from the console (0x%0x)\n", ch);
 			break;
 		}
+#ifdef CONFIG_KDB
+	if (kdb_on == 1) {
+		if (ch == *kdb_serial_ptr) {
+			if (!(*++kdb_serial_ptr)) {
+				spin_unlock_irqrestore(&port->sc_port.lock, flags);
+				if (!get_irq_regs()) {
+					KDB_STATE_SET(KEYBOARD);
+					KDB_ENTER();   /* to get some registers */
+				} else
+					kdb(KDB_REASON_KEYBOARD, 0, get_irq_regs());
+				kdb_serial_ptr = (char *)kdb_serial_str;
+				spin_lock_irqsave(&port->sc_port.lock, flags);
+				break;
+			}
+		}
+		else
+			kdb_serial_ptr = (char *)kdb_serial_str;
+	}
+#endif /* CONFIG_KDB */
+
 #ifdef CONFIG_MAGIC_SYSRQ
                 if (sysrq_requested) {
                         unsigned long sysrq_timeout = sysrq_requested + HZ*5;
@@ -1009,6 +1068,15 @@ sn_sal_console_write(struct console *co, const char *s, unsigned count)
  */
 static int sn_sal_console_setup(struct console *co, char *options)
 {
+#ifdef CONFIG_KDB
+	/*
+	* Remember the line number of the first serial
+	* console.  We'll make this the kdb serial console too.
+	*/
+	if (kdb_serial_line == -1) {
+		kdb_serial_line = co->index;
+	}
+#endif /* CONFIG_KDB */
 	return 0;
 }
 
@@ -1084,3 +1152,31 @@ static int __init sn_sal_serial_console_init(void)
 }
 
 console_initcall(sn_sal_serial_console_init);
+
+#ifdef	CONFIG_KDB
+int
+l1_control_in_polled(int offset)
+{
+	int sal_call_status = 0, input;
+	int ret = 0;
+	if (offset == UART_LSR) {
+		ret = (UART_LSR_THRE | UART_LSR_TEMT);	/* can send anytime */
+		sal_call_status = ia64_sn_console_check(&input);
+		if (!sal_call_status && input) {
+			/* input pending */
+			ret |= UART_LSR_DR;
+		}
+	}
+	return ret;
+}
+
+int
+l1_serial_in_polled(void)
+{
+	int ch;
+	if (!ia64_sn_console_getc(&ch))
+		return ch;
+	else
+		return 0;
+}
+#endif /* CONFIG_KDB */

@@ -118,6 +118,12 @@ static inline struct shmem_sb_info *SHMEM_SB(struct super_block *sb)
 	return sb->s_fs_info;
 }
 
+#ifdef CONFIG_PAGE_CACHE_DMA
+#include <linux/mic_dma/mic_dma_local.h>
+#include <linux/mic_dma/mic_dma_callback.h>
+#endif
+extern int vfs_optimization;
+
 /*
  * shmem_file_setup pre-accounts the whole fixed size of a VM object,
  * for shared memory and for shared anonymous (/dev/zero) mappings
@@ -1053,8 +1059,21 @@ static int shmem_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	struct inode *inode = vma->vm_file->f_path.dentry->d_inode;
 	int error;
 	int ret = VM_FAULT_LOCKED;
+	struct address_space *mapping = inode->i_mapping;
 
+//	if (((loff_t)vmf->pgoff << PAGE_CACHE_SHIFT) >= i_size_read(inode))
+//		return VM_FAULT_SIGBUS;
+#ifdef CONFIG_VECTOR_MEMCPY
+	/* Save user fpu state */
+	if (vfs_opt_write_enabled(mapping->backing_dev_info))
+		kernel_fpu_begin();
+#endif	
 	error = shmem_getpage(inode, vmf->pgoff, &vmf->page, SGP_CACHE, &ret);
+#ifdef CONFIG_VECTOR_MEMCPY
+	/* Restore user fpu state */
+	if (vfs_opt_write_enabled(mapping->backing_dev_info))
+		kernel_fpu_end();
+#endif	
 	if (error)
 		return ((error == -ENOMEM) ? VM_FAULT_OOM : VM_FAULT_SIGBUS);
 
@@ -1212,7 +1231,13 @@ static void do_shmem_file_read(struct file *filp, loff_t *ppos, read_descriptor_
 	pgoff_t index;
 	unsigned long offset;
 	enum sgp_type sgp = SGP_READ;
-
+ 
+#ifdef CONFIG_PAGE_CACHE_DMA
+	struct page **upages = NULL, **pages = NULL;
+	unsigned long nr_upages = 0, nr_kpages = 0, pidx = 0, uidx = 0;
+	int upages_pinned = 0, i;
+	struct dma_channel *chan = NULL;
+#endif
 	/*
 	 * Might this read be for a stacking filesystem?  Then when reading
 	 * holes of a sparse file, we actually need to allocate those pages,
@@ -1224,6 +1249,32 @@ static void do_shmem_file_read(struct file *filp, loff_t *ppos, read_descriptor_
 	index = *ppos >> PAGE_CACHE_SHIFT;
 	offset = *ppos & ~PAGE_CACHE_MASK;
 
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+	if (vfs_opt_read_enabled(mapping->backing_dev_info)) {
+#ifdef CONFIG_PAGE_CACHE_DMA
+		/* how many buffer pages to pin down? */
+		nr_upages = calculate_pages(desc->count,
+				(unsigned long)desc->arg.buf & (PAGE_CACHE_SIZE - 1));
+
+		nr_kpages = calculate_pages(desc->count, offset);
+		pages = kmalloc(nr_kpages * sizeof(struct page *),
+				GFP_KERNEL);
+
+		upages = prepare_for_dma_read(desc, nr_upages, &chan,
+				&upages_pinned);
+		if (unlikely(upages == NULL)) {
+			chan = NULL;
+			kfree(pages);
+			pages = NULL;
+		}
+#endif
+#ifdef CONFIG_VECTOR_MEMCPY
+		/* Save user fpu state */
+		kernel_fpu_begin();
+#endif
+	}
+#endif
+	
 	for (;;) {
 		struct page *page = NULL;
 		pgoff_t end_index;
@@ -1293,17 +1344,59 @@ static void do_shmem_file_read(struct file *filp, loff_t *ppos, read_descriptor_
 		 * "pos" here (the actor routine has to update the user buffer
 		 * pointers and the remaining count).
 		 */
-		ret = actor(desc, page, offset, nr);
+#ifdef CONFIG_PAGE_CACHE_DMA
+		if (vfs_opt_read_enabled(mapping->backing_dev_info)
+				&& chan) {
+			pages[pidx] = page;
+			pidx++;
+			ret = fast_copy_to_user(desc, upages, &uidx, page,
+					offset, nr, chan);
+		} else
+#endif
+			ret = actor(desc, page, offset, nr);		
+		
 		offset += ret;
 		index += offset >> PAGE_CACHE_SHIFT;
 		offset &= ~PAGE_CACHE_MASK;
 
-		page_cache_release(page);
+#ifdef CONFIG_PAGE_CACHE_DMA
+		if (!vfs_opt_read_enabled(mapping->backing_dev_info) || chan == NULL)
+#endif
+			page_cache_release(page);
+
 		if (ret != nr || !desc->count)
 			break;
 
 		cond_resched();
 	}
+	
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
+	/* Restore user fpu state. */
+	if (vfs_opt_read_enabled(mapping->backing_dev_info)) {
+#ifdef CONFIG_VECTOR_MEMCPY
+		kernel_fpu_end();
+#endif
+#ifdef CONFIG_PAGE_CACHE_DMA
+		wait_for_dma_finish(chan, desc);
+		if (upages) {
+			/* release pinned upages */
+			for (i = 0; i < upages_pinned; i++)
+				page_cache_release(upages[i]);
+
+			kfree(upages);
+		}
+
+		if (pages) {
+			/* Free page cache pages after the DMA operation is completed */
+			for (i = 0; i < pidx; i++) {
+				BUG_ON(!pages[i]);
+				page_cache_release(pages[i]);
+			}
+			kfree(pages);
+		}
+#endif
+	}
+#endif	
 
 	*ppos = ((loff_t) index << PAGE_CACHE_SHIFT) + offset;
 	file_accessed(filp);
@@ -1517,6 +1610,7 @@ shmem_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 static int shmem_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 {
 	int error;
+	int add_to_radix_tree = 1, left = 1;
 
 	if ((error = shmem_mknod(dir, dentry, mode | S_IFDIR, 0)))
 		return error;

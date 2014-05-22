@@ -622,4 +622,7 @@ extern int default_check_phys_apicid_present(int phys_apicid);
 
 #endif /* CONFIG_X86_LOCAL_APIC */
 
+#if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
+void recalibrate_lapic(u_int div, u_int mult);
+#endif
 #endif /* _ASM_X86_APIC_H */

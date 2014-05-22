@@ -1,3 +1,26 @@
+/* * Copyright (c) 2010 - 2012 Intel Corporation.
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
 #ifndef _ASM_X86_PGTABLE_H
 #define _ASM_X86_PGTABLE_H
 
@@ -33,7 +56,6 @@ extern struct mm_struct *pgd_page_get_mm(struct page *page);
 #ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>
 #else  /* !CONFIG_PARAVIRT */
-#define set_pte(ptep, pte)		native_set_pte(ptep, pte)
 #define set_pte_at(mm, addr, ptep, pte)	native_set_pte_at(mm, addr, ptep, pte)
 #define set_pmd_at(mm, addr, pmdp, pmd)	native_set_pmd_at(mm, addr, pmdp, pmd)
 
@@ -116,6 +138,15 @@ static inline int pte_huge(pte_t pte)
 {
 	return pte_flags(pte) & _PAGE_PSE;
 }
+
+#ifdef CONFIG_X86_EARLYMIC
+static inline int pte_64k(pte_t pte)
+{
+	return !!(pte_flags(pte) & _PAGE_SIZE_64K);
+}
+#else
+static inline int pte_64k(pte_t pte) { return 0; }
+#endif
 
 static inline int pte_global(pte_t pte)
 {
@@ -216,10 +247,27 @@ static inline pte_t pte_mkwrite(pte_t pte)
 	return pte_set_flags(pte, _PAGE_RW);
 }
 
+#ifdef CONFIG_X86_EARLYMIC
+static inline pte_t pte_mkpmd(pte_t pte)
+{
+	return pte_set_flags(pte, _PAGE_PSE);
+}
+
+static inline pte_t pte_mk64k(pte_t pte)
+{
+	return pte_set_flags(pte, _PAGE_SIZE_64K);
+}
+
+static inline pte_t pte_mkhuge(pte_t pte)
+{
+	return pte;
+}
+#else
 static inline pte_t pte_mkhuge(pte_t pte)
 {
 	return pte_set_flags(pte, _PAGE_PSE);
 }
+#endif
 
 static inline pte_t pte_clrhuge(pte_t pte)
 {
@@ -447,6 +495,10 @@ static inline unsigned long pmd_index(unsigned long address)
 	return (address >> PMD_SHIFT) & (PTRS_PER_PMD - 1);
 }
 
+#ifdef CONFIG_X86_EARLYMIC
+extern void mic_flush_icache_nonx(struct page *page, pgprotval_t protval);
+#endif
+
 /*
  * Conversion functions: convert a page and protection to a page entry,
  * and a page entry and page directory to the page they refer to.
@@ -454,7 +506,13 @@ static inline unsigned long pmd_index(unsigned long address)
  * (Currently stuck as a macro because of indirect forward reference
  * to linux/mm.h:page_to_nid())
  */
-#define mk_pte(page, pgprot)   pfn_pte(page_to_pfn(page), (pgprot))
+static inline pte_t mk_pte(struct page  *page, pgprot_t pgprot)
+{
+#ifdef CONFIG_X86_EARLYMIC
+       mic_flush_icache_nonx(page, pgprot_val(pgprot));
+#endif
+       return pfn_pte(page_to_pfn(page), (pgprot));
+}
 
 /*
  * the pte page can be thought of an array like this: pte_t[PTRS_PER_PTE]
@@ -629,6 +687,13 @@ static inline void native_set_pmd_at(struct mm_struct *mm, unsigned long addr,
 }
 
 #ifndef CONFIG_PARAVIRT
+
+
+static inline void set_pte(pte_t *ptep, pte_t pte)
+{
+	native_set_pte(ptep, pte);
+}
+
 /*
  * Rules for using pte_update - it must be called after any PTE update which
  * has not been done using the set_pte / clear_pte interfaces.  It is used by
@@ -644,6 +709,7 @@ static inline void native_set_pmd_at(struct mm_struct *mm, unsigned long addr,
  */
 #define pte_update(mm, addr, ptep)		do { } while (0)
 #define pte_update_defer(mm, addr, ptep)	do { } while (0)
+
 #endif
 
 /*

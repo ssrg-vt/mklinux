@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 #ifndef _ASM_X86_ELF_H
 #define _ASM_X86_ELF_H
 
@@ -69,7 +93,13 @@ typedef struct user_fxsr_struct elf_fpxregset_t;
  */
 #define ELF_CLASS	ELFCLASS64
 #define ELF_DATA	ELFDATA2LSB
+#if defined(CONFIG_ML1OM)
+#define ELF_ARCH	EM_L1OM
+#elif defined(CONFIG_MK1OM)
+#define ELF_ARCH	EM_K1OM
+#else
 #define ELF_ARCH	EM_X86_64
+#endif
 
 #endif
 
@@ -80,8 +110,19 @@ extern unsigned int vdso_enabled;
 /*
  * This is used to ensure we don't load something for the wrong architecture.
  */
+#if defined(CONFIG_ML1OM)
+
+#define elf_check_arch_ia32(x) ((x)->e_machine == EM_L1OM)
+
+#elif defined(CONFIG_MK1OM)
+
+#define elf_check_arch_ia32(x) ((x)->e_machine == EM_K1OM)
+
+#else
+
 #define elf_check_arch_ia32(x) \
 	(((x)->e_machine == EM_386) || ((x)->e_machine == EM_486))
+#endif
 
 #include <asm/processor.h>
 #include <asm/system.h>
@@ -154,7 +195,7 @@ do {						\
  * This is used to ensure we don't load something for the wrong architecture.
  */
 #define elf_check_arch(x)			\
-	((x)->e_machine == EM_X86_64)
+	((x)->e_machine == ELF_ARCH)
 
 #define compat_elf_check_arch(x)	elf_check_arch_ia32(x)
 
@@ -223,7 +264,13 @@ do {								\
 } while (0);
 
 /* I'm not sure if we can use '-' here */
+#if defined(CONFIG_ML1OM)
+#define ELF_PLATFORM       ("l1om")
+#elif defined(CONFIG_MK1OM)
+#define ELF_PLATFORM       ("k1om")
+#else
 #define ELF_PLATFORM       ("x86_64")
+#endif
 extern void set_personality_64bit(void);
 extern unsigned int sysctl_vsyscall32;
 extern int force_personality32;

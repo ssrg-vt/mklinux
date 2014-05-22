@@ -1,3 +1,27 @@
+/* * Copyright (c) Intel Corporation (2011).
+*
+* Disclaimer: The codes contained in these modules may be specific to the
+* Intel Software Development Platform codenamed: Knights Ferry, and the 
+* Intel product codenamed: Knights Corner, and are not backward compatible 
+* with other Intel products. Additionally, Intel will NOT support the codes 
+* or instruction set in future products.
+*
+* Intel offers no warranty of any kind regarding the code.  This code is
+* licensed on an "AS IS" basis and Intel is not obligated to provide any support,
+* assistance, installation, training, or other services of any kind.  Intel is 
+* also not obligated to provide any updates, enhancements or extensions.  Intel 
+* specifically disclaims any warranty of merchantability, non-infringement, 
+* fitness for any particular purpose, and any other warranty.
+*
+* Further, Intel disclaims all liability of any kind, including but not
+* limited to liability for infringement of any proprietary rights, relating
+* to the use of the code, even if Intel is notified of the possibility of
+* such liability.  Except as expressly stated in an Intel license agreement
+* provided with this code and agreed upon with Intel, no license, express
+* or implied, by estoppel or otherwise, to any intellectual property rights
+* is granted herein.
+*/
+
 #ifndef _ASM_X86_APICDEF_H
 #define _ASM_X86_APICDEF_H
 
@@ -40,9 +64,15 @@
 #define		APIC_EIO_ACK		0x0
 #define	APIC_RRR	0xC0
 #define	APIC_LDR	0xD0
+#ifdef CONFIG_X86_EARLYMIC
+#define		APIC_LDR_MASK		(0xFFFFu << 16)
+#define		GET_APIC_LOGICAL_ID(x)	(((x) >> 16) & 0xFFFFu)
+#define		SET_APIC_LOGICAL_ID(x)	(((x) << 16))
+#else
 #define		APIC_LDR_MASK		(0xFFu << 24)
 #define		GET_APIC_LOGICAL_ID(x)	(((x) >> 24) & 0xFFu)
 #define		SET_APIC_LOGICAL_ID(x)	(((x) << 24))
+#endif
 #define		APIC_ALL_CPUS		0xFFu
 #define	APIC_DFR	0xE0
 #define		APIC_DFR_CLUSTER		0x0FFFFFFFul
@@ -88,8 +118,13 @@
 #define		APIC_DM_EXTINT		0x00700
 #define		APIC_VECTOR_MASK	0x000FF
 #define	APIC_ICR2	0x310
+#ifdef CONFIG_X86_EARLYMIC
+#define		GET_APIC_DEST_FIELD(x)	(((x) >> 16) & 0xFFFF)
+#define		SET_APIC_DEST_FIELD(x)	((x) << 16)
+#else
 #define		GET_APIC_DEST_FIELD(x)	(((x) >> 24) & 0xFF)
 #define		SET_APIC_DEST_FIELD(x)	((x) << 24)
+#endif
 #define	APIC_LVTT	0x320
 #define	APIC_LVTTHMR	0x330
 #define	APIC_LVTPC	0x340

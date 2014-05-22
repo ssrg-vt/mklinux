@@ -188,6 +188,13 @@ config VIRTIO_CONSOLE
 	  the port which can be used by udev scripts to create a
 	  symlink to the device.
 
+config HVC_MIC
+	bool "Intel MIC Virtual Console support"
+	depends on X86_MICPCI
+	select HVC_DRIVER
+	help
+	  Intel MIC Virtual Console support.
+
 config IBM_BSR
 	tristate "IBM POWER Barrier Synchronization Register support"
 	depends on PPC_PSERIES
