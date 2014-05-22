@@ -1603,7 +1603,7 @@ struct task_struct {
 
     int origin_pid;/*first thread id created in the originating kernel*/
     //struct kernel_robust_list_head  *kernel_robust_list;
-
+   // int in_distributed_lock_state;
 
 };
 

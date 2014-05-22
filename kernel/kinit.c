@@ -366,7 +366,7 @@ void popcorn_init(void)
 		vendor intel = GenuineIntel;
 		vendor_id = intel;
 	}
-	printk("POP_INIT:vendor{%s} cpufam{%d} model{%u} cpucnt{%d} jhas{%u}\n",c->x86_vendor_id[0] ? c->x86_vendor_id : "unknown",c->x86,c->x86_model,vendor_id, jhash_2words((u32)vendor_id,cpumask_first(cpu_present_mask), JHASH_INITVAL));
+	printk("POP_INIT:vendor{%s} cpufam{%d} model{%u} cpucnt{%d} jhas{%u}\n",c->x86_vendor_id[0] ? c->x86_vendor_id : "unknown",c->x86,c->x86_model,vendor_id, (jhash_2words((u32)vendor_id,cpumask_first(cpu_present_mask), JHASH_INITVAL) & ((1<<8)-1)));
 	
 	
 	Kernel_Id=smp_processor_id();;

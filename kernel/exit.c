@@ -1005,20 +1005,31 @@ NORET_TYPE void do_exit(long code)
 				current->comm, task_pid_nr(current),
 				preempt_count());
 
-	//cleanup global worker thread.
-	if(tsk->tgroup_distributed){
+	//cleanup global worker thread only for the thread group leader
+	if(tsk->tgroup_distributed && tsk->pid == tsk->tgroup_home_id){
 	_global_value * gvp = hashgroup(tsk);
 	printk(KERN_INFO "GVP EXISTS{%s} tgid{%d} pid{%d} \n",tsk->comm,tsk->tgroup_home_id,tsk->pid);
 
-	/*if(gvp != NULL){
-		gvp->global_wq = NULL;// create_singlethread_workqueue(gvp->name);
+	if(gvp != NULL){
+
+		((global_request_work_t*)gvp->worker_task)->_is_alive = 0;
+		*(((global_request_work_t*)gvp->worker_task)->free_work) = 1;
+		smp_mb();
+		printk(KERN_INFO"((global_request_work_t*)gvp->worker_task){%d} free{%d}\n",((global_request_work_t*)gvp->worker_task)->_worker_pid,
+						*(((global_request_work_t*)gvp->worker_task)->free_work));
+		set_task_state(pid_task(find_vpid(((global_request_work_t*)gvp->worker_task)->_worker_pid), PIDTYPE_PID),TASK_INTERRUPTIBLE);
+		wake_up_interruptible_all(((global_request_work_t*)gvp->worker_task)->flush);
+		printk(KERN_INFO "after wake up \n");
+		/*if(!( cancel_work_sync((struct work_struct*)gvp->worker_task))){
+			flush_work((struct work_struct*)gvp->worker_task);
+			flush_workqueue(gvp->global_wq);
+		}*/
 		gvp->thread_group_leader = NULL;
 		gvp->free = 0;
-		gvp->_is_alive = 0;
-		//wake_up_process((struct task_struct *)gvp->worker_task);
+		gvp->global_wq = NULL;
 		gvp->worker_task =NULL;
+		printk(KERN_INFO "cleaned up \n");
 	}
-	smp_mb();*/
 	}
 	acct_update_integrals(tsk);
 	/* sync mm's RSS info before statistics gathering */

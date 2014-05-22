@@ -12,7 +12,6 @@ struct _remote_wakeup_request {
 	int tghid;				// 4
 	int rflag;				// 4
 	int pid;				// 4
-	//int origin_pid;			// 4
 	unsigned int flags;		// 4
 	int fn_flag;			// 4
 	unsigned int ticket;	// 4
@@ -30,7 +29,9 @@ struct _remote_wakeup_response {
 	struct pcn_kmsg_hdr header;
 	int errno;				// 4
 	int request_id;			// 4
-	char pad_string[52];
+	pid_t rem_pid;			// 4
+	unsigned long uaddr;	// 8
+	char pad_string[40];
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 
@@ -46,7 +47,6 @@ struct _remote_key_request {
 	u32 bitset;
 	int rw;					// 4
 	int pid;				// 4
-	//int origin_pid;			// 4
 	int val;				// 4
 	int tghid;				// 4
 	unsigned int ticket;	// 4
@@ -58,18 +58,11 @@ typedef struct _remote_key_request _remote_key_request_t;
 
 struct _remote_key_response {
 	struct pcn_kmsg_hdr header;
-	unsigned long uaddr; 	// 8
-	unsigned int flags;		// 4
-	unsigned int fn_flags;	// 4
-	u32 bitset;
-	int rw;					// 4
-	int pid;				// 4
-	//int origin_pid;			// 4
-	int val;				// 4
-	int tghid;				// 4
-	unsigned int ticket;	// 4
-	unsigned int ops :1;	// 1
-	char pad_string[19];
+	int errno;				// 4
+	int request_id;			// 4
+	pid_t rem_pid;			// 4
+	unsigned long uaddr;	// 8
+	char pad_string[40];
 }__attribute__((packed)) __attribute__((aligned(64)));
 
 
