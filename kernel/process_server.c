@@ -6912,15 +6912,19 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
         // It will also probably cause problems for genuine COW mappings..
         if(!vma) {
             vma = find_vma_checked(mm, address & PAGE_MASK);
+            if(!vma)
+                PSPRINTK("VMA failed to resolve\n");
         }
         if(vma && 
-                vma->vm_flags & VM_WRITE && 
-                0 == is_page_writable(mm, vma, address & PAGE_MASK)) {
+                vma->vm_flags & VM_WRITE /*&& 
+                0 == is_page_writable(mm, vma, address & PAGE_MASK)*/) {
             PSPRINTK("Touching up write setting\n");
             mk_page_writable(mm,vma,address & PAGE_MASK);
             adjusted_permissions = 1;
             ret = 1;
-        } 
+        } else {
+            PSPRINTK("Did not touch up write settings\n");
+        }
 
         goto not_handled;
     }
@@ -7183,6 +7187,10 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
 			        data->vaddr_start, (data->vaddr_start + data->vaddr_size));
         } else {
             PSPRINTK("vma is present, using existing\n");
+        }
+
+        if(vma) {
+            vma->vm_flags |= VM_MIXEDMAP;
         }
 
         // We should have a vma now, so map physical memory into it.
