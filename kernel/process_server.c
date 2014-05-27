@@ -8112,6 +8112,9 @@ static int proc_read(char* buf, char**start, off_t off, int count,
     int i,j,s;
     stats_query_t query;
     stats_query_data_t data;
+
+    sprintf(buf,"See dmesg\n");
+
     query.header.prio = PCN_KMSG_PRIO_NORMAL;
     query.header.type = PCN_KMSG_TYPE_PROC_SRV_STATS_QUERY;
     query.pid = current->pid;
@@ -8150,15 +8153,15 @@ static int proc_read(char* buf, char**start, off_t off, int count,
     remove_data_entry(&data);
     spin_unlock(&_data_head_lock);
 
-    p += sprintf(p,"Process Server Data\n");
+    printk("Process Server Data\n");
     for(i = 0; i < PS_PROC_DATA_MAX; i++) {
-        p += sprintf(p,"%s[Tot,Cnt,Max,Min,Avg]:\n",_proc_data[_cpu][i].name);
+        printk("%s[Tot,Cnt,Max,Min,Avg]:\n",_proc_data[_cpu][i].name);
         for(j = 0; j < NR_CPUS; j++) {
             if(_proc_data[j][i].count) {
                 unsigned long long avg = 0;
                 if(_proc_data[j][i].count)
                     avg = _proc_data[j][i].total / _proc_data[j][i].count;
-                p += sprintf(p,"\tcpu{%d}[%llx,%d,%llx,%llx,%llx]\n",
+                printk("\tcpu{%d}[%llx,%d,%llx,%llx,%llx]\n",
                                 j,
                                 _proc_data[j][i].total,
                                 _proc_data[j][i].count,
