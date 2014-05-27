@@ -18,6 +18,12 @@ typedef u32 __ticketpair_t;
 #define TICKET_SHIFT	(sizeof(__ticket_t) * 8)
 #define TICKET_MASK	((__ticket_t)((1 << TICKET_SHIFT) - 1))
 
+#ifdef CONFIG_SPINLOCK_SCALABLE
+/* Xeon Phi support */
+typedef struct arch_spinlock {
+	volatile unsigned int slock;
+} arch_spinlock_t;
+#else /* !CONFIG_SPINLOCK_SCALABLE */
 typedef struct arch_spinlock {
 	union {
 		__ticketpair_t head_tail;
@@ -26,6 +32,7 @@ typedef struct arch_spinlock {
 		} tickets;
 	};
 } arch_spinlock_t;
+#endif /* !CONFIG_SPINLOCK_SCALABLE */
 
 #define __ARCH_SPIN_LOCK_UNLOCKED	{ { 0 } }
 

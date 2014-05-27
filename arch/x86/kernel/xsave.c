@@ -217,12 +217,12 @@ int save_i387_xstate(void __user *buf)
 	 * allocated, fix the code so that we call a different function
 	 * to init the thread's xstate ?
 	 */
-	err = init_fpu(current);
+	err = init_fpu(tsk);
 
 	if (err) {
 		set_used_math();
 		clts();
-		task_thread_info(tsk)->status |= TS_USEDFPU;
+                __thread_set_has_fpu(tsk);
 		return err;
 	}
 
@@ -371,7 +371,7 @@ clear:
 		} else {
 			set_used_math();
 			clts();
-	 		task_thread_info(tsk)->status |= TS_USEDFPU;
+                        __thread_set_has_fpu(tsk);
 		}
 #endif
 	}

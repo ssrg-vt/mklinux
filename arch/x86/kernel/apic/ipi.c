@@ -62,7 +62,7 @@ void default_send_IPI_mask_allbutself_phys(const struct cpumask *mask,
  * Anyways, there is no APIC clustering on MIC and no hot-plug CPUs either,
  * which means that shorthand notation will work just fine.
  */
-default_send_IPI_all_phys(int vector)
+void default_send_IPI_all_phys(int vector)
 {
 	unsigned long flags;
 
@@ -71,7 +71,7 @@ default_send_IPI_all_phys(int vector)
 	local_irq_restore(flags);
 }
 
-default_send_IPI_allbutself_phys(int vector)
+void default_send_IPI_allbutself_phys(int vector)
 {
 	unsigned long flags;
 

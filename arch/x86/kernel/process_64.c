@@ -428,11 +428,11 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	int cpu = smp_processor_id();
 	struct tss_struct *tss = &per_cpu(init_tss, cpu);
 	unsigned fsindex, gsindex;
-	fpu_switch_t fpu;
+        fpu_switch_t fpu;
 
-	fpu = switch_fpu_prepare(prev_p, next_p);
+        fpu = switch_fpu_prepare(prev_p, next_p);	
 
-	/*
+        /*
 	 * Reload esp0, LDT and the page table pointer:
 	 */
 	load_sp0(tss, next);
@@ -500,7 +500,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		wrmsrl(MSR_KERNEL_GS_BASE, next->gs);
 	prev->gsindex = gsindex;
 
-	switch_fpu_finish(next_p, fpu);
+        switch_fpu_finish(next_p, fpu);
 
 	/*
 	 * Switch the PDA and FPU contexts.
@@ -520,15 +520,6 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		     task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV))
 		__switch_to_xtra(prev_p, next_p, tss);
 
-#ifdef CONFIG_MK1OM
-	if (tsk_used_math(next_p)) {
-		if (!preload_fpu)
-			clts();
-		restore_mask_regs();
-		if (!preload_fpu)
-			stts();
-       }
-#endif
 	return prev_p;
 }
 

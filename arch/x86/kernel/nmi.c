@@ -322,6 +322,17 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 static DEFINE_PER_CPU(bool, swallow_nmi);
 static DEFINE_PER_CPU(unsigned long, last_nmi_rip);
 
+#ifdef CONFIG_X86_EARLYMIC
+/*
+ *  * Intercept hook for RAS module
+ *   */
+int (*mca_nmi)(int);
+EXPORT_SYMBOL_GPL(mca_nmi);
+
+atomic_t mca_inject;
+EXPORT_SYMBOL_GPL(mca_inject);
+#endif
+
 static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 {
 	unsigned char reason = 0;

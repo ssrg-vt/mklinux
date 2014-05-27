@@ -253,6 +253,7 @@ static inline void fpu_fxsave(struct fpu *fpu)
  */
 static inline int fpu_save_init(struct fpu *fpu)
 {
+	int ret;
 	if (use_xsave()) {
 		fpu_xsave(fpu);
 
@@ -277,19 +278,26 @@ static inline int fpu_save_init(struct fpu *fpu)
 	 * irq13 case? Maybe we could leave the x87 state
 	 * intact otherwise?
 	 */
-	int ret;
 	if (unlikely(ret = fpu->state->fxsave.swd & X87_FSW_ES))
 		asm volatile("fnclex");
-		
-	alternative_input(
+
+/* We need a safe address that is cheap to find and that is already
+   in L1 during context switch. The best choices are unfortunately
+   different for UP and SMP */
+#ifdef CONFIG_SMP
+#define _safe_address (__per_cpu_offset[0])
+#else
+#define _safe_address (kstat_cpu(0).cpustat.user)
+#endif
+/*	alternative_input(
 		ASM_NOP8 ASM_NOP2,
 #ifndef CONFIG_X86_EARLYMIC
- 		"emms\n\t"	  	/* clear stack tags */
+ 		"emms\n\t"	  	// clear stack tags
 #endif
- 		"fildl %P[addr]",	/* set F?P to defined value */
+ 		"fildl %P[addr]",	// set F?P to defined value
  		X86_FEATURE_FXSAVE_LEAK,
- 		[addr] "m" (safe_address));
-	
+ 		[addr] "m" (_safe_address));
+*/ //AB: looks like this code has been moved in arch/x86/kernel/traps.c	
 	if(ret)	
 		return 0;
 	
@@ -445,6 +453,15 @@ static inline void switch_fpu_finish(struct task_struct *new, fpu_switch_t fpu)
 {
 	if (fpu.preload)
 		__math_state_restore(new);
+#ifdef CONFIG_MK1OM
+        if (tsk_used_math(new)) {
+                if (!fpu.preload)
+                        clts();
+                restore_mask_regs();
+                if (!fpu.preload)
+                        stts();
+       }
+#endif
 }
 
 /*

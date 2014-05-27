@@ -632,7 +632,9 @@ void __math_state_restore(struct task_struct *tsk)
 	   values. safe_address is a random variable that should be in L1 */
 	alternative_input(
 		ASM_NOP8 ASM_NOP2,
+#ifndef CONFIG_X86_EARLYMIC
 		"emms\n\t"	  	/* clear stack tags */
+#endif
 		"fildl %P[addr]",	/* set F?P to defined value */
 		X86_FEATURE_FXSAVE_LEAK,
 		[addr] "m" (safe_address));
@@ -788,15 +790,4 @@ void __init trap_init(void)
 
 	x86_init.irqs.trap_init();
 }
-
-#ifdef CONFIG_X86_EARLYMIC
-/*
- * Intercept hook for RAS module
- */
-int (*mca_nmi)(int);
-EXPORT_SYMBOL_GPL(mca_nmi);
-
-atomic_t mca_inject;
-EXPORT_SYMBOL_GPL(mca_inject);
-#endif
 

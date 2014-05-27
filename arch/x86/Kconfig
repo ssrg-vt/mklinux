@@ -2200,7 +2200,7 @@ config HAVE_TEXT_POKE_SMP
 	select STOP_MACHINE if SMP
 
 config SPINLOCK_SCALABLE
-	def_bool y
+	bool "Intel Scalable Spinlock"
 	depends on MK1OM
 	---help---
 	  This option enables scalable ticket spin locks in the
