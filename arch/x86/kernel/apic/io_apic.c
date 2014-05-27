@@ -3165,29 +3165,39 @@ void destroy_irq(unsigned int irq)
 }
 
 #ifdef CONFIG_X86_EARLYMIC
-static void sbox_ack_apic_edge(unsigned int irq)
+//static void sbox_ack_apic_edge(unsigned int irq)
+static void sbox_ack_apic_edge(struct irq_data *idata)
 {
-	struct irq_desc *desc = irq_to_desc(irq);
+	//struct irq_desc *desc = irq_to_desc(irq);
+	struct irq_cfg *cfg = irq_get_chip_data(idata->irq);
 
-	irq_complete_move(&desc);
-	move_native_irq(irq);
+	irq_complete_move(cfg);
+	irq_move_irq(idata);
 	ack_APIC_irq();
 }
 
-static void mask_sbox_irq(unsigned int irq)
+static inline void *get_irq_data(unsigned int irq)
+{
+        struct irq_data *d = irq_get_irq_data(irq);
+        return d ? d->handler_data : NULL;
+}
+
+//static void mask_sbox_irq(unsigned int irq)
+static void mask_sbox_irq(struct irq_data *idata)
 {
 #ifdef CONFIG_MK1OM
-	void *icraddr = get_irq_data(irq);
+	void *icraddr = get_irq_data(idata->irq);
 	u32 value = readl(icraddr);
 	value |= 1 << 16;
 	writel(value, icraddr);
 #endif
 }
 
-static void unmask_sbox_irq(unsigned int irq)
+//static void unmask_sbox_irq(unsigned int irq)
+static void unmask_sbox_irq(struct irq_data *idata)
 {
 #ifdef CONFIG_MK1OM
-	void *icraddr = get_irq_data(irq);
+	void *icraddr = get_irq_data(idata->irq);
 	u32 value = readl(icraddr);
 	value &= ~(1 << 16);
 	writel(value, icraddr);
@@ -3198,10 +3208,10 @@ static void unmask_sbox_irq(unsigned int irq)
  */
 static struct irq_chip sbox_chip = {
 	.name		= "SBOX-ICR",
-	.unmask		= unmask_sbox_irq,
-	.mask		= mask_sbox_irq,
-	.ack		= sbox_ack_apic_edge,
-	.retrigger	= ioapic_retrigger_irq,
+	.irq_unmask	= unmask_sbox_irq,
+	.irq_mask	= mask_sbox_irq,
+	.irq_ack	= sbox_ack_apic_edge,
+	.irq_retrigger	= ioapic_retrigger_irq,
 };
 
 static void setup_sbox_irq(int irq, int i)
@@ -4171,7 +4181,7 @@ void __init mp_register_ioapic(int id, u64 address, u32 gsi_base)
 		gsi_top = gsi_cfg->gsi_end + 1;
 #endif
 	printk(KERN_INFO "IOAPIC[%d]: apic_id %d, version %d, address 0x%lx, "
-		idx, mpc_ioapic_id(idx),
+		"GSI %d-%d\n", idx, mpc_ioapic_id(idx),
 		mpc_ioapic_ver(idx), mpc_ioapic_addr(idx),
 		gsi_cfg->gsi_base, gsi_cfg->gsi_end);
 
