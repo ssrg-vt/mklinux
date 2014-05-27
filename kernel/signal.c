@@ -45,7 +45,7 @@
 #include <linux/kernel.h>
 #include <popcorn/pid.h>
 #include <linux/kthread.h>
-
+#include <linux/process_server.h>
 
 //static DECLARE_WAIT_QUEUE_HEAD( wq);
 
@@ -313,7 +313,8 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 		ret = kill_something_info(msg->sig, &info, msg->pid);
 	} else //for killing with tgid
 	{
-		ret = do_send_specific(msg->tgid, msg->pid, msg->sig, &info);
+		//for remote tgid will be different so set it to 0
+		ret = do_send_specific(0, msg->pid, msg->sig, &info);
 	}
 
 	if(ptr->assign_for_kthread == 0)
@@ -334,18 +335,6 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	else
 	{
 		//do nothing...taken care by kthread.
-		/*spin_lock(&kthread_lock);
-		if(ret==0)
-			signum = SIGUSR1;
-		else
-			signum = SIGUSR2;
-		//
-		signalfd_notify(waiting_thread, signum);
-		sigaddset(&waiting_thread->pending.signal, signum);
-		set_tsk_thread_flag(waiting_thread, TIF_SIGPENDING);
-		signal_wake_up(waiting_thread, 0);
-
-		spin_unlock(&kthread_lock);*/
 	}
 
 	pcn_kmsg_free_msg(inc_msg);
@@ -359,7 +348,7 @@ static int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 	int res = 0;
 
 	_remote_kill_request_t *request = kmalloc(sizeof(_remote_kill_request_t),
-	GFP_KERNEL);
+	GFP_ATOMIC);
 
 	_outgoing_remote_signal_pool_t *ptr;
 	// Build request
@@ -417,7 +406,7 @@ int remote_kill_pid_info_thread(void *data) {
 
 				_remote_kill_request_t *request = kmalloc(
 						sizeof(_remote_kill_request_t),
-						GFP_KERNEL);
+						GFP_ATOMIC);
 
 				_outgoing_remote_signal_pool_t *ptr;
 				// Build request
@@ -485,35 +474,6 @@ int remote_kill_pid_info_thread(void *data) {
 				set_tsk_thread_flag(current,TIF_SIGPENDING);
 				 __set_task_state(current,TASK_INTERRUPTIBLE);
 			}
-			/*else if (recv_signal == SIGUSR1 || recv_signal == SIGUSR2) {
-				_remote_kill_response_t response;
-				// Finish constructing response
-					response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
-					response.header.prio = PCN_KMSG_PRIO_NORMAL;
-					if(killinfo->respon !=0 || recv_signal == SIGUSR2)
-					response.errno = -ESRCH;
-
-					if(recv_signal == SIGUSR1 && killinfo->respon ==0)
-					response.errno = 0;
-
-					response.request_id = killinfo->req_id;
-
-					printk("%s: request --remote:errno: %d \n", "remote_kill_pid_info_thread",
-							response.errno );
-
-						// Send response
-					pcn_kmsg_send(killinfo->ret_cpu, (struct pcn_kmsg_message*) (&response));
-
-					spin_lock(&in_list_lock);
-						find_and_delete_incomming(killinfo->pid,&inc_head);
-					spin_unlock(&in_list_lock);
-
-					recv_signal = SIGSTOP;
-					sigaddset(&current->pending.signal,SIGSTOP);
-					set_tsk_thread_flag(current,TIF_SIGPENDING);
-					__set_task_state(current,TASK_INTERRUPTIBLE);
-
-			}*/
 
 		}
 
@@ -530,7 +490,7 @@ static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
 
 	int res = 0;
 	_remote_kill_request_t *request = kmalloc(sizeof(_remote_kill_request_t),
-	GFP_KERNEL);
+	GFP_ATOMIC);
 
 	_outgoing_remote_signal_pool_t *ptr;
 	// Build request
@@ -638,7 +598,7 @@ static int remote_send_sigprocmask(int kernel, pid_t pid, int how, sigset_t *new
 
 	int res = 0;
 	_remote_sigproc_request_t *request = kmalloc(sizeof(_remote_sigproc_request_t),
-	GFP_KERNEL);
+	GFP_ATOMIC);
 
 	sigset_t local_new;
 	sigset_t local_old;
@@ -3629,7 +3589,16 @@ int error = -ESRCH;
 
 rcu_read_lock();
 p = find_task_by_vpid(pid);
-if (p && (tgid <= 0 || task_tgid_vnr(p) == tgid)) {
+printk(KERN_ALERT"%s: pid{%d} tgid{%d} p{%d} \n",__func__,pid,tgid,(!p)?0:1);
+
+if(p && p->tgroup_distributed && !p->executing_for_remote){
+	if(p->return_disposition == RETURN_DISPOSITION_NONE) {
+		printk(KERN_ALERT"%s: ret disp pid{%d} next{%d} \n",__func__,pid,p->next_pid);
+		rcu_read_unlock();
+		return remote_do_send_specific(ORIG_NODE(p->next_pid),tgid,p->next_pid,sig,info);
+	}
+}
+if (p && (tgid <= 0 || task_tgid_vnr(p) == tgid) || p->executing_for_remote) {
 	error = check_kill_permission(sig, info, p);
 
 	if (info != SEND_SIG_NOINFO && info != SEND_SIG_PRIV
@@ -3645,7 +3614,7 @@ if (p && (tgid <= 0 || task_tgid_vnr(p) == tgid)) {
 	if (!error && sig) {
 		error = do_send_sig_info(sig, info, p, false);
 		/*
-		 * If lock_task_sighand() failed we pretend the task
+		 * If lock_task_sighand() failed we pretend the tasp
 		 * dies after receiving the signal. The window is tiny,
 		 * and the signal is private anyway.
 		 */
@@ -3654,6 +3623,8 @@ if (p && (tgid <= 0 || task_tgid_vnr(p) == tgid)) {
 	}
 }
 if (p == NULL) {
+	printk(KERN_ALERT"%s: tgid{%d} pid{%d} sig{%d} \n",__func__ ,tgid,pid,sig);
+	rcu_read_unlock();
 	return remote_do_send_specific(ORIG_NODE(pid), tgid, pid, sig, info);
 }
 rcu_read_unlock();

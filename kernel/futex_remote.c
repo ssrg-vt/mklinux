@@ -29,7 +29,7 @@
 #define MODULE "GRQ-"
 #include <popcorn/global_spinlock.h>
 
-#define FUTEX_REMOTE_VERBOSE 0
+#define FUTEX_REMOTE_VERBOSE 1
 #if FUTEX_REMOTE_VERBOSE
 #define FRPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -121,14 +121,7 @@ struct _inc_remote_vm_pool {
 	struct list_head list_member;
 };
 
-struct send_ticket_request {
-	struct pcn_kmsg_hdr header;
-	pid_t rem_pid;			//4
-	unsigned long uaddr;	//8
-	char pad[48];
-}__attribute__((packed)) __attribute__((aligned(64)));
 
-typedef struct send_ticket_request send_ticket_request_t;
 
 int find_kernel_for_pfn(unsigned long addr, struct list_head *head) {
 	struct list_head *iter;
@@ -347,7 +340,17 @@ out:
 }
 
 
+int fix_user_page(u32 __user * uaddr,struct task_struct *tsk){
+struct mm_struct *mm=tsk->mm;
+int ret;
 
+down_read(&mm->mmap_sem);
+ret =fixup_user_fault(tsk,mm, (unsigned long) uaddr, FAULT_FLAG_WRITE| FAULT_FLAG_NONLINEAR | FAULT_FLAG_MKWRITE |FAULT_FLAG_KILLABLE );
+up_read(&mm->mmap_sem);
+
+return ret < 0 ? ret :0;
+
+}
 int global_futex_wait(unsigned long uaddr, unsigned int flags, u32 val,
 		ktime_t *abs_time, u32 bitset, pid_t rem, struct task_struct *origin,
 		unsigned int fn_flags) {
@@ -368,13 +371,14 @@ int global_futex_wait(unsigned long uaddr, unsigned int flags, u32 val,
 
 	//start wait setup
 retry:
+	
 	ret = get_futex_key((u32 __user *)uaddr, flags & FLAGS_SHARED, &q->key, VERIFY_READ);
-	FRPRINTK(KERN_ALERT "%s: pid origin {%s} _cpu{%d} uaddr{%lx} uval{%d} \n ",__func__,tsk->comm,smp_processor_id(),uaddr,val);
+	FRPRINTK(KERN_ALERT "%s: pid origin {%s} _cpu{%d} uaddr{%lx} uval{%d} ret{%d} \n ",__func__,tsk->comm,smp_processor_id(),uaddr,val,ret);
 	if (unlikely(ret != 0))
 	   return ret;
 
 	//set private.mm to origin tasks mm
-	if (tsk)
+	if(tsk)
 		q->key.private.mm = tsk->mm;
 
 retry_private:
@@ -382,12 +386,23 @@ retry_private:
 	hb = hash_futex(&q->key);
 	q->lock_ptr = &hb->lock;
 	spin_lock(&hb->lock);
-
+fault:
 	ret = get_futex_value_locked(&uval, (u32 __user *)uaddr);
 
 	if (ret) {
 			spin_unlock(&hb->lock);
 			FRPRINTK(KERN_ALERT "%s:after spin unlock ret{%d} uval{%lx}\n ",__func__,ret,uval);
+
+			if(ret == -EFAULT){
+				if((ret = fix_user_page((u32 __user *)uaddr,tsk)) ==  0){
+					FRPRINTK(KERN_ALERT"%s:ret {%d} \n",__func__,ret);
+					//spin_lock(&hb->lock);
+					//goto fault;
+				}
+
+				//goto out;
+			}
+
 			ret = get_user(uval, (u32 __user *)uaddr);
 
 			if (ret){
@@ -435,10 +450,6 @@ retry_private:
 
 out:
 	if(ret){
-		if(ret == -EFAULT){
-		FRPRINTK(KERN_ALERT"check if the wake signal has reached origin\n");
-
-		}
 		put_futex_key(&q->key);
 	}
 
@@ -453,7 +464,6 @@ void global_worher_fn(struct work_struct* work) {
 	global_request_work_t* w = (global_request_work_t*) work;
 
 	 _global_rq *this, *next;
-	struct plist_head * head;
 	struct task_struct *tsk = current;
 	struct task_struct *task, *g;
 	struct mm_struct *cmm = NULL;
@@ -463,41 +473,28 @@ void global_worher_fn(struct work_struct* work) {
 	unsigned long flags =0;
 	//Set task struct for the worker
 	worker_pid = current->pid;
-	w->_worker_pid = current->pid;
-	w->flush = &resume_;
-	w->free_work = &free_work;
 
 	FRPRINTK(KERN_ALERT "%s:GRQ started {%s}\n",__func__,current->comm);
 
+        this = (_global_rq*) w->gq;
 
-	//TODO:inifinite loop till the thread dies or forcefully thread is stopped
+	has_work = 0;
+	FRPRINTK(KERN_ALERT "%s:retry has_work{%d} \n",__func__,has_work);
 
-retry:
-		has_work = 0;
-		FRPRINTK(KERN_ALERT "%s:retry has_work{%d} \n",__func__,has_work);
 
-		if(w->_is_alive == 0)
-			goto exit;
+	struct spin_key sk;
+	_spin_key_init(&sk);
 
-		head = w->_grq_head;
-		plist_for_each_entry_safe(this, next, head, list)
+		if (this->ops == WAKE_OPS) //process wake request from GRQ
 		{
-			has_work = 1;
-			struct spin_key sk;
-			_spin_key_init(&sk);
+			_remote_wakeup_request_t* msg = (_remote_wakeup_request_t*) &this->wakeup;
+			int ret =0;
 
-			if (this->ops == WAKE_OPS) //process wake request from GRQ
-			{
-				_remote_wakeup_request_t* msg = (_remote_wakeup_request_t*) &this->wakeup;
-				int ret =0;
+			getKey(msg->uaddr, &sk,msg->tghid);
+			_spin_value *value = hashspinkey(&sk);
+			FRPRINTK(KERN_ALERT"%s:wake--current msg pid{%d} msg->ticket{%d} \n", __func__,msg->pid,msg->ticket);
 
-				getKey(msg->uaddr, &sk,msg->tghid);
-				_spin_value *value = hashspinkey(&sk);
-
-				FRPRINTK(KERN_ALERT"%s:wake--current msg pid{%d} msg->ticket{%d} \n", __func__,msg->pid,msg->ticket);
-
-
-				if (msg->rflag == 0 || (msg->fn_flag & FLAGS_ORIGINCALL)) {
+			if (msg->rflag == 0 || (msg->fn_flag & FLAGS_ORIGINCALL)) {
 					if (current->mm != NULL) {
 						null_flag = 1;
 						cmm = (current->mm);
@@ -560,23 +557,23 @@ mm_exit:
 					pcn_kmsg_send(ORIG_NODE(send_tkt.rem_pid), (struct pcn_kmsg_message*) (&send_tkt));
 
 
-			} else if(this->ops == WAIT_OPS){ //wait request
+		} else if(this->ops == WAIT_OPS){ //wait request
 
-				_remote_key_request_t* msg = (_remote_key_request_t*) &this->wait;
-				int ret =0 ;
+			_remote_key_request_t* msg = (_remote_key_request_t*) &this->wait;
+			int ret =0 ;
 
-				getKey(msg->uaddr, &sk,msg->tghid);
-				_spin_value *value = hashspinkey(&sk);
+			getKey(msg->uaddr, &sk,msg->tghid);
+			_spin_value *value = hashspinkey(&sk);
 
-				FRPRINTK(KERN_ALERT"%s:wait --current msg pid{%d} msg->ticket{%d} \n", __func__,msg->pid,msg->ticket);
+			FRPRINTK(KERN_ALERT"%s:wait --current msg pid{%d} msg->ticket{%d} \n", __func__,msg->pid,msg->ticket);
 
-				tsk = gettask(msg->tghid, msg->tghid);
-				if (msg->fn_flags & FLAGS_ORIGINCALL) {
-					msg->fn_flags |= FLAGS_REMOTECALL;
-					ret = global_futex_wait(msg->uaddr, msg->flags, msg->val, 0, 0, msg->pid, tsk,
-							msg->fn_flags);
-				} else
-					ret = global_futex_wait(msg->uaddr, msg->flags, msg->val, 0, 0, msg->pid, tsk,
+			tsk = gettask(msg->tghid, msg->tghid);
+			if (msg->fn_flags & FLAGS_ORIGINCALL) {
+				msg->fn_flags |= FLAGS_REMOTECALL;
+				ret = global_futex_wait(msg->uaddr, msg->flags, msg->val, 0, 0, msg->pid, tsk,
+						msg->fn_flags);
+			} else
+				ret = global_futex_wait(msg->uaddr, msg->flags, msg->val, 0, 0, msg->pid, tsk,
 							msg->fn_flags);
 
 
@@ -595,22 +592,11 @@ mm_exit:
 
 			}
 cleanup:
-			//Delete the entry
-			counter++;
-			FRPRINTK(KERN_ALERT "done iteration moving the head cnt{%d} counter{%d} \n",this->cnt,counter);
+		//Delete the entry
+		counter++;
+		FRPRINTK(KERN_ALERT "done iteration moving the head cnt{%d} counter{%d} \n",this->cnt,counter);
 
-			plist_del(&this->list, w->_grq_head);
-			kfree(this);
-		}
-		if (has_work == 0) {
-			__set_current_state(TASK_INTERRUPTIBLE);
-			FRPRINTK(KERN_ALERT "sleep until request \n");
-			finish_work = 1;
-			wake_up_interruptible(&wait_);
-			wait_event_interruptible(resume_, free_work == 1);
-			free_work = 0;
-		}
-		goto retry;
+		kfree(this);
 
 
 exit:
@@ -620,7 +606,7 @@ exit:
 
 static int handle_remote_futex_wake_response(struct pcn_kmsg_message* inc_msg) {
 	_remote_wakeup_response_t* msg = (_remote_wakeup_response_t*) inc_msg;
-	preempt_disable();
+	//preempt_disable();
 	FRPRINTK(KERN_ALERT"%s: response {%d} \n",
 			__func__, msg->errno);
 	struct task_struct *p =  pid_task(find_vpid(msg->rem_pid), PIDTYPE_PID);
@@ -635,17 +621,15 @@ static int handle_remote_futex_wake_response(struct pcn_kmsg_message* inc_msg) {
 	// update the local value status to has ticket
 
 
-	_local_rq_t *ptr = find_request(msg->request_id, &value->_lrq_head);
-	ptr->status = DONE;
-	ptr->errno = msg->errno;
-        smp_wmb();
-	FRPRINTK(KERN_ALERT"%s: errno{%d} p->tgp(%d} \n",__func__,ptr->errno,p->tgroup_home_id);
+	_local_rq_t *ptr = set_err_request(msg->request_id,msg->errno, &value->_lrq_head);
+       // smp_wmb();
+	FRPRINTK(KERN_ALERT"%s: errno{%d} p->tgp(%d} \n",__func__,msg->errno,p->tgroup_home_id);
 	wake_up_interruptible(&ptr->_wq);
 
 	put_task_struct(p);
 
 	pcn_kmsg_free_msg(inc_msg);
-	preempt_enable();
+	//preempt_enable();
 
 	return 0;
 }
@@ -678,58 +662,40 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 	gvp = hashgroup(tsk);
 	if (!gvp->free) { //futex_wake is the first one
 		//scnprintf(gvp->name, sizeof(gvp->name), MODULE);
-		FRPRINTK(KERN_ALERT"%s: wake gvp free \n", __func__);
-		gvp->global_wq = grq;// create_singlethread_workqueue(gvp->name);
-		gvp->free = 1;
-		gvp->thread_group_leader = tsk;
-		global_request_work_t* back_work = NULL;
-
-		// Spin up bottom half to process this event
-		back_work = (global_request_work_t*) kmalloc(sizeof(global_request_work_t),
+	 	gvp ->free =1;
+	}
+	FRPRINTK(KERN_ALERT"%s: wake gvp free \n", __func__);
+	gvp->global_wq = grq;// create_singlethread_workqueue(gvp->name);
+	gvp->thread_group_leader = tsk;
+	global_request_work_t* back_work = NULL;
+	// Spin up bottom half to process this event
+	back_work = (global_request_work_t*) kmalloc(sizeof(global_request_work_t),
 				GFP_ATOMIC);
-		if (back_work) {
+	if (back_work) {
 			INIT_WORK((struct work_struct* )back_work, global_worher_fn);
 
 			FRPRINTK(KERN_ALERT"%s: set up head\n", __func__);
-			back_work->_grq_head = &gvp->_grq_head;//, sizeof(struct plist_head));
+			
 			back_work->lock = &gvp->lock; // , sizeof(spinlock_t));
-			back_work->ops = -1;
-			back_work->_is_alive = 1;
-			back_work->_worker_pid = 0;
+			
+			_global_rq *trq = (_global_rq *) kmalloc(sizeof(_global_rq), GFP_ATOMIC);			
+			memcpy(&trq->wakeup, msg, sizeof(_remote_wakeup_request_t));
+			trq->ops = WAKE_OPS;
+			trq->cnt = atomic_read(&progress);
+			//smp_mb();barrier()i;
+
+			back_work->gq = trq;
 			queue_work(gvp->global_wq, (struct work_struct*) back_work);
 		}
-		gvp->worker_task = back_work;// pid_task(find_vpid(worker_pid), PIDTYPE_PID);
-	} else {
-		//TODO: check if it is the same thread group leader if not hash it to another bucket.
-	}
+	gvp->worker_task = back_work;// pid_task(find_vpid(worker_pid), PIDTYPE_PID);
 	GENERAL_SPIN_UNLOCK(&access_global_value_table);
 
-	if(gvp->free == 0 || !gvp->global_wq ){
-			FRPRINTK(KERN_ALERT"%s: wait finish\n", __func__);
-				if(finish_work == 0){
-				wait_event_interruptible(wait_, (finish_work != 0));
-				finish_work = 1;
-				}
-				else if(atomic_read(&progress) > counter){
-					FRPRINTK(KERN_ALERT"%s: continue finish\n", __func__);
-				}
-			}
 
 	FRPRINTK(KERN_ALERT"%s: ERROR msg ticket{%d}\n", __func__,msg->ticket);
 
 	//Check whether the request is asking for ticket or holding the ticket?
 		//if not holding the ticket add to the tail of Global request queue.
-		_global_rq *trq = (_global_rq *) kmalloc(sizeof(_global_rq), GFP_ATOMIC);
 		//if not holding the ticket add to the tail of Global request queue.
-		memcpy(&trq->wakeup, msg, sizeof(_remote_wakeup_request_t));
-		trq->ops = WAKE_OPS;
-		trq->cnt = atomic_read(&progress);
-		plist_node_init(&trq->list, NORMAL_Q_PRIORITY);
-		plist_add(&trq->list, &gvp->_grq_head);
-		free_work = 1;
-		smp_mb();barrier();
-
-		wake_up_interruptible(&resume_);
 	}
 	else {
                 FRPRINTK(KERN_ALERT"need to wake_st\n");
@@ -794,7 +760,7 @@ out:
 }
 static int handle_remote_futex_key_response(struct pcn_kmsg_message* inc_msg) {
 	_remote_key_response_t* msg = (_remote_key_response_t*) inc_msg;
-	preempt_disable();
+	//preempt_disable();
 	FRPRINTK(KERN_ALERT"%s: response to revoke wait request as origin is dead {%d} \n",
 			__func__,msg->errno);
 
@@ -811,17 +777,16 @@ static int handle_remote_futex_key_response(struct pcn_kmsg_message* inc_msg) {
 
 	FRPRINTK(KERN_ALERT"%s:  value {%d}  p->tgroup_home_id{%d}  \n",
 					__func__, value->_st,p->tgroup_home_id);
-	smp_wmb();
+	//smp_wmb();
 
-	_local_rq_t *ptr = find_request(msg->request_id, &value->_lrq_head);
-	ptr->status = DONE;
-	ptr->errno = msg->errno;
+	_local_rq_t *ptr = set_err_request(msg->request_id,msg->errno, &value->_lrq_head);
+	
 	wake_up_interruptible(&ptr->_wq);
 
 	put_task_struct(p);
 
 	pcn_kmsg_free_msg(inc_msg);
-	preempt_enable();
+	//preempt_enable();
 	return 0;
 }
 
@@ -848,14 +813,15 @@ static int handle_remote_futex_key_request(struct pcn_kmsg_message* inc_msg) {
 	GENERAL_SPIN_LOCK(&access_global_value_table);
 	gvp = hashgroup(tsk);
 	if(!gvp->free) {
+		gvp->free =1;
+	}
 		//futex wait is the first global request
-		FRPRINTK(KERN_ALERT"%s: wait gvp free \n", __func__);
-		scnprintf(gvp->name, sizeof(gvp->name), MODULE);
+	FRPRINTK(KERN_ALERT"%s: wait gvp free \n", __func__);
+	scnprintf(gvp->name, sizeof(gvp->name), MODULE);
 
-		gvp->global_wq = grq;//create_singlethread_workqueue(gvp->name);
-		gvp->free = 1;
-		gvp->thread_group_leader = tsk;
-		global_request_work_t* back_work = NULL;
+	gvp->global_wq = grq;//create_singlethread_workqueue(gvp->name);
+	gvp->thread_group_leader = tsk;
+	global_request_work_t* back_work = NULL;
 
 		// Spin up bottom half to process this event
 		back_work = (global_request_work_t*) kmalloc(sizeof(global_request_work_t),
@@ -863,40 +829,20 @@ static int handle_remote_futex_key_request(struct pcn_kmsg_message* inc_msg) {
 		if (back_work) {
 			INIT_WORK((struct work_struct* )back_work, global_worher_fn);
 			FRPRINTK(KERN_ALERT"%s: set up head\n", __func__);
-			back_work->_grq_head = &gvp->_grq_head;//, sizeof(struct plist_head));
 			back_work->lock = &gvp->lock; // , sizeof(spinlock_t));
-			back_work->ops = -1;
-			back_work->_is_alive = 1;
-			back_work->_worker_pid = 0;
+			
+			_global_rq *trq = (_global_rq *) kmalloc(sizeof(_global_rq), GFP_ATOMIC);
+			memcpy(&trq->wait, msg, sizeof(_remote_key_request_t));
+			trq->cnt =atomic_read(&progress);
+			trq->ops = WAIT_OPS;
+
+			back_work->gq = trq;
+			FRPRINTK(KERN_ALERT"%s: wait token aqc trq->wait.ticket{%d} cnt{%d}\n", __func__,trq->wait.ticket,trq->cnt);
+			
 			queue_work(grq, (struct work_struct*) back_work);
 		}
-		gvp->worker_task = back_work;//pid_task(find_vpid(worker_pid), PIDTYPE_PID);
-	} else {
-		//TODO: check if it is the same thread group leader if not hash it to another bucket.
-	}
+	gvp->worker_task = back_work;//pid_task(find_vpid(worker_pid), PIDTYPE_PID);
 	GENERAL_SPIN_UNLOCK(&access_global_value_table);
-
-	if(gvp->free == 0 || !gvp->global_wq ){
-			FRPRINTK(KERN_ALERT"%s: wait finish\n", __func__);
-				if(finish_work == 0){
-				wait_event_interruptible(wait_, (finish_work != 0));
-				finish_work = 1;
-				}
-				else if(atomic_read(&progress) > counter){
-					FRPRINTK(KERN_ALERT"%s: continue finish\n", __func__);
-				}
-			}
-
-		_global_rq *trq = (_global_rq *) kmalloc(sizeof(_global_rq), GFP_ATOMIC);
-		memcpy(&trq->wait, msg, sizeof(_remote_key_request_t));
-		trq->cnt =atomic_read(&progress);
-		trq->ops = WAIT_OPS;
-		FRPRINTK(KERN_ALERT"%s: wait token aqc trq->wait.ticket{%d} cnt{%d}\n", __func__,trq->wait.ticket,trq->cnt);
-		plist_node_init(&trq->list, NORMAL_Q_PRIORITY);
-		plist_add(&trq->list, &gvp->_grq_head);
-		free_work = 1;
-		smp_mb();barrier();
-		wake_up_interruptible(&resume_);
 
 	pcn_kmsg_free_msg(inc_msg);
 

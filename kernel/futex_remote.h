@@ -114,7 +114,8 @@ extern int match_futex(union futex_key *key1, union futex_key *key2);
 extern void wake_futex(struct futex_q *q);
 extern void put_futex_key(union futex_key *key);
 extern void __unqueue_futex(struct futex_q *q);
-
+extern int fault_in_user_writeable(u32 __user * uaddr);
+extern int fault_in_user_writeable_task(u32 __user * uaddr, struct task_struct * tgid);
 pte_t *do_page_walk(unsigned long address);
 
 int find_kernel_for_pfn(unsigned long addr, struct list_head *head);

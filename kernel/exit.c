@@ -1012,18 +1012,7 @@ NORET_TYPE void do_exit(long code)
 
 	if(gvp != NULL){
 
-		((global_request_work_t*)gvp->worker_task)->_is_alive = 0;
-		*(((global_request_work_t*)gvp->worker_task)->free_work) = 1;
-		smp_mb();
-		printk(KERN_INFO"((global_request_work_t*)gvp->worker_task){%d} free{%d}\n",((global_request_work_t*)gvp->worker_task)->_worker_pid,
-						*(((global_request_work_t*)gvp->worker_task)->free_work));
-		set_task_state(pid_task(find_vpid(((global_request_work_t*)gvp->worker_task)->_worker_pid), PIDTYPE_PID),TASK_INTERRUPTIBLE);
-		wake_up_interruptible_all(((global_request_work_t*)gvp->worker_task)->flush);
-		printk(KERN_INFO "after wake up \n");
-		/*if(!( cancel_work_sync((struct work_struct*)gvp->worker_task))){
-			flush_work((struct work_struct*)gvp->worker_task);
-			flush_workqueue(gvp->global_wq);
-		}*/
+		printk(KERN_INFO"Inside GVP");
 		gvp->thread_group_leader = NULL;
 		gvp->free = 0;
 		gvp->global_wq = NULL;

@@ -37,18 +37,6 @@ struct futex_common_data{
 typedef struct futex_common_data  futex_common_data_t;
 
 
-struct global_request_work  {
-	struct work_struct work;
-	spinlock_t * lock;
-	struct plist_head * _grq_head;
-	volatile unsigned int _is_alive;
-	pid_t _worker_pid;
-	 wait_queue_head_t *flush;
-	 unsigned int * free_work;
-	int ops ; //0-wait 1-wake
-};
-
-typedef struct global_request_work global_request_work_t;
 
 
 typedef struct spin_key {
@@ -71,13 +59,31 @@ struct local_request_queue {
 typedef struct local_request_queue _local_rq_t;
 
 struct global_request_queue {
-	volatile struct plist_node list;
+//	volatile struct plist_node list;
 	_remote_wakeup_request_t wakeup;
 	_remote_key_request_t wait;
 	int cnt;
 	unsigned int ops:1; //0-wait 1-wake
 }__attribute__((packed));
 typedef struct global_request_queue _global_rq;
+
+
+
+
+
+struct global_request_work  {
+	struct work_struct work;
+	spinlock_t * lock;
+	_global_rq * gq;
+//	struct plist_head * _grq_head;
+//	volatile unsigned int _is_alive;
+//	pid_t _worker_pid;
+//	wait_queue_head_t *flush;
+//	unsigned int * free_work;
+//	int ops ; //0-wait 1-wake
+};
+
+typedef struct global_request_work global_request_work_t;
 
 struct spin_value {
 	spinlock_t _sp;
@@ -90,7 +96,7 @@ typedef struct spin_value  _spin_value;
 
 struct global_value {
 	spinlock_t lock;
-	volatile struct plist_head _grq_head;
+//	volatile struct plist_head _grq_head; // TODO for storing mutiple wq
 	struct workqueue_struct *global_wq;
 	struct task_struct *thread_group_leader;
 	global_request_work_t *worker_task;
@@ -116,6 +122,8 @@ _local_rq_t * add_request_node(int request_id,pid_t pid, struct list_head *head)
 int find_and_delete_request(int request_id, struct list_head *head);
 _local_rq_t * find_request(int request_id, struct list_head *head) ;
 _local_rq_t * find_request_by_pid(pid_t pid, struct list_head *head) ;
+_local_rq_t * set_err_request(int request_id,int err, struct list_head *head) ;
+
 
 extern _spin_value spin_bucket[1 << _SPIN_HASHBITS];
 extern _global_value global_bucket[1 << _SPIN_HASHBITS];

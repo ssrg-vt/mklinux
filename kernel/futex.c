@@ -68,7 +68,7 @@
 #include <popcorn/global_spinlock.h>
 
 
-#define FUTEX_VERBOSE 0
+#define FUTEX_VERBOSE 1
 #if FUTEX_VERBOSE
 #define FPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -355,7 +355,9 @@ void put_futex_key(union futex_key *key)
  * disabled section so we can as well avoid the #PF overhead by
  * calling get_user_pages() right away.
  */
-static int fault_in_user_writeable(u32 __user *uaddr)
+//static 
+
+int fault_in_user_writeable(u32 __user *uaddr)
 {
 	struct mm_struct *mm = current->mm;
 	int ret;
@@ -368,7 +370,8 @@ static int fault_in_user_writeable(u32 __user *uaddr)
 	return ret < 0 ? ret : 0;
 }
 
-static int fault_in_user_writeable_task(u32 __user *uaddr,struct task_struct * tgid)
+//static
+ int fault_in_user_writeable_task(u32 __user *uaddr,struct task_struct * tgid)
 {
 	struct mm_struct *mm = tgid->mm;
 	int ret;
@@ -1754,8 +1757,6 @@ static inline void queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
 	q->task = current;
 	spin_unlock(&hb->lock);
 
-	//if(current->tgroup_distributed)
-	//	global_spinunlock((unsigned long)q->key.private.address+q->key.private.offset,FLAGS_SYSCALL);
 
 }
 
@@ -2018,9 +2019,6 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 	set_current_state(TASK_INTERRUPTIBLE);
 	queue_me(q, hb);
 
-	struct plist_head *head = &hb->chain;
-	struct futex_q *this,*next;
-
 	/* Arm the timer */
 	if (timeout) {
 		hrtimer_start_expires(&timeout->timer, HRTIMER_MODE_ABS);
@@ -2042,7 +2040,6 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 			schedule();
 		}
 	}
-	int sig;
 	__set_current_state(TASK_RUNNING);
 }
 
@@ -2103,14 +2100,20 @@ retry_private:
 				flags & FLAGS_SHARED, VERIFY_READ, bitset);
 		FPRINTK(KERN_ALERT " %s: spinlock  futex_wait_setup err {%d}\n",__func__,g_errno);
 		if (g_errno) {	//error due to val change
-			ret = g_errno;
-			goto out;
+			    ret = g_errno;
+			    if( ret == -EFAULT)
+			    {
+				 FPRINTK(KERN_ALERT" client side efault fix up {%d} \n",fault_in_user_writeable(uaddr));
+				
+ 			    }
+
 		} else if (!g_errno) {	//no error => just queue it acquiring spinlock
 			//get the actual spinlock : Not necessary as we are alone
 			*hb = queue_lock(q);
 			ret = g_errno;
-			goto out;
 		}
+
+		goto out;
 	}
 	else{
 		*hb = queue_lock(q);
@@ -2230,7 +2233,7 @@ int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 
 	struct task_struct *t=current;
 	int rep_rem = t->tgroup_distributed;
-	int x=0,y=0,wake=0,woke=0,nw=0,bs=0;
+	int x=0;
 	struct pt_regs * regs;
 	unsigned long bp = stack_frame(current,NULL);
 
@@ -2254,9 +2257,8 @@ int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 
 retry:
 
-	FPRINTK(KERN_ALERT "%s:wait before task {%d} rep_rem {%d}  uaddr{%lx}\ value{%d},wake{%d} ,woke{%d},nw{%d},bs{%d} disp{%d}\n",__func__,
-		t->pid, t->tgroup_distributed, uaddr, x, wake, woke, nw, bs,
-		current->return_disposition);
+	FPRINTK(KERN_ALERT "%s:wait before task {%d} rep_rem {%d}  uaddr{%lx}\ value{%d} disp{%d}\n",__func__,
+		t->pid, t->tgroup_distributed, uaddr, x,current->return_disposition);
 	/*
 	 * Prepare to wait on uaddr. On success, holds hb lock and increments
 	 * q.key refs.
@@ -2287,6 +2289,8 @@ retry:
 	if (!signal_pending(current))
 		goto retry;
 
+	printk(KERN_ALERT" up for restart abs{%d} \n",(!abs_time)?0:1);
+
 	ret = -ERESTARTSYS;
 	if (!abs_time)
 		goto out;
@@ -2314,7 +2318,8 @@ static long futex_wait_restart(struct restart_block *restart)
 {
 	u32 __user *uaddr = restart->futex.uaddr;
 	ktime_t t, *tp = NULL;
-
+	if(current->tgroup_distributed==1)
+		printk(KERN_ALERT"futex_restarted {%d} \n",uaddr);
 	if (restart->futex.flags & FLAGS_HAS_TIMEOUT) {
 		t.tv64 = restart->futex.time;
 		tp = &t;
@@ -3006,7 +3011,7 @@ long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
 		flags |= FLAGS_SHARED;
 
 	if (op & FUTEX_CLOCK_REALTIME) {
-		//flags |= FLAGS_CLOCKRT;
+		flags |= FLAGS_CLOCKRT;
 		if (cmd != FUTEX_WAIT_BITSET && cmd != FUTEX_WAIT_REQUEUE_PI)
 			return -ENOSYS;
 	}

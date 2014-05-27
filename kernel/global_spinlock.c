@@ -29,8 +29,8 @@ DEFINE_SPINLOCK(request_queue_lock);
  _spin_value spin_bucket[1<<_SPIN_HASHBITS];
  _global_value global_bucket[1<<_SPIN_HASHBITS];
 
-#define GENERAL_SPIN_LOCK(x) spin_lock(x)
-#define GENERAL_SPIN_UNLOCK(x) spin_unlock(x)
+#define GENERAL_SPIN_LOCK(x,f) spin_lock_irqsave(x,f)
+#define GENERAL_SPIN_UNLOCK(x,f) spin_unlock_irqrestore(x,f)
 
 //extern functions
  extern struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr);
@@ -39,7 +39,8 @@ DEFINE_SPINLOCK(request_queue_lock);
 
  _local_rq_t * add_request_node(int request_id, pid_t pid, struct list_head *head) {
 
-	 GENERAL_SPIN_LOCK(&request_queue_lock);
+	 unsigned long f;
+	 GENERAL_SPIN_LOCK(&request_queue_lock,f);
 	 _local_rq_t *Ptr = (_local_rq_t *) kmalloc(
  			sizeof(_local_rq_t), GFP_ATOMIC);
 
@@ -51,7 +52,7 @@ DEFINE_SPINLOCK(request_queue_lock);
  	init_waitqueue_head(&Ptr->_wq);
  	INIT_LIST_HEAD(&Ptr->lrq_member);
  	list_add(&Ptr->lrq_member, head);
- 	 GENERAL_SPIN_UNLOCK(&request_queue_lock);
+ 	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
 
  	return Ptr;
  }
@@ -60,18 +61,19 @@ DEFINE_SPINLOCK(request_queue_lock);
 
  	struct list_head *iter;
  	_local_rq_t *objPtr;
- 	 GENERAL_SPIN_LOCK(&request_queue_lock);
+	unsigned long f;
+ 	 GENERAL_SPIN_LOCK(&request_queue_lock,f);
  	list_for_each(iter, head)
  	{
  		objPtr = list_entry(iter, _local_rq_t, lrq_member);
  		if (objPtr->_request_id == request_id) {
  			list_del(&objPtr->lrq_member);
  			kfree(objPtr);
- 			 GENERAL_SPIN_UNLOCK(&request_queue_lock);
+ 			 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
  			return 1;
  		}
  	}
- 	 GENERAL_SPIN_UNLOCK(&request_queue_lock);
+ 	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
  }
 
 
@@ -79,34 +81,58 @@ DEFINE_SPINLOCK(request_queue_lock);
 
  	struct list_head *iter;
  	_local_rq_t *objPtr;
- 	 GENERAL_SPIN_LOCK(&request_queue_lock);
+	unsigned long f;
+ 	 GENERAL_SPIN_LOCK(&request_queue_lock,f);
  	list_for_each(iter, head)
  	{
  		objPtr = list_entry(iter, _local_rq_t, lrq_member);
  		if (objPtr->_request_id == request_id) {
- 			GENERAL_SPIN_UNLOCK(&request_queue_lock);
+ 			GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
  			return objPtr;
  		}
  	}
- 	 GENERAL_SPIN_UNLOCK(&request_queue_lock);
+ 	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
  	return NULL;
  }
+
+ _local_rq_t * set_err_request(int request_id, int err, struct list_head *head) {
+
+struct list_head *iter;
+_local_rq_t *objPtr;
+unsigned long f;
+	 GENERAL_SPIN_LOCK(&request_queue_lock,f);
+  	list_for_each(iter, head)
+ 	{
+		objPtr = list_entry(iter, _local_rq_t, lrq_member);
+		if (objPtr->_request_id == request_id) {
+			pagefault_disable();
+			objPtr->status =DONE;
+			objPtr->errno = err;
+			pagefault_enable();
+ 			GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
+ 			return objPtr;
+ 		}
+ 	}
+	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
+ 	return NULL;
+}
 
  _local_rq_t *find_request_by_pid(pid_t pid, struct list_head *head) {
 
  	struct list_head *iter;
  	_local_rq_t *objPtr;
- 	 GENERAL_SPIN_LOCK(&request_queue_lock);
+	unsigned long f;
+ 	 GENERAL_SPIN_LOCK(&request_queue_lock,f);
  	list_for_each(iter, head)
  	{
  		objPtr = list_entry(iter, _local_rq_t, lrq_member);
  		if (objPtr->_pid == pid) {
 			objPtr->wake_st =1; //Set wake state as ON
- 			GENERAL_SPIN_UNLOCK(&request_queue_lock);
+ 			GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
  			return objPtr;
  		}
  	}
- 	 GENERAL_SPIN_UNLOCK(&request_queue_lock);
+ 	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
  	return NULL;
  }
 
@@ -149,7 +175,9 @@ _global_value *hashgroup(struct task_struct *group_pid)
 	struct task_struct *tsk =NULL;
 	tsk= group_pid;
 	//u32 hash = jhash2((u32*)&tsk->pid,(sizeof(tsk->pid))/4,JHASH_INITVAL);
+	pagefault_disable();
 	u32 hash = sp_hashfn(tsk->pid,0);
+	pagefault_enable();
 	//printk(KERN_ALERT"%s: globalhash{%u} \n", __func__,hash & ((1 << _SPIN_HASHBITS)-1));
 	return &global_bucket[hash];
 }
@@ -359,7 +387,6 @@ static int __init global_spinlock_init(void)
 			global_bucket[i].thread_group_leader = NULL;
 			global_bucket[i].worker_task=NULL;
 			global_bucket[i].global_wq = NULL;
-			plist_head_init(&global_bucket[i]._grq_head);
 			global_bucket[i].free = 0;
 		}
 
