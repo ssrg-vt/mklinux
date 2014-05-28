@@ -3169,24 +3169,17 @@ void destroy_irq(unsigned int irq)
 static void sbox_ack_apic_edge(struct irq_data *idata)
 {
 	//struct irq_desc *desc = irq_to_desc(irq);
-	struct irq_cfg *cfg = irq_get_chip_data(idata->irq);
 
-	irq_complete_move(cfg);
+	irq_complete_move(idata->chip_data);
 	irq_move_irq(idata);
 	ack_APIC_irq();
-}
-
-static inline void *get_irq_data(unsigned int irq)
-{
-        struct irq_data *d = irq_get_irq_data(irq);
-        return d ? d->handler_data : NULL;
 }
 
 //static void mask_sbox_irq(unsigned int irq)
 static void mask_sbox_irq(struct irq_data *idata)
 {
 #ifdef CONFIG_MK1OM
-	void *icraddr = get_irq_data(idata->irq);
+	void *icraddr = irq_get_handler_data(idata->irq);
 	u32 value = readl(icraddr);
 	value |= 1 << 16;
 	writel(value, icraddr);
@@ -3197,7 +3190,7 @@ static void mask_sbox_irq(struct irq_data *idata)
 static void unmask_sbox_irq(struct irq_data *idata)
 {
 #ifdef CONFIG_MK1OM
-	void *icraddr = get_irq_data(idata->irq);
+	void *icraddr = irq_get_handler_data(idata->irq);
 	u32 value = readl(icraddr);
 	value &= ~(1 << 16);
 	writel(value, icraddr);
@@ -3217,14 +3210,14 @@ static struct irq_chip sbox_chip = {
 static void setup_sbox_irq(int irq, int i)
 {
 	int vector;
-	struct irq_desc *desc = irq_to_desc(irq);
 	void *icraddr = mic_sbox_mmio_va + SBOX_APICICR0 + (i * 8);
 
-	set_irq_chip_and_handler_name(irq, &sbox_chip, handle_edge_irq, "edge");
+	irq_set_chip_and_handler_name(irq, &sbox_chip, handle_edge_irq, "edge");
 	/* IRQ private data */
-	set_irq_data(irq, icraddr);
+	irq_set_handler_data(irq, icraddr);
 	/* Write the vector number, apicid in ICR */
-	vector = ((struct irq_cfg*)(irq_to_desc(irq)->chip_data))->vector;
+	//vector = ((struct irq_cfg*)(irq_to_desc(irq)->chip_data))->vector;
+	vector = (irq_cfg(irq))->vector;
 	writel(vector, icraddr);
 	writel(boot_cpu_physical_apicid, icraddr + 4);
 	printk("irq %d for SBOX, vector=%d, icr=%u\n", irq, vector, readl(icraddr));
@@ -3233,7 +3226,6 @@ static void setup_sbox_irq(int irq, int i)
 void arch_setup_sbox_irqs(unsigned int *irqs, int n)
 {
 	unsigned int irq;
-	int ret;
 	int node = cpu_to_node(boot_cpu_physical_apicid);
 	/* start from the first free irq */
 	unsigned int irq_want = MIC_NUM_IOAPIC_ENTRIES + 1;
@@ -4180,8 +4172,8 @@ void __init mp_register_ioapic(int id, u64 address, u32 gsi_base)
 	if (gsi_cfg->gsi_end >= gsi_top)
 		gsi_top = gsi_cfg->gsi_end + 1;
 #endif
-	printk(KERN_INFO "IOAPIC[%d]: apic_id %d, version %d, address 0x%lx, "
-		"GSI %d-%d\n", idx, mpc_ioapic_id(idx),
+	printk(KERN_INFO "IOAPIC[%d]: apic_id %d, version %d, address 0x%x, GSI %d-%d\n",
+	        idx, mpc_ioapic_id(idx),
 		mpc_ioapic_ver(idx), mpc_ioapic_addr(idx),
 		gsi_cfg->gsi_base, gsi_cfg->gsi_end);
 
