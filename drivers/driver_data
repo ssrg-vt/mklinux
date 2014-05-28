@@ -1,0 +1,32 @@
+ata/libata-core.c: *	@link: ATA link to test SCR accessibility for
+Kconfig:source "drivers/accessibility/Kconfig"
+Kconfig.orig:source "drivers/accessibility/Kconfig"
+Makefile:obj-$(CONFIG_ACCESSIBILITY)	+= accessibility/
+net/ethernet/broadcom/bnx2x/bnx2x_hsi.h: * structure for easy accessibility to assembler
+ps3/ps3stor_lib.c:			"%s:%u: checking accessibility of region %u\n",
+s390/cio/chsc.c:	CIO_CRW_EVENT(4, "chsc: resource accessibility event (rs=%02x, "
+s390/cio/chsc.c:	case 2: /* i/o resource accessibility */
+staging/cxt1e1/pmcc4_drv.c:     * Sanity check hardware accessibility.  The 0x6000 portion handles port
+staging/speakup/speakup_ltlk.c: * These attributes will appear in /sys/accessibility/speakup/ltlk.
+staging/speakup/speakup_dummy.c: * These attributes will appear in /sys/accessibility/speakup/dummy.
+staging/speakup/speakup_decpc.c: * These attributes will appear in /sys/accessibility/speakup/decpc.
+staging/speakup/speakup_acntsa.c: * These attributes will appear in /sys/accessibility/speakup/acntsa.
+staging/speakup/kobjects.c:static struct kobject *accessibility_kobj;
+staging/speakup/kobjects.c:	 * Create a simple kobject with the name of "accessibility",
+staging/speakup/kobjects.c:	accessibility_kobj = kobject_create_and_add("accessibility", NULL);
+staging/speakup/kobjects.c:	if (!accessibility_kobj) {
+staging/speakup/kobjects.c:	speakup_kobj = kobject_create_and_add("speakup", accessibility_kobj);
+staging/speakup/kobjects.c:	kobject_put(accessibility_kobj);
+staging/speakup/kobjects.c:	kobject_put(accessibility_kobj);
+staging/speakup/speakup_bns.c: * These attributes will appear in /sys/accessibility/speakup/bns.
+staging/speakup/speakup_audptr.c: * These attributes will appear in /sys/accessibility/speakup/audptr.
+staging/speakup/speakup_acntpc.c: * These attributes will appear in /sys/accessibility/speakup/acntpc.
+staging/speakup/speakup_decext.c: * These attributes will appear in /sys/accessibility/speakup/decext.
+staging/speakup/speakup_apollo.c: * These attributes will appear in /sys/accessibility/speakup/apollo.
+staging/speakup/speakup_soft.c: * These attributes will appear in /sys/accessibility/speakup/soft.
+staging/speakup/speakup_txprt.c: * These attributes will appear in /sys/accessibility/speakup/txprt.
+staging/speakup/speakup_keypc.c: * These attributes will appear in /sys/accessibility/speakup/keypc.
+staging/speakup/speakup_dtlk.c: * These attributes will appear in /sys/accessibility/speakup/dtlk.
+staging/speakup/speakup_dectlk.c: * These attributes will appear in /sys/accessibility/speakup/dectlk.
+staging/speakup/speakup_spkout.c: * These attributes will appear in /sys/accessibility/speakup/spkout.
+staging/speakup/spkguide.txt:ln -s /sys/accessibility/speakup /speakup
