@@ -8603,8 +8603,11 @@ static int __init process_server_init(void) {
     /*
      * Cache some local information.
      */
-    _cpu = smp_processor_id();
-
+#ifndef SUPPORT_FOR_CLUSTERING
+      _cpu= smp_processor_id();
+ #else
+      _cpu= cpumask_first(cpu_present_mask);
+ #endif
     /*
      * Init global semaphores
      */
