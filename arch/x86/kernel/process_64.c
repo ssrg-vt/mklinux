@@ -367,6 +367,52 @@ start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 			    __USER_CS, __USER_DS, 0);
 }
 
+static bool __user_addr (unsigned long x ) {
+    return (x < PAGE_OFFSET);
+}
+void start_remote_thread(struct pt_regs *regs){
+    unsigned int fsindex, gsindex;
+    unsigned short es,ds;
+
+    savesegment(fs, fsindex);
+    if ( !(current->thread.fs) || !(__user_addr(current->thread.fs)) ) {
+        printk(KERN_ERR "%s: ERROR corrupted fs base address %lu\n", __func__, current->thread.fs);
+    }
+
+    if (unlikely(fsindex | current->thread.fsindex))
+        loadsegment(fs, current->thread.fsindex);
+    else
+        loadsegment(fs, 0);
+    if (current->thread.fs)
+        checking_wrmsrl(MSR_FS_BASE, current->thread.fs);
+
+    savesegment(gs, gsindex); //read the gs register in gsindex variable
+    if ( !(current->thread.gs) && !(__user_addr(current->thread.gs)) ) {
+        printk(KERN_ERR "%s: ERROR corrupted gs base address %lu\n", __func__, current->thread.gs);
+    }
+
+    if (unlikely(gsindex | current->thread.gsindex))
+        load_gs_index(current->thread.gsindex);
+    else
+        load_gs_index(0);
+    if (current->thread.gs)
+        checking_wrmsrl(MSR_KERNEL_GS_BASE, current->thread.gs);
+
+    savesegment(es, es);
+    if (unlikely(es | current->thread.es))
+        loadsegment(es, current->thread.es);
+
+    savesegment(ds, ds);
+    if (unlikely(ds | current->thread.ds))
+        loadsegment(ds, current->thread.ds);
+
+    percpu_write(old_rsp, current->thread.usersp);
+
+    regs->sp = current->thread.usersp;
+    free_thread_xstate(current);
+
+}
+
 #ifdef CONFIG_IA32_EMULATION
 void start_thread_ia32(struct pt_regs *regs, u32 new_ip, u32 new_sp)
 {

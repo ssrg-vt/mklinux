@@ -432,6 +432,48 @@ unsigned long do_mremap(unsigned long addr,
 	struct vm_area_struct *vma;
 	unsigned long ret = -EINVAL;
 	unsigned long charged = 0;
+    int original_enable_distributed_munmap = current->enable_distributed_munmap;
+    unsigned long a;
+    current->enable_distributed_munmap = 0;
+
+    // This is kind of tricky.  We have to lock the old range
+    // and the new range.
+    // Also, recursion is not an issue for mremap, since 
+    // process_server does not ever attempt to do distributed
+    // remaps, it is naughty, and just does a distributed
+    // munmap (except locally).  That should probably change.
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+    process_server_acquire_heavy_lock();
+#else 
+    {
+    unsigned long old_start = addr;
+    unsigned long old_end   = addr + old_len;
+    unsigned long new_start = new_addr;
+    unsigned long new_end   = new_addr + new_len;
+    if(old_end <= new_start || new_end <= old_start) {
+        process_server_acquire_page_lock_range(old_start,old_len);
+        process_server_acquire_page_lock_range(new_start,new_len);
+    } else {
+        unsigned long min_start = old_start < new_start? old_start : new_start;
+        unsigned long max_end   = old_end > new_end? old_end : new_end;
+        process_server_acquire_page_lock_range(min_start,max_end - min_start);
+    }
+    }
+#endif
+#endif
+
+    // Pull in all remote mappings so nothing is lost later.
+    for(a = addr & PAGE_MASK; a < addr + old_len; a+= PAGE_SIZE) {
+        struct vm_area_struct *vma_out = NULL;
+        process_server_pull_remote_mappings(current->mm,
+                                            NULL,
+                                            a,
+                                            NULL,
+                                            &vma_out,
+                                            NULL);
+
+    }
 
 	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
 		goto out;
@@ -533,12 +575,39 @@ unsigned long do_mremap(unsigned long addr,
          * operation, and notify all remotes of a munmap.  If they want to access
          * the new space, they will fault and re-acquire the mapping.
          */
-        process_server_do_munmap(mm, vma, addr, old_len);
+        current->enable_distributed_munmap = original_enable_distributed_munmap;
+        process_server_do_munmap(mm, addr, old_len);
+        process_server_do_munmap(mm, new_addr, new_len);
+        current->enable_distributed_munmap = 0;
 
 	}
 out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+    process_server_release_heavy_lock();
+#else
+    {
+    unsigned long old_start = addr;
+    unsigned long old_end   = addr + old_len;
+    unsigned long new_start = new_addr;
+    unsigned long new_end   = new_addr + new_len;
+    if(old_end <= new_start || new_end <= old_start) {
+        process_server_release_page_lock_range(old_start,old_len);
+        process_server_release_page_lock_range(new_start,new_len);
+    } else {
+        unsigned long min_start = old_start < new_start? old_start : new_start;
+        unsigned long max_end   = old_end > new_end? old_end : new_end;
+        process_server_release_page_lock_range(min_start,max_end - min_start);
+    }
+
+    }
+#endif
+#endif
+
+    current->enable_distributed_munmap = original_enable_distributed_munmap;
+
 	return ret;
 }
 

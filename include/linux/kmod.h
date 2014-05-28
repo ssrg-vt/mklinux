@@ -28,6 +28,7 @@
 
 /*mklinux_akshay*/
 #include <linux/signal.h>
+#include <linux/process_server.h>
 
 #define KMOD_PATH_LEN 256
 
@@ -72,6 +73,7 @@ struct subprocess_info {
     /**
      * multikernel
      */
+#ifdef PROCESS_SERVER_USE_KMOD
     int delegated; // Is this subprocess a delegated worker 
                    // working on behalf of another cpu?
     pid_t remote_pid;
@@ -83,6 +85,7 @@ struct subprocess_info {
     pid_t origin_pid;
     /*mklinux_akshay*/
 
+#endif
 };
 
 /* Allocate a subprocess_info structure */

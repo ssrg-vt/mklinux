@@ -74,7 +74,7 @@
 #include <linux/init_task.h>
 #include <linux/process_server.h>
 #ifdef SUPPORT_FOR_CLUSTERING
-//#include <linux/popcorn.h>
+#include <linux/popcorn_cpuinfo.h>
 #endif
 
 #include <asm/tlb.h>
@@ -5607,19 +5607,19 @@ if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
 #ifndef SUPPORT_FOR_CLUSTERING
     for(i = 0; i < NR_CPUS; i++) {
         if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
-/*#else
+#else
     struct list_head *iter;
     _remote_cpu_info_list_t *objPtr;
     struct cpumask *pcpum;
-extern struct list_head rlist_head;
+    extern struct list_head rlist_head;
     list_for_each(iter, &rlist_head) {
         objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
         i = objPtr->_data._processor;
         pcpum = &(objPtr->_data._cpumask);
-        if ( cpumask_intersects(in_mask, pcpum) ) {*/
+        if ( cpumask_intersects(in_mask, pcpum) ) {
 #endif
-        // TODO ask the global scheduler if there are multiple affinities    
-	// do the migration
+            // TODO ask the global scheduler if there are multiple affinities    
+	        // do the migration
             get_task_struct(p);
             rcu_read_unlock();
             ret =process_server_do_migration(p,i);

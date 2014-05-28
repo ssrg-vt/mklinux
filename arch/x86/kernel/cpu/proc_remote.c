@@ -15,7 +15,7 @@
 #include <linux/seq_file.h>
 
 
-#include <popcorn/cpuinfo.h>
+#include <linux/popcorn_cpuinfo.h>
 
 
 #include <linux/list.h>

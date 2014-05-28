@@ -813,7 +813,10 @@ int kernel_read(struct file *file, loff_t offset,
 
 EXPORT_SYMBOL(kernel_read);
 
-static int exec_mmap(struct mm_struct *mm)
+#ifdef PROCESS_SERVER_USE_KMOD
+static 
+#endif
+int exec_mmap(struct mm_struct *mm)
 {
 	struct task_struct *tsk;
 	struct mm_struct * old_mm, *active_mm;
@@ -854,6 +857,10 @@ static int exec_mmap(struct mm_struct *mm)
 	mmdrop(active_mm);
 	return 0;
 }
+
+#ifndef PROCESS_SERVER_USE_KMOD
+EXPORT_SYMBOL(exec_mmap);
+#endif
 
 /*
  * This function makes sure the current process has its own signal table,
@@ -1011,7 +1018,7 @@ no_thread_group:
  * These functions flushes out all traces of the currently running executable
  * so that a new one can be started
  */
-static void flush_old_files(struct files_struct * files)
+/*static*/ void flush_old_files(struct files_struct * files)
 {
 	long j = -1;
 	struct fdtable *fdt;
@@ -1523,8 +1530,9 @@ static int do_execve_common(const char *filename,
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
 	if (retval < 0)
 		goto out;
-
+#ifdef PROCESS_SERVER_USE_KMOD
     if(!current->executing_for_remote) {
+#endif
         bprm->exec = bprm->p;
         retval = copy_strings(bprm->envc, envp, bprm);
         if (retval < 0)
@@ -1533,7 +1541,9 @@ static int do_execve_common(const char *filename,
         retval = copy_strings(bprm->argc, argv, bprm);
         if (retval < 0)
             goto out;
+#ifdef PROCESS_SERVER_USE_KMOD
     }
+#endif
 
 	retval = search_binary_handler(bprm,regs);
 	if (retval < 0)
