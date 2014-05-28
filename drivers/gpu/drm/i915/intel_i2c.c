@@ -90,7 +90,7 @@ struct intel_gpio {
 void
 intel_i2c_reset(struct drm_device *dev)
 {
-	struct drm_i915_private *dev_priv = dev->dev_private;
+//	struct drm_i915_private *dev_priv = dev->dev_private;
 	if (HAS_PCH_SPLIT(dev))
 		I915_GMBUS_WRITE(PCH_GMBUS0, 0);
 	else
@@ -131,7 +131,7 @@ static u32 get_reserved(struct intel_gpio *gpio)
 static int get_clock(void *data)
 {
 	struct intel_gpio *gpio = data;
-	struct drm_i915_private *dev_priv = gpio->dev_priv;
+//	struct drm_i915_private *dev_priv = gpio->dev_priv;
 	u32 reserved = get_reserved(gpio);
 	I915_GMBUS_WRITE_NOTRACE(gpio->reg, reserved | GPIO_CLOCK_DIR_MASK);
 	I915_GMBUS_WRITE_NOTRACE(gpio->reg, reserved);
@@ -141,7 +141,7 @@ static int get_clock(void *data)
 static int get_data(void *data)
 {
 	struct intel_gpio *gpio = data;
-	struct drm_i915_private *dev_priv = gpio->dev_priv;
+//	struct drm_i915_private *dev_priv = gpio->dev_priv;
 	u32 reserved = get_reserved(gpio);
 	I915_GMBUS_WRITE_NOTRACE(gpio->reg, reserved | GPIO_DATA_DIR_MASK);
 	I915_GMBUS_WRITE_NOTRACE(gpio->reg, reserved);
@@ -265,7 +265,7 @@ intel_i2c_quirk_xfer(struct drm_i915_private *dev_priv,
  * HSD # 4118169.
  */
 static inline void
-dummy_read_dbox_regs()
+dummy_read_dbox_regs(void)
 {
 	I915_GMBUS_READ(DBOX_ADAK_CTRL_REG);
 	I915_GMBUS_READ(DBOX_SW_FLAG_REG);
@@ -387,7 +387,7 @@ gmbus_xfer_read_write(uint16_t flags, uint16_t len, uint8_t *buf, uint16_t addr,
 		/* byte count (no of bytes to be transferred in a GMBUS cycle)
 		 * is a 9-bit field (max 511) in the GMBUS command register.
 		 */
-		byte_count = min(len, 511);
+		byte_count = min(len, (uint16_t)511);
 		len -= byte_count;
 
 		/* If Machine Check Exception handler wants to use the GMBUS, 
@@ -405,7 +405,9 @@ gmbus_xfer_read_write(uint16_t flags, uint16_t len, uint8_t *buf, uint16_t addr,
 				if (ret != 0)
 					return ret;
 				val = I915_GMBUS_READ(GMBUS3 + reg_offset);
-
+                                do {
+                                        *buf++ = val & 0xff;
+                                        val >>= 8;
 				} while (--byte_count && ++loop < 4);
 				/* If exception handler sets this flag and 
 				 * there are pending bytes to be transferred,

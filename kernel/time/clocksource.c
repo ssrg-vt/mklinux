@@ -200,8 +200,8 @@ clocks_calc_mult_shift(u32 *mult, u32 *shift, u32 from, u32 to, u32 maxsec)
 			}
 
 			printk("Hit the magic_mult problem,"
-				"magicmult=%u,mult=%u,shift=%u\n",
-				magic_mult, tmp, sft);
+				"magicmult=%u,mult=%lu,shift=%u\n",
+				magic_mult, (long unsigned)tmp, sft);
 		}
 #else
 		if ((tmp >> sftacc) == 0)

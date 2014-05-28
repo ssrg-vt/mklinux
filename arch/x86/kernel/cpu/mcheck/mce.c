@@ -288,7 +288,7 @@ static struct mce_log mcelog = {
 
 #ifdef CONFIG_X86_EARLYMIC
 EXPORT_SYMBOL_GPL(mcelog);
-EXPORT_SYMBOL_GPL(mce_read_mutex);
+EXPORT_SYMBOL_GPL(mce_chrdev_read_mutex);
 EXPORT_SYMBOL_GPL(mce_disabled);
 #endif
 

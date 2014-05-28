@@ -33,6 +33,7 @@ static int ptrace_trapping_sleep_fn(void *flags)
 }
 
 /* Ensure that nothing can wake it up, even SIGKILL */
+/* FROM MPSS3.2
 static bool ptrace_freeze_traced(struct task_struct *task, int kill)
 {
 	bool ret = true;
@@ -50,6 +51,7 @@ static bool ptrace_freeze_traced(struct task_struct *task, int kill)
 
 	return ret;
 }
+*/
 
 static void ptrace_unfreeze_traced(struct task_struct *task)
 {
@@ -185,29 +187,24 @@ int ptrace_check_attach(struct task_struct *child, bool ignore_state)
 	 * be changed by us so it's not changing right after this.
 	 */
 	read_lock(&tasklist_lock);
-	if (child->ptrace && child->parent == current) {
-		WARN_ON(child->state == __TASK_TRACED);
+	if ((child->ptrace & PT_PTRACED) && child->parent == current) {
 		/*
 		 * child->sighand can't be NULL, release_task()
 		 * does ptrace_unlink() before __exit_signal().
 		 */
-		if (ptrace_freeze_traced(child, kill))
+		spin_lock_irq(&child->sighand->siglock);
+		WARN_ON_ONCE(task_is_stopped(child));
+		if (ignore_state || (task_is_traced(child) &&
+				     !(child->jobctl & JOBCTL_LISTENING)))
 			ret = 0;
+		spin_unlock_irq(&child->sighand->siglock);
 	}
 	read_unlock(&tasklist_lock);
+	
+	if (!ret && !ignore_state)
+		ret = wait_task_inactive(child, TASK_TRACED) ? 0 : -ESRCH;
 
-	if (!ret && !kill) {
-		if (!wait_task_inactive(child, __TASK_TRACED)) {
-			/*
-			 * This can only happen if may_ptrace_stop() fails and
-			 * ptrace_stop() changes ->state back to TASK_RUNNING,
-			 * so we should not worry about leaking __TASK_TRACED.
-			 */
-			WARN_ON(child->state == __TASK_TRACED);
-			ret = -ESRCH;
-		}
-	}
-
+	/* All systems go.. */
 	return ret;
 }
 

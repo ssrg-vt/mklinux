@@ -15,6 +15,7 @@
 #include <asm/apic.h>
 
 #include "perf_event.h"
+#include "perf_event_knc.c"
 
 /*
  * Intel PerfMon, used on Core and later.

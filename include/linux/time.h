@@ -258,7 +258,7 @@ static __always_inline void timespec_add_ns(struct timespec *a, u64 ns)
 }
 #if defined(CONFIG_X86_EARLYMIC) && defined(CONFIG_MK1OM)
 extern void timekeeping_resume(void);
-extern void timekeeping_suspend(void);
+extern int timekeeping_suspend(void);
 #endif
 #endif /* __KERNEL__ */
 

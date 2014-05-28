@@ -354,7 +354,7 @@ static void ati_force_hpet_resume(void)
 
 static u32 ati_ixp4x0_rev(struct pci_dev *dev)
 {
-	u32 d;
+	u32 d =0;
 	u8  b;
 
 	pci_read_config_byte(dev, 0xac, &b);

@@ -20,6 +20,7 @@ extern unsigned long initial_code;
 extern unsigned long initial_gs;
 
 extern void __init setup_trampolines(void);
+extern int __init configure_trampolines(void);
 
 extern const unsigned char trampoline_data[];
 extern const unsigned char trampoline_status[];

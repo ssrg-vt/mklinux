@@ -618,7 +618,7 @@ static int suspended=0;
 void timekeeping_resume(void)
 {
 	cycle_t etc_cycles, rdtsc_cycles;
-	struct timespec ts1, ts2;
+	struct timespec ts1; //, ts2;
 	struct clocksource *tsc;
 	unsigned long flags;
 		
@@ -691,7 +691,7 @@ void timekeeping_resume(void)
 	smp_wmb();
 	xtime = timespec_add_safe(xtime, ts1);
 	raw_time = timespec_add_safe(raw_time, ts1);
-	pr_debug("xtime delta(%d,%llu). xtime (%llu,%llu)\n",
+	pr_debug("xtime delta(%lu,%lu). xtime (%lu,%lu)\n",
 		ts1.tv_sec,ts1.tv_nsec,xtime.tv_sec,xtime.tv_nsec);
 	/* Commenting it out as this causes loss of jiffies
 	 * wall_to_monotonic = timespec_sub(wall_to_monotonic, ts1);
@@ -809,7 +809,7 @@ static void timekeeping_resume(void)
 /* We are not really suspending timekeeping.
  * We are just preparing for package state
  */
-void timekeeping_suspend(void)
+int timekeeping_suspend(void)
 {
 	unsigned long flags;
  
@@ -821,10 +821,12 @@ void timekeeping_suspend(void)
 	timekeeping_forward_now();
 	etc_cycles_suspend = clocksource_micetc.read(&clocksource_micetc);
 	rdtscll(tsc_cycles_suspend);
-	pr_debug("etc_suspend=%llx tsc_suspend= %llx xtime(%llu,llu)\n",
-	etc_cycles_suspend,tsc_cycles_suspend,xtime.tv_sec,xtime.tv_nsec);
+	pr_debug("etc_suspend=%llx tsc_suspend= %llx xtime(%lu,%lu)\n",
+	  etc_cycles_suspend, tsc_cycles_suspend, xtime.tv_sec, xtime.tv_nsec);
 	suspended=1;
 	write_sequnlock_irqrestore(&xtime_lock, flags);
+	
+	return 0;
 }
 EXPORT_SYMBOL(timekeeping_suspend);
 #else

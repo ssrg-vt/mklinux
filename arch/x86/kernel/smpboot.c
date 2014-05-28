@@ -154,7 +154,7 @@ void mic_mdelay(int m)
 /* State of each CPU */
 DEFINE_PER_CPU(int, cpu_state) = { 0 };
 
-static DEFINE_RAW_SPINLOCK(cpu_data_lock);
+//static DEFINE_RAW_SPINLOCK(cpu_data_lock);
 
 /* Store all idle threads, this can be reused instead of creating
 * a new thread. Also avoids complicated thread destroy functionality
@@ -171,8 +171,8 @@ static DEFINE_PER_CPU(struct task_struct *, idle_thread_array);
 
 #ifdef CONFIG_X86_EARLYMIC
 extern void mic_construct_default_ioirq_mptable(int mpc_default_type) __init;
-extern void disable_icache_snoop() __cpuinit;
-extern void mic_smpt_init() __init;
+extern void disable_icache_snoop(void) __cpuinit;
+extern void mic_smpt_init(void) __init;
 #endif
 
 /*
@@ -1307,7 +1307,8 @@ do_rest:
 	stack_start = smp_stack_pointer_map[apicid];
 
 	/* start_ip had better be page-aligned! */
-	start_ip = setup_trampoline();
+	configure_trampolines();
+	start_ip = trampoline_address();
 
 	/* So we see what's up */
 	announce_cpu(cpu, apicid);

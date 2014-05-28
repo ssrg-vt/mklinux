@@ -121,11 +121,11 @@ static struct pxa_reg_layout pxa_reg_layout[] = {
 		.isar =	0x20,
 	},
 	[REGS_PXA3XX] = {
-		.ibmr =	0x00,
-		.idbr =	0x04,
-		.icr =	0x08,
-		.isr =	0x0c,
-		.isar =	0x10,
+		.ibmr =	0x10, //0x00,
+		.idbr =	0xc, //0x04,
+		.icr =	0x0, //0x08,
+		.isr =	0x4, //0x0c,
+		.isar =	0x8, //0x10,
 	},
 	[REGS_CE4100] = {
 		.ibmr =	0x14,
@@ -135,6 +135,14 @@ static struct pxa_reg_layout pxa_reg_layout[] = {
 		/* no isar register */
 	},
 };
+
+/* Intel MPSS3.2 REGS_PXA3XX
+#define _IBMR(i2c)	((i2c)->reg_base + (0x10 << (i2c)->reg_shift))
+#define _IDBR(i2c)	((i2c)->reg_base + (0xc << (i2c)->reg_shift))
+#define _ICR(i2c)	((i2c)->reg_base + (0x0 << (i2c)->reg_shift))
+#define _ISR(i2c)	((i2c)->reg_base + (0x4 << (i2c)->reg_shift))
+#define _ISAR(i2c)	((i2c)->reg_base + (0x8 << (i2c)->reg_shift))
+*/
 
 static const struct platform_device_id i2c_pxa_id_table[] = {
 	{ "pxa2xx-i2c",		REGS_PXA2XX },
@@ -214,11 +222,11 @@ struct pxa_i2c {
 	unsigned int		fast_mode :1;
 };
 
-#define _IBMR(i2c)	((i2c)->reg_base + (0x10 << (i2c)->reg_shift))
-#define _IDBR(i2c)	((i2c)->reg_base + (0xc << (i2c)->reg_shift))
-#define _ICR(i2c)	((i2c)->reg_base + (0x0 << (i2c)->reg_shift))
-#define _ISR(i2c)	((i2c)->reg_base + (0x4 << (i2c)->reg_shift))
-#define _ISAR(i2c)	((i2c)->reg_base + (0x8 << (i2c)->reg_shift))
+#define _IBMR(i2c)      ((i2c)->reg_ibmr)
+#define _IDBR(i2c)      ((i2c)->reg_idbr)
+#define _ICR(i2c)       ((i2c)->reg_icr)
+#define _ISR(i2c)       ((i2c)->reg_isr)
+#define _ISAR(i2c)      ((i2c)->reg_isar)
 
 /*
  * I2C Slave mode address
@@ -1230,12 +1238,13 @@ static int i2c_pxa_probe(struct platform_device *dev)
 	struct pxa_i2c *i2c;
 //	struct resource *res;
 //	struct i2c_pxa_platform_data *plat = dev->dev.platform_data;
-//	const struct platform_device_id *id = platform_get_device_id(dev);
+	const struct platform_device_id *id = platform_get_device_id(dev);
 	enum pxa_i2c_types i2c_type = id->driver_data;
 	int ret;
 //	int irq;
+	int i;
 
-	printk(KERN_INFO "I2C enter: PXA I2C adapter\n");
+	printk(KERN_INFO "I2C enter: PXA I2C adapter type %d\n", i2c_type);
 #if 0
 	res = platform_get_resource(dev, IORESOURCE_MEM, 0);
 	irq = platform_get_irq(dev, 0);
@@ -1279,15 +1288,15 @@ static int i2c_pxa_probe(struct platform_device *dev)
 		ret = -EIO;
 		goto eremap;
 	}
-/*
+
 	i2c->reg_ibmr = i2c->reg_base + pxa_reg_layout[i2c_type].ibmr;
 	i2c->reg_idbr = i2c->reg_base + pxa_reg_layout[i2c_type].idbr;
 	i2c->reg_icr = i2c->reg_base + pxa_reg_layout[i2c_type].icr;
 	i2c->reg_isr = i2c->reg_base + pxa_reg_layout[i2c_type].isr;
 	if (i2c_type != REGS_CE4100)
 		i2c->reg_isar = i2c->reg_base + pxa_reg_layout[i2c_type].isar;
-*/	
-	i2c->reg_shift = 0;
+
+//	i2c->reg_shift = 0;
 
 	i2c->iobase = MIC_SBOX_I2C_BASE;
 	i2c->iosize = MIC_SBOX_SIZE;
@@ -1355,12 +1364,12 @@ static int i2c_pxa_probe(struct platform_device *dev)
 eadapt:
 //	if (!i2c->use_pio)
 //		free_irq(irq, i2c);
-ereqirq:
+//ereqirq:
 	clk_disable(i2c->clk);
 	iounmap(i2c->reg_base);
 eremap:
 	clk_put(i2c->clk);
-eclk:
+//eclk:
 	kfree(i2c);
 emalloc:
 	printk(KERN_INFO "I2C: PXA I2C adapter Probe Failed\n");

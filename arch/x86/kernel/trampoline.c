@@ -32,7 +32,7 @@ void __init setup_trampolines(void)
  * tables are set up, so we cannot set page permissions in that
  * function.  Thus, we use an arch_initcall instead.
  */
-static int __init configure_trampolines(void)
+int __init configure_trampolines(void)
 {
 	size_t size = PAGE_ALIGN(x86_trampoline_end - x86_trampoline_start);
 
