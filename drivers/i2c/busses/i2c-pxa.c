@@ -1238,8 +1238,8 @@ static int i2c_pxa_probe(struct platform_device *dev)
 	struct pxa_i2c *i2c;
 //	struct resource *res;
 //	struct i2c_pxa_platform_data *plat = dev->dev.platform_data;
-	const struct platform_device_id *id = platform_get_device_id(dev);
-	enum pxa_i2c_types i2c_type = id->driver_data;
+//	const struct platform_device_id *id = platform_get_device_id(dev);
+	enum pxa_i2c_types i2c_type = REGS_PXA3XX;
 	int ret;
 //	int irq;
 	int i;
@@ -1347,8 +1347,8 @@ static int i2c_pxa_probe(struct platform_device *dev)
 	}
 	of_i2c_register_devices(&i2c->adap);
 
-	//SDFIX: Not setting driver data?
-	//platform_set_drvdata(dev, i2c);
+	//SDFIX: Not setting driver data? 
+	platform_set_drvdata(dev, i2c); //AB we should do this
 
 #ifdef CONFIG_I2C_PXA_SLAVE
 	printk(KERN_INFO "I2C: %s: PXA I2C adapter, slave address %d\n",
@@ -1442,9 +1442,33 @@ static struct platform_driver i2c_pxa_driver = {
 
 static int __init i2c_adap_pxa_init(void)
 {
-	int error = platform_driver_register(&i2c_pxa_driver);
-	printk(KERN_INFO "I2C: PXA Driver Registered error %d", error);
-	i2c_pxa_probe(NULL);
+	int error =0; //copied from drivers/base/platform.c
+	struct platform_device * pdev;
+	
+	pdev = platform_device_alloc("pxa2xx-i2c", -1);
+	if (!pdev) {
+		error = -ENOMEM;
+		printk(KERN_INFO "%s: Device allocation failed\n", __func__);
+		goto exit;
+	}
+	error = platform_device_add(pdev);
+	if (error) {
+		printk(KERN_INFO "%s: Device addition failed (returned %d)\n",
+		       __func__, error);
+		goto exit_device_put;
+	}
+  
+	error = platform_driver_register(&i2c_pxa_driver);
+	printk(KERN_INFO "%s: PXA Driver Registered (returned %d)\n",
+	       __func__, error);
+	//i2c_pxa_probe(NULL); //AB MPSS3.2 CODE
+	if (error)
+		goto exit_device_put;
+	return 0;
+		
+exit_device_put:
+	platform_device_put(pdev);
+exit:
 	return error;
 }
 

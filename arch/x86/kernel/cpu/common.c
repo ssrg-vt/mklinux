@@ -715,10 +715,12 @@ static void __init early_identify_cpu(struct cpuinfo_x86 *c)
 #endif
 	filter_cpuid_features(c, false);
 
+/* MPSS3.2 ???
 	setup_smep(c);
 
 	if (this_cpu->c_bsp_init)
 		this_cpu->c_bsp_init(c);
+*/
 }
 
 void __init early_cpu_init(void)
@@ -727,8 +729,9 @@ void __init early_cpu_init(void)
 	int count = 0;
 
 #ifdef CONFIG_PROCESSOR_SELECT
-	printk(KERN_INFO "KERNEL supported cpus:\n");
+	printk(KERN_INFO "KERNEL supported cpus\n");
 #endif
+	printk("%s: %p\n", __func__, this_cpu); //AB
 
 	for (cdev = __x86_cpu_dev_start; cdev < __x86_cpu_dev_end; cdev++) {
 		const struct cpu_dev *cpudev = *cdev;

@@ -77,14 +77,16 @@ static void __cpuinit early_init_intel(struct cpuinfo_x86 *c)
 		(c->x86 == 0x6 && c->x86_model >= 0x0e))
 		set_cpu_cap(c, X86_FEATURE_CONSTANT_TSC);
 
+/* MPSS 3.2 does not have this check --- it hangs on wrmsr(MSR_IA32_UCODE_REV
 	if (c->x86 >= 6 && !cpu_has(c, X86_FEATURE_IA64)) {
 		unsigned lower_word;
 
 		wrmsr(MSR_IA32_UCODE_REV, 0, 0);
-		/* Required by the SDM */
+		// Required by the SDM
 		sync_core();
 		rdmsr(MSR_IA32_UCODE_REV, lower_word, c->microcode);
 	}
+*/
 
 	/*
 	 * Atom erratum AAE44/AAF40/AAG38/AAH41:
@@ -154,17 +156,22 @@ static void __cpuinit early_init_intel(struct cpuinfo_x86 *c)
 
 		if (misc_enable & MSR_IA32_MISC_ENABLE_FAST_STRING) {
 			printk(KERN_INFO "kmemcheck: Disabling fast string operations\n");
-
 			misc_enable &= ~MSR_IA32_MISC_ENABLE_FAST_STRING;
 			wrmsrl(MSR_IA32_MISC_ENABLE, misc_enable);
 		}
 	}
 #endif
 
+#ifdef CONFIG_ML1OM
+        printk(KERN_INFO "Disabled fast string operations\n");
+        setup_clear_cpu_cap(X86_FEATURE_REP_GOOD);
+        setup_clear_cpu_cap(X86_FEATURE_ERMS);
+#else
 	/*
 	 * If fast string is not enabled in IA32_MISC_ENABLE for any reason,
 	 * clear the fast string and enhanced fast string CPU capabilities.
 	 */
+/* MPSS 3.2 does not have this check --- it hangs on rdmsrl(MSR_IA32_MISC_ENABLE
 	if (c->x86 > 6 || (c->x86 == 6 && c->x86_model >= 0xd)) {
 		rdmsrl(MSR_IA32_MISC_ENABLE, misc_enable);
 		if (!(misc_enable & MSR_IA32_MISC_ENABLE_FAST_STRING)) {
@@ -173,6 +180,8 @@ static void __cpuinit early_init_intel(struct cpuinfo_x86 *c)
 			setup_clear_cpu_cap(X86_FEATURE_ERMS);
 		}
 	}
+	*/
+#endif
 }
 
 #ifdef CONFIG_X86_32
