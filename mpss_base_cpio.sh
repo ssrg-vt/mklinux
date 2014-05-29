@@ -25,9 +25,20 @@ case $1 in
     ;;
   create)
     echo "packing $WORKING_DIR in $MY_INITRAMFS"
+    cd $WORKING_DIR
     find . | cpio -o -c | gzip >../$MY_CPIO_GZ
     rm -f $MY_INITRAMFS
     mv ../$MY_CPIO_GZ $MY_INITRAMFS
+    ;;
+  install)
+    echo "installing $MY_INITRAMFS as $MIC ramfs"
+    micctrl --base=CPIO --new=$MY_INITRAMFS $MIC
+    micctrl --updateramfs $MIC
+    ;;
+  default)
+    echo "reset $MPSS_INITRAMFS as $MIC ramfs"
+    micctrl --base=CPIO --new=$MPSS_INITRAMFS $MIC
+    micctrl --updateramfs $MIC
     ;;
   *)
     echo "Usage: $0 [extract|create]"
