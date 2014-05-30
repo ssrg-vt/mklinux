@@ -443,6 +443,7 @@ unsigned long do_mremap(unsigned long addr,
     // remaps, it is naughty, and just does a distributed
     // munmap (except locally).  That should probably change.
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+    up_write(&mm->mmap_sem);
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
     process_server_acquire_heavy_lock();
 #else 
@@ -461,6 +462,7 @@ unsigned long do_mremap(unsigned long addr,
     }
     }
 #endif
+    down_write(&mm->mmap_sem);
 #endif
 
     // Pull in all remote mappings so nothing is lost later.

@@ -994,11 +994,13 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
             struct vm_area_struct* vma_out = NULL;
             addr = get_unmapped_area(file, NULL, len, pgoff, flags);
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+            up_write(&mm->mmap_sem);
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
             process_server_acquire_heavy_lock();
 #else
             process_server_acquire_page_lock_range(addr,len);
 #endif
+            down_write(&mm->mmap_sem);
 #endif
             fault_ret = process_server_pull_remote_mappings(mm,
                                                             NULL,
@@ -1037,11 +1039,13 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_do_mmap_pgoff_hook && !range_locked) {
+        up_write(&mm->mmap_sem);
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_acquire_heavy_lock();
 #else
         process_server_acquire_page_lock_range(addr,len);
 #endif
+        down_write(&mm->mmap_sem);
     }
 #endif
 
@@ -2150,28 +2154,33 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	if ((len = PAGE_ALIGN(len)) == 0)
 		return -EINVAL;
 
-
-	/* Find the first overlapping VMA */
-	vma = find_vma(mm, start);
-	if (!vma)
-		return 0;
-	prev = vma->vm_prev;
-	/* we have  start < vma->vm_end  */
-
-	/* if it doesn't overlap, we have nothing.. */
-	end = start + len;
-	if (vma->vm_start >= end)
-		return 0;
-
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(current->enable_distributed_munmap) {
+        up_write(&mm->mmap_sem);
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_acquire_heavy_lock();
 #else
         process_server_acquire_page_lock_range(start,len);
 #endif
+        down_write(&mm->mmap_sem);
     }
 #endif
+
+	/* Find the first overlapping VMA */
+	vma = find_vma(mm, start);
+	if (!vma) {
+        error = 0;
+        goto err;
+    }
+	prev = vma->vm_prev;
+	/* we have  start < vma->vm_end  */
+
+	/* if it doesn't overlap, we have nothing.. */
+	end = start + len;
+	if (vma->vm_start >= end) {
+		error = 0;
+        goto err;
+    }
 	
     /*
 	 * If we need to split any vma, do it now to save pain later.

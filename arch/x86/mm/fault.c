@@ -1002,6 +1002,8 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	int write = error_code & PF_WRITE;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
 					(write ? FAULT_FLAG_WRITE : 0);
+    int original_enable_do_mmap_pgoff_hook = current->enable_do_mmap_pgoff_hook;
+    int original_enable_distributed_munmap = current->enable_distributed_munmap;
 
 	tsk = current;
 	mm = tsk->mm;
@@ -1110,6 +1112,9 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
         goto ret;
     }
 
+    current->enable_do_mmap_pgoff_hook = 0;
+    current->enable_distributed_munmap = 0;
+
 	/*
 	 * When running in the kernel we expect faults to occur only to
 	 * addresses in user space.  All other faults represent errors in
@@ -1216,6 +1221,9 @@ good_area:
 	up_read(&mm->mmap_sem);
 
 ret:
+    current->enable_do_mmap_pgoff_hook = original_enable_do_mmap_pgoff_hook;
+    current->enable_distributed_munmap = original_enable_distributed_munmap;
+
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
     process_server_release_heavy_lock();
 #else
