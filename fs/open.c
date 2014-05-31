@@ -423,21 +423,26 @@ SYSCALL_DEFINE1(chroot, const char __user *, filename)
 	struct path path;
 	int error;
 
+printk("%s: checkme %d\n", __func__, 1);
 	error = user_path_dir(filename, &path);
 	if (error)
 		goto out;
 
+printk("%s: checkme %d\n", __func__, 2);
 	error = inode_permission(path.dentry->d_inode, MAY_EXEC | MAY_CHDIR);
 	if (error)
 		goto dput_and_out;
 
+printk("%s: checkme %d\n", __func__, 3);
 	error = -EPERM;
 	if (!capable(CAP_SYS_CHROOT))
 		goto dput_and_out;
+printk("%s: checkme %d\n", __func__, 4);
 	error = security_path_chroot(&path);
 	if (error)
 		goto dput_and_out;
 
+printk("%s: checkme %d\n", __func__, 5);
 	set_fs_root(current->fs, &path);
 	error = 0;
 dput_and_out:

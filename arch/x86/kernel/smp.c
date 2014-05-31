@@ -119,6 +119,7 @@ static void native_smp_send_reschedule(int cpu)
 		WARN_ON(1);
 		return;
 	}
+//printk("%s!\n", __func__); //AB added it to check if IPI are working: they are
 	apic->send_IPI_mask(cpumask_of(cpu), RESCHEDULE_VECTOR);
 }
 

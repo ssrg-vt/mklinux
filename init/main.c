@@ -834,17 +834,22 @@ static noinline int init_post(void)
 #ifndef CONFIG_X86_MIC_EMULATION  /* skip to save time */
 	free_initmem();
 #endif
+printk("%s: I am here %d\n", __func__, 1);
 	mark_rodata_ro();
+printk("%s: I am here %d\n", __func__, 2);
 	system_state = SYSTEM_RUNNING;
 	numa_default_policy();
+printk("%s: I am here %d\n", __func__, 3);
 
 
 	current->signal->flags |= SIGNAL_UNKILLABLE;
 
 	if (ramdisk_execute_command) {
+printk("%s: I am here %d\n", __func__, 4);
 		run_init_process(ramdisk_execute_command);
 		printk(KERN_WARNING "Failed to execute %s\n",
 				ramdisk_execute_command);
+printk("%s: I am here %d\n", __func__, 5);
 	}
 
 	/*
@@ -853,14 +858,21 @@ static noinline int init_post(void)
 	 * The Bourne shell can be used instead of init if we are
 	 * trying to recover a really broken machine.
 	 */
+printk("%s: I am here %d\n", __func__, 6);
 	if (execute_command) {
+printk("%s: I am here %d\n", __func__, 7);
 		run_init_process(execute_command);
 		printk(KERN_WARNING "Failed to execute %s.  Attempting "
 					"defaults...\n", execute_command);
+printk("%s: I am here %d\n", __func__, 8);
 	}
+printk("%s: I am here %d\n", __func__, 9);
 	run_init_process("/sbin/init");
+printk("%s: I am here %d\n", __func__, 10);
 	run_init_process("/etc/init");
+printk("%s: I am here %d\n", __func__, 11);
 	run_init_process("/bin/init");
+printk("%s: I am here %d\n", __func__, 12);
 	run_init_process("/bin/sh");
 
 	panic("No init found.  Try passing init= option to kernel. "

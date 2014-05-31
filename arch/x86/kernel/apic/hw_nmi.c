@@ -35,6 +35,7 @@ static unsigned long backtrace_flag;
 void arch_trigger_all_cpu_backtrace(void)
 {
 	int i;
+	char buffer[128];
 
 	if (test_and_set_bit(0, &backtrace_flag))
 		/*
@@ -45,7 +46,7 @@ void arch_trigger_all_cpu_backtrace(void)
 
 	cpumask_copy(to_cpumask(backtrace_mask), cpu_online_mask);
 
-	printk(KERN_INFO "sending NMI to all CPUs:\n");
+	printk(KERN_ERR "sending NMI to all CPUs:\n");
 	apic->send_IPI_all(NMI_VECTOR);
 
 	/* Wait for up to 10 seconds for all CPUs to do the backtrace */
@@ -55,6 +56,8 @@ void arch_trigger_all_cpu_backtrace(void)
 		mdelay(1);
 	}
 
+cpumask_scnprintf(buffer, 128, to_cpumask(backtrace_mask));
+printk("%s: mask %s\n", __func__, buffer);
 	clear_bit(0, &backtrace_flag);
 	smp_mb__after_clear_bit();
 }
@@ -65,12 +68,12 @@ arch_trigger_all_cpu_backtrace_handler(unsigned int cmd, struct pt_regs *regs)
 	int cpu;
 
 	cpu = smp_processor_id();
-
+printk("%s: ehilaaa %d\n", __func__, cpu);
 	if (cpumask_test_cpu(cpu, to_cpumask(backtrace_mask))) {
 		static arch_spinlock_t lock = __ARCH_SPIN_LOCK_UNLOCKED;
 
 		arch_spin_lock(&lock);
-		printk(KERN_WARNING "NMI backtrace for cpu %d\n", cpu);
+		printk(KERN_ERR "NMI backtrace for cpu %d\n", cpu);
 		show_regs(regs);
 		arch_spin_unlock(&lock);
 		cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
@@ -82,6 +85,7 @@ arch_trigger_all_cpu_backtrace_handler(unsigned int cmd, struct pt_regs *regs)
 
 static int __init register_trigger_all_cpu_backtrace(void)
 {
+printk("%s: interrupt %d\n", __func__, NMI_LOCAL);
 	register_nmi_handler(NMI_LOCAL, arch_trigger_all_cpu_backtrace_handler,
 				0, "arch_bt");
 	return 0;

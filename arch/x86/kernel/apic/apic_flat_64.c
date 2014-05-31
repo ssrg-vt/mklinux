@@ -327,21 +327,26 @@ static void physflat_send_IPI_allbutself(int vector)
 	 * We can use APIC shorthand on MIC, way faster than looping.
 	 * For safety, keep using loops if NMI and offline CPUs. 
 	 */
-	if (vector != NMI_VECTOR || cpumask_equal(cpu_online_mask, cpu_present_mask))
+        if (vector != NMI_VECTOR || cpumask_equal(cpu_online_mask, cpu_present_mask))
+	//if (cpumask_equal(cpu_online_mask, cpu_present_mask))
 		default_send_IPI_allbutself_phys(vector);
 	else
 #endif
 	default_send_IPI_mask_allbutself_phys(cpu_online_mask, vector);
 }
 
+//char buffer[128];
 static void physflat_send_IPI_all(int vector)
 {
+//cpumask_scnprintf(buffer, 128, cpu_online_mask);
+//printk("%s: ehila vector %d %s\n", __func__, vector, buffer);
 #ifdef CONFIG_X86_EARLYMIC
 	/*
 	 * We can use APIC shorthand on MIC, way faster than looping.
 	 * For safety, keep using loops if NMI and offline CPUs. 
 	 */
 	if (vector != NMI_VECTOR || cpumask_equal(cpu_online_mask, cpu_present_mask))
+	//if ( cpumask_equal(cpu_online_mask, cpu_present_mask) )
 		default_send_IPI_all_phys(vector);
 	else
 #endif

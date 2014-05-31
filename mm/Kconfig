@@ -363,7 +363,7 @@ config PRECOMPUTE_WAITQ_HEAD
 
 config PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
 	bool
-	default y
+	default n
 	help
 	  Uses higher order page allocation to populate the radix tree for a file.
 	  The routine falls back to a single page allocation if the higher order

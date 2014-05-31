@@ -64,6 +64,7 @@ void default_send_IPI_mask_allbutself_phys(const struct cpumask *mask,
  */
 void default_send_IPI_all_phys(int vector)
 {
+printk("%s: called!\n", __func__);
 	unsigned long flags;
 
 	local_irq_save(flags);

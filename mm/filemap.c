@@ -4008,7 +4008,7 @@ int try_to_release_page(struct page *page, gfp_t gfp_mask)
 
 EXPORT_SYMBOL(try_to_release_page);
 
-
+#ifdef CONFIG_PAGE_CACHE_HIGH_ORDER_PAGE_ALLOC
 /*
  * split read and write optimizations into individually controllable command
  * line options.
@@ -4033,3 +4033,4 @@ static int __init vfs_write_optimization_setup(char *str)
 	return 0;
 }
 __setup("vfs_write_optimization=", vfs_write_optimization_setup);
+#endif

@@ -1069,11 +1069,13 @@ static int shmem_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		kernel_fpu_begin();
 #endif	
 	error = shmem_getpage(inode, vmf->pgoff, &vmf->page, SGP_CACHE, &ret);
+	
 #ifdef CONFIG_VECTOR_MEMCPY
 	/* Restore user fpu state */
 	if (vfs_opt_write_enabled(mapping->backing_dev_info))
 		kernel_fpu_end();
 #endif	
+		
 	if (error)
 		return ((error == -ENOMEM) ? VM_FAULT_OOM : VM_FAULT_SIGBUS);
 
@@ -1610,7 +1612,6 @@ shmem_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 static int shmem_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 {
 	int error;
-	int add_to_radix_tree = 1, left = 1;
 
 	if ((error = shmem_mknod(dir, dentry, mode | S_IFDIR, 0)))
 		return error;
@@ -2478,6 +2479,7 @@ static const struct vm_operations_struct shmem_vm_ops = {
 static struct dentry *shmem_mount(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data)
 {
+printk("%s: mount_nodev\n", __func__);
 	return mount_nodev(fs_type, flags, data, shmem_fill_super);
 }
 
@@ -2549,6 +2551,8 @@ int __init shmem_init(void)
 {
 	BUG_ON(register_filesystem(&shmem_fs_type) != 0);
 
+printk("%s: kern_mount\n", __func__);
+        struct irq_data *idata = irq_get_irq_data(irq);
 	shm_mnt = kern_mount(&shmem_fs_type);
 	BUG_ON(IS_ERR(shm_mnt));
 

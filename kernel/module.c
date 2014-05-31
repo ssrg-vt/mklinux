@@ -2833,8 +2833,8 @@ static struct module *load_module(void __user *umod,
 	struct module *mod;
 	long err;
 
-	DEBUGP("load_module: umod=%p, len=%lu, uargs=%p\n",
-	       umod, len, uargs);
+	//DEBUGP("load_module: umod=%p, len=%lu, uargs=%p\n", umod, len, uargs);
+printk(KERN_ERR"load_module: umod=%p, len=%lu, uargs=%p\n", umod, len, uargs);
 
 	/* Copy in the blobs from userspace, check they are vaguely sane. */
 	err = copy_and_check(&info, umod, len, uargs);
@@ -2848,7 +2848,7 @@ static struct module *load_module(void __user *umod,
 		goto free_copy;
 	}
 
-	printk("Module %s loaded at 0x%p\n", mod->name, mod->module_core);
+	printk(KERN_ERR"Module %s loaded at 0x%p\n", mod->name, mod->module_core);
 
 	/* Now module is in final location, initialize linked lists, etc. */
 	err = module_unload_init(mod);
@@ -2977,14 +2977,17 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 	struct module *mod;
 	int ret = 0;
 
+printk("%s: I am alive %d\n", __func__, 1);
 	/* Must have permission */
 	if (!capable(CAP_SYS_MODULE) || modules_disabled)
 		return -EPERM;
 
+printk("%s: I am alive %d\n", __func__, 2);
 	/* Do all the hard work */
 	mod = load_module(umod, len, uargs);
 	if (IS_ERR(mod))
 		return PTR_ERR(mod);
+printk("%s: I am alive %d\n", __func__, 3);
 
 	blocking_notifier_call_chain(&module_notify_list,
 			MODULE_STATE_COMING, mod);
