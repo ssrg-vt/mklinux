@@ -195,6 +195,7 @@ static void __init smp_intr_init(void)
 	 * IPI, driven by wakeup.
 	 */
 	alloc_intr_gate(RESCHEDULE_VECTOR, reschedule_interrupt);
+alloc_intr_gate(BACKTRACE_VECTOR, backtrace_interrupt);
 
 	/* IPIs for invalidation */
 #define ALLOC_INVTLB_VEC(NR) \

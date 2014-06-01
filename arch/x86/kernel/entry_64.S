@@ -1027,6 +1027,8 @@ apicinterrupt CALL_FUNCTION_VECTOR \
 	call_function_interrupt smp_call_function_interrupt
 apicinterrupt RESCHEDULE_VECTOR \
 	reschedule_interrupt smp_reschedule_interrupt
+apicinterrupt BACKTRACE_VECTOR \
+        backtrace_interrupt smp_backtrace_interrupt
 #endif
 
 apicinterrupt ERROR_APIC_VECTOR \

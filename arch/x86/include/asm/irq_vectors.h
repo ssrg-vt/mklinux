@@ -137,6 +137,7 @@
 /* Xen vector callback to receive events in a HVM domain */
 #define XEN_HVM_EVTCHN_CALLBACK		0xf3
 
+#define BACKTRACE_VECTOR		0xf2
 /*
  * KDB_VECTOR will take over vector 0xfe when it is needed, as in theory
  * it should not be used anyway.
