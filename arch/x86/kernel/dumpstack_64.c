@@ -117,6 +117,7 @@ static inline int ___valid_stack_ptr(struct thread_info *tinfo,
         return p > t && p < t + THREAD_SIZE - size;
 }
 
+#define MAX_WALK_UNSAFE 64
 unsigned long
 walk_stack_unsafe(struct thread_info *tinfo,
                 unsigned long *stack, unsigned long bp,
@@ -124,7 +125,7 @@ walk_stack_unsafe(struct thread_info *tinfo,
                 unsigned long *end, int *graph)
 {
         struct stack_frame *frame = (struct stack_frame *)bp;
-int max_walk =64;
+	int max_walk = MAX_WALK_UNSAFE;
 
         while (___valid_stack_ptr(tinfo, stack, sizeof(*stack), end) || max_walk) {
                 unsigned long addr;
@@ -141,9 +142,9 @@ int max_walk =64;
 //                        print_ftrace_graph_addr(addr, data, ops, tinfo, graph);
                 }
                 stack++;
-		max_walk = (max_walk) ? --max_walk : 0;
+		if (max_walk > 0)
+	 		max_walk--;
         }
-//printk("end %s\n", __func__);
         return bp;
 }
 

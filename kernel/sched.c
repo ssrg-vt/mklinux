@@ -2840,12 +2840,13 @@ static void ttwu_queue(struct task_struct *p, int cpu)
  * Returns %true if @p was woken up, %false if it was already running
  * or @state didn't match @p's state.
  */
-static char buffer[128];
+#define DEBUG_RATE 3000000
+//static char debug_buffer[128];
 static int
 try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 {
 	unsigned long flags;
-	int cpu, success = 0;
+	int cpu, success = 0, rep = 0;
 
 	smp_wmb();
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
@@ -2863,7 +2864,6 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 * If the owning (remote) cpu is still in the middle of schedule() with
 	 * this task as prev, wait until its done referencing the task.
 	 */
-int i=0;
 	while (p->on_cpu) {
 #ifdef __ARCH_WANT_INTERRUPTS_ON_CTXSW
 #error "ARCH WANTs INTERRUPTS on CTXSW are you sure?"
@@ -2877,12 +2877,12 @@ int i=0;
 		if (ttwu_activate_remote(p, wake_flags))
 			goto stat;
 #else
-		cpu_relax(); i++;
-		if ( !(i%3000000) ) {
-			cpumask_scnprintf(buffer, 128, &(p->cpus_allowed));
-			printk("%s: (%d) cpu %d, task %p run %d(%ld) %s %s\n",
-				__func__, i, cpu, p, task_running(0, p), p->state, p->comm, buffer);
-			// it ->state is 0 state is running
+		cpu_relax(); rep++;
+		if ( !(rep % DEBUG_RATE) ) {
+			printk("%s: (%d) cpu %d, task %p, running %d, state %ld, %s\n",
+				__func__, rep, cpu, p, task_running(0, p), p->state, p->comm);
+//                      cpumask_scnprintf(debug_buffer, 128, &(p->cpus_allowed));
+//			printk("affinity %s\n", debug_buffer);
 		}
 #endif
 	}
