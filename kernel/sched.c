@@ -2840,6 +2840,7 @@ static void ttwu_queue(struct task_struct *p, int cpu)
  * Returns %true if @p was woken up, %false if it was already running
  * or @state didn't match @p's state.
  */
+static char buffer[128];
 static int
 try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 {
@@ -2862,8 +2863,10 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 * If the owning (remote) cpu is still in the middle of schedule() with
 	 * this task as prev, wait until its done referencing the task.
 	 */
+int i=0;
 	while (p->on_cpu) {
 #ifdef __ARCH_WANT_INTERRUPTS_ON_CTXSW
+#error "ARCH WANTs INTERRUPTS on CTXSW are you sure?"
 		/*
 		 * In case the architecture enables interrupts in
 		 * context_switch(), we cannot busy wait, since that
@@ -2874,7 +2877,13 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		if (ttwu_activate_remote(p, wake_flags))
 			goto stat;
 #else
-		cpu_relax();
+		cpu_relax(); i++;
+		if ( !(i%3000000) ) {
+			cpumask_scnprintf(buffer, 128, &(p->cpus_allowed));
+			printk("%s: (%d) cpu %d, task %p run %d(%ld) %s %s\n",
+				__func__, i, cpu, p, task_running(0, p), p->state, p->comm, buffer);
+			// it ->state is 0 state is running
+		}
 #endif
 	}
 	/*
@@ -2951,8 +2960,9 @@ out:
  */
 int wake_up_process(struct task_struct *p)
 {
-	WARN_ON(task_is_stopped_or_traced(p));
-	return try_to_wake_up(p, TASK_NORMAL, 0);
+	WARN_ON(task_is_stopped_or_traced(p)); 
+	return try_to_wake_up(p, TASK_NORMAL, 0); //AB: having TASK_ALL, we will also wake up traced and stopped tasks
+//	return try_to_wake_up(p, TASK_ALL, 0); //AB: original implementation of wake_up_process(..) both gives error (deadlock)
 }
 EXPORT_SYMBOL(wake_up_process);
 
@@ -9911,6 +9921,6 @@ kdb_runqueue(unsigned long cpu, kdb_printf_t xxx_printf)
 	kdb_prio("active", &rq->rt.active, xxx_printf, (unsigned int)cpu);
 }
 EXPORT_SYMBOL(kdb_runqueue);
-
+#error "are you sure KDB is on?!"
 #endif	/* CONFIG_KDB */
 

@@ -28,6 +28,7 @@ u64 hw_nmi_get_sample_period(int watchdog_thresh)
 #ifdef arch_trigger_all_cpu_backtrace
 /* For reliability, we're prepared to waste bits here. */
 static DECLARE_BITMAP(backtrace_mask, NR_CPUS) __read_mostly;
+static DECLARE_BITMAP(backtrace_mask_hints, NR_CPUS) __read_mostly;
 
 /* "in progress" flag of arch_trigger_all_cpu_backtrace */
 static unsigned long backtrace_flag;
@@ -47,7 +48,8 @@ void arch_trigger_all_cpu_backtrace(void)
 	cpumask_copy(to_cpumask(backtrace_mask), cpu_online_mask);
 
 	printk(KERN_ERR "sending NMI to all CPUs:\n");
-	apic->send_IPI_all(NMI_VECTOR);
+//	apic->send_IPI_all(NMI_VECTOR);
+	apic->send_IPI_mask(to_cpumask(backtrace_mask),NMI_VECTOR); //same as arch/x86/kdb/kdba_support.c:kdba_wait_for_cpus(..)
 
 	/* Wait for up to 10 seconds for all CPUs to do the backtrace */
 	for (i = 0; i < 10 * 1000; i++) {
@@ -59,6 +61,7 @@ void arch_trigger_all_cpu_backtrace(void)
 cpumask_scnprintf(buffer, 128, to_cpumask(backtrace_mask));
 printk("%s: mask %s\n", __func__, buffer);
 	clear_bit(0, &backtrace_flag);
+cpumask_clear(to_cpumask(backtrace_mask_hints));
 	smp_mb__after_clear_bit();
 }
 
@@ -68,19 +71,24 @@ arch_trigger_all_cpu_backtrace_handler(unsigned int cmd, struct pt_regs *regs)
 	int cpu;
 
 	cpu = smp_processor_id();
-printk("%s: ehilaaa %d\n", __func__, cpu);
 	if (cpumask_test_cpu(cpu, to_cpumask(backtrace_mask))) {
-		static arch_spinlock_t lock = __ARCH_SPIN_LOCK_UNLOCKED;
-
-		arch_spin_lock(&lock);
-		printk(KERN_ERR "NMI backtrace for cpu %d\n", cpu);
-		show_regs(regs);
-		arch_spin_unlock(&lock);
+		if ( cpumask_test_cpu(cpu, to_cpumask(backtrace_mask_hints)) ) {
+			static arch_spinlock_t lock = __ARCH_SPIN_LOCK_UNLOCKED;
+			arch_spin_lock(&lock);
+			printk(KERN_ERR "NMI backtrace for cpu %d\n", cpu);
+			show_regs(regs);
+			arch_spin_unlock(&lock);
+		}
 		cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
 		return NMI_HANDLED;
 	}
 
 	return NMI_DONE;
+}
+
+void arch_trigger_backtrace_hints(struct cpumask * cpum)
+{
+  cpumask_copy(to_cpumask(backtrace_mask_hints), cpum);
 }
 
 static int __init register_trigger_all_cpu_backtrace(void)
