@@ -89,7 +89,6 @@ static int notrace __kprobes nmi_handle(unsigned int type, struct pt_regs *regs,
 	struct nmi_desc *desc = nmi_to_desc(type);
 	struct nmiaction *a;
 	int handled=0;
-printk("%s: nmi type %d\n", __func__, type );
 	rcu_read_lock();
 
 	/*
@@ -166,9 +165,6 @@ int register_nmi_handler(unsigned int type, nmi_handler_t handler,
         struct nmiaction *action;
         int retval = -ENOMEM;
 
-printk("%s: type %d, handler %p, flags %lx, name %s\n",
-	__func__, type, handler, nmiflags, devname);
-
 	if (!handler)
 		return -EINVAL;
 
@@ -194,7 +190,6 @@ fail_setup_nmi:
 fail_action_name:
 	kfree(action);
 fail_action:	
-printk("%s: failed to register\n", __func__);
 	return retval;
 }
 EXPORT_SYMBOL_GPL(register_nmi_handler);
@@ -344,7 +339,6 @@ static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 	int cpu;
 
  	cpu = smp_processor_id();
-printk("%s: called!", __func__);
 #ifdef CONFIG_X86_EARLYMIC
 	/*
 	 * If RAS hook in use then let it have first pass on the NMI.
@@ -472,7 +466,7 @@ do_nmi(struct pt_regs *regs, long error_code)
 	nmi_enter();
 
 	inc_irq_stat(__nmi_count);
-printk("%s: here\n", __func__);
+
 	if (!ignore_nmis)
 		default_do_nmi(regs);
 

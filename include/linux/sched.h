@@ -2593,11 +2593,11 @@ extern void signal_wake_up_state(struct task_struct *t, unsigned int state);
 
 static inline void signal_wake_up(struct task_struct *t, bool resume)
 {
-	signal_wake_up_state(t, resume ? TASK_WAKEKILL : 0);
+	signal_wake_up_state(t, resume ? (TASK_WAKEKILL | TASK_INTERRUPTIBLE) : 0);
 }
 static inline void ptrace_signal_wake_up(struct task_struct *t, bool resume)
 {
-	signal_wake_up_state(t, resume ? __TASK_TRACED : 0);
+	signal_wake_up_state(t, resume ? (__TASK_TRACED | TASK_INTERRUPTIBLE) : 0);
 }
 
 /*

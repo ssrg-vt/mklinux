@@ -45,13 +45,11 @@ void arch_trigger_all_cpu_backtrace(void)
 		 */
 		return;
 
-//if (cpumask_empty(to_cpumask(backtrace_mask_hints)))
 	cpumask_copy(to_cpumask(backtrace_mask), cpu_online_mask);
-//else
-	//cpumask_copy(to_cpumask(backtrace_mask), to_cpumask(backtrace_mask_hints));
 
 	printk(KERN_ERR "sending NMI to all CPUs:\n");
-	apic->send_IPI_all(BACKTRACE_VECTOR);
+	/* same as arch/x86/kdb/kdba_support.c:kdba_wait_for_cpus(..) */
+	apic->send_IPI_mask(to_cpumask(backtrace_mask),NMI_VECTOR); //apic->send_IPI_all(NMI_VECTOR);
 
 	/* Wait for up to 10 seconds for all CPUs to do the backtrace */
 	for (i = 0; i < 10 * 1000; i++) {
@@ -60,9 +58,10 @@ void arch_trigger_all_cpu_backtrace(void)
 		mdelay(1);
 	}
 
-cpumask_scnprintf(buffer, 128, to_cpumask(backtrace_mask));
-printk("%s: mask %s\n", __func__, buffer);
-cpumask_clear(to_cpumask(backtrace_mask_hints));
+	cpumask_scnprintf(buffer, 128, to_cpumask(backtrace_mask));
+	printk("%s: mask %s\n", __func__, buffer);
+
+	cpumask_clear(to_cpumask(backtrace_mask_hints));
 	clear_bit(0, &backtrace_flag);
 	smp_mb__after_clear_bit();
 }
@@ -73,30 +72,23 @@ arch_trigger_all_cpu_backtrace_handler(unsigned int cmd, struct pt_regs *regs)
 	int cpu;
 
 	cpu = smp_processor_id();
-	if (cpumask_test_cpu(cpu, to_cpumask(backtrace_mask))
-&& cpumask_test_cpu(cpu, to_cpumask(backtrace_mask_hints))
-) {
-		static arch_spinlock_t lock = __ARCH_SPIN_LOCK_UNLOCKED;
-printk("%s: ehilaaa %d\n", __func__, cpu);
-		arch_spin_lock(&lock);
-		printk(KERN_ERR "NMI backtrace for cpu %d\n", cpu);
-		show_regs(regs);
-		arch_spin_unlock(&lock);
+	if (cpumask_test_cpu(cpu, to_cpumask(backtrace_mask))) {
+		if ( cpumask_test_cpu(cpu, to_cpumask(backtrace_mask_hints)) ) {
+			static arch_spinlock_t lock = __ARCH_SPIN_LOCK_UNLOCKED;
+			arch_spin_lock(&lock);
+			printk(KERN_ERR "NMI backtrace for cpu %d\n", cpu);
+			show_regs(regs);
+			arch_spin_unlock(&lock);
+		}
 		cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
 		return NMI_HANDLED;
 	}
-cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
 	return NMI_DONE;
 }
 
-void smp_backtrace_interrupt(struct pt_regs * regs)
+void arch_trigger_backtrace_hints(struct cpumask * cpum)
 {
-  arch_trigger_all_cpu_backtrace_handler(0, regs);
-}
-
-void smp_backtrace_interrupt_hints(struct cpumask *src)
-{ 
-  cpumask_copy(to_cpumask(backtrace_mask_hints), src);
+  cpumask_copy(to_cpumask(backtrace_mask_hints), cpum);
 }
 
 static int __init register_trigger_all_cpu_backtrace(void)

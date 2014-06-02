@@ -104,6 +104,49 @@ in_irq_stack(unsigned long *stack, unsigned long *irq_stack,
 	return (stack >= irq_stack && stack < irq_stack_end);
 }
 
+static inline int ___valid_stack_ptr(struct thread_info *tinfo,
+                        void *p, unsigned int size, void *end)
+{
+        void *t = tinfo;
+        if (end) {
+                if (p < end && p >= (end-THREAD_SIZE))
+                        return 1;
+                else
+                        return 0;
+        }
+        return p > t && p < t + THREAD_SIZE - size;
+}
+
+unsigned long
+walk_stack_unsafe(struct thread_info *tinfo,
+                unsigned long *stack, unsigned long bp,
+                const struct stacktrace_ops *ops, void *data,
+                unsigned long *end, int *graph)
+{
+        struct stack_frame *frame = (struct stack_frame *)bp;
+int max_walk =64;
+
+        while (___valid_stack_ptr(tinfo, stack, sizeof(*stack), end) || max_walk) {
+                unsigned long addr;
+
+                addr = *stack;
+                if (__kernel_text_address(addr)) {
+                        if ((unsigned long) stack == bp + sizeof(long)) {
+                                ops->address(data, addr, 1);
+                                frame = frame->next_frame;
+                                bp = (unsigned long) frame;
+                        } else {
+                                ops->address(data, addr, 0);
+                        }
+//                        print_ftrace_graph_addr(addr, data, ops, tinfo, graph);
+                }
+                stack++;
+		max_walk = (max_walk) ? --max_walk : 0;
+        }
+//printk("end %s\n", __func__);
+        return bp;
+}
+
 /*
  * x86-64 can have up to three kernel stacks:
  * process stack
@@ -121,11 +164,12 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 	unsigned used = 0;
 	struct thread_info *tinfo;
 	int graph = 0;
-	unsigned long dummy;
+	unsigned long dummy, bpret;
 
 	if (!task)
 		task = current;
 
+//printk("itask: %p current: %p regs: %p sp %lx stack %p\n", task, current, regs, (regs) ? regs->sp : 0, stack);
 	if (!stack) {
 		if (regs)
 			stack = (unsigned long *)regs->sp;
@@ -137,6 +181,7 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 
 	if (!bp)
 		bp = stack_frame(task, regs);
+
 	/*
 	 * Print function call entries in all stacks, starting at the
 	 * current stack address. If the stacks consist of nested
@@ -148,9 +193,8 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 		unsigned long *estack_end;
 		estack_end = in_exception_stack(cpu, (unsigned long)stack,
 						&used, &id);
-
-		if (estack_end) {
-			if (ops->stack(data, id) < 0)
+		if (estack_end) 
+			if (ops->stack(data, id) < 0) {
 				break;
 
 			bp = ops->walk_stack(tinfo, stack, bp, ops,
@@ -168,9 +212,8 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 			unsigned long *irq_stack;
 			irq_stack = irq_stack_end -
 				(IRQ_STACK_SIZE - 64) / sizeof(*irq_stack);
-
 			if (in_irq_stack(stack, irq_stack, irq_stack_end)) {
-				if (ops->stack(data, "IRQ") < 0)
+				if (ops->stack(data, "IRQ") < 0) 
 					break;
 				bp = ops->walk_stack(tinfo, stack, bp,
 					ops, data, irq_stack_end, &graph);
@@ -191,7 +234,12 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 	/*
 	 * This handles the process stack:
 	 */
-	bp = ops->walk_stack(tinfo, stack, bp, ops, data, NULL, &graph);
+	bpret = ops->walk_stack(tinfo, stack, bp, ops, data, NULL, &graph);
+	if (bpret == bp) {
+		ops->stack(data, "unsafe");
+		walk_stack_unsafe(tinfo, stack, bp, ops, data, NULL, &graph);
+	}
+	bp = bpret;
 	put_cpu();
 }
 EXPORT_SYMBOL(dump_trace);
