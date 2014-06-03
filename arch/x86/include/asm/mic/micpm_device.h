@@ -59,12 +59,12 @@
 enum notifier_type {BLOCKING,ATOMIC};
 
 /*These are for atomic event notifications */
-void micpm_atomic_notifier_register(struct notifier_block *n);
-void micpm_atomic_notifier_unregister(struct notifier_block *n);
+int micpm_atomic_notifier_register(struct notifier_block *n);
+int micpm_atomic_notifier_unregister(struct notifier_block *n);
 
 /*These are for blocking event notifications */
-void micpm_notifier_register(struct notifier_block *n);
-void micpm_notifier_unregister(struct notifier_block *n);
+int micpm_notifier_register(struct notifier_block *n);
+int micpm_notifier_unregister(struct notifier_block *n);
 
 /*These are for pm suspend/resume notofications */
 void micpm_device_register(struct notifier_block *n);

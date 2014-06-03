@@ -2977,17 +2977,14 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 	struct module *mod;
 	int ret = 0;
 
-printk("%s: I am alive %d\n", __func__, 1);
 	/* Must have permission */
 	if (!capable(CAP_SYS_MODULE) || modules_disabled)
 		return -EPERM;
 
-printk("%s: I am alive %d\n", __func__, 2);
 	/* Do all the hard work */
 	mod = load_module(umod, len, uargs);
 	if (IS_ERR(mod))
 		return PTR_ERR(mod);
-printk("%s: I am alive %d\n", __func__, 3);
 
 	blocking_notifier_call_chain(&module_notify_list,
 			MODULE_STATE_COMING, mod);

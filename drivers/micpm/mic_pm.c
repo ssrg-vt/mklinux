@@ -414,7 +414,7 @@ static int __init mic_pm_init(void)
 		printk(KERN_DEBUG PREFIX"Failed to init pm events\n");
 	}
 	
-	#ifdef	CONFIG_MIC_CPUFREQ
+#ifdef	CONFIG_MIC_CPUFREQ
 	if(mic_cpufreq_driver) {
 		result = mic_cpufreq_init();
 		if(result) {
@@ -423,11 +423,11 @@ static int __init mic_pm_init(void)
 		}
 		cpufreq_inited=1;
 	}
-	#endif	
+#endif	
 		
 	pmscif=NULL;
 	
-	#ifdef	CONFIG_MIC_CPUIDLE
+#ifdef	CONFIG_MIC_CPUIDLE
 	if(mic_cpuidle_cc6 || mic_cpuidle_pc3) {	 
 		result = mic_init_menu(mic_cpuidle_pc3);
 		if(result) {
@@ -440,9 +440,8 @@ static int __init mic_pm_init(void)
 			mic_exit_menu();
 			return result;
 		}
-		cpuidle_inited=1;
-		
-	#endif
+		cpuidle_inited=1;		
+#endif
 	}
 	micpm_global_kobject = kobject_create_and_add("micpm",
 					&cpu_sysdev_class.kset.kobj);
@@ -452,19 +451,19 @@ static int __init mic_pm_init(void)
 	return result;
 }	    
   
-static void __init mic_pm_exit(void)
+static void __exit mic_pm_exit(void)
 {
 
-	#ifdef	CONFIG_MIC_CPUIDLE
+#ifdef	CONFIG_MIC_CPUIDLE
 	if (cpuidle_inited) {
 		mic_exit_menu();
 		mic_cpuidle_exit();
 	}
-	#endif
-	#ifdef	CONFIG_MIC_CPUFREQ
+#endif
+#ifdef	CONFIG_MIC_CPUFREQ
 	if(cpufreq_inited)
 		mic_cpufreq_exit();
-	#endif
+#endif
 	mic_pm_event_exit();
 	micpm_proc_exit();	
 }	 	  

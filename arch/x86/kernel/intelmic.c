@@ -377,7 +377,7 @@ void __init mic_sbox_md_init(void)
 }
 
 #ifdef	CONFIG_MK1OM
-static void mic_timer_init_common(void)
+static void __init mic_timer_init_common(void)
 {
 #ifndef CONFIG_X86_MIC_EMULATION
 	if (mic_etc_enabled)

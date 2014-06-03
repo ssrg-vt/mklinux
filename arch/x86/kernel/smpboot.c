@@ -1307,7 +1307,7 @@ do_rest:
 	stack_start = smp_stack_pointer_map[apicid];
 
 	/* start_ip had better be page-aligned! */
-	configure_trampolines();
+//	configure_trampolines();
 	start_ip = trampoline_address();
 
 	/* So we see what's up */

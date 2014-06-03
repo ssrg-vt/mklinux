@@ -34,6 +34,7 @@
  * of the License.
  */
 
+#include <linux/export.h>
 #include <linux/kernel.h>
 #include <linux/cpuidle.h>
 #include <linux/pm_qos_params.h>
@@ -155,27 +156,27 @@ static void toggle_tmu_reg(int regoffset, uint32_t mask, uint32_t val);
 static ATOMIC_NOTIFIER_HEAD(micpm_atomic_event_notifier);
 static BLOCKING_NOTIFIER_HEAD(micpm_event_notifier);
 
-void micpm_atomic_notifier_register(struct notifier_block *n)
+int micpm_atomic_notifier_register(struct notifier_block *n)
 {
-	atomic_notifier_chain_register(&micpm_atomic_event_notifier, n);
+	return atomic_notifier_chain_register(&micpm_atomic_event_notifier, n);
 }
-EXPORT_SYMBOL(micpm_atomic_notifier_register);
+EXPORT_SYMBOL_GPL(micpm_atomic_notifier_register);
 
-void micpm_atomic_notifier_unregister(struct notifier_block *n)
+int micpm_atomic_notifier_unregister(struct notifier_block *n)
 {
-	atomic_notifier_chain_unregister(&micpm_atomic_event_notifier, n);
+	return atomic_notifier_chain_unregister(&micpm_atomic_event_notifier, n);
 }
 EXPORT_SYMBOL_GPL(micpm_atomic_notifier_unregister);
 
-void micpm_notifier_register(struct notifier_block *n)
+int micpm_notifier_register(struct notifier_block *n)
 {
-	blocking_notifier_chain_register(&micpm_event_notifier, n);
+	return blocking_notifier_chain_register(&micpm_event_notifier, n);
 }
-EXPORT_SYMBOL(micpm_notifier_register);
+EXPORT_SYMBOL_GPL(micpm_notifier_register);
 
-void micpm_notifier_unregister(struct notifier_block *n)
+int micpm_notifier_unregister(struct notifier_block *n)
 {
-	blocking_notifier_chain_unregister(&micpm_event_notifier, n);
+	return blocking_notifier_chain_unregister(&micpm_event_notifier, n);
 }
 EXPORT_SYMBOL_GPL(micpm_notifier_unregister);
 
