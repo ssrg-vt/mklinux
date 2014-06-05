@@ -262,8 +262,11 @@ int do_mprotect(struct task_struct* task, struct mm_struct* mm, unsigned long st
 
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
     if(do_remote) {
+        //printk("%s: doing lock\n",__func__);
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_acquire_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_acquire_distributed_mm_lock();
 #else
         process_server_acquire_page_lock_range(start,len);
 #endif
@@ -356,6 +359,8 @@ out:
     if(do_remote) {
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_release_distributed_mm_lock();
 #else
         process_server_release_page_lock_range(start,len);
 #endif

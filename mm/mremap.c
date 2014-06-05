@@ -446,6 +446,8 @@ unsigned long do_mremap(unsigned long addr,
     up_write(&mm->mmap_sem);
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
     process_server_acquire_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+    process_server_acquire_distributed_mm_lock();
 #else 
     {
     unsigned long old_start = addr;
@@ -589,6 +591,8 @@ out:
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
     process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+    process_server_release_distributed_mm_lock();
 #else
     {
     unsigned long old_start = addr;

@@ -1093,8 +1093,8 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	}
 
     vma = find_vma(mm, address);
-#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
-    process_server_acquire_heavy_lock();
+#if defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+    process_server_acquire_distributed_mm_lock();
 #else
     process_server_acquire_page_lock(address);
 #endif
@@ -1224,8 +1224,8 @@ ret:
     current->enable_do_mmap_pgoff_hook = original_enable_do_mmap_pgoff_hook;
     current->enable_distributed_munmap = original_enable_distributed_munmap;
 
-#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
-    process_server_release_heavy_lock();
+#if defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+    process_server_release_distributed_mm_lock();
 #else
     process_server_release_page_lock(address);
 #endif

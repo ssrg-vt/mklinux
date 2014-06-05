@@ -997,6 +997,8 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
             up_write(&mm->mmap_sem);
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
             process_server_acquire_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+            process_server_acquire_distributed_mm_lock();
 #else
             process_server_acquire_page_lock_range(addr,len);
 #endif
@@ -1013,6 +1015,8 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 #ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
                 process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+                process_server_release_distributed_mm_lock();
 #else
                 process_server_release_page_lock_range(addr,len);
 #endif
@@ -1029,6 +1033,8 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
         if(range_locked && current->enable_do_mmap_pgoff_hook) {
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
             process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+            process_server_release_distributed_mm_lock();
 #else  
             process_server_release_page_lock_range(addr,len);
 #endif
@@ -1042,6 +1048,8 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
         up_write(&mm->mmap_sem);
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_acquire_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_acquire_distributed_mm_lock();
 #else
         process_server_acquire_page_lock_range(addr,len);
 #endif
@@ -1172,6 +1180,8 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
     if(current->enable_do_mmap_pgoff_hook) {
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_release_distributed_mm_lock();
 #else
         process_server_release_page_lock_range(addr,len);
 #endif
@@ -1187,6 +1197,8 @@ err:
     if(current->enable_do_mmap_pgoff_hook) {
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_release_distributed_mm_lock();
 #else
         process_server_release_page_lock_range(addr,len);
 #endif
@@ -1194,6 +1206,7 @@ err:
 #endif
 
     return error;
+
 }
 EXPORT_SYMBOL(do_mmap_pgoff);
 
@@ -2159,6 +2172,8 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
         up_write(&mm->mmap_sem);
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_acquire_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_acquire_distributed_mm_lock();
 #else
         process_server_acquire_page_lock_range(start,len);
 #endif
@@ -2254,6 +2269,8 @@ err:
     if(current->enable_distributed_munmap) {
 #ifdef PROCESS_SERVER_USE_HEAVY_LOCK
         process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_release_distributed_mm_lock();
 #else
         process_server_release_page_lock_range(start,len);
 #endif

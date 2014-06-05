@@ -29,8 +29,15 @@
 #define PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
 //#undef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
 
+//#define PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK
+//#undef PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK
+
 #define PROCESS_SERVER_USE_HEAVY_LOCK
 //#undef PROCESS_SERVER_USE_HEAVY_LOCK
+
+#if defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK) && defined(PROCESS_SERVER_USE_HEAVY_LOCK)
+#error cannot have both PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK and PROCESS_SERVER_USE_HEAVY_LOCK
+#endif
 
 /*
  * Migration hook.
@@ -72,8 +79,10 @@ unsigned long process_server_do_mmap_pgoff(struct file *file, unsigned long addr
 int process_server_acquire_page_lock(unsigned long address);
 int process_server_acquire_page_lock_range(unsigned long address, size_t sz);
 int process_server_acquire_heavy_lock(void);
+int process_server_acquire_distributed_mm_lock(void);
 void process_server_release_page_lock(unsigned long address);
 void process_server_release_page_lock_range(unsigned long address, size_t sz);
 void process_server_release_heavy_lock(void);
+void process_server_release_distributed_mm_lock(void);
 
 #endif // _PROCESS_SERVER_H
