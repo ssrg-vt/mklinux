@@ -350,6 +350,7 @@ void __init mic_smpt_init(void)
 #else
 void __init mic_smpt_init(void)
 {
+#if 0
         uint32_t *smpt_offset;
         uint32_t smpt_reg_val;
         int i;
@@ -363,6 +364,7 @@ void __init mic_smpt_init(void)
                 smpt_reg_val = readl(&smpt_offset[i]);
 		printk("SMPT %i val %x\n", i, smpt_reg_val);
         }
+#endif
 }
 #endif
 

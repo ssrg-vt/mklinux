@@ -2479,7 +2479,6 @@ static const struct vm_operations_struct shmem_vm_ops = {
 static struct dentry *shmem_mount(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data)
 {
-printk("%s: mount_nodev\n", __func__);
 	return mount_nodev(fs_type, flags, data, shmem_fill_super);
 }
 
