@@ -350,6 +350,19 @@ void __init mic_smpt_init(void)
 #else
 void __init mic_smpt_init(void)
 {
+        uint32_t *smpt_offset;
+        uint32_t smpt_reg_val;
+        int i;
+
+        if(!mic_sbox_mmio_va)
+                mic_sbox_md_init();
+
+        smpt_offset = mic_sbox_mmio_va + SBOX_SMPT00;
+
+        for (i = 0; i < NUM_SMPT_ENTRIES_IN_USE; i++) {
+                smpt_reg_val = readl(&smpt_offset[i]);
+		printk("SMPT %i val %x\n", i, smpt_reg_val);
+        }
 }
 #endif
 
@@ -373,6 +386,7 @@ void __init mic_sbox_md_init(void)
 		mic_sbox_mmio_va = ioremap(MIC_SBOX_BASE, MIC_SBOX_MMIO_SIZE);
 		BUG_ON(!mic_sbox_mmio_va);
 	}
+printk("%s: mic_sbox_mmio_va %p\n", __func__, mic_sbox_mmio_va);
 	return;
 }
 

@@ -2833,8 +2833,8 @@ static struct module *load_module(void __user *umod,
 	struct module *mod;
 	long err;
 
-	//DEBUGP("load_module: umod=%p, len=%lu, uargs=%p\n", umod, len, uargs);
-printk(KERN_ERR"load_module: umod=%p, len=%lu, uargs=%p\n", umod, len, uargs);
+	DEBUGP("load_module: umod=%p, len=%lu, uargs=%p\n", umod, len, uargs);
+//printk(KERN_ERR"load_module: umod=%p, len=%lu, uargs=%p\n", umod, len, uargs);
 
 	/* Copy in the blobs from userspace, check they are vaguely sane. */
 	err = copy_and_check(&info, umod, len, uargs);

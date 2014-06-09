@@ -386,7 +386,7 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 #ifdef CONFIG_ML1OM
 	__math_state_restore();
 #else
-	restore_mask_regs();
+	restore_mask_regs(current);
 	stts();
 #endif
 	preempt_enable();

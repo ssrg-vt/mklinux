@@ -112,7 +112,8 @@ static void __cpuinit init_thread_xstate(void)
 		return;
 	}
 #ifdef CONFIG_X86_EARLYMIC
-	xstate_size = sizeof(struct _xstate);
+//	xstate_size = sizeof(struct _xstate);
+	xstate_size = sizeof(struct xsave_struct);	
 	xsave_init();
 	return;
 #endif

@@ -63,7 +63,7 @@ extern user_regset_get_fn fpregs_get, xfpregs_get, fpregs_soft_get,
 extern user_regset_set_fn fpregs_set, xfpregs_set, fpregs_soft_set,
 				 xstateregs_set;
 #ifdef CONFIG_MK1OM
-void restore_mask_regs(void);
+void restore_mask_regs(struct task_struct *);
 #endif
 
 /*
@@ -454,10 +454,11 @@ static inline void switch_fpu_finish(struct task_struct *new, fpu_switch_t fpu)
 	if (fpu.preload)
 		__math_state_restore(new);
 #ifdef CONFIG_MK1OM
-        if (tsk_used_math(new)) {
+        if (tsk_used_math(new) && new->thread.fpu.state) {
                 if (!fpu.preload)
                         clts();
-                restore_mask_regs();
+//printk("%s: I am %s\n", __func__, new->comm);
+                restore_mask_regs( new);
                 if (!fpu.preload)
                         stts();
        }
@@ -543,7 +544,7 @@ static inline void kernel_fpu_end(void)
 #ifdef CONFIG_MK1OM
        struct thread_info *me = current_thread_info();
        if (tsk_used_math(me->task))
-               restore_mask_regs();
+               restore_mask_regs(me->task);
 #endif
 	stts();
 	preempt_enable();

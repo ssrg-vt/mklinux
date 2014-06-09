@@ -154,7 +154,7 @@
 
 static inline int __mic_restore_mask_regs(struct vpustate_struct *vpustate)
 {
-	int err;
+	int err = 0;
 
 	asm volatile(
 		CHK_VKLOAD_DISP32_EAX(0, 0x800)
@@ -178,7 +178,7 @@ static inline int __mic_restore_mask_regs(struct vpustate_struct *vpustate)
 
 static inline int restore_vpu_checking_nomask(struct vpustate_struct *vpustate)
 {
-	int err;
+	int err = 0;
 
 	asm volatile(
 		CHK_VLOADD_DISP32_EAX(0, 0x00)
@@ -238,7 +238,7 @@ static inline int restore_vpu_checking(struct vpustate_struct *vpustate)
 
 static inline int save_vpu_checking(struct vpustate_struct *vpustate)
 {
-	int err;
+	int err = 0;
 
 	asm volatile(
 		CHK_VSTORED_DISP32_EAX(0, 0x00)

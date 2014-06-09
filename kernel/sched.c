@@ -2879,10 +2879,11 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 #else
 		cpu_relax(); rep++;
 		if ( !(rep % DEBUG_RATE) ) {
-			printk("%s: (%d) cpu %d, task %p, running %d, state %ld, %s\n",
-				__func__, rep, cpu, p, task_running(0, p), p->state, p->comm);
+			printk("%s: (%d) cpu %d, task %p, running %d, state %lx[%x], %s\n",
+				__func__, rep, cpu, p, task_running(0, p), (unsigned long) p->state, state, p->comm);
 //                      cpumask_scnprintf(debug_buffer, 128, &(p->cpus_allowed));
 //			printk("affinity %s\n", debug_buffer);
+dump_stack();			
 		}
 #endif
 	}

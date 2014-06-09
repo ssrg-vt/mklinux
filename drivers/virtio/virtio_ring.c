@@ -84,7 +84,7 @@ struct vring_virtqueue
 	bool indirect;
 
 	/* Host publishes avail event idx */
-	bool event;
+//	bool event;
 
 	/* Number of free buffers */
 	unsigned int num_free;
@@ -104,6 +104,9 @@ struct vring_virtqueue
 	unsigned int in_use;
 #endif
 
+        struct _mic_ctx_t *mic_ctx;
+
+        bool event;
 	/* Tokens for callbacks. */
 	void *data[];
 };

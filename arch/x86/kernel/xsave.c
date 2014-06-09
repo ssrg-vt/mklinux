@@ -231,7 +231,7 @@ int save_i387_xstate(void __user *buf)
 #ifdef CONFIG_ML1OM
 	__math_state_restore();
 #else
-	restore_mask_regs();
+	restore_mask_regs(tsk);
 	stts();
 #endif
 	preempt_enable();
@@ -358,13 +358,13 @@ clear:
 		clear_used_math();
 #ifdef CONFIG_X86_EARLYMIC
 		/* Simulate FPU DNA */
-		if (!init_fpu(current)) {
+		if (!init_fpu(tsk)) {
 			preempt_disable();
 			clts();
 #ifdef CONFIG_ML1OM
 			__math_state_restore();
 #else
-			restore_mask_regs();
+			restore_mask_regs(tsk);
 			stts();
 #endif
 			preempt_enable();
@@ -520,7 +520,8 @@ static void __init xstate_enable_boot_cpu(void)
 	cpuid_count(XSTATE_CPUID, 0, &eax, &ebx, &ecx, &edx);
 	xstate_size = ebx;
 #else
-	xstate_size = sizeof(struct _xstate);
+//	xstate_size = sizeof(struct _xstate);
+	xstate_size = sizeof(struct xsave_struct);	
 #endif
 
 	update_regset_xstate_info(xstate_size, pcntxt_mask);

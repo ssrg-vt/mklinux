@@ -392,7 +392,7 @@ struct vpustate_struct {
 	u16 k[8];		/* Mask Registers */
 	u32 vxcsr;
 	u32 reserved2[27];
-};
+} __attribute__((packed));
 #endif
 
 struct xsave_struct {

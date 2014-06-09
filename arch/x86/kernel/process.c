@@ -80,7 +80,7 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 #ifdef CONFIG_ML1OM
 		__math_state_restore();
 #else
-		restore_mask_regs();
+		restore_mask_regs(dst);
 		stts();
 #endif
 		preempt_enable();

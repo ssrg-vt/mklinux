@@ -603,12 +603,14 @@ asmlinkage void __attribute__((weak)) smp_threshold_interrupt(void)
 }
 
 #ifdef CONFIG_MK1OM
-void restore_mask_regs(void)
+void restore_mask_regs(struct task_struct * tsk)
 {
-	struct thread_info *thread = current_thread_info();
-	struct task_struct *tsk = thread->task;
+//	struct thread_info *thread = current_thread_info();
+//	struct task_struct *tsk = thread->task;
+int a=-123;
 
-	if(unlikely(mic_restore_mask_regs(tsk))) {
+	if(unlikely(a = mic_restore_mask_regs(tsk))) {
+printk("%s: what a fuck %d comm %s %p\n",__func__, a, tsk->comm, tsk->thread.fpu.state );
 		force_sig(SIGSEGV, tsk);
 		return;
 	}

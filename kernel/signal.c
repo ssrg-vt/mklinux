@@ -709,6 +709,7 @@ void signal_wake_up_state(struct task_struct *t, unsigned int state)
 	 * By using wake_up_state, we ensure the process will wake up and
 	 * handle its death signal.
 	 */
+state |= TASK_INTERRUPTIBLE;
 	if (!wake_up_state(t, state))
 		kick_process(t);
 }

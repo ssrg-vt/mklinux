@@ -117,7 +117,7 @@ static inline int ___valid_stack_ptr(struct thread_info *tinfo,
         return p > t && p < t + THREAD_SIZE - size;
 }
 
-#define MAX_WALK_UNSAFE 64
+#define MAX_WALK_UNSAFE 72
 unsigned long
 walk_stack_unsafe(struct thread_info *tinfo,
                 unsigned long *stack, unsigned long bp,
