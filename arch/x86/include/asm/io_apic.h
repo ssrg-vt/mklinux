@@ -136,7 +136,7 @@ struct IR_IO_APIC_route_entry {
 extern int nr_ioapics;
 
 extern int mpc_ioapic_id(int ioapic);
-extern unsigned int mpc_ioapic_addr(int ioapic);
+extern unsigned  long mpc_ioapic_addr(int ioapic);
 extern struct mp_ioapic_gsi *mp_ioapic_gsi_routing(int ioapic);
 
 #define MP_MAX_IOAPIC_PIN 127

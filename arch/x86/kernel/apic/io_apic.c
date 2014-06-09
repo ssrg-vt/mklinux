@@ -129,7 +129,7 @@ int mpc_ioapic_id(int ioapic_idx)
 	return ioapics[ioapic_idx].mp_config.apicid;
 }
 
-unsigned int mpc_ioapic_addr(int ioapic_idx)
+unsigned long mpc_ioapic_addr(int ioapic_idx)
 {
 	return ioapics[ioapic_idx].mp_config.apicaddr;
 }
@@ -4114,7 +4114,7 @@ static __init int bad_ioapic_register(int idx)
 	reg_02.raw = io_apic_read(idx, 2);
 
 	if (reg_00.raw == -1 && reg_01.raw == -1 && reg_02.raw == -1) {
-		pr_warn("I/O APIC 0x%x registers return all ones, skipping!\n",
+		pr_warn("I/O APIC 0x%lx registers return all ones, skipping!\n",
 			mpc_ioapic_addr(idx));
 		return 1;
 	}
@@ -4172,7 +4172,7 @@ void __init mp_register_ioapic(int id, u64 address, u32 gsi_base)
 	if (gsi_cfg->gsi_end >= gsi_top)
 		gsi_top = gsi_cfg->gsi_end + 1;
 #endif
-	printk(KERN_INFO "IOAPIC[%d]: apic_id %d, version %d, address 0x%x, GSI %d-%d\n",
+	printk(KERN_INFO "IOAPIC[%d]: apic_id %d, version %d, address 0x%lx, GSI %d-%d\n",
 	        idx, mpc_ioapic_id(idx),
 		mpc_ioapic_ver(idx), mpc_ioapic_addr(idx),
 		gsi_cfg->gsi_base, gsi_cfg->gsi_end);
