@@ -1006,20 +1006,8 @@ NORET_TYPE void do_exit(long code)
 				preempt_count());
 
 	//cleanup global worker thread only for the thread group leader
-	if(tsk->tgroup_distributed && tsk->pid == tsk->tgroup_home_id){
-	_global_value * gvp = hashgroup(tsk);
-	printk(KERN_INFO "GVP EXISTS{%s} tgid{%d} pid{%d} \n",tsk->comm,tsk->tgroup_home_id,tsk->pid);
-
-	if(gvp != NULL){
-
-		printk(KERN_INFO"Inside GVP");
-		gvp->thread_group_leader = NULL;
-		gvp->free = 0;
-		gvp->global_wq = NULL;
-		gvp->worker_task =NULL;
-		printk(KERN_INFO "cleaned up \n");
-	}
-	}
+	futex_global_worker_cleanup(tsk);
+	
 	acct_update_integrals(tsk);
 	/* sync mm's RSS info before statistics gathering */
 	if (tsk->mm)

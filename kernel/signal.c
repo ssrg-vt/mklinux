@@ -165,13 +165,14 @@ _incomming_remote_signal_pool_t * add_incomming(int pid,int cpu_id, int request_
 	_incomming_remote_signal_pool_t *Ptr = (_incomming_remote_signal_pool_t *) kmalloc(
 			sizeof(_incomming_remote_signal_pool_t), GFP_ATOMIC);
 
+	spin_lock(&in_list_lock);
 	Ptr->req_id = request_id;
 	Ptr->cpu_id = cpu_id;
 	Ptr->pid = pid;
 	Ptr->assign_for_kthread=0;
 	INIT_LIST_HEAD(&Ptr->list_member);
 	list_add(&Ptr->list_member, head);
-
+	spin_unlock(&in_list_lock);
 	return Ptr;
 }
 
@@ -179,28 +180,35 @@ int find_and_delete_incomming(int pid, struct list_head *head) {
 	struct list_head *iter;
 	_incomming_remote_signal_pool_t *objPtr;
 
+	spin_lock(&in_list_lock);
 	list_for_each(iter, head)
 	{
 		objPtr = list_entry(iter, _incomming_remote_signal_pool_t, list_member);
 		if (objPtr->pid == pid) {
 			list_del(&objPtr->list_member);
 			kfree(objPtr);
+			spin_unlock(&in_list_lock);
 			return 1;
 		}
 	}
+	spin_unlock(&in_list_lock);
+	return 0;
 }
 
 _incomming_remote_signal_pool_t * find_incomming(int pid, struct list_head *head) {
 	struct list_head *iter;
 	_incomming_remote_signal_pool_t *objPtr;
-
+	
+	spin_lock(&in_list_lock);
 	list_for_each(iter, head)
 	{
 		objPtr = list_entry(iter, _incomming_remote_signal_pool_t, list_member);
 		if (objPtr->pid == pid) {
+			spin_unlock(&in_list_lock);
 			return objPtr;
 		}
 	}
+	spin_unlock(&in_list_lock);
 	return NULL;
 }
 
@@ -208,55 +216,63 @@ _outgoing_remote_signal_pool_t * add_outgoing(int request_id, struct list_head *
 	_outgoing_remote_signal_pool_t *Ptr = (_outgoing_remote_signal_pool_t *) kmalloc(
 			sizeof(_outgoing_remote_signal_pool_t), GFP_ATOMIC);
 
+	spin_lock(&out_list_lock);
 	memset(Ptr, 0, sizeof(_outgoing_remote_signal_pool_t));
 	Ptr->request_id = request_id;
 	Ptr->status = IDLE;
 	init_waitqueue_head(&Ptr->wq);
 	INIT_LIST_HEAD(&Ptr->list_member);
 	list_add(&Ptr->list_member, head);
-
+	spin_unlock(&out_list_lock);
 	return Ptr;
 }
 
 int find_and_delete_outgoing(int request_id, struct list_head *head) {
 	struct list_head *iter;
 	_outgoing_remote_signal_pool_t *objPtr;
-
+	
+	spin_lock(&out_list_lock);
 	list_for_each(iter, head)
 	{
 		objPtr = list_entry(iter, _outgoing_remote_signal_pool_t, list_member);
 		if (objPtr->request_id == request_id) {
 			list_del(&objPtr->list_member);
 			kfree(objPtr);
+			spin_unlock(&out_list_lock);
 			return 1;
 		}
 	}
+	spin_unlock(&out_list_lock);
 }
 
 _outgoing_remote_signal_pool_t * find_outgoing(int request_id, struct list_head *head) {
 	struct list_head *iter;
 	_outgoing_remote_signal_pool_t *objPtr;
 
+	spin_lock(&out_list_lock);
 	list_for_each(iter, head)
 	{
 		objPtr = list_entry(iter, _outgoing_remote_signal_pool_t, list_member);
 		if (objPtr->request_id == request_id) {
+			spin_unlock(&out_list_lock);
 			return objPtr;
 		}
 	}
+	spin_unlock(&out_list_lock);
 	return NULL;
 }
 
 void display_request(struct list_head *head) {
 	struct list_head *iter;
 	_outgoing_remote_signal_pool_t *objPtr;
-
+	spin_lock(&out_list_lock);
 	list_for_each(iter, head)
 	{
 		objPtr = list_entry(iter, _outgoing_remote_signal_pool_t, list_member);
 		printk("%d \t", objPtr->request_id);
 		printk("%d \t", objPtr->status);
 	}
+	spin_lock(&out_list_lock);
 	printk("\n");
 }
 
@@ -267,12 +283,12 @@ static int handle_remote_kill_response(struct pcn_kmsg_message* inc_msg) {
 			"handle_remote_kill_response", msg->errno);
 
 	_outgoing_remote_signal_pool_t *ptr = find_outgoing(msg->request_id, &out_head);
+	if(!ptr) goto free;
 	ptr->status = DONE;
 	ptr->errno = msg->errno;
 	wake_up_interruptible(&ptr->wq);
-
+free:
 	pcn_kmsg_free_msg(inc_msg);
-
 	return 0;
 }
 
@@ -302,9 +318,9 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	info.si_uid = current_uid();
 	info.si_remote = true;
 
-	spin_lock(&in_list_lock);
+	//spin_lock(&in_list_lock);
 	ptr = add_incomming( msg->pid,msg->header.from_cpu,msg->request_id, &inc_head);
-	spin_unlock(&in_list_lock);
+	//spin_unlock(&in_list_lock);
 
 	//perform action
 
@@ -328,9 +344,9 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	// Send response
 	pcn_kmsg_send(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response));
 
-	spin_lock(&in_list_lock);
+	//spin_lock(&in_list_lock);
 		find_and_delete_incomming(msg->pid,&inc_head);
-	spin_unlock(&in_list_lock);
+	//spin_unlock(&in_list_lock);
 	}
 	else
 	{
@@ -360,11 +376,11 @@ static int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 	request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
 
-	spin_lock(&out_list_lock);
+	//spin_lock(&out_list_lock);
 	int req_id = get_counter_id();
 	ptr = add_outgoing(req_id, &out_head);
 	request->request_id = req_id;
-	spin_unlock(&out_list_lock);
+	//spin_unlock(&out_list_lock);
 
 	// Send response
 	res = pcn_kmsg_send(kernel, (struct pcn_kmsg_message*) (request));
@@ -373,9 +389,9 @@ static int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 
 	res = ptr->errno;
 
-	spin_lock(&out_list_lock);
+	//spin_lock(&out_list_lock);
 	find_and_delete_outgoing(req_id, &out_head);
-	spin_unlock(&out_list_lock);
+	//spin_unlock(&out_list_lock);
 
 	return res;
 
@@ -418,11 +434,11 @@ int remote_kill_pid_info_thread(void *data) {
 				request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 				request->header.prio = PCN_KMSG_PRIO_NORMAL;
 
-				spin_lock(&out_list_lock);
+				//spin_lock(&out_list_lock);
 				int req_id = get_counter_id();
 				ptr = add_outgoing(req_id, &out_head);
 				request->request_id = req_id;
-				spin_unlock(&out_list_lock);
+				//spin_unlock(&out_list_lock);
 
 				// Send response to kill migrated pid
 				res = pcn_kmsg_send(killinfo->kernel,
@@ -432,24 +448,9 @@ int remote_kill_pid_info_thread(void *data) {
 
 				killinfo->respon=ptr->errno;
 
-				spin_lock(&out_list_lock);
+				//spin_lock(&out_list_lock);
 				find_and_delete_outgoing(req_id, &out_head);
-				spin_unlock(&out_list_lock);
-
-				//send the expecting process to continue
-				//kill_pid(find_vpid(killinfo->ret_pid), SIGCONT,1);
-
-				/*struct task_struct *task = pid_task(find_vpid(killinfo->calling_pid), PIDTYPE_PID);
-
-				if(task){
-					__set_task_state(task,TASK_INTERRUPTIBLE);
-				}
-
-				//send signal to current pid
-				rcu_read_lock();
-					ret = kill_pid_info(killinfo->signal, killinfo->info, find_vpid(killinfo->calling_pid));
-				rcu_read_unlock();*/
-
+				//spin_unlock(&out_list_lock);
 
 
 				_remote_kill_response_t response;
@@ -465,9 +466,9 @@ int remote_kill_pid_info_thread(void *data) {
 				// Send response to the calling kernel
 				pcn_kmsg_send(killinfo->ret_cpu, (struct pcn_kmsg_message*) (&response));
 
-				spin_lock(&in_list_lock);
+				//spin_lock(&in_list_lock);
 					find_and_delete_incomming(killinfo->pid,&inc_head);
-				spin_unlock(&in_list_lock);
+				//spin_unlock(&in_list_lock);
 
 				recv_signal = SIGSTOP;
 				sigaddset(&current->pending.signal,SIGSTOP);
@@ -502,11 +503,11 @@ static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
 	request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
 
-	spin_lock(&out_list_lock);
+	//spin_lock(&out_list_lock);
 	int req_id = get_counter_id();
 	ptr = add_outgoing(req_id, &out_head);
 	request->request_id = req_id;
-	spin_unlock(&out_list_lock);
+	//spin_unlock(&out_list_lock);
 
 	// Send response
 	res = pcn_kmsg_send(kernel, (struct pcn_kmsg_message*) (request));
@@ -515,9 +516,9 @@ static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
 
 	res = ptr->errno;
 
-	spin_lock(&out_list_lock);
+	//spin_lock(&out_list_lock);
 	find_and_delete_outgoing(req_id, &out_head);
-	spin_unlock(&out_list_lock);
+	//spin_unlock(&out_list_lock);
 
 	return res;
 }
@@ -2028,8 +2029,10 @@ rcu_read_unlock();
 if (error == -ESRCH) {
 	if (ORIG_NODE(pid) != _cpu) {
 		_incomming_remote_signal_pool_t *ptr = find_incomming(pid, &inc_head);
-		if (ptr == NULL)
+		if (ptr == NULL){
+			printk(KERN_ALERT"%s:remote_kill pid{%d} c(%d} cpu{%d}\n",__func__,pid,ORIG_NODE(pid),_cpu);
 			return remote_kill_pid_info( ORIG_NODE(pid),sig,pid,info);
+		}
 		else {
 			spin_lock(&kthread_lock);
 			kthread_param.kernel = ORIG_NODE(pid);
@@ -2142,8 +2145,10 @@ if (pid > 0) {
 
 		if (ORIG_NODE(pid) != _cpu) {
 			_incomming_remote_signal_pool_t *ptr = find_incomming(pid, &inc_head);
-			if (ptr == NULL)
+			if (ptr == NULL){
+					printk(KERN_ALERT"%s:remote_kill pid{%d} c(%d} cpu{%d}\n",__func__,pid,ORIG_NODE(pid),_cpu);
 				return remote_kill_pid_info( ORIG_NODE(pid),sig,pid,info);
+			}
 			else {
 				spin_lock(&kthread_lock);
 				kthread_param.kernel = ORIG_NODE(pid);
@@ -2167,8 +2172,10 @@ if (pid > 0) {
 	}
 	else if (origin_pid != -1 && next_pid != -1) {
 				_incomming_remote_signal_pool_t *ptr = find_incomming(pid, &inc_head);
-				if (ptr == NULL)
+				if (ptr == NULL){
+						printk(KERN_ALERT"%s:remote_kill pid{%d} c(%d} cpu{%d}\n",__func__,pid,ORIG_NODE(pid),_cpu);
 					return remote_kill_pid_info( ORIG_NODE(next_pid),sig,next_pid,info);
+				}
 				else {
 					spin_lock(&kthread_lock);
 					ptr->assign_for_kthread=1;
@@ -4026,8 +4033,10 @@ sigqueue_cachep = KMEM_CACHE(sigqueue, SLAB_PANIC);
 }
 static int __init kill_handler_init(void) {
 /*mklinux_akshay*/
-_cpu = smp_processor_id();
 
+ _cpu= cpumask_first(cpu_present_mask);
+
+printk(KERN_ALERT"%s: cpu{%d}\n",__func__,_cpu);
 INIT_LIST_HEAD(&out_head);
 INIT_LIST_HEAD(&inc_head);
 

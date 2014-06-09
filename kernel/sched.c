@@ -5611,15 +5611,15 @@ if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
     struct list_head *iter;
     _remote_cpu_info_list_t *objPtr;
     struct cpumask *pcpum;
-    extern struct list_head rlist_head;
+extern struct list_head rlist_head;
     list_for_each(iter, &rlist_head) {
         objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
         i = objPtr->_data._processor;
         pcpum = &(objPtr->_data._cpumask);
         if ( cpumask_intersects(in_mask, pcpum) ) {
 #endif
-            // TODO ask the global scheduler if there are multiple affinities    
-	        // do the migration
+        // TODO ask the global scheduler if there are multiple affinities    
+	// do the migration
             get_task_struct(p);
             rcu_read_unlock();
             ret =process_server_do_migration(p,i);

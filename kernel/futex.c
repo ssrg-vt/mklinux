@@ -95,7 +95,9 @@ const struct futex_q futex_q_init = {
 	/* list gets initialized in queue_me()*/
 	.key = FUTEX_KEY_INIT,
 	.bitset = FUTEX_BITSET_MATCH_ANY,
-	.rem_pid = -1
+	.rem_pid = -1,
+	.rem_requeue_key = FUTEX_KEY_INIT,
+	.req_addr = 0
 };
 
 
@@ -971,8 +973,10 @@ inline void __spin_key_init (struct spin_key *st) {
  */
 static inline int global_queue_wait_lock(struct futex_q *q,u32 __user * uaddr, struct futex_hash_bucket *hb,unsigned int fn_flag,
 		unsigned int val, int fshared, int rw,  u32 bitset)
+__acquires(&value->_sp)
 {
 	int ret;
+	u32 dval;
 	int localticket_value;
 
 	struct spin_key sk;
@@ -983,6 +987,7 @@ static inline int global_queue_wait_lock(struct futex_q *q,u32 __user * uaddr, s
 	_spin_value *value = hashspinkey(&sk);
 
 	//Get the request id
+	spin_lock(&value->_sp);
 	localticket_value = xadd_sync(&value->_ticket, 1);
 
 	_local_rq_t *rq_ptr= add_request_node(localticket_value,current->pid,&value->_lrq_head);
@@ -1009,14 +1014,15 @@ static inline int global_queue_wait_lock(struct futex_q *q,u32 __user * uaddr, s
 	smp_mb();
 
 	if(ret){
-		printk(KERN_ALERT "%s: check if there is wake up {%d} - {%d} \n",__func__,rq_ptr->wake_st,ret);
+		FPRINTK(KERN_ALERT "%s: check if there is wake up {%d} - {%d} \n",__func__,rq_ptr->wake_st,ret);
 		if(rq_ptr->wake_st == 1) //no need to queue it.
 		{
 			ret = 0;
 		}
 	}
 	else if (!ret){
-		printk(KERN_ALERT"%s: check if there is wake up on ret=0 {%d} \n",__func__,rq_ptr->wake_st,ret);
+		get_user(dval,uaddr);
+		FPRINTK(KERN_ALERT"%s: check if there is wake up on ret=0 {%d} davl{%d}  \n",__func__,rq_ptr->wake_st,ret,dval);
 		if(rq_ptr->wake_st == 1)//no neew to queue
 		{
 			ret = -EWOULDBLOCK;
@@ -1028,7 +1034,8 @@ static inline int global_queue_wait_lock(struct futex_q *q,u32 __user * uaddr, s
 }
 
 static inline int global_queue_wake_lock(union futex_key *key,u32 __user * uaddr, unsigned int flags, int nr_wake,
-		u32 bitset, int rflag, unsigned int fn_flags, u32 __user *uaddr2, int nr_requeue, int cmpval)
+		u32 bitset, int rflag, unsigned int fn_flags, unsigned long uaddr2, int nr_requeue, int cmpval)
+__acquires(&value->_sp)
 {
 	int ret;
 	int localticket_value;
@@ -1041,6 +1048,7 @@ static inline int global_queue_wake_lock(union futex_key *key,u32 __user * uaddr
 	_spin_value *value = hashspinkey(&sk);
 
 	//Get the request id
+	spin_lock(&value->_sp);
 	localticket_value = xadd_sync(&value->_ticket, 1);
 
 	_local_rq_t *rq_ptr= add_request_node(localticket_value,current->pid,&value->_lrq_head);
@@ -1054,7 +1062,7 @@ static inline int global_queue_wake_lock(union futex_key *key,u32 __user * uaddr
 	data_.rflag =rflag;
 	data_.nr_wake= nr_wake;
 	data_.nr_requeue =nr_requeue;
-	data_.uaddr2 =uaddr2;
+	data_.uaddr2 =(unsigned long) uaddr2;
 	data_.bitset =bitset;
 	data_.cmpval =cmpval;
 	data_.ops=1;
@@ -1087,7 +1095,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset,unsign
 	unsigned long bp = stack_frame(current,NULL);
 
 
-	printk(KERN_ALERT " FUTEX_WAKE:current{%d} uaddr {%lx} get_user{%d} comm{%s}  lockval{%d} fn_flags{%d} cpu{%d} \n",current->pid,uaddr,x,current->comm,y,fn_flags,smp_processor_id());
+	FPRINTK(KERN_ALERT " FUTEX_WAKE:current{%d} uaddr {%lx} get_user{%d} comm{%s}  lockval{%d} fn_flags{%d} cpu{%d} \n",current->pid,uaddr,x,current->comm,y,fn_flags,smp_processor_id());
 
 	fn_flags |= FLAGS_WAKECALL;
 
@@ -1134,9 +1142,10 @@ cont:
 			 wake_futex(this);
 			else
 			{
-				FPRINTK(KERN_ALERT " %s:sending it to remote after decision; ret{%d} nr_wake{%d} \n",__func__,ret,nr_wake);
-				ret = remote_futex_wakeup(uaddr, flags & FLAGS_SHARED,nr_wake, bitset,&key,this->rem_pid, fn_flags, 0,0,0);
-				this->rem_pid=NULL;
+				FPRINTK(KERN_ALERT " %s:sending it to remote after decision; ret{%d} nr_wake{%d} has_req_addr{%lx} \n",__func__,ret,nr_wake,(this->req_addr != 0) ? this->req_addr : 0);
+				ret = remote_futex_wakeup(uaddr, flags & FLAGS_SHARED,nr_wake, bitset,&key,this->rem_pid, fn_flags, (this->req_addr != 0) ? this->req_addr : 0,0,0);
+				this->rem_pid = NULL;
+				this->req_addr = 0;
 				__unqueue_futex(this);
 				smp_wmb();
 				this->lock_ptr = NULL;
@@ -1173,7 +1182,7 @@ int futex_wake_op(u32 __user *uaddr1, unsigned int flags, u32 __user *uaddr2,
 	int g_errno=0;
 
 	fn_flags |= FLAGS_WAKEOPCALL;
-	printk(KERN_ALERT " FUTEX_WAKE_OP: entry{%pB} pid {%d} comm{%s} uaddr1{%lx} uaddr2{%lx}  op(%d} \n",(void*) &bp,current->pid,current->comm,uaddr1,uaddr2,op);
+	FPRINTK(KERN_ALERT " FUTEX_WAKE_OP: entry{%pB} pid {%d} comm{%s} uaddr1{%lx} uaddr2{%lx}  op(%d} \n",(void*) &bp,current->pid,current->comm,uaddr1,uaddr2,op);
 retry:
 	ret = get_futex_key(uaddr1, flags & FLAGS_SHARED, &key1, VERIFY_READ);
 
@@ -1218,7 +1227,7 @@ retry_private:
 		}
 
 		ret = ((fn_flags & FLAGS_REMOTECALL) && or_task)? fault_in_user_writeable_task(uaddr2,or_task):fault_in_user_writeable(uaddr2);
-		FPRINTK(KERN_ALERT "%s: faultinuaddr2 {%d}\n",__func__,ret);
+		FPRINTK(KERN_ALERT "%s: faultinuaddr2 {%d} tsk{%d} comm{%s} \n",__func__,ret,or_task->pid,or_task->comm);
 		if (ret)
 			goto out_put_keys;
 
@@ -1322,6 +1331,16 @@ void requeue_futex(struct futex_q *q, struct futex_hash_bucket *hb1,
 	get_futex_key_refs(key2);
 	q->key = *key2;
 }
+
+static inline
+void rem_requeue_futex(struct futex_q *q, union futex_key *key2, unsigned long uaddr)
+{
+
+	q->req_addr = uaddr;
+	q->rem_requeue_key = *key2;
+}
+
+
 
 /**
  * requeue_pi_wake_futex() - Wake a task that acquired the lock during requeue
@@ -1454,7 +1473,7 @@ int futex_requeue(u32 __user *uaddr1, unsigned int flags,
 
 	fn_flags |= FLAGS_REQCALL;
 
-	printk(KERN_ALERT " FUTEX_REQUEUE: entry{%pB} nr_wake{%d} nr_requeue{%d} pid{%d} comm{%s} uaddr1{%lx} uaddr2{%lx} fn_flags{%lx} \n",(void*) &bp,nr_wake,nr_requeue,current->pid,current->comm,uaddr1,uaddr2,fn_flags);
+	FPRINTK(KERN_ALERT " FUTEX_REQUEUE: cmp{%lx} nr_wake{%d} nr_requeue{%d} pid{%d} comm{%s} uaddr1{%lx} uaddr2{%lx} fn_flags{%lx} \n",*cmpval,nr_wake,nr_requeue,current->pid,current->comm,uaddr1,uaddr2,fn_flags);
 	if (requeue_pi) {
 		/*
 		 * requeue_pi requires a pi_state, try to allocate it now
@@ -1503,12 +1522,12 @@ cont:
 
 retry_private:
 
-    FPRINTK(KERN_ALERT " %s: spinlock  futex_requeue\n",__func__);
+    FPRINTK(KERN_ALERT " %s: spinlock  futex_requeue uaddr2{%lx} \n",__func__,uaddr2);
 
 
     if(current->tgroup_distributed  && !(fn_flags & FLAGS_REMOTECALL) && !(flags & FLAGS_SHARED)){
     		g_errno= global_queue_wake_lock(&key1,uaddr1, flags & FLAGS_SHARED, nr_wake, 1,
-    				 0, fn_flags,uaddr2,nr_requeue,cmpval);
+    				 0, fn_flags,uaddr2,nr_requeue,(int)*cmpval);
      		FPRINTK(KERN_ALERT " %s: err {%d}\n",__func__,g_errno);
     		ret = g_errno;
     		goto out;
@@ -1628,7 +1647,7 @@ retry_private:
 			else
 			{	u32 bitset=1;
 			if(!requeued)
-				ret = remote_futex_wakeup(uaddr1, flags & FLAGS_SHARED,nr_wake, bitset,&key1,this->rem_pid, fn_flags, 0,0,0);
+				ret = remote_futex_wakeup(uaddr1, flags & FLAGS_SHARED,nr_wake, bitset,&key1,this->rem_pid, fn_flags,0,0,0);
 			else
 				ret = remote_futex_wakeup(uaddr2, flags & FLAGS_SHARED,nr_wake, bitset,&key2,this->rem_pid, fn_flags, 0,0,0);
 			this->rem_pid=NULL;
@@ -1668,7 +1687,11 @@ retry_private:
 				goto out_unlock;
 			}
 		}
+		FPRINTK(KERN_ALERT"%s: b4 requeue\n");
 		requeue_futex(this, hb1, hb2, &key2);
+		if(this->rem_pid != -1){
+			rem_requeue_futex(this,&key1,(unsigned long) uaddr1);
+		}
 		requeued=1;
 		drop_count++;
 	}
@@ -2237,7 +2260,7 @@ int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 	struct pt_regs * regs;
 	unsigned long bp = stack_frame(current,NULL);
 
-	printk(KERN_ALERT "FUTEX_WAIT:current {%pB} pid{%d} uaddr{%lx} get_user{%d} comm{%s}  syscall{%d} cpu{%d}\n",(void*) &bp,current->pid,uaddr,x,current->comm,fn_flag,smp_processor_id());
+	FPRINTK(KERN_ALERT "FUTEX_WAIT:current {%pB} pid{%d} uaddr{%lx} get_user{%d} comm{%s}  syscall{%d} cpu{%d}\n",(void*) &bp,current->pid,uaddr,x,current->comm,fn_flag,smp_processor_id());
 
 //	printPTE(uaddr);
 	if (!bitset)
@@ -2289,7 +2312,7 @@ retry:
 	if (!signal_pending(current))
 		goto retry;
 
-	printk(KERN_ALERT" up for restart abs{%d} \n",(!abs_time)?0:1);
+	FPRINTK(KERN_ALERT" up for restart abs{%d} \n",(!abs_time)?0:1);
 
 	ret = -ERESTARTSYS;
 	if (!abs_time)

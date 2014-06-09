@@ -20,8 +20,8 @@ union futex_key; //forward decl for futex_remote.h
 #define FLAGS_REMOTECALL	16
 #define FLAGS_ORIGINCALL	32
 
-#define GET_TOKEN 0
-#define WAIT_RELEASE_TOKEN 2
+#define WAKE_OPS 1
+#define WAIT_OPS 0
 
 DEFINE_SPINLOCK(request_queue_lock);
 
@@ -105,10 +105,9 @@ unsigned long f;
  	{
 		objPtr = list_entry(iter, _local_rq_t, lrq_member);
 		if (objPtr->_request_id == request_id) {
-			pagefault_disable();
 			objPtr->status =DONE;
 			objPtr->errno = err;
-			pagefault_enable();
+			wake_up_interruptible(&objPtr->_wq);
  			GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
  			return objPtr;
  		}
@@ -161,11 +160,9 @@ int getKey(unsigned long uaddr, _spin_key *sk, pid_t tgid)
 // hash spin key to find the spin bucket
 _spin_value *hashspinkey(_spin_key *sk)
 {
-	//u32 hash = jhash2((u32*)&sk->_uaddr,(sizeof(sk->_uaddr)+sizeof(sk->_uaddr))/4,100);
 	pagefault_disable();
 	u32 hash = sp_hashfn(sk->_uaddr,sk->_tgid);
 	pagefault_enable();
-	//printk(KERN_ALERT"%s: hashspin{%u} -{%u} _uaddr{%lx) len{%d} \n", __func__,hash,hash & ((1 << _SPIN_HASHBITS)-1),sk->_uaddr,(sizeof(sk->_uaddr)+sizeof(sk->_uaddr))/4);
 	return &spin_bucket[hash];
 }
 
@@ -174,26 +171,20 @@ _global_value *hashgroup(struct task_struct *group_pid)
 {
 	struct task_struct *tsk =NULL;
 	tsk= group_pid;
-	//u32 hash = jhash2((u32*)&tsk->pid,(sizeof(tsk->pid))/4,JHASH_INITVAL);
 	pagefault_disable();
 	u32 hash = sp_hashfn(tsk->pid,0);
 	pagefault_enable();
-	//printk(KERN_ALERT"%s: globalhash{%u} \n", __func__,hash & ((1 << _SPIN_HASHBITS)-1));
 	return &global_bucket[hash];
 }
 // Perform global spin lock
-int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value * value,_local_rq_t *rq_ptr,int localticket_value){
-
-
+int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value * value,_local_rq_t *rq_ptr,int localticket_value)
+__releases(&value->_sp)
+{
 	//preempt_disable();
 
 	int res = 0;
 	int cpu=0;
 	unsigned int flgs;
-
-
-	//TODO: check if interleaving is possible inside spin lock even though it is not pre emptible
-	//GENERAL_SPIN_LOCK(&value->_sp);
 
 	 _remote_key_request_t* wait_req= (_remote_key_request_t*) kmalloc(sizeof(_remote_key_request_t),
 				GFP_ATOMIC);
@@ -201,7 +192,7 @@ int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value *
 				GFP_ATOMIC);
 
 	//Prepare request
-	if(_data->ops==0){
+	if(_data->ops==WAIT_OPS){
 
 //	printk(KERN_ALERT"%s: request -- entered whos calling{%s} \n", __func__,current->comm);
 //	printk(KERN_ALERT"%s:  uaddr {%lx}  pid{%d} current->tgroup_home_id{%d}\n",				__func__,uaddr,current->pid,current->tgroup_home_id);
@@ -210,7 +201,7 @@ int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value *
 	wait_req->header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST;
 	wait_req->header.prio = PCN_KMSG_PRIO_NORMAL;
 
-	wait_req->ops = 0;
+	wait_req->ops = WAIT_OPS;
 	wait_req->rw = _data->rw;
 	wait_req->val = _data->val;
 
@@ -227,8 +218,8 @@ int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value *
 		wake_req->header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_REQUEST;
 		wake_req->header.prio = PCN_KMSG_PRIO_NORMAL;
 
-		wake_req->ops = 1;
-		wake_req->uaddr2 = _data->uaddr2;
+		wake_req->ops = WAKE_OPS;
+		wake_req->uaddr2 = (unsigned long) _data->uaddr2;
 		wake_req->nr_wake2 = _data->nr_requeue;
 		wake_req->cmpval = _data->cmpval;
 		wake_req->rflag = _data->rflag;
@@ -242,6 +233,7 @@ int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value *
 		wake_req->flags = _data->flags;
 
 		wake_req->ticket = localticket_value;//GET_TOKEN; //set the request has no ticket
+		printk(KERN_ALERT"%s: wake uaddr2{%lx} data{%lx} \n",__func__,wake_req->uaddr2,_data->uaddr2);
 	}
 
 
@@ -250,41 +242,38 @@ int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value *
 	unsigned long pfn;
 	pte_t pte;
 	pte = *((pte_t *) do_page_walk((unsigned long)uaddr));
-	//printk(KERN_ALERT"%s pte ptr : ox{%lx} cpu{%d} \n",__func__,pte,smp_processor_id());
 	pfn = pte_pfn(pte);
-	//printk(KERN_ALERT"%s pte pfn : 0x{%lx}\n",__func__,pfn);
-
-
-	//GENERAL_SPIN_UNLOCK(&value->_sp);
-	//preempt_enable();
 
 	struct vm_area_struct *vma;
 	vma = getVMAfromUaddr(uaddr);
 	if (vma != NULL && current->executing_for_remote && (vma->vm_flags & VM_PFNMAP)) {
-				if(_data->ops==0){
+				if(_data->ops==WAIT_OPS){
 					wait_req->fn_flags |= FLAGS_REMOTECALL;
 				}
 				else
 					wake_req->fn_flag |= FLAGS_REMOTECALL;
-    	//		printk(KERN_ALERT"%s: sending to origin remote callpfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
+  //  			printk(KERN_ALERT"%s: sending to origin remote callpfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
     			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
-    				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*)  ((_data->ops==1)? (wake_req):(wait_req)));
+				spin_unlock(&value->_sp);
+    				
+				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*)  ((_data->ops==WAKE_OPS)? (wake_req):(wait_req)));
     			}
     		} else if (vma != NULL && !(vma->vm_flags & VM_PFNMAP) ) {
-    			if(_data->ops==0){
+    			if(_data->ops==WAIT_OPS){
 					wait_req->fn_flags |= FLAGS_ORIGINCALL;
 				}
 				else{
 					wake_req->fn_flag |= FLAGS_ORIGINCALL;
 					wake_req->rflag = current->pid;
 				}
-    	//		printk(KERN_ALERT"%s: sending to origin origin call cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
+//    			printk(KERN_ALERT"%s: sending to origin origin call cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
     			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
-    				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) ((_data->ops==1)? (wake_req):(wait_req)));
+				spin_unlock(&value->_sp);
+    				
+				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) ((_data->ops==WAKE_OPS)? (wake_req):(wait_req)));
     			}
     		}
 
-    	//check if it has acquired valid ticket
     	//	printk(KERN_ALERT"%s:goto sleep after ticket request: 0x{%d} {%d}\n",__func__,cpu,current->pid);
     		wait_event_interruptible(rq_ptr->_wq, (rq_ptr->status == DONE));
     	//	printk(KERN_ALERT"%s:after wake up process: task woken{%d}\n",__func__,current->pid);
@@ -331,7 +320,7 @@ int global_spinunlock(unsigned long uaddr, unsigned int fn_flag){
 		request->tghid = current->tgroup_home_id;
 		request->fn_flags = fn_flag;
 
-		request->ticket = WAIT_RELEASE_TOKEN; //set the request to release lock
+		request->ticket = 2;// WAIT_RELEASE_TOKEN; //set the request to release lock
 
 		unsigned long pfn;
 		pte_t pte;

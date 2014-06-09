@@ -72,6 +72,8 @@ struct futex_q {
 
 	/*mklinux_akshay*/
 	pid_t rem_pid;
+	union futex_key rem_requeue_key;
+	unsigned long req_addr;
 };
 
 
@@ -94,7 +96,7 @@ struct futex_q * query_q(struct task_struct *t);
 
 
 int remote_futex_wakeup(u32 __user  *uaddr,unsigned int flags, int nr_wake, u32 bitset,union futex_key *key, int rflag,
-		unsigned int fn_flags, u32 __user *uaddr2,  int nr_requeue, int cmpval);
+		unsigned int fn_flags, unsigned long uaddr2,  int nr_requeue, int cmpval);
 extern struct futex_hash_bucket futex_queues[1<<_FUTEX_HASHBITS];
 extern void get_futex_key_refs(union futex_key *key);
 extern int
@@ -122,7 +124,7 @@ int find_kernel_for_pfn(unsigned long addr, struct list_head *head);
 
 
 int get_futex_value_locked(u32 *dest, u32 __user *from);
-
+extern int futex_global_worker_cleanup(struct task_struct *tsk);
 extern struct list_head fq_head;
 
 struct kernel_robust_list {
