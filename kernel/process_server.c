@@ -1233,6 +1233,7 @@ get_counter_phys_data_t* get_counter_phys_data = NULL;
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
 struct proc_dir_entry *_proc_entry = NULL;
+struct proc_dir_entry *_lamport_proc_entry = NULL;
 static void proc_track_data(int entry, unsigned long long time);//proto
 static void proc_data_init();
 typedef struct _proc_data {
@@ -3237,10 +3238,37 @@ static void dump_lamport_queue(lamport_barrier_queue_t* queue) {
     }
 }
 
+static void dump_lamport_queue_alwaysprint(lamport_barrier_queue_t* queue) {
+    lamport_barrier_entry_t* curr = queue->queue;
+    int queue_pos = 0;
+    printk("Queue %p:\n",__func__,queue);
+    printk("  tgroup_home_cpu: %d\n",queue->tgroup_home_cpu);
+    printk("  tgroup_home_id: %d\n",queue->tgroup_home_id);
+    printk("  Addr: %lx\n",queue->address);
+    printk("  is_heavy: %d\n",queue->is_heavy);
+    printk("  active_timestamp: %llx\n",queue->active_timestamp);
+    printk("  Entries:\n");
+    while(curr) {
+        printk("    Entry, Queue position %d\n",queue_pos++);
+        printk("\t   timestamp: %llx\n",curr->timestamp);
+        printk("\t   is_heavy: %d\n",curr->is_heavy);
+        printk("\t   cpu: %d\n",curr->cpu);
+        curr = (lamport_barrier_entry_t*)curr->header.next;
+    }
+}
+
 static void dump_all_lamport_queues() {
     lamport_barrier_queue_t* curr = _lamport_barrier_queue_head;
     while(curr) {
         dump_lamport_queue(curr);
+        curr = (lamport_barrier_queue_t*)curr->header.next;
+    }
+}
+
+static void dump_all_lamport_queues_alwaysprint() {
+    lamport_barrier_queue_t* curr = _lamport_barrier_queue_head;
+    while(curr) {
+        dump_lamport_queue_alwaysprint(curr);
         curr = (lamport_barrier_queue_t*)curr->header.next;
     }
 }
@@ -8800,6 +8828,17 @@ static void proc_data_reset(int cpu,int entry) {
    
 }
 #endif
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+static int lamport_proc_read(char* buf, char**start, off_t off, int count,
+                        int *eof, void*d) {
+    if(off > 0) return 0;
+    sprintf(buf,"See dmesg\n");
+    PS_SPIN_LOCK(&_lamport_barrier_queue_lock);
+    dump_all_lamport_queues_alwaysprint();
+    PS_SPIN_UNLOCK(&_lamport_barrier_queue_lock);
+    return strlen(buf);
+}
+#endif
 
 /**
  *
@@ -8807,11 +8846,12 @@ static void proc_data_reset(int cpu,int entry) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
 static int proc_read(char* buf, char**start, off_t off, int count,
                         int *eof, void*d) {
-    char* p = buf;
     int i,j,s;
     stats_query_t query;
     stats_query_data_t data;
 
+    if(off > 0) return 0;
+    
     sprintf(buf,"See dmesg\n");
 
     query.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -8890,7 +8930,14 @@ static void proc_track_data(int entry, unsigned long long time) {
 }
 #endif
 
-
+#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+static int lamport_proc_write(struct file* file,
+                        const char* buffer,
+                        unsigned long count,
+                        void* data) {
+    return count;
+}
+#endif
 
 /**
  *
@@ -8938,6 +8985,10 @@ static void proc_data_init(void) {
     _proc_entry = create_proc_entry("procsrv",666,NULL);
     _proc_entry->read_proc = proc_read;
     _proc_entry->write_proc = proc_write;
+
+    _lamport_proc_entry = create_proc_entry("lamport_dump",666,NULL);
+    _lamport_proc_entry->read_proc = lamport_proc_read;
+    _lamport_proc_entry->write_proc = lamport_proc_write;
 
     for(j = 0; j < NR_CPUS; j++)
         for(i = 0; i < PS_PROC_DATA_MAX; i++)
