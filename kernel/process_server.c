@@ -3257,10 +3257,37 @@ static void dump_lamport_queue_alwaysprint(lamport_barrier_queue_t* queue) {
     }
 }
 
+static void dump_lamport_queue_alert(lamport_barrier_queue_t* queue) {
+    lamport_barrier_entry_t* curr = queue->queue;
+    int queue_pos = 0;
+    printk(KERN_ALERT"Queue %p:\n",__func__,queue);
+    printk(KERN_ALERT"  tgroup_home_cpu: %d\n",queue->tgroup_home_cpu);
+    printk(KERN_ALERT"  tgroup_home_id: %d\n",queue->tgroup_home_id);
+    printk(KERN_ALERT"  Addr: %lx\n",queue->address);
+    printk(KERN_ALERT"  is_heavy: %d\n",queue->is_heavy);
+    printk(KERN_ALERT"  active_timestamp: %llx\n",queue->active_timestamp);
+    printk(KERN_ALERT"  Entries:\n");
+    while(curr) {
+        printk(KERN_ALERT"    Entry, Queue position %d\n",queue_pos++);
+        printk(KERN_ALERT"\t   timestamp: %llx\n",curr->timestamp);
+        printk(KERN_ALERT"\t   is_heavy: %d\n",curr->is_heavy);
+        printk(KERN_ALERT"\t   cpu: %d\n",curr->cpu);
+        curr = (lamport_barrier_entry_t*)curr->header.next;
+    }
+}
+
 static void dump_all_lamport_queues() {
     lamport_barrier_queue_t* curr = _lamport_barrier_queue_head;
     while(curr) {
         dump_lamport_queue(curr);
+        curr = (lamport_barrier_queue_t*)curr->header.next;
+    }
+}
+
+static void dump_all_lamport_queues_alert() {
+    lamport_barrier_queue_t* curr = _lamport_barrier_queue_head;
+    while(curr) {
+        dump_lamport_queue_alert(curr);
         curr = (lamport_barrier_queue_t*)curr->header.next;
     }
 }
@@ -4632,7 +4659,11 @@ void register_lamport_barrier_response_light(int tgroup_home_cpu,
                                        address,
                                        0);
 
-    BUG_ON(!queue);
+    if(!queue) {
+        printk(KERN_ALERT"%s: !queue\n",__func__);
+        dump_all_lamport_queues_alert();
+        BUG_ON(!queue);
+    }
 
     if(queue) {
         curr = queue->queue;
@@ -4667,7 +4698,7 @@ void register_lamport_barrier_response_heavy(int tgroup_home_cpu,
                                        1);
 
     //BUG_ON(!queue);
-    if(!queue) PSPRINTK("%s: ERROR, no queue found\n",__func__);
+    if(!queue) PSPRINTK(KERN_ALERT"%s: ERROR, no queue found\n",__func__);
 
     if(queue) {
         curr = queue->queue;
@@ -8501,15 +8532,31 @@ static int process_server_acquire_page_lock_range_maybeheavy(unsigned long addre
 
     PSPRINTK("%s: addr{%lx},sz{%d},is_heavy{%d}\n",__func__,address,sz,is_heavy);
 
-    BUG_ON(is_heavy && (sz > PAGE_SIZE));
+    if(is_heavy && (sz > PAGE_SIZE)) {
+        printk(KERN_ALERT"%s: is_heavy && (sz > PAGE_SIZE)\n",__func__);
+        dump_all_lamport_queues_alert();
+        BUG_ON(is_heavy && (sz > PAGE_SIZE));
+    }
 
     entry_list = kmalloc(sizeof(lamport_barrier_entry_t*)*page_count,GFP_KERNEL);
     queue_list = kmalloc(sizeof(lamport_barrier_queue_t*)*page_count,GFP_KERNEL);
     request = kmalloc(sizeof(lamport_barrier_request_range_t), GFP_KERNEL);
-  
-    BUG_ON(!request);
-    BUG_ON(!entry_list);
-    BUG_ON(!queue_list);
+ 
+    if(!request) {
+        printk(KERN_ALERT"%s: !request\n",__func__);
+        dump_all_lamport_queues_alert();
+        BUG_ON(!request);
+    }
+    if(!entry_list) {
+        printk(KERN_ALERT"%s: !entry_list\n",__func__);
+        dump_all_lamport_queues_alert();
+        BUG_ON(!entry_list);
+    }
+    if(!queue_list) {
+        printk(KERN_ALERT"%s: !queue_list\n",__func__);
+        dump_all_lamport_queues_alert();
+        BUG_ON(!queue_list);
+    }
 
     address &= PAGE_MASK;
     request->header.type = PCN_KMSG_TYPE_PROC_SRV_LAMPORT_BARRIER_REQUEST_RANGE;
@@ -8626,8 +8673,16 @@ static void release_local_lamport_lock_light(unsigned long address,
 
     if(queue) {
 
-        BUG_ON(!queue->queue);
-        BUG_ON(queue->queue->cpu != _cpu);
+        if(!queue->queue) {
+            printk(KERN_ALERT"%s: !queue->queue\n",__func__);
+            dump_all_lamport_queues_alert();
+            BUG_ON(!queue->queue);
+        }
+        if(queue->queue->cpu != _cpu) {
+            printk(KERN_ALERT"%s: queue->queue->cpu != _cpu\n",__func__);
+            dump_all_lamport_queues_alert();
+            BUG_ON(queue->queue->cpu != _cpu);
+        }
         
         entry = queue->queue;
         
@@ -8677,12 +8732,24 @@ static void release_local_lamport_lock_heavy(unsigned long long* timestamp) {
         }
 
 
-        BUG_ON(!queue->queue);
+        if(!queue->queue) {
+            printk(KERN_ALERT"%s: !queue->queue\n",__func__);
+            dump_all_lamport_queues_alert();
+            BUG_ON(!queue->queue);
+        }
         
         entry = queue->queue;
 
-        BUG_ON(!entry);
-        BUG_ON(!entry->is_heavy);
+        if(!entry) {
+            printk(KERN_ALERT"%s: !entry\n",__func__);
+            dump_all_lamport_queues_alert();
+            BUG_ON(!entry);
+        }
+        if(!entry->is_heavy) {
+            printk(KERN_ALERT"%s: !entry->is_heavy\n",__func__);
+            dump_all_lamport_queues_alert();
+            BUG_ON(!entry->is_heavy);
+        }
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
         entry->lock_released = native_read_tsc();
@@ -8742,7 +8809,11 @@ void process_server_release_page_lock_range_maybeheavy(unsigned long address,siz
     unsigned long long tmp_ts = 0;
     int page_count = sz / PAGE_SIZE;
 
-    BUG_ON(is_heavy && (sz > PAGE_SIZE));
+    if(is_heavy && (sz > PAGE_SIZE)) {
+        printk(KERN_ALERT"%s: is_heavy && (sz > PAGE_SIZE)\n",__func__);
+        dump_all_lamport_queues_alert();
+        BUG_ON(is_heavy && (sz > PAGE_SIZE));
+    }
 
     if(!current->tgroup_distributed) return;
 
