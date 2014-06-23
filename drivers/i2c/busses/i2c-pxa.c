@@ -120,13 +120,23 @@ static struct pxa_reg_layout pxa_reg_layout[] = {
 		.isr =	0x18,
 		.isar =	0x20,
 	},
+#ifndef CONFIG_X86_EARLYMIC
 	[REGS_PXA3XX] = {
-		.ibmr =	0x10, //0x00,
-		.idbr =	0xc, //0x04,
-		.icr =	0x0, //0x08,
-		.isr =	0x4, //0x0c,
-		.isar =	0x8, //0x10,
+		.ibmr =	0x00,
+		.idbr =	0x04,
+		.icr =	0x08,
+		.isr =	0x0c,
+		.isar =	0x10,
 	},
+#else
+	[REGS_PXA3XX] = {
+		.ibmr =	0x10,
+		.idbr =	0xc,
+		.icr =	0x0,
+		.isr =	0x4,
+		.isar =	0x8,
+	},
+#endif	
 	[REGS_CE4100] = {
 		.ibmr =	0x14,
 		.idbr =	0x0c,
@@ -147,7 +157,9 @@ static struct pxa_reg_layout pxa_reg_layout[] = {
 static const struct platform_device_id i2c_pxa_id_table[] = {
 	{ "pxa2xx-i2c",		REGS_PXA2XX },
 	{ "pxa3xx-pwri2c",	REGS_PXA3XX },
+#ifdef CONFIG_X86_EARLYMIC	
 	{ "sc16is740",		REGS_PXA3XX },
+#endif	
 	{ "ce4100-i2c",		REGS_CE4100 },
 	{ },
 };
@@ -204,8 +216,10 @@ struct pxa_i2c {
 	unsigned int		irqlogidx;
 	u32			isrlog[32];
 	u32			icrlog[32];
+#ifdef CONFIG_X86_EARLYMIC	
         u8			lcklog[32];
         u8			idbrlog[32];
+#endif	
 
 	void __iomem		*reg_base;
 	void __iomem		*reg_ibmr;
@@ -424,7 +438,9 @@ static int i2c_pxa_wait_bus_not_busy(struct pxa_i2c *i2c)
 	}
 
 	if (timeout < 0) {
+#ifdef CONFIG_X86_EARLYMIC	  
 		i2c_pxa_scream_blue_murder(i2c, "pxa_wait_bus_not_busy: timeout");
+#endif
 		show_state(i2c);
         }
 
@@ -456,13 +472,17 @@ static int i2c_pxa_wait_master(struct pxa_i2c *i2c)
 			return 1;
 		}
 
+#ifdef CONFIG_X86_EARLYMIC
 		while(atomic_read(&pxa_block))
 		  cpu_relax();
+#endif
 
 		msleep(1);
 	}
 
+#ifdef CONFIG_X86_EARLYMIC
 	i2c_pxa_scream_blue_murder(i2c, "pxa_wait_master: timeout");
+#endif
 	if (i2c_debug > 0)
 		dev_dbg(&i2c->adap.dev, "%s: did not free\n", __func__);
  out:
@@ -477,7 +497,9 @@ static int i2c_pxa_set_master(struct pxa_i2c *i2c)
 	if ((readl(_ISR(i2c)) & (ISR_UB | ISR_IBB)) != 0) {
 		dev_dbg(&i2c->adap.dev, "%s: unit is busy\n", __func__);
 		if (!i2c_pxa_wait_master(i2c)) {
+#ifdef CONFIG_X86_EARLYMIC
 			i2c_pxa_scream_blue_murder(i2c, "pxa_set_master: timeout");
+#endif
 			dev_dbg(&i2c->adap.dev, "%s: error: unit busy\n", __func__);
 			return I2C_RETRY;
 		}
@@ -741,9 +763,11 @@ static inline void i2c_pxa_start_message(struct pxa_i2c *i2c)
 {
 	u32 icr;
 
+#ifdef CONFIG_X86_EARLYMIC	
 	pxa_state = 'I';
 	while(atomic_read(&pxa_block))
 	  cpu_relax();
+#endif
 
 	/*
 	 * Step 1: target slave address into IDBR
@@ -772,7 +796,9 @@ static inline void i2c_pxa_stop_message(struct pxa_i2c *i2c)
 	icr = readl(_ICR(i2c));
 	icr &= ~(ICR_STOP | ICR_ACKNAK);
 	writel(icr, _ICR(i2c));
+#ifdef CONFIG_X86_EARLYMIC	
 	pxa_state = '-';
+#endif
 
 #if PXA_TRACE
 	if (pxa_log && pxa_num++ < pxa_max)
@@ -788,19 +814,24 @@ static int i2c_pxa_pio_set_master(struct pxa_i2c *i2c)
 	/*
 	 * Wait for the bus to become free.
 	 */
+#ifdef CONFIG_X86_EARLYMIC	
 	pxa_state = 'B';
+#endif	
 	while (timeout-- && readl(_ISR(i2c)) & (ISR_IBB | ISR_UB)) {
+#ifdef CONFIG_X86_EARLYMIC	  
 		if (atomic_read(&pxa_block)) {
 	  	  while(atomic_read(&pxa_block))
 	    	    cpu_relax();
 		}
-		else {
+		else
+#endif		  
 		  udelay(1000);
-		}
+
 		show_state(i2c);
 	}
 
 	if (timeout < 0) {
+#ifdef CONFIG_X86_EARLYMIC	  
 		printk("pxa_pio_set_master '%c': ISR %05x, ICR %03x, IDBR %02x, IBMR %x\n",
 				pxa_state,
 				readl(_ISR(i2c)) & ~0xfffe0000,
@@ -808,6 +839,7 @@ static int i2c_pxa_pio_set_master(struct pxa_i2c *i2c)
 				readl(_IDBR(i2c)) & ~0xffffff00,
 				readl(_IBMR(i2c)) & ~0xfffffffc);
 		i2c_pxa_scream_blue_murder(i2c, "pxa_pio_set_master: timeout");
+#endif
 		show_state(i2c);
 		dev_err(&i2c->adap.dev,
 			"i2c_pxa: timeout waiting for bus free\n");
@@ -846,11 +878,13 @@ static int i2c_pxa_do_pio_xfer(struct pxa_i2c *i2c,
 		i2c_pxa_handler(0, i2c);
 		udelay(10);
 
+#ifdef CONFIG_X86_EARLYMIC
 		if (atomic_read(&pxa_block)) {
 		  while(atomic_read(&pxa_block))
 		    cpu_relax();
 		  return I2C_RETRY;
 		}
+#endif		
 	}
 
 	i2c_pxa_stop_message(i2c);
@@ -931,8 +965,10 @@ static int i2c_pxa_pio_xfer(struct i2c_adapter *adap,
 	struct pxa_i2c *i2c = adap->algo_data;
 	int ret, i;
 
+#ifdef CONFIG_X86_EARLYMIC	
 	while(atomic_read(&pxa_block))
 	  cpu_relax();
+#endif	
 
 	/* If the I2C controller is disabled we need to reset it
 	  (probably due to a suspend/resume destroying state). We do
@@ -981,7 +1017,9 @@ static void i2c_pxa_irq_txempty(struct pxa_i2c *i2c, u32 isr)
 {
 	u32 icr = readl(_ICR(i2c)) & ~(ICR_START|ICR_STOP|ICR_ACKNAK|ICR_TB);
 
+#ifdef CONFIG_X86_EARLYMIC	
 	pxa_state = 'S';
+#endif
  again:
 	/*
 	 * If ISR_ALD is set, we lost arbitration.
@@ -1018,7 +1056,9 @@ static void i2c_pxa_irq_txempty(struct pxa_i2c *i2c, u32 isr)
 		}
 		i2c_pxa_master_complete(i2c, ret);
 	} else if (isr & ISR_RWM) {
+#ifdef CONFIG_X86_EARLYMIC	  
 		pxa_state = 'R';
+#endif
 
 		/*
 		 * Read mode.  We have just sent the address byte, and
@@ -1096,8 +1136,9 @@ static void i2c_pxa_irq_txempty(struct pxa_i2c *i2c, u32 isr)
 static void i2c_pxa_irq_rxfull(struct pxa_i2c *i2c, u32 isr)
 {
 	u32 icr = readl(_ICR(i2c)) & ~(ICR_START|ICR_STOP|ICR_ACKNAK|ICR_TB);
-
+#ifdef CONFIG_X86_EARLYMIC
 	pxa_state = 'R';
+#endif
 
 	/*
 	 * Read the byte.
@@ -1144,8 +1185,10 @@ static irqreturn_t i2c_pxa_handler(int this_irq, void *dev_id)
 	}
 
 	if (i2c->irqlogidx < ARRAY_SIZE(i2c->isrlog)) {
+#ifdef CONFIG_X86_EARLYMIC	  
 		i2c->lcklog[i2c->irqlogidx] = (u8) atomic_read(&pxa_block);
 		i2c->idbrlog[i2c->irqlogidx] = (u8) readl(_IDBR(i2c));
+#endif
 		i2c->isrlog[i2c->irqlogidx++] = isr;
 	}
 
@@ -1215,6 +1258,8 @@ static const struct i2c_algorithm i2c_pxa_pio_algorithm = {
 	.functionality	= i2c_pxa_functionality,
 };
 
+#ifdef CONFIG_X86_EARLYMIC
+
 #define MIC_SBOX_I2C_BASE 0x08007D1000UL
 #define MIC_SBOX_SIZE (64 * 1024 * 1024)
 
@@ -1233,19 +1278,25 @@ static struct i2c_board_info info[] = {
 #endif
 };
 
+#endif
+
 static int i2c_pxa_probe(struct platform_device *dev)
 {
 	struct pxa_i2c *i2c;
-//	struct resource *res;
-//	struct i2c_pxa_platform_data *plat = dev->dev.platform_data;
-//	const struct platform_device_id *id = platform_get_device_id(dev);
+#ifndef CONFIG_X86_EARLYMIC	
+	struct resource *res;
+	struct i2c_pxa_platform_data *plat = dev->dev.platform_data;
+	const struct platform_device_id *id = platform_get_device_id(dev);
+	enum pxa_i2c_types i2c_type = id->driver_data;
+#else
 	enum pxa_i2c_types i2c_type = REGS_PXA3XX;
+	int irq;
+#endif
 	int ret;
-//	int irq;
 	int i;
 
 	printk(KERN_INFO "I2C enter: PXA I2C adapter type %d\n", i2c_type);
-#if 0
+#ifndef CONFIG_X86_EARLYMIC
 	res = platform_get_resource(dev, IORESOURCE_MEM, 0);
 	irq = platform_get_irq(dev, 0);
 	if (res == NULL || irq < 0)
@@ -1271,19 +1322,24 @@ static int i2c_pxa_probe(struct platform_device *dev)
 	 * The reason to do so is to avoid sysfs names that only make
 	 * sense when there are multiple adapters.
 	 */
+#ifndef CONFIG_X86_EARLYMIC
+	i2c->adap.nr = dev->id;
+#else
 	i2c->adap.nr = 0;
+#endif	
 	snprintf(i2c->adap.name, sizeof(i2c->adap.name), "pxa_i2c-i2c.%u",
 		 i2c->adap.nr);
 
-#if 0
+#ifndef CONFIG_X86_EARLYMIC
 	i2c->clk = clk_get(&dev->dev, NULL);
 	if (IS_ERR(i2c->clk)) {
 		ret = PTR_ERR(i2c->clk);
 		goto eclk;
 	}
-
+	i2c->reg_base = ioremap(res->start, resource_size(res));
+#else
+	i2c->reg_base = ioremap(MIC_SBOX_I2C_BASE, MIC_SBOX_SIZE);
 #endif
-	i2c->reg_base = ioremap(MIC_SBOX_I2C_BASE, MIC_SBOX_SIZE);	
 	if (!i2c->reg_base) {
 		ret = -EIO;
 		goto eremap;
@@ -1296,10 +1352,17 @@ static int i2c_pxa_probe(struct platform_device *dev)
 	if (i2c_type != REGS_CE4100)
 		i2c->reg_isar = i2c->reg_base + pxa_reg_layout[i2c_type].isar;
 
+#ifndef CONFIG_X86_EARLYMIC
+	i2c->iobase = res->start;
+	i2c->iosize = resource_size(res);
+
+	i2c->irq = irq;
+#else
 //	i2c->reg_shift = 0;
 
 	i2c->iobase = MIC_SBOX_I2C_BASE;
 	i2c->iosize = MIC_SBOX_SIZE;
+#endif
 
 	i2c->slave_addr = I2C_PXA_SLAVE_ADDR;
 
@@ -1310,7 +1373,7 @@ static int i2c_pxa_probe(struct platform_device *dev)
 	}
 #endif
 
-#if 0
+#ifndef CONFIG_X86_EARLYMIC
 	clk_enable(i2c->clk);
 
 	if (plat) {
@@ -1318,24 +1381,29 @@ static int i2c_pxa_probe(struct platform_device *dev)
 		i2c->use_pio = plat->use_pio;
 		i2c->fast_mode = plat->fast_mode;
 	}
+#else
+	i2c->use_pio = 1;
 #endif
-	i2c->use_pio = 1;	
 
 	if (i2c->use_pio) {
 		i2c->adap.algo = &i2c_pxa_pio_algorithm;
 	} else {
-		//i2c->adap.algo = &i2c_pxa_algorithm;
-		//ret = request_irq(irq, i2c_pxa_handler, IRQF_SHARED,
-		//		  i2c->adap.name, i2c);
-		//if (ret)
-		//	goto ereqirq;
+#ifndef CONFIG_X86_EARLYMIC	  
+		i2c->adap.algo = &i2c_pxa_algorithm;
+		ret = request_irq(irq, i2c_pxa_handler, IRQF_SHARED,
+				  i2c->adap.name, i2c);
+		if (ret)
+			goto ereqirq;
+#endif
 	}
 
 	i2c_pxa_reset(i2c);
 
 	i2c->adap.algo_data = i2c;
 	//SDFIX: No parent?
-	//i2c->adap.dev.parent = &dev->dev;
+#ifndef CONFIG_X86_EARLYMIC	
+	i2c->adap.dev.parent = &dev->dev;
+#endif	
 #ifdef CONFIG_OF
 	i2c->adap.dev.of_node = dev->dev.of_node;
 #endif
@@ -1357,23 +1425,33 @@ static int i2c_pxa_probe(struct platform_device *dev)
 	printk(KERN_INFO "I2C: %s: PXA I2C adapter Probe Complete\n",
 	       dev_name(&i2c->adap.dev));
 #endif
+#ifdef CONFIG_X86_EARLYMIC	
 	for (i = 0; i < ARRAY_SIZE(info); i++)
 		i2c_new_device(&i2c->adap, &info[i]);
 	return 0;
+#endif
 
 eadapt:
-//	if (!i2c->use_pio)
-//		free_irq(irq, i2c);
-//ereqirq:
+#ifndef CONFIG_X86_EARLYMIC
+	if (!i2c->use_pio)
+		free_irq(irq, i2c);
+ereqirq:
+#endif
 	clk_disable(i2c->clk);
 	iounmap(i2c->reg_base);
 eremap:
 	clk_put(i2c->clk);
-//eclk:
+#ifndef CONFIG_X86_EARLYMIC	
+eclk:
+#endif
 	kfree(i2c);
 emalloc:
+#ifdef CONFIG_X86_EARLYMIC
 	printk(KERN_INFO "I2C: PXA I2C adapter Probe Failed\n");
 	release_mem_region(MIC_SBOX_I2C_BASE, MIC_SBOX_SIZE);
+#else	
+	release_mem_region(res->start, resrouce_size(res));
+#endif	
 	return ret;
 }
 
@@ -1400,10 +1478,12 @@ static int __exit i2c_pxa_remove(struct platform_device *dev)
 #ifdef CONFIG_PM
 static int i2c_pxa_suspend_noirq(struct device *dev)
 {
-	//struct platform_device *pdev = to_platform_device(dev);
-	//struct pxa_i2c *i2c = platform_get_drvdata(pdev);
+#ifdef CONFIG_X86_EARLYMIC  
+	struct platform_device *pdev = to_platform_device(dev);
+	struct pxa_i2c *i2c = platform_get_drvdata(pdev);
 
-	//clk_disable(i2c->clk);
+	clk_disable(i2c->clk);
+#endif
 
 	return 0;
 }
@@ -1442,6 +1522,7 @@ static struct platform_driver i2c_pxa_driver = {
 
 static int __init i2c_adap_pxa_init(void)
 {
+#ifdef CONFIG_X86_EARLYMIC  
 	int error =0; //copied from drivers/base/platform.c
 	struct platform_device * pdev;
 	
@@ -1470,6 +1551,9 @@ exit_device_put:
 	platform_device_put(pdev);
 exit:
 	return error;
+#else
+	return platform_driver_register(&i2c_pxa_driver);
+#endif
 }
 
 static void __exit i2c_adap_pxa_exit(void)

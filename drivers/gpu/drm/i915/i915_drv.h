@@ -1297,9 +1297,11 @@ extern inline bool intel_gmbus_is_forced_bit(struct i2c_adapter *adapter)
 	return container_of(adapter, struct intel_gmbus, adapter)->force_bit;
 }
 extern void intel_i2c_reset(struct drm_device *dev);
+#ifdef CONFIG_X86_EARLYMIC
 extern int gmbus_i2c_read(uint8_t port, uint8_t tgt, uint8_t index, uint8_t *buf, uint16_t len);
 extern int gmbus_i2c_write(uint8_t port, uint8_t tgt, uint8_t index, uint8_t *buf, uint16_t len);
 extern int gmbus_i2c_write_atomic(uint8_t port, uint8_t tgt, uint8_t index, uint8_t *buf, uint16_t len);
+#endif
 
 /* intel_opregion.c */
 extern int intel_opregion_setup(struct drm_device *dev);

@@ -1871,7 +1871,11 @@ static void serial8250_backup_timeout(unsigned long data)
 
 	/* Standard timer interval plus 0.2s to keep the port running */
 	mod_timer(&up->timer,
+#ifdef CONFIG_X86_EARLYMIC
 		jiffies + uart_poll_timeout(&up->port));
+#else
+		jiffies + uart_poll_timeout(&up->port) + HZ / 5);
+#endif
 }
 
 static unsigned int serial8250_tx_empty(struct uart_port *port)
@@ -2167,7 +2171,11 @@ static int serial8250_startup(struct uart_port *port)
 		up->timer.function = serial8250_backup_timeout;
 		up->timer.data = (unsigned long)up;
 		mod_timer(&up->timer, jiffies +
+#ifdef CONFIG_X86_EARLYMIC
 			uart_poll_timeout(port));
+#else
+			uart_poll_timeout(port) + HZ / 5);
+#endif
 	}
 
 	/*
