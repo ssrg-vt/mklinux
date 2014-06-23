@@ -365,6 +365,7 @@ config X86_MICPCI
 	select MK1OM if ARCH = "k1om"
 	select X86_LOCAL_APIC
 	select MMU_NOTIFIER
+	select DRM_I915
 	---help---
 	  Support for Intel Many Integrated Core (Intel MIC) SoC's in a
 	  PCIe coprocessor form factor.
