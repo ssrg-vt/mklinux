@@ -267,13 +267,13 @@ static int __init icache_init(void)
 
 	return entry ? PTR_ERR(entry) : -ENODEV;
 }
-
 arch_initcall(icache_init);
 
 /*
  * Syscall implementation for icache flush
  */
-SYSCALL_DEFINE3(cacheflush, void*, addr, __const int, nbytes, __const int, op)
+//SYSCALL_DEFINE3(cacheflush, void*, __addr, __const int, __nbytes, __const int, __op)
+asmlinkage long sys_cacheflush ( void* __addr, __const int __nbytes, __const int __op)
 {
 	int ret = 0;
 
