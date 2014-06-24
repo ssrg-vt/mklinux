@@ -1232,12 +1232,12 @@ struct pci_dev_blacklist_item {
        unsigned short device;
        unsigned int flags;
 };
-#define BL 16
+#define BL 32
 static struct pci_dev_blacklist_item
-pci_dev_blacklist[BL] = { {0,0,0},{0,0,0},{0,0,0},{0,0,0},
-                                               {0,0,0},{0,0,0},{0,0,0},{0,0,0},
-                                               {0,0,0},{0,0,0},{0,0,0},{0,0,0},
-                                               {0,0,0},{0,0,0},{0,0,0},{0,0,0} };
+pci_dev_blacklist[BL] = { {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},
+                          {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},
+                          {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},
+                          {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0} };
 static int pci_dev_blacklist_elements = 0;
 
 int pci_dev_list_add(int compatible, char *vendor, char *model,

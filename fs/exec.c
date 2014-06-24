@@ -813,10 +813,7 @@ int kernel_read(struct file *file, loff_t offset,
 
 EXPORT_SYMBOL(kernel_read);
 
-#ifdef PROCESS_SERVER_USE_KMOD
-static 
-#endif
-int exec_mmap(struct mm_struct *mm)
+static int exec_mmap(struct mm_struct *mm)
 {
 	struct task_struct *tsk;
 	struct mm_struct * old_mm, *active_mm;
@@ -857,10 +854,6 @@ int exec_mmap(struct mm_struct *mm)
 	mmdrop(active_mm);
 	return 0;
 }
-
-#ifndef PROCESS_SERVER_USE_KMOD
-EXPORT_SYMBOL(exec_mmap);
-#endif
 
 /*
  * This function makes sure the current process has its own signal table,
@@ -1491,19 +1484,25 @@ static int do_execve_common(const char *filename,
 		goto out_files;
 
 	retval = prepare_bprm_creds(bprm);
-	if (retval)
+	if (retval) {
+printk("%s: prepare_bprm_creds\n", __func__);
 		goto out_free;
+}
 
 	retval = check_unsafe_exec(bprm);
-	if (retval < 0)
+	if (retval < 0) {
+printk("%s: check_unsafe_exec\n", __func__);
 		goto out_free;
+}
 	clear_in_exec = retval;
 	current->in_execve = 1;
 
 	file = open_exec(filename);
 	retval = PTR_ERR(file);
-	if (IS_ERR(file))
+	if (IS_ERR(file)) {
+//printk("%s: open_exec\n", __func__);
 		goto out_unmark;
+}
 
 	sched_exec();
 
@@ -1512,42 +1511,56 @@ static int do_execve_common(const char *filename,
 	bprm->interp = filename;
 
 	retval = bprm_mm_init(bprm);
-	if (retval)
+	if (retval) {
+printk("%s: bprm_mm_init\n", __func__);
 		goto out_file;
+}
 
 	bprm->argc = count(argv, MAX_ARG_STRINGS);
-	if ((retval = bprm->argc) < 0)
+	if ((retval = bprm->argc) < 0) {
+printk("%s: count argv\n", __func__);
 		goto out;
+}
 
 	bprm->envc = count(envp, MAX_ARG_STRINGS);
-	if ((retval = bprm->envc) < 0)
+	if ((retval = bprm->envc) < 0) {
+printk("%s: count envc\n", __func__);
 		goto out;
+}
 
 	retval = prepare_binprm(bprm);
-	if (retval < 0)
+	if (retval < 0) {
+printk("%s: prepare_binprm\n", __func__);
 		goto out;
+}
 
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
-	if (retval < 0)
+	if (retval < 0) {
+printk("%s: copy_string_kernel\n", __func__);
 		goto out;
-#ifdef PROCESS_SERVER_USE_KMOD
+}
+
     if(!current->executing_for_remote) {
-#endif
         bprm->exec = bprm->p;
         retval = copy_strings(bprm->envc, envp, bprm);
-        if (retval < 0)
+        if (retval < 0) {
+printk("%s: copy_strings bprm->envc\n", __func__);
             goto out;
+}
 
         retval = copy_strings(bprm->argc, argv, bprm);
-        if (retval < 0)
+        if (retval < 0) {
+printk("%s: copy_strings bprm->argc\n", __func__);
             goto out;
-#ifdef PROCESS_SERVER_USE_KMOD
-    }
-#endif
+}
+
+     }
 
 	retval = search_binary_handler(bprm,regs);
-	if (retval < 0)
+	if (retval < 0) {
+printk("%s: search_binary_handler\n", __func__);
 		goto out;
+}
 
 	/* execve succeeded */
 	current->fs->in_exec = 0;
@@ -2312,3 +2325,4 @@ int dump_seek(struct file *file, loff_t off)
 	return ret;
 }
 EXPORT_SYMBOL(dump_seek);
+
