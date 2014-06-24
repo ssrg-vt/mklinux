@@ -233,7 +233,7 @@ __releases(&value->_sp)
 		wake_req->flags = _data->flags;
 
 		wake_req->ticket = localticket_value;//GET_TOKEN; //set the request has no ticket
-		printk(KERN_ALERT"%s: wake uaddr2{%lx} data{%lx} \n",__func__,wake_req->uaddr2,_data->uaddr2);
+//		printk(KERN_ALERT"%s: wake uaddr2{%lx} data{%lx} \n",__func__,wake_req->uaddr2,_data->uaddr2);
 	}
 
 

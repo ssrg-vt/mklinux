@@ -100,10 +100,10 @@ int remote_futex_wakeup(u32 __user  *uaddr,unsigned int flags, int nr_wake, u32 
 extern struct futex_hash_bucket futex_queues[1<<_FUTEX_HASHBITS];
 extern void get_futex_key_refs(union futex_key *key);
 extern int
-futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset,unsigned int fn_flags);
+futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset,unsigned int fn_flags,struct task_struct *tsk);
 extern int futex_requeue(u32 __user *uaddr1, unsigned int flags,
 			 u32 __user *uaddr2, int nr_wake, int nr_requeue,
-			 u32 *cmpval, int requeue_pi,unsigned int fn_flags);
+			 u32 *cmpval, int requeue_pi,unsigned int fn_flags, struct task_struct *tsk);
 extern int futex_wake_op(u32 __user *uaddr1, unsigned int flags, u32 __user *uaddr2,
 	      int nr_wake, int nr_wake2, int op,unsigned int fn_flags,struct task_struct *tsk);
 extern int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
@@ -112,6 +112,10 @@ extern const struct futex_q futex_q_init ;
 extern struct futex_hash_bucket *hash_futex(union futex_key *key);
 extern int
 get_futex_key(u32 __user *uaddr, int fshared, union futex_key *key, int rw);
+
+extern int 
+get_futex_key_tsk(u32 __user *uaddr, int fshared, union futex_key *key, int rw, struct task_struct *tsk);
+
 extern int match_futex(union futex_key *key1, union futex_key *key2);
 extern void wake_futex(struct futex_q *q);
 extern void put_futex_key(union futex_key *key);
@@ -149,8 +153,12 @@ struct kernel_robust_list_head {
 #define FLAGS_ORIGINCALL	32
 
 #define FLAGS_MAX	FLAGS_SYSCALL+FLAGS_REMOTECALL+FLAGS_ORIGINCALL+FLAGS_WAKECALL+FLAGS_REQCALL+FLAGS_WAKEOPCALL
-
+//#define FUTEX_STAT
+#undef FUTEX_STAT
 extern struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr);
+int print_wait_perf();
 
-
+int print_wake_perf();
+int print_wakeop_perf();
+int print_requeue_perf();
 #endif /* FUTEX_REMOTE_H_ */

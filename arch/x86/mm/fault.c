@@ -1091,23 +1091,18 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	}
 
     vma = find_vma(mm, address);
-#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
-    process_server_acquire_heavy_lock();
-#else
-    process_server_acquire_page_lock(address);
-#endif
 	if (unlikely(!vma)) {
         // Multikernel - see if another member of the thread group has mapped
         // this vma
-        if(process_server_pull_remote_mappings(mm,NULL,address,flags,&vma,error_code)) {
-            goto ret;
+        if(process_server_try_handle_mm_fault(mm,NULL,address,flags,&vma,error_code)) {
+            return;
         }
 		if(!vma) {
             bad_area(regs, error_code, address);
-		    goto ret;
+		    return;
         }
-	} else if(process_server_pull_remote_mappings(mm,vma,address,flags,&vma,error_code)) {
-        goto ret;
+	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags,&vma,error_code)) {
+        return;
     }
 
 	/*
@@ -1130,7 +1125,7 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		if ((error_code & PF_USER) == 0 &&
 		    !search_exception_tables(regs->ip)) {
 			bad_area_nosemaphore(regs, error_code, address);
-			goto ret;
+			return;
 		}
 retry:
 		down_read(&mm->mmap_sem);
@@ -1143,11 +1138,26 @@ retry:
 		might_sleep();
 	}
 
+	/*vma = find_vma(mm, address);
+	if (unlikely(!vma)) {
+        // Multikernel - see if another member of the thread group has mapped
+        // this vma
+        if(process_server_try_handle_mm_fault(mm,NULL,address,flags,&vma)) {
+            return;
+        }
+		if(!vma) {
+            bad_area(regs, error_code, address);
+		    return;
+        }
+	} else if(process_server_try_handle_mm_fault(mm,vma,address,flags,&vma)) {
+        return;
+    }*/
+
 	if (likely(vma->vm_start <= address))
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
 		bad_area(regs, error_code, address);
-		goto ret;
+		return;
 	}
 	if (error_code & PF_USER) {
 		/*
@@ -1158,12 +1168,12 @@ retry:
 		 */
 		if (unlikely(address + 65536 + 32 * sizeof(unsigned long) < regs->sp)) {
 			bad_area(regs, error_code, address);
-			goto ret;
+			return;
 		}
 	}
 	if (unlikely(expand_stack(vma, address))) {
 		bad_area(regs, error_code, address);
-		goto ret;
+		return;
 	}
 
 	/*
@@ -1173,7 +1183,7 @@ retry:
 good_area:
 	if (unlikely(access_error(error_code, vma))) {
 		bad_area_access_error(regs, error_code, address);
-		goto ret;
+		return;
 	}
 
 	/*
@@ -1185,7 +1195,7 @@ good_area:
 
 	if (unlikely(fault & (VM_FAULT_RETRY|VM_FAULT_ERROR))) {
 		if (mm_fault_error(regs, error_code, address, fault))
-			goto ret;
+			return;
 	}
 
 	/*
@@ -1214,12 +1224,4 @@ good_area:
 	check_v8086_mode(regs, address, tsk);
 
 	up_read(&mm->mmap_sem);
-
-ret:
-#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
-    process_server_release_heavy_lock();
-#else
-    process_server_release_page_lock(address);
-#endif
-    return;
 }

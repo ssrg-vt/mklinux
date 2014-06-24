@@ -14,7 +14,8 @@
 
 #define NORMAL_Q_PRIORITY 100
 
-
+#define LOCK_STAT 
+//#undef LOCK_STAT
 #define sp_hashfn(uaddr, pid)      \
          hash_long((unsigned long)uaddr + (unsigned long)pid, _SPIN_HASHBITS)
 

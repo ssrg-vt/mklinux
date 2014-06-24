@@ -238,12 +238,10 @@ fail:
  * do_remote - 1 = ask process_server to notify all remote thread members
  *             0 = do not
  */
-int do_mprotect(struct task_struct* task, struct mm_struct* mm, unsigned long start, size_t len, unsigned long prot, int do_remote) {
+int do_mprotect(struct task_struct* task, unsigned long start, size_t len, unsigned long prot, int do_remote) {
 	unsigned long vm_flags, nstart, end, tmp, reqprot;
 	struct vm_area_struct *vma, *prev;
-    struct mm_struct* task_mm = task? task->mm : mm;
 	int error = -EINVAL;
-    unsigned long a;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
@@ -260,28 +258,18 @@ int do_mprotect(struct task_struct* task, struct mm_struct* mm, unsigned long st
 	if (!arch_validate_prot(prot))
 		return -EINVAL;
 
-#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
-    if(do_remote) {
-#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
-        process_server_acquire_heavy_lock();
-#else
-        process_server_acquire_page_lock_range(start,len);
-#endif
-    }
-#endif
-
 	reqprot = prot;
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC:
 	 */
-	if (task && (prot & PROT_READ) && (task->personality & READ_IMPLIES_EXEC))
+	if ((prot & PROT_READ) && (task->personality & READ_IMPLIES_EXEC))
 		prot |= PROT_EXEC;
 
 	vm_flags = calc_vm_prot_bits(prot);
 
-	down_write(&task_mm->mmap_sem);
+	down_write(&task->mm->mmap_sem);
 
-	vma = find_vma_prev(task_mm, start, &prev);
+	vma = find_vma_prev(task->mm, start, &prev);
 	error = -ENOMEM;
 	if (!vma)
 		goto out;
@@ -343,24 +331,14 @@ int do_mprotect(struct task_struct* task, struct mm_struct* mm, unsigned long st
 		}
 	}
 out:
-	up_write(&task_mm->mmap_sem);
+	up_write(&task->mm->mmap_sem);
 
     /*
      * Multikernel.  Change remote mappings as well before returning.
      */
-    if(!error && do_remote && task) {
+    if(!error && do_remote) {
         process_server_do_mprotect(task,start,len,prot);
     }
-
-#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
-    if(do_remote) {
-#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
-        process_server_release_heavy_lock();
-#else
-        process_server_release_page_lock_range(start,len);
-#endif
-    }
-#endif
 
 	return error;
 
@@ -369,5 +347,5 @@ out:
 SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 		unsigned long, prot)
 {
-    return do_mprotect(current, current->mm, start, len, prot, 1);
+    return do_mprotect(current, start, len, prot, 1);
 }

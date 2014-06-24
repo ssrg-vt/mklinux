@@ -992,7 +992,14 @@ NORET_TYPE void do_exit(long code)
      * Multikernel
      */
     process_server_do_exit();
-
+#ifdef FUTEX_STAT
+    if(current->tgroup_distributed && current->pid == current->tgroup_home_id){
+    print_wait_perf();
+    print_wake_perf();
+    print_wakeop_perf();
+    print_requeue_perf();
+    }
+#endif
 	/*
 	 * tsk->flags are checked in the futex code to protect against
 	 * an exiting task cleaning up the robust pi futexes.
