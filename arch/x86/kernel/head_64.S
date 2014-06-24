@@ -337,6 +337,7 @@ ENTRY(secondary_startup_64)
 	/* Make changes effective */
 	movq	%rax, %cr0
 
+#ifdef CONFIG_X86_EARLYMIC
 	/* ap_code tells us whether we are in parallel boot code or serial boot code (BSP or hotplug) */
 	mov ap_code(%rip), %eax
 	testl	%eax, %eax
@@ -366,6 +367,7 @@ ENTRY(secondary_startup_64)
 	jnz  skip_for_secondary
 
 skip_for_bsp:
+#endif
 	/* Setup a boot time stack */
 	movq stack_start(%rip),%rsp
 
@@ -404,6 +406,7 @@ skip_for_secondary:
 	 * init data section till per cpu areas are set up.
 	 */
 
+#ifdef CONFIG_X86_EARLYMIC
 	mov ap_code(%rip), %ebx
 	testl	%ebx, %ebx
 	jz	skip_for_bsp2
@@ -421,7 +424,8 @@ skip_for_secondary:
 skip_for_bsp2:
 	movq	initial_gs(%rip),%rax
 
-skip_for_secondary2:   
+skip_for_secondary2:
+#endif   
 
 	movl	$MSR_GS_BASE,%ecx
 	movl	initial_gs(%rip),%eax

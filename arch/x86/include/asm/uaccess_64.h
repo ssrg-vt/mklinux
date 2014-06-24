@@ -36,6 +36,7 @@ copy_user_generic(void *to, const void *from, unsigned len)
 	return ret;
 }
 
+#ifdef CONFIG_X86_EARLYMIC
 unsigned long
 copy_user_generic_vector(void *to, const void *from, unsigned len);
 
@@ -50,6 +51,7 @@ __copy_to_user_vector_inatomic(void *to, const void *from, unsigned len)
 {
 	return copy_user_generic_vector(to, from, len);
 }
+#endif
 
 __must_check unsigned long
 _copy_to_user(void __user *to, const void *from, unsigned len);

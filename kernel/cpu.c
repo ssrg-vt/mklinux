@@ -381,6 +381,7 @@ out:
 	return err;
 }
 
+#ifdef CONFIG_X86_EARLYMIC
 /* Requires cpu_add_remove_lock to be held */
 static int __cpuinit _cpu_up_parallel(unsigned int cpu, int tasks_frozen)
 {
@@ -497,6 +498,7 @@ void __cpuinit map_cpu_active(unsigned int cpu)
 
 	return;
 }
+#endif
 
 #ifdef CONFIG_PM_SLEEP_SMP
 static cpumask_var_t frozen_cpus;

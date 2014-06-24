@@ -880,6 +880,6 @@ asmlinkage long sys_process_vm_writev(pid_t pid,
 				      unsigned long riovcnt,
 				      unsigned long flags);
 
-asmlinkage int sys_cacheflush(void *__addr, __const int __nbytes, __const int __op);
+asmlinkage long sys_cacheflush(void *__addr, __const int __nbytes, __const int __op);
 
 #endif

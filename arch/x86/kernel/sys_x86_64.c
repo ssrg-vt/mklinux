@@ -281,3 +281,10 @@ bottomup:
 
 	return addr;
 }
+
+#ifndef CONFIG_X86_EARLYMIC
+SYSCALL_DEFINE3(cacheflush, void*, addr, __const int, nbytes, __const int, op)
+{
+	return 0;
+}
+#endif

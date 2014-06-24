@@ -152,8 +152,6 @@ static int raise_local(void)
 	return ret;
 }
 
-extern atomic_t mca_inject;
-
 static void raise_mce(struct mce *m)
 {
 	int context = MCJ_CTX(m->inject_flags);
@@ -200,6 +198,10 @@ static void raise_mce(struct mce *m)
 		raise_local();
 }
 
+#ifdef CONFIG_X86_EARLYMIC
+extern atomic_t mca_inject;
+#endif
+
 /* Error injection interface */
 static ssize_t mce_write(struct file *filp, const char __user *ubuf,
 			 size_t usize, loff_t *off)
@@ -228,9 +230,13 @@ static ssize_t mce_write(struct file *filp, const char __user *ubuf,
 	 * so do it a jiffie or two later everywhere.
 	 */
 	schedule_timeout(2);
+#ifdef CONFIG_X86_EARLYMIC	
 	atomic_inc(&mca_inject);
 	raise_mce(&m);
 	atomic_dec(&mca_inject);
+#else	
+	raise_mce(&m);
+#endif
 	return usize;
 }
 

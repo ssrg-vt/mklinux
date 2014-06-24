@@ -273,7 +273,7 @@ arch_initcall(icache_init);
 /*
  * Syscall implementation for icache flush
  */
-asmlinkage int sys_cacheflush(void *__addr, __const int __nbytes, __const int __op)
+SYSCALL_DEFINE3(cacheflush, void*, addr, __const int, nbytes, __const int, op)
 {
 	int ret = 0;
 
