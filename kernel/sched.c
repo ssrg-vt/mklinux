@@ -95,6 +95,7 @@
 #include <linux/ftrace.h>
 #include <linux/slab.h>
 #include <linux/init_task.h>
+#include <linux/process_server.h>
 
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>
@@ -5639,6 +5640,109 @@ out_put_task:
 	return retval;
 }
 
+long sched_setaffinity_on_popcorn(pid_t pid, const struct cpumask *in_mask, struct pt_regs* regs)
+{
+	cpumask_var_t cpus_allowed, new_mask;
+	struct task_struct *p;
+	int retval;
+    int current_cpu = smp_processor_id();
+    int i,ret;
+
+	get_online_cpus();
+	rcu_read_lock();
+
+	p = find_process_by_pid(pid);
+	if (!p) {
+		rcu_read_unlock();
+		put_online_cpus();
+		return -ESRCH;
+	}
+	pid = current->pid;
+
+    /*
+     * Multikernel
+     */
+    // For now, migrate to the first cpu in the mask that
+    // is not the current cpu
+	if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
+		char buf_in[64], buf_present[64];
+		memset(buf_in, 0, 64); memset(buf_present, 0, 64);
+		cpumask_scnprintf(buf_in, 63, in_mask);
+		cpumask_scnprintf(buf_present, 63, cpu_present_mask);
+
+		for(i = 0; i < NR_CPUS; i++) {
+			if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
+				// do the migration
+				get_task_struct(p);
+				rcu_read_unlock();
+				ret= process_server_do_migration(p,i,regs);
+				put_task_struct(p);
+				put_online_cpus();
+
+				schedule();
+
+				if(ret==PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote){
+					if(current->group_exit){
+						do_group_exit(current->distributed_exit_code);
+					}
+					else
+						do_exit(current->distributed_exit_code);
+
+				}
+
+				return task_pt_regs(current)->orig_ax;
+
+			}
+		}
+	}
+
+	/* Prevent p going away */
+	get_task_struct(p);
+	rcu_read_unlock();
+
+	if (!alloc_cpumask_var(&cpus_allowed, GFP_KERNEL)) {
+		retval = -ENOMEM;
+		goto out_put_task;
+	}
+	if (!alloc_cpumask_var(&new_mask, GFP_KERNEL)) {
+		retval = -ENOMEM;
+		goto out_free_cpus_allowed;
+	}
+	retval = -EPERM;
+	if (!check_same_owner(p) && !task_ns_capable(p, CAP_SYS_NICE))
+		goto out_unlock;
+
+	retval = security_task_setscheduler(p);
+	if (retval)
+		goto out_unlock;
+
+	cpuset_cpus_allowed(p, cpus_allowed);
+	cpumask_and(new_mask, in_mask, cpus_allowed);
+again:
+	retval = set_cpus_allowed_ptr(p, new_mask);
+
+	if (!retval) {
+		cpuset_cpus_allowed(p, cpus_allowed);
+		if (!cpumask_subset(new_mask, cpus_allowed)) {
+			/*
+			 * We must have raced with a concurrent cpuset
+			 * update. Just reset the cpus_allowed to the
+			 * cpuset's cpus_allowed
+			 */
+			cpumask_copy(new_mask, cpus_allowed);
+			goto again;
+		}
+	}
+out_unlock:
+	free_cpumask_var(new_mask);
+out_free_cpus_allowed:
+	free_cpumask_var(cpus_allowed);
+out_put_task:
+	put_task_struct(p);
+	put_online_cpus();
+	return retval;
+}
+
 static int get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
 			     struct cpumask *new_mask)
 {
@@ -5656,8 +5760,9 @@ static int get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
  * @len: length in bytes of the bitmask pointed to by user_mask_ptr
  * @user_mask_ptr: user-space pointer to the new cpu mask
  */
-SYSCALL_DEFINE3(sched_setaffinity, pid_t, pid, unsigned int, len,
-		unsigned long __user *, user_mask_ptr)
+//SYSCALL_DEFINE3(sched_setaffinity, pid_t, pid, unsigned int, len,
+//		unsigned long __user *, user_mask_ptr)
+asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long __user * user_mask_ptr, struct pt_regs* regs)
 {
 	cpumask_var_t new_mask;
 	int retval;
@@ -5666,8 +5771,12 @@ SYSCALL_DEFINE3(sched_setaffinity, pid_t, pid, unsigned int, len,
 		return -ENOMEM;
 
 	retval = get_user_cpu_mask(user_mask_ptr, len, new_mask);
-	if (retval == 0)
-		retval = sched_setaffinity(pid, new_mask);
+	if (retval == 0){
+		if(cpumask_intersects(new_mask, cpu_present_mask))
+			retval = sched_setaffinity(pid, new_mask);
+		else
+			retval= sched_setaffinity_on_popcorn(pid, new_mask, regs);
+	}
 	free_cpumask_var(new_mask);
 	return retval;
 }

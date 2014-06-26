@@ -79,6 +79,12 @@ static void check_hung_task(struct task_struct *t, unsigned long timeout)
 	if (unlikely(t->flags & (PF_FROZEN | PF_FREEZER_SKIP)))
 	    return;
 
+	/* Multikernel
+	 * a shadow thread can be in interruptible state for very long....
+	 * */
+	if(t->tgroup_distributed && (t->represents_remote || t->main))
+		return;
+
 	/*
 	 * When a freshly created task is scheduled once, changes its state to
 	 * TASK_UNINTERRUPTIBLE without having ever been switched out once, it

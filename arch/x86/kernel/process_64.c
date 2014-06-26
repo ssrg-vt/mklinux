@@ -391,7 +391,8 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 #endif
 	preempt_enable();
 #else
-	free_thread_xstate(current);
+	if ( !current->executing_for_remote)
+		free_thread_xstate(current);
 #endif
 }
 
@@ -400,6 +401,10 @@ start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 {
 	start_thread_common(regs, new_ip, new_sp,
 			    __USER_CS, __USER_DS, 0);
+}
+
+unsigned long read_old_rsp(){
+	return percpu_read(old_rsp);
 }
 
 #ifdef CONFIG_IA32_EMULATION

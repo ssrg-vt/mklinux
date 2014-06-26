@@ -27,6 +27,9 @@
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
+//Multikernel
+#include <linux/process_server.h>
+#include <linux/rmap.h>
 
 #ifndef pgprot_modify
 static inline pgprot_t pgprot_modify(pgprot_t oldprot, pgprot_t newprot)
@@ -48,31 +51,149 @@ static void change_pte_range(struct mm_struct *mm, pmd_t *pmd,
 		oldpte = *pte;
 		if (pte_present(oldpte)) {
 			pte_t ptent;
+			int clear= 0;
+			//Multikernel
+			if(current->tgroup_distributed==1){
+
+				//case pte_present: or REPLICATION_STATUS_NOT_REPLICATED or
+				// REPLICATION_STATUS_VALID or REPLICATION_STATUS_WRITTEN
+
+				struct page *page= pte_page(oldpte);
+
+				if (!is_zero_page(pte_pfn(oldpte))) {
+
+					if (page->status == REPLICATION_STATUS_INVALID) {
+						printk("ERROR: mprotect moving "
+								"a present page that is in invalid state\n");
+					}
+
+					if (!(newprot.pgprot & PROT_WRITE)) { //it is becoming a read only vma
+
+						if (page->replicated == 1) {
+							printk("mprot: changing to read only address %lu\n",addr);
+							if (page->status == REPLICATION_STATUS_NOT_REPLICATED) {
+								printk("ERROR:  page replicated is 1 "
+										"but in state not replicated\n");
+							}
+
+							page->replicated = 0;
+
+							page->status = REPLICATION_STATUS_NOT_REPLICATED;
+						}
+
+					} else { // it is becoming a writable vma
+
+						if (page->replicated == 0) {
+							printk("mprot: changing to read write address %lu\n",addr);
+							if (page->status != REPLICATION_STATUS_NOT_REPLICATED) {
+								printk("ERROR: page replicated is zero "
+										"but not in state not replicated\n");
+							}
+							//check if somebody else fetched the page
+							int i,count=0;
+							for (i = 0; i < NR_CPUS; i++) {
+								count=count+page->other_owners[i];
+							}
+							if(count>1){
+								page->replicated = 1;
+								page->status = REPLICATION_STATUS_VALID;
+								clear=1;
+							}
+						}else
+						{
+							//in case valid I enforce a clear
+							if (page->status == REPLICATION_STATUS_VALID) {
+								clear=1;
+							}
+						}
+
+					}
+				}
+			}
 
 			ptent = ptep_modify_prot_start(mm, addr, pte);
 			ptent = pte_modify(ptent, newprot);
 
-			/*
-			 * Avoid taking write faults for pages we know to be
-			 * dirty.
-			 */
-			if (dirty_accountable && pte_dirty(ptent))
-				ptent = pte_mkwrite(ptent);
+			if(clear)
+				ptent = pte_clear_flags(ptent, _PAGE_RW);
+			else
+				/*
+				 * Avoid taking write faults for pages we know to be
+				 * dirty.
+				 */
+				if (dirty_accountable && pte_dirty(ptent))
+					ptent = pte_mkwrite(ptent);
 
 			ptep_modify_prot_commit(mm, addr, pte, ptent);
-		} else if (PAGE_MIGRATION && !pte_file(oldpte)) {
-			swp_entry_t entry = pte_to_swp_entry(oldpte);
+		} else
+			if(current->tgroup_distributed==1){
 
-			if (is_write_migration_entry(entry)) {
-				/*
-				 * A protection check is difficult so
-				 * just be safe and disable write
-				 */
-				make_migration_entry_read(&entry);
-				set_pte_at(mm, addr, pte,
-					swp_entry_to_pte(entry));
+				if(!( pte==NULL || pte_none(pte_clear_flags(oldpte, _PAGE_UNUSED1)) )){
+
+					struct page *page= pte_page(oldpte);
+
+					if(page->replicated!=1 || page->status!=REPLICATION_STATUS_INVALID){
+						printk("ERROR: mprotect moving a not present page that is not in invalid state or replicated\n");
+					}
+
+					if( !(newprot.pgprot & PROT_WRITE)) { //it is becoming a read only vma
+						printk("mprot: removing page address %lu\n",addr);
+						//force a new fetch
+						int rss[NR_MM_COUNTERS];
+						memset(rss, 0, sizeof(int) * NR_MM_COUNTERS);
+
+						if (PageAnon(page))
+							rss[MM_ANONPAGES]--;
+						else {
+							rss[MM_FILEPAGES]--;
+						}
+
+#if DIFF_PAGE
+						if(page->old_page_version!=NULL)
+							kfree(page->old_page_version);
+#endif
+
+						page_remove_rmap(page);
+
+						page->replicated= 0;
+						page->status= REPLICATION_STATUS_NOT_REPLICATED;
+
+#if FOR_2_KERNELS
+						//add if for 2 kernels
+						if(cpumask_first(cpu_present_mask)==current->tgroup_home_cpu){
+							ptep_get_and_clear(mm, addr, pte);
+							pte_t ptent= *pte;
+							if(!pte_none(ptent))
+								printk("ERROR: mprot cleaning pte but after not none\n");
+							ptent = pte_set_flags(ptent, _PAGE_UNUSED1);
+							set_pte_at_notify(mm, addr, pte, ptent);
+						}
+#endif
+						int i;
+
+						if (current->mm == mm)
+							sync_mm_rss(current, mm);
+						for (i = 0; i < NR_MM_COUNTERS; i++)
+							if (rss[i])
+								atomic_long_add(rss[i], &mm->rss_stat.count[i]);
+					}
+				}
 			}
-		}
+			else{
+				if (PAGE_MIGRATION && !pte_file(oldpte)) {
+					swp_entry_t entry = pte_to_swp_entry(oldpte);
+
+					if (is_write_migration_entry(entry)) {
+						/*
+						 * A protection check is difficult so
+						 * just be safe and disable write
+						 */
+						make_migration_entry_read(&entry);
+						set_pte_at(mm, addr, pte,
+								swp_entry_to_pte(entry));
+					}
+				}
+			}
 	} while (pte++, addr += PAGE_SIZE, addr != end);
 	arch_leave_lazy_mmu_mode();
 	pte_unmap_unlock(pte - 1, ptl);
@@ -98,7 +219,7 @@ static inline void change_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 		if (pmd_none_or_clear_bad(pmd))
 			continue;
 		change_pte_range(vma->vm_mm, pmd, addr, next, newprot,
-				 dirty_accountable);
+				dirty_accountable);
 	} while (pmd++, addr = next, addr != end);
 }
 
@@ -115,7 +236,7 @@ static inline void change_pud_range(struct vm_area_struct *vma, pgd_t *pgd,
 		if (pud_none_or_clear_bad(pud))
 			continue;
 		change_pmd_range(vma, pud, addr, next, newprot,
-				 dirty_accountable);
+				dirty_accountable);
 	} while (pud++, addr = next, addr != end);
 }
 
@@ -136,14 +257,13 @@ static void change_protection(struct vm_area_struct *vma,
 		if (pgd_none_or_clear_bad(pgd))
 			continue;
 		change_pud_range(vma, pgd, addr, next, newprot,
-				 dirty_accountable);
+				dirty_accountable);
 	} while (pgd++, addr = next, addr != end);
 	flush_tlb_range(vma, start, end);
 }
 
-int
-mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
-	unsigned long start, unsigned long end, unsigned long newflags)
+int mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
+		unsigned long start, unsigned long end, unsigned long newflags)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	unsigned long oldflags = vma->vm_flags;
@@ -166,7 +286,7 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 	 */
 	if (newflags & VM_WRITE) {
 		if (!(oldflags & (VM_ACCOUNT|VM_WRITE|VM_HUGETLB|
-						VM_SHARED|VM_NORESERVE))) {
+				VM_SHARED|VM_NORESERVE))) {
 			charged = nrpages;
 			if (security_vm_enough_memory(charged))
 				return -ENOMEM;
@@ -199,14 +319,14 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 			goto fail;
 	}
 
-success:
+	success:
 	/*
 	 * vm_flags and vm_page_prot are protected by the mmap_sem
 	 * held in write mode.
 	 */
 	vma->vm_flags = newflags;
 	vma->vm_page_prot = pgprot_modify(vma->vm_page_prot,
-					  vm_get_page_prot(newflags));
+			vm_get_page_prot(newflags));
 
 	if (vma_wants_writenotify(vma)) {
 		vma->vm_page_prot = vm_get_page_prot(newflags & ~VM_SHARED);
@@ -224,18 +344,20 @@ success:
 	perf_event_mmap(vma);
 	return 0;
 
-fail:
+	fail:
 	vm_unacct_memory(charged);
 	return error;
 }
 
-SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
-		unsigned long, prot)
-{
+int kernel_mprotect(unsigned long start, size_t len,
+		unsigned long prot){
+
 	unsigned long vm_flags, nstart, end, tmp, reqprot;
 	struct vm_area_struct *vma, *prev;
-	int error = -EINVAL;
+	int error = -EINVAL, distributed= 0;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
+	long distr_ret;
+
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
 		return -EINVAL;
@@ -261,6 +383,17 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	vm_flags = calc_vm_prot_bits(prot);
 
 	down_write(&current->mm->mmap_sem);
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
+		distributed= 1;
+		printk("WARNING: mprotect called \n");
+		distr_ret= process_server_mprotect_start( start, len, prot);
+		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
+			up_write(&current->mm->mmap_sem);
+			return distr_ret;
+		}
+	}
 
 	vma = find_vma_prev(current->mm, start, &prev);
 	error = -ENOMEM;
@@ -323,7 +456,131 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 			goto out;
 		}
 	}
-out:
+	out:
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && distributed == 1){
+		process_server_mprotect_end(start,len,prot,distr_ret);
+	}
+
+	up_write(&current->mm->mmap_sem);
+	return error;
+
+}
+SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
+		unsigned long, prot)
+{
+	unsigned long vm_flags, nstart, end, tmp, reqprot;
+	struct vm_area_struct *vma, *prev;
+	int error = -EINVAL, distributed= 0;
+	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
+	long distr_ret;
+
+	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
+	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
+		return -EINVAL;
+
+	if (start & ~PAGE_MASK)
+		return -EINVAL;
+	if (!len)
+		return 0;
+	len = PAGE_ALIGN(len);
+	end = start + len;
+	if (end <= start)
+		return -ENOMEM;
+	if (!arch_validate_prot(prot))
+		return -EINVAL;
+
+	reqprot = prot;
+	/*
+	 * Does the application expect PROT_READ to imply PROT_EXEC:
+	 */
+	if ((prot & PROT_READ) && (current->personality & READ_IMPLIES_EXEC))
+		prot |= PROT_EXEC;
+
+	vm_flags = calc_vm_prot_bits(prot);
+
+	down_write(&current->mm->mmap_sem);
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
+		distributed= 1;
+		printk("WARNING: mprotect called\n");
+		distr_ret= process_server_mprotect_start( start, len, prot);
+		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
+			up_write(&current->mm->mmap_sem);
+			return distr_ret;
+		}
+	}
+
+	vma = find_vma_prev(current->mm, start, &prev);
+	error = -ENOMEM;
+	if (!vma)
+		goto out;
+	if (unlikely(grows & PROT_GROWSDOWN)) {
+		if (vma->vm_start >= end)
+			goto out;
+		start = vma->vm_start;
+		error = -EINVAL;
+		if (!(vma->vm_flags & VM_GROWSDOWN))
+			goto out;
+	}
+	else {
+		if (vma->vm_start > start)
+			goto out;
+		if (unlikely(grows & PROT_GROWSUP)) {
+			end = vma->vm_end;
+			error = -EINVAL;
+			if (!(vma->vm_flags & VM_GROWSUP))
+				goto out;
+		}
+	}
+	if (start > vma->vm_start)
+		prev = vma;
+
+	for (nstart = start ; ; ) {
+		unsigned long newflags;
+
+		/* Here we know that  vma->vm_start <= nstart < vma->vm_end. */
+
+		newflags = vm_flags | (vma->vm_flags & ~(VM_READ | VM_WRITE | VM_EXEC));
+
+		/* newflags >> 4 shift VM_MAY% in place of VM_% */
+		if ((newflags & ~(newflags >> 4)) & (VM_READ | VM_WRITE | VM_EXEC)) {
+			error = -EACCES;
+			goto out;
+		}
+
+		error = security_file_mprotect(vma, reqprot, prot);
+		if (error)
+			goto out;
+
+		tmp = vma->vm_end;
+		if (tmp > end)
+			tmp = end;
+		error = mprotect_fixup(vma, &prev, nstart, tmp, newflags);
+		if (error)
+			goto out;
+		nstart = tmp;
+
+		if (nstart < prev->vm_end)
+			nstart = prev->vm_end;
+		if (nstart >= end)
+			goto out;
+
+		vma = prev->vm_next;
+		if (!vma || vma->vm_start != nstart) {
+			error = -ENOMEM;
+			goto out;
+		}
+	}
+	out:
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && distributed == 1){
+		process_server_mprotect_end(start,len,prot,distr_ret);
+	}
+
 	up_write(&current->mm->mmap_sem);
 	return error;
 }

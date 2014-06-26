@@ -26,6 +26,9 @@
 
 #include "internal.h"
 
+//Multikernel
+#include <linux/process_server.h>
+
 static pmd_t *get_old_pmd(struct mm_struct *mm, unsigned long addr)
 {
 	pgd_t *pgd;
@@ -430,7 +433,9 @@ unsigned long do_mremap(unsigned long addr,
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
 	unsigned long ret = -EINVAL;
+	long distr_ret = -EINVAL;
 	unsigned long charged = 0;
+	int distributed= 0;
 
 	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
 		goto out;
@@ -448,6 +453,29 @@ unsigned long do_mremap(unsigned long addr,
 	 */
 	if (!new_len)
 		goto out;
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
+		distributed =1;
+		printk("WARNING: remap called\n");
+		distr_ret= process_server_do_mremap_start(addr,
+			old_len,  new_len,
+			 flags, new_addr);
+
+		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE)
+			return distr_ret;
+
+		/* Only the server can have as output VMA_OP_SAVE and VMA_OP_NOT_SAVE.
+		 * the only output of server are VMA_OP_SAVE and VMA_OP_NOT_SAVE.
+		 * the client should always overwrite new_addr, the server never.
+		 * */
+		if(distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
+			new_addr= ret;
+			flags|= MREMAP_FIXED;
+		}
+
+	}
+
 
 	if (flags & MREMAP_FIXED) {
 		if (flags & MREMAP_MAYMOVE)
@@ -529,6 +557,15 @@ unsigned long do_mremap(unsigned long addr,
 out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && distributed == 1){
+		process_server_do_mremap_end( addr,
+			 old_len,new_len,
+			flags,  new_addr, distr_ret);
+
+	}
+
 	return ret;
 }
 

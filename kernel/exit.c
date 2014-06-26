@@ -77,6 +77,7 @@
 #include <trace/events/sched.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/oom.h>
+#include <linux/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -919,6 +920,13 @@ NORET_TYPE void do_exit(long code)
 	struct task_struct *tsk = current;
 	int group_dead;
 
+	/*
+	 * Multikernel
+	 */
+	if(tsk->tgroup_distributed && tsk->main==0) {
+		process_server_task_exit_notification(tsk, code);
+	}
+
 	profile_task_exit(tsk);
 
 	WARN_ON(blk_needs_flush_plug(tsk));
@@ -1100,6 +1108,10 @@ do_group_exit(int exit_code)
 	struct signal_struct *sig = current->signal;
 
 	BUG_ON(exit_code & 0x80); /* core dumps don't get here */
+
+	//Multikernel
+	if(current->tgroup_distributed==1)
+		current->group_exit= 1;
 
 	if (signal_group_exit(sig))
 		exit_code = sig->group_exit_code;

@@ -67,6 +67,7 @@
 #include <linux/oom.h>
 #include <linux/khugepaged.h>
 #include <linux/signalfd.h>
+#include <linux/process_server.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -1535,6 +1536,9 @@ long do_fork(unsigned long clone_flags,
 		 * and set the child going.
 		 */
 		p->flags &= ~PF_STARTING;
+
+		//Multikernel
+		process_server_dup_task(current, p);
 
 		wake_up_new_task(p);
 

@@ -30,6 +30,8 @@
 #include <linux/perf_event.h>
 #include <linux/audit.h>
 #include <linux/khugepaged.h>
+//Multikernel
+#include <linux/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -45,6 +47,7 @@
 #ifndef arch_rebalance_pgtables
 #define arch_rebalance_pgtables(addr, len)		(addr)
 #endif
+
 
 static void unmap_region(struct mm_struct *mm,
 		struct vm_area_struct *vma, struct vm_area_struct *prev,
@@ -940,14 +943,16 @@ void vm_stat_account(struct mm_struct *mm, unsigned long flags,
  */
 
 unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
-			unsigned long len, unsigned long prot,
-			unsigned long flags, unsigned long pgoff)
+		unsigned long len, unsigned long prot,
+		unsigned long flags, unsigned long pgoff)
 {
 	struct mm_struct * mm = current->mm;
 	struct inode *inode;
 	vm_flags_t vm_flags;
-	int error;
+	int error, distributed=0;
 	unsigned long reqprot = prot;
+	unsigned long ret;
+	long distr_ret;
 
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC?
@@ -972,18 +977,20 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 
 	/* offset overflow? */
 	if ((pgoff + (len >> PAGE_SHIFT)) < pgoff)
-               return -EOVERFLOW;
+		return -EOVERFLOW;
 
 	/* Too many mappings? */
 	if (mm->map_count > sysctl_max_map_count)
 		return -ENOMEM;
 
+
 	/* Obtain the address to map to. we verify (or select) it and ensure
 	 * that it represents a valid section of the address space.
 	 */
 	addr = get_unmapped_area(file, addr, len, pgoff, flags);
-	if (addr & ~PAGE_MASK)
+	if (addr & ~PAGE_MASK){
 		return addr;
+	}
 
 	/* Do simple checking here so the lower-level routines won't have
 	 * to. we assume access permissions have been handled by the open
@@ -995,6 +1002,8 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	if (flags & MAP_LOCKED)
 		if (!can_do_mlock())
 			return -EPERM;
+
+
 
 	/* mlock MCL_FUTURE? */
 	if (vm_flags & VM_LOCKED) {
@@ -1028,6 +1037,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 			if (locks_verify_locked(inode))
 				return -EAGAIN;
 
+
 			vm_flags |= VM_SHARED | VM_MAYSHARE;
 			if (!(file->f_mode & FMODE_WRITE))
 				vm_flags &= ~(VM_MAYWRITE | VM_SHARED);
@@ -1036,6 +1046,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 		case MAP_PRIVATE:
 			if (!(file->f_mode & FMODE_READ))
 				return -EACCES;
+
 			if (file->f_path.mnt->mnt_flags & MNT_NOEXEC) {
 				if (vm_flags & VM_EXEC)
 					return -EPERM;
@@ -1044,10 +1055,12 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 
 			if (!file->f_op || !file->f_op->mmap)
 				return -ENODEV;
+
 			break;
 
 		default:
 			return -EINVAL;
+
 		}
 	} else {
 		switch (flags & MAP_TYPE) {
@@ -1066,6 +1079,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 			break;
 		default:
 			return -EINVAL;
+
 		}
 	}
 
@@ -1073,7 +1087,35 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	if (error)
 		return error;
 
-	return mmap_region(file, addr, len, flags, vm_flags, pgoff);
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
+		distributed= 1;
+
+		distr_ret= process_server_do_mmap_pgoff_start(file,addr,
+			 len, prot,
+			flags,pgoff);
+
+		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE)
+			return distr_ret;
+
+		if(distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
+			addr= distr_ret;
+			flags|=MAP_FIXED;
+		}
+
+	}
+
+	ret= mmap_region(file, addr, len, flags, vm_flags, pgoff);
+
+	if(current->tgroup_distributed==1 && distributed==1){
+		 process_server_do_mmap_pgoff_end(file,addr,
+					 len, prot,
+					flags,pgoff,distr_ret);
+	}
+
+	return ret;
+
 }
 EXPORT_SYMBOL(do_mmap_pgoff);
 
@@ -1329,6 +1371,7 @@ out:
 			mm->locked_vm += (len >> PAGE_SHIFT);
 	} else if ((flags & MAP_POPULATE) && !(flags & MAP_NONBLOCK))
 		make_pages_present(addr, addr + len);
+
 	return addr;
 
 unmap_and_free_vma:
@@ -2021,6 +2064,8 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 {
 	unsigned long end;
 	struct vm_area_struct *vma, *prev, *last;
+	int error, distributed= 0 ;
+	long ret;
 
 	if ((start & ~PAGE_MASK) || start > TASK_SIZE || len > TASK_SIZE-start)
 		return -EINVAL;
@@ -2028,17 +2073,31 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	if ((len = PAGE_ALIGN(len)) == 0)
 		return -EINVAL;
 
+	//Multikernel
+	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
+		distributed= 1;
+		printk("WARNING: unmap called \n");
+		ret= process_server_do_unmap_start(mm, start, len);
+		if(ret<0 && ret!=VMA_OP_SAVE && ret!=VMA_OP_NOT_SAVE){
+			return ret;
+		}
+	}
+
 	/* Find the first overlapping VMA */
 	vma = find_vma(mm, start);
-	if (!vma)
-		return 0;
+	if (!vma){
+		error= 0;
+		goto exit;
+	}
 	prev = vma->vm_prev;
 	/* we have  start < vma->vm_end  */
 
 	/* if it doesn't overlap, we have nothing.. */
 	end = start + len;
-	if (vma->vm_start >= end)
-		return 0;
+	if (vma->vm_start >= end){
+		error= 0;
+		goto exit;
+	}
 
 	/*
 	 * If we need to split any vma, do it now to save pain later.
@@ -2048,28 +2107,31 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	 * places tmp vma above, and higher split_vma places tmp vma below.
 	 */
 	if (start > vma->vm_start) {
-		int error;
+		//int error;
 
 		/*
 		 * Make sure that map_count on return from munmap() will
 		 * not exceed its limit; but let map_count go just above
 		 * its limit temporarily, to help free resources as expected.
 		 */
-		if (end < vma->vm_end && mm->map_count >= sysctl_max_map_count)
-			return -ENOMEM;
-
+		if (end < vma->vm_end && mm->map_count >= sysctl_max_map_count){
+			error= (-ENOMEM);
+			goto exit;
+		}
 		error = __split_vma(mm, vma, start, 0);
 		if (error)
-			return error;
+			goto exit;
+
 		prev = vma;
 	}
 
 	/* Does it split the last one? */
 	last = find_vma(mm, end);
 	if (last && end > last->vm_start) {
-		int error = __split_vma(mm, last, end, 1);
+		//int error = __split_vma(mm, last, end, 1);
+		error = __split_vma(mm, last, end, 1);
 		if (error)
-			return error;
+			goto exit;
 	}
 	vma = prev? prev->vm_next: mm->mmap;
 
@@ -2096,7 +2158,16 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	/* Fix up all other VM information */
 	remove_vma_list(mm, vma);
 
-	return 0;
+	error= 0;
+
+	exit:
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && distributed==1){
+		process_server_do_unmap_end(mm, start, len, ret);
+	}
+
+	return error;
 }
 
 EXPORT_SYMBOL(do_munmap);
@@ -2136,21 +2207,48 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
 	unsigned long flags;
 	struct rb_node ** rb_link, * rb_parent;
 	pgoff_t pgoff = addr >> PAGE_SHIFT;
-	int error;
-
+	int error, distributed=0;
+	long distr_ret;
 	len = PAGE_ALIGN(len);
 	if (!len)
 		return addr;
 
+	//Multikernel
+	if(current->tgroup_distributed == 1 && current->distributed_exit == EXIT_ALIVE){
+		distributed= 1;
+
+		distr_ret= process_server_do_brk_start(addr, len);
+		if(distr_ret==-1){
+			error=-1;
+			goto exit;
+		}
+
+		//Note: start distributed operation could give me a different address to map
+		//However brk get the address with get_unmapped_area(NULL, addr, len, 0, MAP_FIXED);
+		//so with MAP_FIXED =>
+		//the new address should be the same!!
+		if(distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
+
+			if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE)
+				return distr_ret;
+
+			if(distr_ret!=addr)
+				printk("SERVER chose an addr for brk different from the one suggested. ERROR!!!\n");
+
+			addr= distr_ret;
+		}
+
+	}
+
 	error = security_file_mmap(NULL, 0, 0, 0, addr, 1);
 	if (error)
-		return error;
+		goto exit;
 
 	flags = VM_DATA_DEFAULT_FLAGS | VM_ACCOUNT | mm->def_flags;
 
 	error = get_unmapped_area(NULL, addr, len, 0, MAP_FIXED);
 	if (error & ~PAGE_MASK)
-		return error;
+		goto exit;
 
 	/*
 	 * mlock MCL_FUTURE?
@@ -2161,8 +2259,10 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
 		locked += mm->locked_vm;
 		lock_limit = rlimit(RLIMIT_MEMLOCK);
 		lock_limit >>= PAGE_SHIFT;
-		if (locked > lock_limit && !capable(CAP_IPC_LOCK))
-			return -EAGAIN;
+		if (locked > lock_limit && !capable(CAP_IPC_LOCK)){
+			error= (-EAGAIN);
+			goto exit;
+		}
 	}
 
 	/*
@@ -2177,24 +2277,30 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
  munmap_back:
 	vma = find_vma_prepare(mm, addr, &prev, &rb_link, &rb_parent);
 	if (vma && vma->vm_start < addr + len) {
-		if (do_munmap(mm, addr, len))
-			return -ENOMEM;
+		if (do_munmap(mm, addr, len)){
+			error= (-ENOMEM);
+			goto exit;
+		}
 		goto munmap_back;
 	}
 
 	/* Check against address space limits *after* clearing old maps... */
-	if (!may_expand_vm(mm, len >> PAGE_SHIFT))
-		return -ENOMEM;
-
-	if (mm->map_count > sysctl_max_map_count)
-		return -ENOMEM;
-
-	if (security_vm_enough_memory(len >> PAGE_SHIFT))
-		return -ENOMEM;
-
+	if (!may_expand_vm(mm, len >> PAGE_SHIFT)){
+		error= (-ENOMEM);
+		goto exit;
+	}
+	if (mm->map_count > sysctl_max_map_count){
+		error= (-ENOMEM);
+		goto exit;
+	}
+	if (security_vm_enough_memory(len >> PAGE_SHIFT)){
+		error= (-ENOMEM);
+		goto exit;
+	}
 	/* Can we just expand an old private anonymous mapping? */
 	vma = vma_merge(mm, prev, addr, addr + len, flags,
 					NULL, NULL, pgoff, NULL);
+
 	if (vma)
 		goto out;
 
@@ -2204,7 +2310,9 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
 	vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
 	if (!vma) {
 		vm_unacct_memory(len >> PAGE_SHIFT);
-		return -ENOMEM;
+		error= (-ENOMEM);
+		goto exit;
+
 	}
 
 	INIT_LIST_HEAD(&vma->anon_vma_chain);
@@ -2222,7 +2330,19 @@ out:
 		if (!mlock_vma_pages_range(vma, addr, addr + len))
 			mm->locked_vm += (len >> PAGE_SHIFT);
 	}
+
+	if(current->tgroup_distributed==1 && distributed==1){
+		process_server_do_brk_end(addr, len, distr_ret);
+	}
+
 	return addr;
+
+	//Multikernel
+exit:	if(current->tgroup_distributed==1 && distributed==1){
+		process_server_do_brk_end(addr, len, distr_ret);
+	}
+
+	return error;
 }
 
 EXPORT_SYMBOL(do_brk);
@@ -2271,7 +2391,10 @@ void exit_mmap(struct mm_struct *mm)
 	while (vma)
 		vma = remove_vma(vma);
 
-	BUG_ON(mm->nr_ptes > (FIRST_USER_ADDRESS+PMD_SIZE-1)>>PMD_SHIFT);
+	if(mm->nr_ptes > (FIRST_USER_ADDRESS+PMD_SIZE-1)>>PMD_SHIFT)
+		printk("nr ptes %lu (FIRST_USER_ADDRESS+PMD_SIZE-1)>>PMD_SHIFT %lu\n",mm->nr_ptes,(FIRST_USER_ADDRESS+PMD_SIZE-1)>>PMD_SHIFT);
+
+	//BUG_ON(mm->nr_ptes > (FIRST_USER_ADDRESS+PMD_SIZE-1)>>PMD_SHIFT);
 }
 
 /* Insert vm structure into process list sorted by address

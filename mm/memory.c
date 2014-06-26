@@ -65,6 +65,8 @@
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
 
+#include <linux/process_server.h>
+
 #include "internal.h"
 
 #ifndef CONFIG_NEED_MULTIPLE_NODES
@@ -741,6 +743,10 @@ static inline int is_zero_pfn(unsigned long pfn)
 {
 	return pfn == zero_pfn;
 }
+int is_zero_page(unsigned long pfn)
+{
+	return is_zero_pfn(pfn);
+}
 #endif
 
 #ifndef my_zero_pfn
@@ -1154,6 +1160,18 @@ again:
 			tlb_remove_tlb_entry(tlb, pte, addr);
 			if (unlikely(!page))
 				continue;
+
+			//Multikernel
+			if(page->replicated==1){
+#if DIFF_PAGE
+				if(page->old_page_version!=NULL){
+					kfree(page->old_page_version);
+					page->old_page_version= NULL;
+				}
+#endif
+				process_server_clean_page(page);
+			}
+
 			if (unlikely(details) && details->nonlinear_vma
 			    && linear_page_index(details->nonlinear_vma,
 						addr) != page->index)
@@ -1176,6 +1194,65 @@ again:
 			if (force_flush)
 				break;
 			continue;
+		}
+		//Multikernel
+		else{
+
+			if(pte_none(pte_clear_flags(ptent, _PAGE_UNUSED1))){
+				ptent= pte_clear_flags(ptent, _PAGE_UNUSED1);
+				set_pte_at_notify(mm, addr, pte, ptent);
+				continue;
+			}
+
+			struct page *page;
+			page= pte_page(ptent);
+
+			if(page!=vm_normal_page(vma, addr, ptent))
+				printk("page!=vm_normal_page in zap pte invalid\n");
+
+			if (unlikely(!page))
+				continue;
+
+			if(page->replicated==1){
+
+				if(page->status==REPLICATION_STATUS_INVALID){
+					if (unlikely(details) && page) {
+						printk("----------------details-----------\n");
+					}
+					ptent = ptep_get_and_clear_full(mm, addr, pte,
+							tlb->fullmm);
+					tlb_remove_tlb_entry(tlb, pte, addr);
+					if (unlikely(!page))
+						continue;
+
+					if (PageAnon(page))
+						rss[MM_ANONPAGES]--;
+					else {
+						rss[MM_FILEPAGES]--;
+					}
+					page_remove_rmap(page);
+					if (unlikely(page_mapcount(page) < 0))
+						print_bad_pte(vma, addr, ptent, page);
+					force_flush = !__tlb_remove_page(tlb, page);
+#if DIFF_PAGE
+					if(page->old_page_version!=NULL){
+						kfree(page->old_page_version);
+						page->old_page_version= NULL;
+					}
+#endif
+					process_server_clean_page(page);
+					if (force_flush)
+						break;
+					continue;
+				}
+#if DIFF_PAGE
+				if(page->old_page_version!=NULL){
+					kfree(page->old_page_version);
+					page->old_page_version= NULL;
+				}
+#endif
+				process_server_clean_page(page);
+			}
 		}
 		/*
 		 * If details->check_mapping, we leave swap entries;
@@ -1742,7 +1819,13 @@ int __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 				if (foll_flags & FOLL_NOWAIT)
 					fault_flags |= (FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_RETRY_NOWAIT);
 
-				ret = handle_mm_fault(mm, vma, start,
+				if(current->tgroup_distributed==1)
+					ret= process_server_try_handle_mm_fault(current,
+							mm, vma,
+							start, fault_flags,
+							0);
+				else
+					ret = handle_mm_fault(mm, vma, start,
 							fault_flags);
 
 				if (ret & VM_FAULT_ERROR) {
@@ -1757,8 +1840,14 @@ int __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 						else
 							return -EFAULT;
 					}
-					if (ret & VM_FAULT_SIGBUS)
-						return i ? i : -EFAULT;
+					if(current->tgroup_distributed==1){
+						if (ret & VM_FAULT_SIGBUS || ret & VM_FAULT_REPLICATION_PROTOCOL)
+							return i ? i : -EFAULT;
+					}
+					else{
+						if (ret & VM_FAULT_SIGBUS)
+							return i ? i : -EFAULT;
+					}					
 					BUG();
 				}
 

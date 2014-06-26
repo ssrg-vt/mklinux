@@ -488,7 +488,8 @@ ENTRY(system_call)
 	CFI_SIGNAL_FRAME
 	CFI_DEF_CFA	rsp,KERNEL_STACK_OFFSET
 	CFI_REGISTER	rip,rcx
-	/*CFI_REGISTER	rflags,r11*/
+	//Uncommented for Multikernel
+	CFI_REGISTER	rflags,r11
 	SWAPGS_UNSAFE_STACK
 	/*
 	 * A hypervisor implementation might want to use a label
@@ -508,6 +509,10 @@ ENTRY(system_call_after_swapgs)
 	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp)
 	movq  %rcx,RIP-ARGOFFSET(%rsp)
 	CFI_REL_OFFSET rip,RIP-ARGOFFSET
+	/*Multikernel add eflags copy start*/
+	movq  %r11, EFLAGS-ARGOFFSET(%rsp)
+	CFI_REL_OFFSET rflags,EFLAGS-ARGOFFSET
+	/*Multikernel add eflags copy end*/
 	GET_THREAD_INFO(%rcx)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
 	jnz tracesys
@@ -540,7 +545,8 @@ sysret_check:
 	movq RIP-ARGOFFSET(%rsp),%rcx
 	CFI_REGISTER	rip,rcx
 	RESTORE_ARGS 1,-ARG_SKIP,0
-	/*CFI_REGISTER	rflags,r11*/
+	//Uncommented for Multikernel
+	CFI_REGISTER	rflags,r11
 	movq	PER_CPU_VAR(old_rsp), %rsp
 	USERGS_SYSRET64
 
@@ -723,6 +729,7 @@ END(\label)
 	PTREGSCALL stub_vfork, sys_vfork, %rdi
 	PTREGSCALL stub_sigaltstack, sys_sigaltstack, %rdx
 	PTREGSCALL stub_iopl, sys_iopl, %rsi
+	PTREGSCALL stub_sched_setaffinity, sys_sched_setaffinity, %rcx
 
 ENTRY(ptregscall_common)
 	DEFAULT_FRAME 1 8	/* offset 8: return address */

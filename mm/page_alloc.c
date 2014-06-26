@@ -58,6 +58,7 @@
 #include <linux/hash.h>
 #include <linux/memcontrol.h>
 #include <linux/prefetch.h>
+#include <linux/process_server.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -1722,6 +1723,10 @@ zonelist_scan:
 try_this_zone:
 		page = buffered_rmqueue(preferred_zone, zone, order,
 						gfp_mask, migratetype);
+
+		//Multikernel
+				process_server_clean_page(page);
+
 		if (page)
 			break;
 this_zone_full:

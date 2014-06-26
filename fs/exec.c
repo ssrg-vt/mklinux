@@ -55,6 +55,7 @@
 #include <linux/pipe_fs_i.h>
 #include <linux/oom.h>
 #include <linux/compat.h>
+#include <linux/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -812,7 +813,7 @@ int kernel_read(struct file *file, loff_t offset,
 
 EXPORT_SYMBOL(kernel_read);
 
-static int exec_mmap(struct mm_struct *mm)
+int exec_mmap(struct mm_struct *mm)
 {
 	struct task_struct *tsk;
 	struct mm_struct * old_mm, *active_mm;
@@ -853,7 +854,6 @@ static int exec_mmap(struct mm_struct *mm)
 	mmdrop(active_mm);
 	return 0;
 }
-
 /*
  * This function makes sure the current process has its own signal table,
  * so that flush_signal_handlers can later reset the handlers without

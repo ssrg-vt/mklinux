@@ -13,6 +13,7 @@
 #include <linux/perf_event.h>		/* perf_sw_event		*/
 #include <linux/hugetlb.h>		/* hstate_index_to_shift	*/
 #include <linux/prefetch.h>		/* prefetchw			*/
+#include <linux/process_server.h> /* Multikernel */
 
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
@@ -959,7 +960,7 @@ spurious_fault(unsigned long error_code, unsigned long address)
 
 int show_unhandled_signals = 1;
 
-static inline int
+inline int
 access_error(unsigned long error_code, struct vm_area_struct *vma)
 {
 	if (error_code & PF_WRITE) {
@@ -997,7 +998,7 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	struct task_struct *tsk;
 	unsigned long address;
 	struct mm_struct *mm;
-	int fault;
+	int fault,repl_ret,lock_aquired;
 	int write = error_code & PF_WRITE;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
 					(write ? FAULT_FLAG_WRITE : 0);
@@ -1089,6 +1090,16 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		return;
 	}
 
+#if NOT_REPLICATED_VMA_MANAGEMENT
+	//Multikernel
+	if(tsk->tgroup_distributed==1){
+
+		down_read(&mm->distribute_sem);
+		lock_aquired= 1;
+	}
+	else
+		lock_aquired= 0;
+#endif
 	/*
 	 * When running in the kernel we expect faults to occur only to
 	 * addresses in user space.  All other faults represent errors in
@@ -1123,15 +1134,45 @@ retry:
 	}
 
 	vma = find_vma(mm, address);
+	// Multikernel
+	repl_ret= 0;
+	// Nothing to do for a thread group that's not distributed.
+	if(tsk->tgroup_distributed==1) {
+
+		repl_ret= process_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
+
+		if(repl_ret==0)
+			goto out;
+
+		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
+			bad_area(regs, error_code, address);
+			goto out_distr;
+		}
+
+		if(unlikely(repl_ret & VM_FAULT_ACCESS_ERROR)){
+			bad_area_access_error(regs, error_code, address);
+			goto out_distr;
+		}
+
+		if (unlikely(repl_ret & VM_FAULT_ERROR)) {
+			mm_fault_error(regs, error_code, address, repl_ret);
+			goto out_distr;
+		}
+
+		vma = find_vma(mm, address);
+
+	}
+
 	if (unlikely(!vma)) {
 		bad_area(regs, error_code, address);
-		return;
+		goto out_distr;
 	}
+
 	if (likely(vma->vm_start <= address))
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
 		bad_area(regs, error_code, address);
-		return;
+		goto out_distr;
 	}
 	if (error_code & PF_USER) {
 		/*
@@ -1142,12 +1183,12 @@ retry:
 		 */
 		if (unlikely(address + 65536 + 32 * sizeof(unsigned long) < regs->sp)) {
 			bad_area(regs, error_code, address);
-			return;
+			goto out_distr;
 		}
 	}
 	if (unlikely(expand_stack(vma, address))) {
 		bad_area(regs, error_code, address);
-		return;
+		goto out_distr;
 	}
 
 	/*
@@ -1157,7 +1198,7 @@ retry:
 good_area:
 	if (unlikely(access_error(error_code, vma))) {
 		bad_area_access_error(regs, error_code, address);
-		return;
+		goto out_distr;
 	}
 
 	/*
@@ -1169,7 +1210,22 @@ good_area:
 
 	if (unlikely(fault & (VM_FAULT_RETRY|VM_FAULT_ERROR))) {
 		if (mm_fault_error(regs, error_code, address, fault))
-			return;
+			goto out_distr;
+	}
+
+	if(tsk->tgroup_distributed==1 && (repl_ret & VM_CONTINUE_WITH_CHECK)){
+
+		repl_ret= process_server_update_page(tsk,mm,vma,address);
+
+		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
+			bad_area(regs, error_code, address);
+			goto out_distr;
+		}
+
+		if (unlikely(repl_ret & VM_FAULT_ERROR)) {
+			mm_fault_error(regs, error_code, address, repl_ret);
+			goto out_distr;
+		}
 	}
 
 	/*
@@ -1195,7 +1251,18 @@ good_area:
 		}
 	}
 
-	check_v8086_mode(regs, address, tsk);
+	out:	check_v8086_mode(regs, address, tsk);
 
 	up_read(&mm->mmap_sem);
+
+	out_distr:
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+	if(tsk->tgroup_distributed==1 && lock_aquired){
+
+		up_read(&mm->distribute_sem);
+	}
+#endif
+
+	return;
 }

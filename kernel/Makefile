@@ -10,7 +10,8 @@ obj-y     = sched.o fork.o exec_domain.o panic.o printk.o \
 	    kthread.o wait.o kfifo.o sys_ni.o posix-cpu-timers.o mutex.o \
 	    hrtimer.o rwsem.o nsproxy.o srcu.o semaphore.o \
 	    notifier.o ksysfs.o sched_clock.o cred.o \
-	    async.o range.o
+	    async.o range.o multikernel.o process_server.o \
+	    WKdmCompress.o WKdmDecompress.o
 obj-y += groups.o
 
 ifdef CONFIG_FUNCTION_TRACER
@@ -24,6 +25,7 @@ CFLAGS_REMOVE_sched_clock.o = -pg
 CFLAGS_REMOVE_irq_work.o = -pg
 endif
 
+obj-$(CONFIG_POPCORN) += multikernel.o kinit.o 
 obj-$(CONFIG_FREEZER) += freezer.o
 obj-$(CONFIG_PROFILING) += profile.o
 obj-$(CONFIG_SYSCTL_SYSCALL_CHECK) += sysctl_check.o
