@@ -1576,6 +1576,29 @@ struct task_struct {
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 	atomic_t ptrace_bp_refcnt;
 #endif
+
+	/*
+	 * Multikernel
+	 */
+	int tgroup_distributed;
+	int tgroup_home_cpu;     /* cpu where the thread group was first migrated */
+	int tgroup_home_id;         /* home thread group id */
+
+	int represents_remote;      /* Is this a shadow process? */
+	pid_t next_pid;             /* What is the pid on the remote cpu? */
+	int next_cpu;
+
+	int executing_for_remote;   /* Is this executing on behalf of another cpu? */
+	pid_t prev_pid;				/* What is the pid on the remote cpu? */
+	int prev_cpu;
+
+	int main;					/* kernel thread that manages the process*/
+
+	int distributed_exit_code;
+	int group_exit;
+	int distributed_exit;
+
+
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

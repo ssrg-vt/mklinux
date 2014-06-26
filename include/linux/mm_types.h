@@ -14,6 +14,7 @@
 #include <linux/page-debug-flags.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
+#include <linux/process_server_macro.h>
 
 #ifndef AT_VECTOR_SIZE_ARCH
 #define AT_VECTOR_SIZE_ARCH 0
@@ -154,6 +155,26 @@ struct page {
 	 * is a pointer to such a status block. NULL if not tracked.
 	 */
 	void *shadow;
+#endif
+
+	//Multikernel
+	int replicated;
+	int status;
+	int owner;
+	long last_write;
+	int other_owners[NR_CPUS];
+	int writing;
+	int reading;
+
+#if FOR_2_KERNELS
+#if DIFF_PAGE
+	char* old_page_version;
+#endif
+#else
+	unsigned long long time_stamp;
+	int concurrent_writers;
+	int concurrent_fetch;
+	int need_fetch[NR_CPUS];
 #endif
 }
 /*
@@ -395,6 +416,15 @@ struct mm_struct {
 #ifdef CONFIG_CPUMASK_OFFSTACK
 	struct cpumask cpumask_allocation;
 #endif
+
+	//Multikernel
+	struct rw_semaphore distribute_sem;
+	int distr_vma_op_counter;
+	int was_not_pushed;
+	struct task_struct* thread_op;
+	int vma_operation_index;
+	int distribute_unmap;
+
 };
 
 static inline void mm_init_cpumask(struct mm_struct *mm)

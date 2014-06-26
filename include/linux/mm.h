@@ -847,8 +847,15 @@ static inline int page_mapped(struct page *page)
 
 #define VM_FAULT_HWPOISON_LARGE_MASK 0xf000 /* encodes hpage index for large hwpoison */
 
+//Multikernel
+#define VM_FAULT_VMA	0x0800
+#define VM_FAULT_ACCESS_ERROR 0x1000
+#define VM_CONTINUE_WITH_CHECK 0x2000
+#define VM_CONTINUE 0x4000
+#define VM_FAULT_REPLICATION_PROTOCOL 0x8000
+
 #define VM_FAULT_ERROR	(VM_FAULT_OOM | VM_FAULT_SIGBUS | VM_FAULT_HWPOISON | \
-			 VM_FAULT_HWPOISON_LARGE)
+			 VM_FAULT_HWPOISON_LARGE| VM_FAULT_REPLICATION_PROTOCOL)
 
 /* Encode hstate index for a hwpoisoned large page */
 #define VM_FAULT_SET_HINDEX(x) ((x) << 12)
@@ -964,6 +971,7 @@ extern int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 			unsigned long address, unsigned int flags);
 extern int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
 			    unsigned long address, unsigned int fault_flags);
+extern int is_zero_page(unsigned long pfn);
 #else
 static inline int handle_mm_fault(struct mm_struct *mm,
 			struct vm_area_struct *vma, unsigned long address,
@@ -976,6 +984,12 @@ static inline int handle_mm_fault(struct mm_struct *mm,
 static inline int fixup_user_fault(struct task_struct *tsk,
 		struct mm_struct *mm, unsigned long address,
 		unsigned int fault_flags)
+{
+	/* should never happen if there's no MMU */
+	BUG();
+	return -EFAULT;
+}
+static inline int is_zero_page(unsigned long pfn)
 {
 	/* should never happen if there's no MMU */
 	BUG();
