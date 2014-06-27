@@ -538,7 +538,7 @@ static int pcn_write_proc (struct file *file, const char __user *buffer, unsigne
 
 static int __init pcn_kmsg_init(void)
 {
-	int rc,i;
+/*	int rc,i;
 	unsigned long win_phys_addr, rkinfo_phys_addr;
 	struct pcn_kmsg_window *win_virt_addr;
 	struct boot_params *boot_params_va;
@@ -552,11 +552,10 @@ static int __init pcn_kmsg_init(void)
 	printk("%s: Entered pcn_kmsg_init raw: %d id: %d\n",
 		__func__, my_cpu, smp_processor_id());
 
-	/* Initialize list heads */
+	
 	INIT_LIST_HEAD(&msglist_hiprio);
 	INIT_LIST_HEAD(&msglist_normprio);
 
-	/* Clear out large-message receive buffers */
 	//memset(&lg_buf, 0, POPCORN_MAX_CPUS * sizeof(unsigned char *));
 	for(i=0; i<POPCORN_MAX_CPUS; i++) {
 		INIT_LIST_HEAD(&(lg_buf[i]));
@@ -564,7 +563,7 @@ static int __init pcn_kmsg_init(void)
 	long_id=0;
 
 
-	/* Clear callback table and register default callback functions */
+	
 	KMSG_INIT("Registering initial callbacks...\n");
 	memset(&callback_table, 0, PCN_KMSG_TYPE_MAX * sizeof(pcn_kmsg_cbftn));
 	rc = pcn_kmsg_register_callback(PCN_KMSG_TYPE_CHECKIN, 
@@ -579,9 +578,9 @@ static int __init pcn_kmsg_init(void)
 	if (rc) {
 		printk(KERN_ALERT"Failed to register initial kmsg mcast callback!\n");
 	}
-#endif /* PCN_SUPPORT_MULTICAST */ 	
+#endif  	
 
-	/* Register softirq handler now kworker */
+	/
 	KMSG_INIT("Registering softirq handler...\n");
 	//open_softirq(PCN_KMSG_SOFTIRQ, pcn_kmsg_action);
 	messaging_wq= create_singlethread_workqueue("messaging_wq");
@@ -589,7 +588,7 @@ static int __init pcn_kmsg_init(void)
 		printk("%s: create_workqueue(messaging_wq) ret 0x%lx ERROR\n",
 			__func__, (unsigned long)messaging_wq);
 
-	/* Initialize work queue */
+	
 	KMSG_INIT("Initializing workqueue...\n");
 	kmsg_wq = create_singlethread_workqueue("kmsg_wq");
 	if (!kmsg_wq)
@@ -597,9 +596,7 @@ static int __init pcn_kmsg_init(void)
 			__func__, (unsigned long)kmsg_wq);
 
 		
-	/* If we're the master kernel, malloc and map the rkinfo structure and 
-	   put its physical address in boot_params; otherwise, get it from the 
-	   boot_params and map it */
+	
 	if (!mklinux_boot) {
 		/* rkinfo must be multiple of a page, because the granularity of
 		 * foreings mapping is per page. The following didn't worked,
@@ -607,7 +604,7 @@ static int __init pcn_kmsg_init(void)
 		 * on the remote fails. 
 		int order = get_order(sizeof(struct pcn_kmsg_rkinfo));
 		rkinfo = __get_free_pages(GFP_KERNEL, order);
-		*/
+		
 		KMSG_INIT("Primary kernel, mallocing rkinfo size:%d rounded:%d\n",
 		       sizeof(struct pcn_kmsg_rkinfo), ROUND_PAGE_SIZE(sizeof(struct pcn_kmsg_rkinfo)));
 		rkinfo = kmalloc(ROUND_PAGE_SIZE(sizeof(struct pcn_kmsg_rkinfo)), GFP_KERNEL);
@@ -622,7 +619,7 @@ static int __init pcn_kmsg_init(void)
 
 		/* Otherwise, we need to set the boot_params to show the rest
 		   of the kernels where the master kernel's messaging window 
-		   is. */
+		   is. 
 		KMSG_INIT("Setting boot_params...\n");
 		boot_params_va = (struct boot_params *) 
 			(0xffffffff80000000 + orig_boot_params);
@@ -646,7 +643,7 @@ static int __init pcn_kmsg_init(void)
 		KMSG_INIT("rkinfo virt addr: 0x%p\n", rkinfo);
 	}
 
-	/* Malloc our own receive buffer and set it up */
+	
 	win_virt_addr = kmalloc(ROUND_PAGE_SIZE(sizeof(struct pcn_kmsg_window)), GFP_KERNEL);
 	if (win_virt_addr) {
 		KMSG_INIT("Allocated %ld(%ld) bytes for my win, virt addr 0x%p\n", 
@@ -668,7 +665,7 @@ static int __init pcn_kmsg_init(void)
 		return -1;
 	}
 
-	/* If we're not the master kernel, we need to check in */
+	/
 	if (mklinux_boot) {
 		rc = do_checkin();
 
@@ -679,7 +676,6 @@ static int __init pcn_kmsg_init(void)
 	} 
 
 	printk("PCN_KMSG_RBUF_SIZE %ld",PCN_KMSG_RBUF_SIZE);
-	/* proc interface for debugging and stats */
 	memset(large_message_count, 0, sizeof(int)*(SIZE_RANGES +1));
 	memset(large_message_sizes, 0, sizeof(int)*(SIZE_RANGES +1));
 	for (i=0; i<SIZE_RANGES; i++)
@@ -691,7 +687,7 @@ static int __init pcn_kmsg_init(void)
 	memset(log_send,0,sizeof(struct pcn_kmsg_hdr)*LOGLEN);
 	memset(log_function_called,0,sizeof(void*)*LOGCALL);
 	memset(log_function_send,0,sizeof(void*)*LOGCALL);
-	/* if everything is ok create a proc interface */
+	
 	struct proc_dir_entry *res;
 	res = create_proc_entry("pcnmsg", S_IRUGO, NULL);
 	if (!res) {
@@ -700,7 +696,7 @@ static int __init pcn_kmsg_init(void)
 	}
 	res->read_proc = pcn_read_proc;
 	res->write_proc = pcn_write_proc;
-
+*/
 	return 0;
 }
 
@@ -709,7 +705,7 @@ subsys_initcall(pcn_kmsg_init);
 /* Register a callback function when a kernel module is loaded */
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
 {
-	PCN_WARN("%s: registering callback for type %d, ptr 0x%p\n", __func__, type, callback);
+	/*PCN_WARN("%s: registering callback for type %d, ptr 0x%p\n", __func__, type, callback);
 
 	if (type >= PCN_KMSG_TYPE_MAX) {
 		printk(KERN_ALERT"Attempted to register callback with bad type %d\n", 
@@ -718,7 +714,7 @@ int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
 	}
 
 	callback_table[type] = callback;
-
+*/
 	return 0;
 }
 
@@ -743,7 +739,7 @@ unsigned long int_ts;
 static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 			   int no_block)
 {
-	int rc;
+	/*int rc;
 	struct pcn_kmsg_window *dest_window;
 
 	if (unlikely(dest_cpu >= POPCORN_MAX_CPUS)) {
@@ -763,7 +759,7 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 		return -1;
 	}
 
-	/* set source CPU */
+	
 	msg->hdr.from_cpu = my_cpu;
 
 	rc = win_put(dest_window, msg, no_block);
@@ -778,7 +774,7 @@ type_message_count[msg->hdr.type]++;
 	}
 
 
-	/* send IPI */
+	
 	if (win_int_enabled(dest_window)) {
 		KMSG_PRINTK("Interrupts enabled; sending IPI...\n");
 		rdtscll(int_ts);
@@ -787,13 +783,13 @@ type_message_count[msg->hdr.type]++;
 		KMSG_PRINTK("Interrupts not enabled; not sending IPI...\n");
 	}
 
-
+*/
 	return 0;
 }
 
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 {
-	unsigned long bp;
+/*	unsigned long bp;
 	get_bp(bp);
 	log_function_send[log_f_sendindex%LOGCALL]= callback_table[msg->hdr.type];
 	log_f_sendindex++;
@@ -803,7 +799,8 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 	msg->hdr.lg_seqnum = 0;
 	msg->hdr.long_number= 0;
 
-	return __pcn_kmsg_send(dest_cpu, msg, 0);
+	return __pcn_kmsg_send(dest_cpu, msg, 0);*/
+return 0;
 }
 
 int pcn_kmsg_send_noblock(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
@@ -822,7 +819,8 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       struct pcn_kmsg_long_message *lmsg, 
 		       unsigned int payload_size)
 {
-	int i, ret =0;
+
+/*	int i, ret =0;
 	int num_chunks = payload_size / PCN_KMSG_PAYLOAD_SIZE;
 	struct pcn_kmsg_message this_chunk;
 
@@ -861,10 +859,10 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 			return ret;
 	}
 	
-	/* statistics */
+
 	num_chunks = payload_size / PCN_KMSG_PAYLOAD_SIZE;
 	large_message_count[((num_chunks < SIZE_RANGES) ? num_chunks : SIZE_RANGES)]++;
-
+*/
 	return 0;
 }
 
@@ -914,7 +912,7 @@ unsigned volatile long isr_ts = 0, isr_ts_2 = 0;
 /* top half */
 void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 {
-	//if (!isr_ts) {
+/*	//if (!isr_ts) {
 		rdtscll(isr_ts);
 	//}
 
@@ -926,16 +924,16 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 	irq_enter();
 
 	/* We do as little work as possible in here (decoupling notification 
-	   from messaging) */
+	   from messaging) 
 
-	/* disable further interrupts for now */
+	/* disable further interrupts for now 
 	win_disable_int(rkvirt[my_cpu]);
 
 	//if (!isr_ts_2) {
 	rdtscll(isr_ts_2);
 	//}
 
-	/* schedule bottom half */
+	/* schedule bottom half 
 	//__raise_softirq_irqoff(PCN_KMSG_SOFTIRQ);
 	struct work_struct* kmsg_work = kmalloc(sizeof(struct work_struct), GFP_ATOMIC);
 	if (kmsg_work) {
@@ -946,7 +944,7 @@ void smp_popcorn_kmsg_interrupt(struct pt_regs *regs)
 	}
 	//tasklet_schedule(&pcn_kmsg_tasklet);
 
-	irq_exit();
+	irq_exit();*/
 	return;
 }
 
