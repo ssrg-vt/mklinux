@@ -11371,6 +11371,17 @@ long process_server_do_mremap_end(unsigned long addr, unsigned long old_len,
  */
 static int __init process_server_init(void) {
 
+printk("Popcorn version with user data replication\n\n");
+printk("Per me si va ne la città dolente,\n"
+"per me si va ne l'etterno dolore,\n"
+"per me si va tra la perduta gente.\n"
+"Giustizia mosse il mio alto fattore;\n"
+"fecemi la divina podestate,\n"
+"la somma sapïenza e 'l primo amore.\n"
+"Dinanzi a me non fuor cose create\n"
+"se non etterne, e io etterno duro.\n"
+"Lasciate ogne speranza, voi ch'intrate\n\n");
+
 
 #ifndef SUPPORT_FOR_CLUSTERING
      _cpu= smp_processor_id();
