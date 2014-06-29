@@ -8,10 +8,6 @@
 
 #ifndef _PROCESS_SERVER_H
 #define _PROCESS_SERVER_H
-
-/**
- * Constants
- */
 #define RETURN_DISPOSITION_NONE 0
 #define RETURN_DISPOSITION_EXIT 1
 #define RETURN_DISPOSITION_MIGRATE 2

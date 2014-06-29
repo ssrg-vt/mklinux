@@ -686,7 +686,6 @@ __SYSCALL(__NR_getcpu, sys_getcpu)
 __SYSCALL(__NR_process_vm_readv, sys_process_vm_readv)
 #define __NR_process_vm_writev			311
 __SYSCALL(__NR_process_vm_writev, sys_process_vm_writev)
-
 #define __NR_multikernel_boot                   312
 __SYSCALL(__NR_multikernel_boot, sys_multikernel_boot)
 #define __NR_get_boot_params_addr               313
@@ -695,13 +694,10 @@ __SYSCALL(__NR_get_boot_params_addr, sys_get_boot_params_addr)
 __SYSCALL(__NR_popcorn_test_kmsg, sys_popcorn_test_kmsg)
 #define __NR_popcorn_test_ipi_latency		315
 __SYSCALL(__NR_popcorn_test_ipi_latency, sys_popcorn_test_ipi_latency)
-
-#ifdef CONFIG_POPCORN_PERF
 #define __NR_popcorn_perf_start     316
 __SYSCALL(__NR_popcorn_perf_start, sys_popcorn_perf_start)
 #define __NR_popcorn_perf_end       317
 __SYSCALL(__NR_popcorn_perf_end, sys_popcorn_perf_end)
-#endif /* CONFIG_POPCORN_PERF */
 
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR

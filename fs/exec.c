@@ -1011,7 +1011,7 @@ no_thread_group:
  * These functions flushes out all traces of the currently running executable
  * so that a new one can be started
  */
-/*static*/ void flush_old_files(struct files_struct * files)
+static void flush_old_files(struct files_struct * files)
 {
 	long j = -1;
 	struct fdtable *fdt;
@@ -1484,25 +1484,19 @@ static int do_execve_common(const char *filename,
 		goto out_files;
 
 	retval = prepare_bprm_creds(bprm);
-	if (retval) {
-printk("%s: prepare_bprm_creds\n", __func__);
+	if (retval)
 		goto out_free;
-}
 
 	retval = check_unsafe_exec(bprm);
-	if (retval < 0) {
-printk("%s: check_unsafe_exec\n", __func__);
+	if (retval < 0)
 		goto out_free;
-}
 	clear_in_exec = retval;
 	current->in_execve = 1;
 
 	file = open_exec(filename);
 	retval = PTR_ERR(file);
-	if (IS_ERR(file)) {
-//printk("%s: open_exec\n", __func__);
+	if (IS_ERR(file))
 		goto out_unmark;
-}
 
 	sched_exec();
 
@@ -1511,56 +1505,39 @@ printk("%s: check_unsafe_exec\n", __func__);
 	bprm->interp = filename;
 
 	retval = bprm_mm_init(bprm);
-	if (retval) {
-printk("%s: bprm_mm_init\n", __func__);
+	if (retval)
 		goto out_file;
-}
 
 	bprm->argc = count(argv, MAX_ARG_STRINGS);
-	if ((retval = bprm->argc) < 0) {
-printk("%s: count argv\n", __func__);
+	if ((retval = bprm->argc) < 0)
 		goto out;
-}
 
 	bprm->envc = count(envp, MAX_ARG_STRINGS);
-	if ((retval = bprm->envc) < 0) {
-printk("%s: count envc\n", __func__);
+	if ((retval = bprm->envc) < 0)
 		goto out;
-}
 
 	retval = prepare_binprm(bprm);
-	if (retval < 0) {
-printk("%s: prepare_binprm\n", __func__);
+	if (retval < 0)
 		goto out;
-}
 
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
-	if (retval < 0) {
-printk("%s: copy_string_kernel\n", __func__);
+	if (retval < 0)
 		goto out;
-}
 
     if(!current->executing_for_remote) {
         bprm->exec = bprm->p;
         retval = copy_strings(bprm->envc, envp, bprm);
-        if (retval < 0) {
-printk("%s: copy_strings bprm->envc\n", __func__);
+        if (retval < 0)
             goto out;
-}
 
         retval = copy_strings(bprm->argc, argv, bprm);
-        if (retval < 0) {
-printk("%s: copy_strings bprm->argc\n", __func__);
+        if (retval < 0)
             goto out;
-}
-
-     }
+    }
 
 	retval = search_binary_handler(bprm,regs);
-	if (retval < 0) {
-printk("%s: search_binary_handler\n", __func__);
+	if (retval < 0)
 		goto out;
-}
 
 	/* execve succeeded */
 	current->fs->in_exec = 0;
@@ -2325,4 +2302,3 @@ int dump_seek(struct file *file, loff_t off)
 	return ret;
 }
 EXPORT_SYMBOL(dump_seek);
-

@@ -203,17 +203,19 @@ static int ____call_usermodehelper(void *data)
         current->origin_pid =sub_info->origin_pid;
 
         // Notify of PID/PID pairing.
-        process_server_notify_delegated_subprocess_starting(
-		current->pid,sub_info->remote_pid,sub_info->remote_cpu);
+        process_server_notify_delegated_subprocess_starting(current->pid,sub_info->remote_pid,sub_info->remote_cpu);
     } 
 
 	retval = kernel_execve(sub_info->path,
 			       (const char *const *)sub_info->argv,
 			       (const char *const *)sub_info->envp);
     
+
 	/* Exec failed? */
 fail:
-	printk("%s: failed retval{%d}\n", __func__, retval);
+
+    printk("kmod exec failed retval{%d}\n",retval);
+
 	sub_info->retval = retval;
 	do_exit(0);
 }

@@ -728,7 +728,11 @@ static int __init pid_handler_init(void)
 {
 
 
-    _cpu = smp_processor_id();
+#ifndef SUPPORT_FOR_CLUSTERING
+      _cpu= smp_processor_id();
+#else
+      _cpu= cpumask_first(cpu_present_mask);
+#endif
 
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PID_REQUEST,
 				    		handle_remote_pid_request);

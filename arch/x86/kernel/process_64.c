@@ -357,6 +357,7 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 	/*
 	 * Free the old FP and other extended state
 	 */
+	if ( !current->executing_for_remote )
 	free_thread_xstate(current);
 }
 
