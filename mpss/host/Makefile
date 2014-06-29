@@ -1,0 +1,17 @@
+obj-y				+= acptboot.o
+obj-y				+= ioctrl.o
+obj-y				+= linpm.o
+obj-y				+= linpsmi.o
+obj-y				+= linscif_host.o
+obj-y				+= linsysfs.o
+obj-y				+= linux.o
+obj-y				+= linvnet.o
+obj-y				+= micpsmi.o
+obj-y				+= micscif_pm.o
+obj-y				+= pm_ioctl.o
+obj-y				+= pm_ioctl.o
+obj-y				+= pm_pcstate.o
+obj-y				+= tools_support.o
+obj-y				+= uos_download.o
+obj-y				+= vmcore.o
+obj-y				+= vhost/
