@@ -438,8 +438,6 @@ void pm_scif_exit(void)
 
 EXPORT_SYMBOL(pm_scif_exit);
 
-
-late_initcall(pm_scif_init);
-//module_init(pm_scif_init);
-//module_exit(pm_scif_exit);
+module_init(pm_scif_init);
+module_exit(pm_scif_exit);
 MODULE_LICENSE("GPL");

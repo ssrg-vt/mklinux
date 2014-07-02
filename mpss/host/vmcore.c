@@ -64,7 +64,7 @@
 extern struct proc_dir_entry *vmcore_dir;
 
 /* Stores the physical address of elf header of crash image. */
-static unsigned long long bla_elfcorehdr_addr = 0x50e9000;
+unsigned long long my_elfcorehdr_addr = 0x50e9000;
 
 /**
  * mic_copy_oldmem_page - copy one page from "oldmem"
@@ -619,7 +619,7 @@ static int parse_crash_elf64_headers(mic_ctx_t *mic_ctx)
 	Elf64_Ehdr ehdr;
 	u64 addr;
 
-	addr = bla_elfcorehdr_addr;
+	addr = my_elfcorehdr_addr;
 
 	/* Read Elf header */
 	rc = read_from_oldmem(mic_ctx, (char*)&ehdr, sizeof(Elf64_Ehdr), &addr, 0);
@@ -655,7 +655,7 @@ static int parse_crash_elf64_headers(mic_ctx_t *mic_ctx)
 	mic_ctx->elfcorebuf = kmalloc(mic_ctx->elfcorebuf_sz, GFP_KERNEL);
 	if (!mic_ctx->elfcorebuf)
 		return -ENOMEM;
-	addr = bla_elfcorehdr_addr;
+	addr = my_elfcorehdr_addr;
 	rc = read_from_oldmem(mic_ctx, mic_ctx->elfcorebuf, mic_ctx->elfcorebuf_sz, &addr, 0);
 	if (rc < 0) {
 		kfree(mic_ctx->elfcorebuf);
@@ -687,7 +687,7 @@ static int parse_crash_elf32_headers(mic_ctx_t *mic_ctx)
 	Elf32_Ehdr ehdr;
 	u64 addr;
 
-	addr = bla_elfcorehdr_addr;
+	addr = my_elfcorehdr_addr;
 
 	/* Read Elf header */
 	rc = read_from_oldmem(mic_ctx, (char*)&ehdr, sizeof(Elf32_Ehdr), &addr, 0);
@@ -715,7 +715,7 @@ static int parse_crash_elf32_headers(mic_ctx_t *mic_ctx)
 	mic_ctx->elfcorebuf = kmalloc(mic_ctx->elfcorebuf_sz, GFP_KERNEL);
 	if (!mic_ctx->elfcorebuf)
 		return -ENOMEM;
-	addr = bla_elfcorehdr_addr;
+	addr = my_elfcorehdr_addr;
 	rc = read_from_oldmem(mic_ctx, mic_ctx->elfcorebuf, mic_ctx->elfcorebuf_sz, &addr, 0);
 	if (rc < 0) {
 		kfree(mic_ctx->elfcorebuf);
@@ -747,7 +747,7 @@ static int parse_crash_elf_headers(mic_ctx_t *mic_ctx)
 	u64 addr;
 	int rc=0;
 
-	addr = bla_elfcorehdr_addr;
+	addr = my_elfcorehdr_addr;
 	rc = read_from_oldmem(mic_ctx, e_ident, EI_NIDENT, &addr, 0);
 	if (rc < 0)
 		return rc;

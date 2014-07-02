@@ -46,8 +46,23 @@ export MPSS_BUILDNO := $(MPSS_BUILDNO)
 export MPSS_BUILTBY := $(shell echo "`whoami`@`uname -n`")
 export MPSS_BUILTON := $(shell date +'%F %T %z')
 
-KERNEL_VERSION := $(shell uname -r)
-KERNEL_SRC = /lib/modules/$(KERNEL_VERSION)/build
+# If KDIR is specified, we are cross compiling for a MIC co-processor card
+# is not the best solution actually.. I should filp it around but MIC_CARD_ARCH is required by Kbuild
+
+ifneq ($(KDIR),)
+  ifeq ($(MIC_CARD_ARCH),)
+    $(error error MIC_CARD_ARCH must be specified)
+  endif
+  ifeq ($(CROSS_COMPILE),)
+    CROSS_COMPILE := $(MIC_CARD_ARCH)-mpss-linux-
+    $(warning warning CROSS_COMPILE not specified, default to $(CROSS_COMPILE))
+  endif
+  KERNEL_VERSION := "3.2.14+mpss3.2"
+  KERNEL_SRC = $(KDIR)
+else
+  KERNEL_VERSION := $(shell uname -r)
+  KERNEL_SRC = /lib/modules/$(KERNEL_VERSION)/build
+endif
 
 INSTALL = install
 INSTALL_d = $(INSTALL) -d
@@ -65,16 +80,29 @@ kmodincludedir = $(realpath $(KERNEL_SRC))/include/modules
 # $(ARCH) it should support
 export MIC_CARD_ARCH
 
-.PHONY: all install modules
-.PHONY: modules_install conf_install dev_install kdev_install
+.PHONY: all modules clean
+.PHONY: install modules_install conf_install dev_install kdev_install
 
 all: modules
 
 install: modules_install conf_install kdev_install
 
-modules modules_install: %:
-	$(MAKE) -C $(KERNEL_SRC) M=$(CURDIR) $* \
-		INSTALL_MOD_PATH=$(DESTDIR)
+modules clean: %:
+ifneq ($(KDIR),)
+	$(MAKE) -C $(KERNEL_SRC) ARCH=$(MIC_CARD_ARCH) CROSS_COMPILE=$(CROSS_COMPILE) M=$(CURDIR) $*
+else
+	$(MAKE) -C $(KERNEL_SRC) M=$(CURDIR) $*
+endif
+
+modules_install: %:
+ifneq ($(KDIR),)
+  ifeq ($(DESTDIR),)
+    $(error error DESTDIR not specified, required for MIC)
+  endif
+	$(MAKE) -C $(KERNEL_SRC) ARCH=$(MIC_CARD_ARCH) CROSS_COMPILE=$(CROSS_COMPILE) M=$(CURDIR) INSTALL_MOD_PATH=$(DESTDIR) $*
+else
+	$(MAKE) -C $(KERNEL_SRC) M=$(CURDIR) INSTALL_MOD_PATH=$(DESTDIR) $*
+endif     
 
 conf_install:
 ifneq ($(MIC_CARD_ARCH),)

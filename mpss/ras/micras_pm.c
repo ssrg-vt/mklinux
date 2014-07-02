@@ -921,8 +921,8 @@ struct micpm_callbacks pm_cb;		/* PM data for us */
 
 extern void micpm_device_register(struct notifier_block *n);
 extern void micpm_device_unregister(struct notifier_block *n);
-extern void micpm_atomic_notifier_register(struct notifier_block *n);
-extern void micpm_atomic_notifier_unregister(struct notifier_block *n);
+extern int micpm_atomic_notifier_register(struct notifier_block *n);
+extern int micpm_atomic_notifier_unregister(struct notifier_block *n);
 
 static struct notifier_block ras_deviceevent = {
   .notifier_call = mr_pm_callback,

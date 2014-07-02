@@ -709,14 +709,13 @@ __scif_connect(scif_epd_t epd, struct scif_portID *dst)
 	struct micscif_dev *remote_dev;
 #endif
 
-	pr_debug("SCIFAPI connect: ep %p %s\n", ep, 
-					scif_ep_states[ep->state]);
-
+//printk("SCIFAPI connect: ep %p %s [%d:%d]\n",
+		 //ep, scif_ep_states[ep->state], dst->node, dst->port);
+//printk("MAX_BOARD_SUPPORTED %d SCIFDEV_RUNNING %d SCIFDEV_SLEEPING %d\n",MAX_BOARD_SUPPORTED,SCIFDEV_RUNNING,SCIFDEV_SLEEPING);
 	if (dst->node > MAX_BOARD_SUPPORTED)
 		return -ENODEV;
 
 	might_sleep();
-
 #ifdef _MIC_SCIF_
 	remote_dev = &scif_dev[dst->node];
 	if ((SCIFDEV_INIT == remote_dev->sd_state ||
@@ -724,7 +723,7 @@ __scif_connect(scif_epd_t epd, struct scif_portID *dst)
 		if ((err = scif_p2p_connect(dst->node)))
 			goto connect_error_simple;
 #endif
-
+	//printk("scif_dev[dst->node].sd_state %d\n",scif_dev[dst->node].sd_state);
 	if (SCIFDEV_RUNNING != scif_dev[dst->node].sd_state &&
 		SCIFDEV_SLEEPING != scif_dev[dst->node].sd_state)
 		return -ENODEV;
@@ -775,6 +774,7 @@ __scif_connect(scif_epd_t epd, struct scif_portID *dst)
 		ep->state = SCIFEP_BOUND;
 		goto connect_error_simple;
 	}
+
 	// Initiate the first part of the endpoint QP setup
 	err = micscif_setup_qp_connect(ep->qp_info.qp, &ep->qp_info.qp_offset,
 			ENDPT_QP_SIZE, ep->remote_dev);
@@ -797,6 +797,7 @@ __scif_connect(scif_epd_t epd, struct scif_portID *dst)
 		micscif_dec_node_refcnt(ep->remote_dev, 1);
 		goto connect_error_simple;
 	}
+
 	// Wait for request to be processed.
 	while ((err = wait_event_interruptible_timeout(ep->conwq, 
 		(ep->state != SCIFEP_CONNECTING), NODE_ALIVE_TIMEOUT)) <= 0) {
@@ -810,8 +811,11 @@ __scif_connect(scif_epd_t epd, struct scif_portID *dst)
 			msg.uop = SCIF_CNCT_TERM;
 			if (!(err = micscif_nodeqp_send(ep->remote_dev, &msg, ep))) {
 retry:
+
 				err = wait_event_timeout(ep->diswq, 
 					(ep->state != SCIFEP_CONNECTING), NODE_ALIVE_TIMEOUT);
+				pr_debug("SCIFAPI connect: wait_event_timeout err %d scifdev_alive %d timeout %d state %s\n", err, scifdev_alive(ep), NODE_ALIVE_TIMEOUT, scif_ep_states[ep->state]);
+				
 				if (!err && scifdev_alive(ep))
 					goto retry;
 				if (!err)
@@ -947,16 +951,18 @@ __scif_accept(scif_epd_t epd, struct scif_portID *peer, scif_epd_t *newepd, int 
 	unsigned long sflags;
 	int err;
 
-	pr_debug("SCIFAPI accept: ep %p %s\n", lep, scif_ep_states[lep->state]);
+	//pr_debug("SCIFAPI accept: ep %p %s, [%d:%d]\n",
+printk("SCIFAPI accept: ep %p %s, [%d:%d]\n",	  
+     lep, scif_ep_states[lep->state], peer->node, peer->port);
 
 	// Error if flags other than SCIF_ACCEPT_SYNC are set
 	if (flags & ~SCIF_ACCEPT_SYNC) {
-		pr_debug("SCIFAPI accept: ep %p invalid flags %x\n", lep, flags & ~SCIF_ACCEPT_SYNC);
+		printk("SCIFAPI accept: ep %p invalid flags %x\n", lep, flags & ~SCIF_ACCEPT_SYNC);
 		return -EINVAL;
 	}
 
 	if (!peer || !newepd) {
-		pr_debug("SCIFAPI accept: ep %p peer %p or newepd %p NULL\n", 
+		printk("SCIFAPI accept: ep %p peer %p or newepd %p NULL\n", 
 			lep, peer, newepd);
 		return -EINVAL;
 	}
@@ -964,14 +970,14 @@ __scif_accept(scif_epd_t epd, struct scif_portID *peer, scif_epd_t *newepd, int 
 	might_sleep();
 	spin_lock_irqsave(&lep->lock, sflags);
 	if (lep->state != SCIFEP_LISTENING) {
-		pr_debug("SCIFAPI accept: ep %p not listending\n", lep);
+		printk("SCIFAPI accept: ep %p not listending\n", lep);
 		spin_unlock_irqrestore(&lep->lock, sflags);
 		return -EINVAL;
 	}
 
 	if (!lep->conreqcnt && !(flags & SCIF_ACCEPT_SYNC)) {
 		// No connection request present and we do not want to wait
-		pr_debug("SCIFAPI accept: ep %p async request with nothing pending\n", lep);
+		printk("SCIFAPI accept: ep %p async request with nothing pending\n", lep);
 		spin_unlock_irqrestore(&lep->lock, sflags);
 		return -EAGAIN;
 	}
@@ -982,14 +988,13 @@ retry_connection:
 	if ((err = wait_event_interruptible(lep->conwq, 
 		(lep->conreqcnt || (lep->state != SCIFEP_LISTENING)))) != 0) {
 		// wait was interrupted
-		pr_debug("SCIFAPI accept: ep %p ^C detected\n", lep);
+		printk("SCIFAPI accept: ep %p ^C detected\n", lep);
 		return err;	// -ERESTARTSYS
 	}
 
 	if (lep->state != SCIFEP_LISTENING) {
 		return -EINTR;
 	}
-
 	spin_lock_irqsave(&lep->lock, sflags);
 
 	if (!lep->conreqcnt) {
@@ -1009,7 +1014,7 @@ retry_connection:
 	// Create the connection endpoint
 	cep = (struct endpt *)kzalloc(sizeof(struct endpt), GFP_KERNEL);
 	if (!cep) {
-		pr_debug("SCIFAPI accept: ep %p new end point allocation failed\n", lep);
+		printk("SCIFAPI accept: ep %p new end point allocation failed\n", lep);
 		err = -ENOMEM;
 		goto scif_accept_error_epalloc;
 	}
@@ -1028,7 +1033,7 @@ retry_connection:
 	}
 
 	if (micscif_rma_ep_init(cep) < 0) {
-		pr_debug("SCIFAPI accept: ep %p new %p RMA EP init failed\n", lep, cep);
+		printk("SCIFAPI accept: ep %p new %p RMA EP init failed\n", lep, cep);
 		err = -ENOMEM;
 		goto scif_accept_error_qpalloc;
 	}
@@ -1051,7 +1056,7 @@ retry_connection:
 	err = micscif_setup_qp_accept(cep->qp_info.qp, &cep->qp_info.qp_offset,
 		conreq->msg.payload[1], ENDPT_QP_SIZE, cep->remote_dev);
 	if (err) {
-		pr_debug("SCIFAPI accept: ep %p new %p micscif_setup_qp_accept %d qp_offset 0x%llx\n", 
+		printk("SCIFAPI accept: ep %p new %p micscif_setup_qp_accept %d qp_offset 0x%llx\n", 
 			    lep, cep, err, cep->qp_info.qp_offset);
 		micscif_dec_node_refcnt(cep->remote_dev, 1);
 		goto scif_accept_error_map;
@@ -1099,7 +1104,7 @@ retry:
 		// Connect sequence complete return new endpoint information
 		*newepd = (scif_epd_t)cep;
 		spin_unlock_irqrestore(&cep->lock, sflags);
-		pr_debug("SCIFAPI accept: ep %p new %p returning new epnd point\n", lep, cep);
+		printk("SCIFAPI accept: ep %p new %p returning new epnd point\n", lep, cep);
 		return 0;
 	}
 
@@ -1116,7 +1121,7 @@ retry:
 			goto retry_connection;
 		}
 
-		pr_debug("SCIFAPI accept: ep %p new %p remote failed to allocate resources\n", lep, cep);
+		printk("SCIFAPI accept: ep %p new %p remote failed to allocate resources\n", lep, cep);
 		return -EAGAIN;
 	}
 

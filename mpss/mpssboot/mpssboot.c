@@ -233,11 +233,11 @@ mpssboot_init(void)
 
 	result = sysfs_create_group(&mbdev->kobj, &mb_attr_group);
 	result = result;
+
 	return 0;
 }
 
-late_initcall(mpssboot_init);
-//module_init(mpssboot_init);
-//module_exit(mpssboot_exit);
+module_init(mpssboot_init);
+module_exit(mpssboot_exit);
 MODULE_LICENSE("GPL");
 

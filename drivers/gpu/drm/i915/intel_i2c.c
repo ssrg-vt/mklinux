@@ -59,9 +59,9 @@
 #include "drmP.h"
 #include "drm.h"
 #include "intel_drv.h"
-#ifdef CONFIG_X86_EARLYMIC
+//#ifdef CONFIG_X86_EARLYMIC
 #include "intel_i2c.h"
-#endif
+//#endif
 #include "i915_drm.h"
 #include "i915_drv.h"
 
@@ -94,8 +94,8 @@ struct intel_gpio {
 void
 intel_i2c_reset(struct drm_device *dev)
 {
+struct drm_i915_private *dev_priv = dev->dev_private;
 #ifdef CONFIG_X86_EARLYMIC  
-	struct drm_i915_private *dev_priv = dev->dev_private;
 	if (HAS_PCH_SPLIT(dev))
 		I915_WRITE(PCH_GMBUS0, 0);
 	else
@@ -104,7 +104,7 @@ intel_i2c_reset(struct drm_device *dev)
 	if (HAS_PCH_SPLIT(dev))
 		I915_GMBUS_WRITE(PCH_GMBUS0, 0);
 	else
-		I915_GMBUD_WRITE(GMBUS0, 0);
+		I915_GMBUS_WRITE(GMBUS0, 0);
 #endif
 }
 
@@ -221,7 +221,7 @@ static void set_data(void *data, int state_high)
 #ifdef CONFIG_X86_EARLYMIC
 	I915_GMBUS_WRITE_NOTRACE(gpio->reg, reserved | data_bits);
 #else
-	I915_BUS_WRITE_NOTRACE(gpio->reg, reserved | data_bits);
+	I915_GMBUS_WRITE_NOTRACE(gpio->reg, reserved | data_bits);
 #endif
 	POSTING_READ(gpio->reg);
 }

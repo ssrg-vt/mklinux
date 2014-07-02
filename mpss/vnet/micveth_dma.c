@@ -1630,10 +1630,8 @@ err_exit:
 }
 
 #ifdef STANDALONE_VNET_DMA
-
-late_initcall(micvnet_module_init);
-//module_init(micvnet_module_init);
-//module_exit(micvnet_module_exit);
+module_init(micvnet_module_init);
+module_exit(micvnet_module_exit);
 #endif
 
 MODULE_LICENSE("GPL");

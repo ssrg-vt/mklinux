@@ -78,7 +78,7 @@
 #endif // _MIC_SCIF_
 
 #ifdef _MIC_SCIF_
-void *mic_sbox_md_init(void);
+void *my_mic_sbox_md_init(void);
 void mic_sbox_md_uninit(void *mic_sbox_mmio_va);
 #endif
 

@@ -83,17 +83,45 @@ struct kernel_param_ops param_ops_vnetmode = {
 #endif /* Kernel > 2.6.36 */
 
 int mic_vnet_mode = VNET_MODE_DMA;
-module_param_named(vnet, mic_vnet_mode, vnetmode, 0400);
+//module_param_named(vnet, mic_vnet_mode, vnetmode, 0400);
 #define __VNET_MODE(u, l) " " #l
-MODULE_PARM_DESC(vnet, "Vnet operating mode, one of:" VNET_MODES);
+//MODULE_PARM_DESC(vnet, "Vnet operating mode, one of:" VNET_MODES);
 #undef __VNET_MODE
+static int __init _setup_vnet(char *str)
+{
+        mic_vnet_mode = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("vnet", _setup_vnet);
+
+
+
 
 int vnet_num_buffers = VNET_MAX_SKBS;
-module_param(vnet_num_buffers, int, 0400);
-MODULE_PARM_DESC(vnet_num_buffers, "Number of buffers used by the VNET driver");
+
+static int __init _setup_vnet_num_buffers(char *str)
+{
+        vnet_num_buffers = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("vnet_num_buffers", _setup_vnet_num_buffers);
 
 ulong vnet_addr = 0;
-module_param(vnet_addr, ulong, 0400);
-MODULE_PARM_DESC(vnet_addr, "Vnet driver host ring address");
+
+static int __init _setup_vnet_addr(char *str)
+{
+        vnet_addr = simple_strtoull(str, 0, 16);
+        return 0;
+}
+early_param("vnet", _setup_vnet_addr);
+
+
+
+//module_param(vnet_num_buffers, int, 0400);
+//MODULE_PARM_DESC(vnet_num_buffers, "Number of buffers used by the VNET driver");
+
+//ulong vnet_addr = 0;
+//module_param(vnet_addr, ulong, 0400);
+//MODULE_PARM_DESC(vnet_addr, "Vnet driver host ring address");
 
 

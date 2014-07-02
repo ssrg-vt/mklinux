@@ -280,7 +280,6 @@ static int __init hvc_mic_init(void)
 			(volatile uint32_t *)&vcons_info.mic_hdr->i_wr,
 			(volatile uint32_t *)vcons_info.vcons_ip_buf,
 			tmp_hdr.i_size);
-
 	mic_cons_init();
 	hp = hvc_alloc(MIC_COOKIE, 2, &hvc_mic_ops, 128);
 
@@ -336,11 +335,24 @@ static void __exit hvc_mic_exit(void)
 		hvc_remove(hp);
 }
 
-MODULE_PARM_DESC(vcons_hdr_addr, "mic address of vcons hdr");
-module_param(vcons_hdr_addr, long, S_IRUGO);
-module_param(dbg, int, S_IRUGO);
-late_initcall(hvc_mic_init);
+static int __init _setup_vcons_hdr_addr(char *str)
+{
+        vcons_hdr_addr = simple_strtoull(str, 0, 16);
+        return 0;
+}
+early_param("vcons_hdr_addr", _setup_vcons_hdr_addr);
+
+//MODULE_PARM_DESC(vcons_hdr_addr, "mic address of vcons hdr");
+//module_param(vcons_hdr_addr, long, S_IRUGO);
+
+static int __init _setup_dbg(char *str)
+{
+        dbg = simple_strtoull(str, 0, 16);
+        return 0;
+}
+early_param("dbg", _setup_dbg);
+//module_param(dbg, int, S_IRUGO);
 //MODULE_LICENSE("GPL");
-//module_init(hvc_mic_init);
-//module_exit(hvc_mic_exit);
+module_init(hvc_mic_init);
+module_exit(hvc_mic_exit);
 

@@ -319,7 +319,8 @@ static const struct net_device_ops veth_netdev_ops = {
 	.ndo_stop		= micveth_stop_dev,
 	.ndo_start_xmit		= micveth_xmit,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_multicast_list = micveth_multicast_list,
+	//.ndo_set_multicast_list = micveth_multicast_list,
+	.ndo_set_rx_mode	= micveth_multicast_list,
 	.ndo_set_mac_address	= micveth_set_address,
 	.ndo_change_mtu		= micveth_change_mtu,
 };
@@ -862,10 +863,8 @@ micveth_module_exit(void)
 
 #ifdef HOST
 #else  // card
-
-late_initcall(micveth_module_init);
-//module_init(micveth_module_init);
-//module_exit(micveth_module_exit);
+module_init(micveth_module_init);
+module_exit(micveth_module_exit);
 
 MODULE_LICENSE("GPL");
 #endif

@@ -2026,9 +2026,9 @@ void mictc_exit(void)
 {
 	return;
 }
-late_initcall(mictc_init);
-//module_init(mictc_init);
-//module_exit(mictc_exit);
+
+module_init(mictc_init);
+module_exit(mictc_exit);
 
 MODULE_AUTHOR("Intel Corp. 2011 (sth " __DATE__ ") ver " TC_VER);
 MODULE_DESCRIPTION("Trace Capture module for K1OM");

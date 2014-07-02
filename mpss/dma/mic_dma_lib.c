@@ -1322,10 +1322,9 @@ static void mic_dma_uninit(void)
 	unregister_dma_for_fast_copy();
 #endif
 }
-late_initcall(mic_dma_init);
 
-//module_init(mic_dma_init);
-//module_exit(mic_dma_uninit);
+early_initcall(mic_dma_init);
+module_exit(mic_dma_uninit);
 #endif
 
 static int

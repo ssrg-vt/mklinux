@@ -59,50 +59,131 @@ MODULE_INFO(build_scmver, BUILD_SCMVER);
 struct kmem_cache *unaligned_cache;
 mic_lindata_t mic_lindata;
 
-module_param_named(ulimit, mic_ulimit_check, bool, 0600);
-MODULE_PARM_DESC(ulimit, "SCIF ulimit check");
+//module_param_named(ulimit, mic_ulimit_check, bool, 0600);
+//MODULE_PARM_DESC(ulimit, "SCIF ulimit check");
 
-module_param_named(reg_cache, mic_reg_cache_enable, bool, 0600);
-MODULE_PARM_DESC(reg_cache, "SCIF registration caching");
+//module_param_named(reg_cache, mic_reg_cache_enable, bool, 0600);
+//MODULE_PARM_DESC(reg_cache, "SCIF registration caching");
 
-module_param_named(huge_page, mic_huge_page_enable, bool, 0600);
-MODULE_PARM_DESC(huge_page, "SCIF Huge Page Support");
+//module_param_named(huge_page, mic_huge_page_enable, bool, 0600);
+//MODULE_PARM_DESC(huge_page, "SCIF Huge Page Support");
 
 extern bool mic_p2p_enable;
-module_param_named(p2p, mic_p2p_enable, bool, 0600);
-MODULE_PARM_DESC(p2p, "SCIF peer-to-peer");
+//module_param_named(p2p, mic_p2p_enable, bool, 0600);
+//MODULE_PARM_DESC(p2p, "SCIF peer-to-peer");
 
 extern bool mic_p2p_proxy_enable;
-module_param_named(p2p_proxy, mic_p2p_proxy_enable, bool, 0600);
-MODULE_PARM_DESC(p2p_proxy, "SCIF peer-to-peer proxy DMA support");
+//module_param_named(p2p_proxy, mic_p2p_proxy_enable, bool, 0600);
+//MODULE_PARM_DESC(p2p_proxy, "SCIF peer-to-peer proxy DMA support");
 
 extern bool mic_watchdog_enable;
-module_param_named(watchdog, mic_watchdog_enable, bool, 0600);
-MODULE_PARM_DESC(watchdog, "SCIF Watchdog");
+//module_param_named(watchdog, mic_watchdog_enable, bool, 0600);
+//MODULE_PARM_DESC(watchdog, "SCIF Watchdog");
 
 extern bool mic_watchdog_auto_reboot;
-module_param_named(watchdog_auto_reboot, mic_watchdog_auto_reboot, bool, 0600);
-MODULE_PARM_DESC(watchdog_auto_reboot, "SCIF Watchdog auto reboot");
+//module_param_named(watchdog_auto_reboot, mic_watchdog_auto_reboot, bool, 0600);
+//MODULE_PARM_DESC(watchdog_auto_reboot, "SCIF Watchdog auto reboot");
 
 bool mic_msi_enable = 1;
-module_param_named(msi, mic_msi_enable, bool, 0600);
-MODULE_PARM_DESC(mic_msi_enable, "To enable MSIx in the driver.");
+//module_param_named(msi, mic_msi_enable, bool, 0600);
+//MODULE_PARM_DESC(mic_msi_enable, "To enable MSIx in the driver.");
 
 int mic_pm_qos_cpu_dma_lat = -1;
-module_param_named(pm_qos_cpu_dma_lat, mic_pm_qos_cpu_dma_lat, int, 0600);
-MODULE_PARM_DESC(mic_pm_qos_cpu_dma_lat, "PM QoS CPU DMA latency in usecs.");
+//module_param_named(pm_qos_cpu_dma_lat, mic_pm_qos_cpu_dma_lat, int, 0600);
+//MODULE_PARM_DESC(mic_pm_qos_cpu_dma_lat, "PM QoS CPU DMA latency in usecs.");
 
 extern int ramoops_count;
-module_param_named(ramoops_count, ramoops_count, int, 0600);
-MODULE_PARM_DESC(ramoops_count, "Maximum frame count for the ramoops driver.");
+//module_param_named(ramoops_count, ramoops_count, int, 0600);
+//MODULE_PARM_DESC(ramoops_count, "Maximum frame count for the ramoops driver.");
 
 extern bool mic_crash_dump_enabled;
-module_param_named(crash_dump, mic_crash_dump_enabled, bool, 0600);
-MODULE_PARM_DESC(mic_crash_dump_enabled, "MIC Crash Dump enabled.");
+//module_param_named(crash_dump, mic_crash_dump_enabled, bool, 0600);
+//MODULE_PARM_DESC(mic_crash_dump_enabled, "MIC Crash Dump enabled.");
 
 #define GET_FILE_SIZE_FROM_INODE(fp) i_size_read((fp)->f_path.dentry->d_inode)
 
 int usagemode_param = 0;
+
+static int __init _setup_ulimit(char *str)
+{
+        mic_ulimit_check = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("ulimit", _setup_ulimit);
+
+static int __init _setup_reg_cache(char *str)
+{
+        mic_reg_cache_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("reg_cache", _setup_reg_cache);
+
+static int __init _setup_huge_page(char *str)
+{
+        mic_huge_page_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("huge_page", _setup_huge_page);
+
+
+static int __init _setup_p2p(char *str)
+{
+        mic_p2p_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("p2p", _setup_p2p);
+
+static int __init _setup_p2p_proxy(char *str)
+{
+        mic_p2p_proxy_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("p2p_proxy", _setup_p2p_proxy);
+
+static int __init _setup_watchdog(char *str)
+{
+        mic_watchdog_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("watchdog", _setup_watchdog);
+
+static int __init _setup_watchdog_auto_reboot(char *str)
+{
+        mic_watchdog_auto_reboot = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("watchdog_auto_reboot", _setup_watchdog_auto_reboot);
+
+
+static int __init _setup_msi(char *str)
+{
+        mic_msi_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("msi", _setup_msi);
+
+static int __init _setup_ramoops_count(char *str)
+{
+        ramoops_count = simple_strtoull(str, 0, 16);
+        return 0;
+}
+early_param("ramoops_count", _setup_ramoops_count);
+
+
+static int __init _setup_crash_dump(char *str)
+{
+        mic_crash_dump_enabled = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("crash_dump", _setup_crash_dump);
+
+static int __init _setup_pm_qos_cpu_dma_lat(char *str)
+{
+        mic_pm_qos_cpu_dma_lat = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("pm_qos_cpu_dma_lat", _setup_pm_qos_cpu_dma_lat);
+
 
 static int
 mic_open(struct inode *inode, struct file *filp)
@@ -792,7 +873,5 @@ cleanup_fs:
 	return status;
 }
 
-
-late_initcall(mic_init);
-//module_init(mic_init);
-//module_exit(mic_exit);
+module_init(mic_init);
+module_exit(mic_exit);

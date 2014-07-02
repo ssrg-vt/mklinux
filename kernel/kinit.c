@@ -269,6 +269,7 @@ int send_cpu_info_request(int KernelId)
 /*
  * ************************************* Function (hook) to be called from other file ********************
  */
+#ifdef CONFIG_X86_EARLYMIC
 int _init_RemoteCPUMask(void)
 {
   unsigned int i;
@@ -308,7 +309,7 @@ int _init_RemoteCPUMask(void)
 */
   return 0;
 }
-
+#endif
 
 static int __init cpu_info_handler_init(void)
 {

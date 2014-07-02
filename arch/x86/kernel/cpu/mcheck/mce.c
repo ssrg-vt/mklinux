@@ -68,7 +68,7 @@
 
 #include "mce-internal.h"
 
-static DEFINE_MUTEX(mce_chrdev_read_mutex);
+DEFINE_MUTEX(mce_chrdev_read_mutex);
 
 #define rcu_dereference_check_mce(p) \
 	rcu_dereference_index_check((p), \
@@ -280,7 +280,7 @@ EXPORT_PER_CPU_SYMBOL_GPL(injectm);
  * separate MCEs from kernel messages to avoid bogus bug reports.
  */
 
-static struct mce_log mcelog = {
+struct mce_log mcelog = {
 	.signature	= MCE_LOG_SIGNATURE,
 	.len		= MCE_LOG_LEN,
 	.recordlen	= sizeof(struct mce),

@@ -152,5 +152,13 @@ struct bin_attribute mic_psmi_ptes_attr = {
 };
 
 extern bool mic_psmi_enable;
-module_param_named(psmi, mic_psmi_enable, bool, S_IRUSR);
-MODULE_PARM_DESC(psmi, "Enable/disable mic psmi");
+static int __init _setup_psmi(char *str)
+{
+        mic_psmi_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("psmi", _setup_psmi);
+
+
+//module_param_named(psmi, mic_psmi_enable, bool, S_IRUSR);
+//MODULE_PARM_DESC(psmi, "Enable/disable mic psmi");

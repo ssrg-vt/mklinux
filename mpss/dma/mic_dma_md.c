@@ -137,7 +137,7 @@ void md_mic_dma_init(struct mic_dma_device *dma_dev, uint8_t *mmio_va_base)
 {
 	int i;
 #ifdef _MIC_SCIF_
-	dma_dev->mm_sbox = mic_sbox_md_init();
+	dma_dev->mm_sbox = my_mic_sbox_md_init();
 #else
 	dma_dev->mm_sbox = mmio_va_base;
 #endif

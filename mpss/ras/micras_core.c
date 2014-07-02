@@ -192,7 +192,7 @@ extern void (*mca_exc_exit)(struct mce *, int, int, int, int);
 extern int  (*mca_print)(char *, ...);
 
 extern struct mce_log   mcelog;		/* Export from kernel */
-extern struct mutex     mce_read_mutex;	/* Export from kernel */
+extern struct mutex     mce_chrdev_read_mutex;	/* Export from kernel */
 static unsigned		mcc_seen;	/* Last event in kernel log */
 int			in_sync;	/* Flag when sync'ing */
 
@@ -866,7 +866,7 @@ mcc_sync(void)
   /*
    * Lock out kernel log access through /dev/mcelog
    */
-  mutex_lock(&mce_read_mutex);
+  mutex_lock(&mce_chrdev_read_mutex);
 
   /*
    * Start over if the log has been cleared cleared
@@ -918,7 +918,7 @@ mcc_sync(void)
   /*
    * Done, release lock
    */
-  mutex_unlock(&mce_read_mutex);
+  mutex_unlock(&mce_chrdev_read_mutex);
 }
 
 

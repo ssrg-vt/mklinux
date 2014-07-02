@@ -209,6 +209,7 @@ int micscif_setup_qp_accept(struct micscif_qp *qp, dma_addr_t *qp_offset, dma_ad
 	spin_lock_init(&qp->qp_recv_lock);
 	/* Start by figuring out where we need to point */
 	remote_qp = scif_ioremap(phys, sizeof(struct micscif_qp), scifdev);
+
 	qp->remote_qp = remote_qp;
 	qp->remote_buf = remote_qp->local_buf;
 	/* To setup the outbound_q, the buffer lives in remote memory (at scifdev->bs->buf phys),
@@ -217,7 +218,15 @@ int micscif_setup_qp_accept(struct micscif_qp *qp, dma_addr_t *qp_offset, dma_ad
 	 */
 	remote_size = qp->remote_qp->inbound_q.size; /* TODO: Remove this read for p2p */
 	remote_q = scif_ioremap(qp->remote_buf, remote_size, scifdev);
-
+	
+#if 0	
+	pr_debug("%s: remote_size %d remote_q %p (p%p) ep %ld(%ld) magic %lx blast %lx ver %d state %d(%d)\n",
+		__func__, remote_size, remote_q, (void*)qp->remote_buf,
+		(unsigned long)qp->remote_qp->ep, (unsigned long)qp->ep,
+		(unsigned long)qp->remote_qp->magic, (unsigned long)qp->remote_qp->blast,
+		(int)qp->remote_qp->scif_version, qp->remote_qp->qp_state, qp->qp_state);
+#endif	
+	
 	BUG_ON(qp->remote_qp->magic != SCIFEP_MAGIC);
 
 	qp->remote_qp->local_write = 0;
@@ -255,7 +264,14 @@ int micscif_setup_qp_accept(struct micscif_qp *qp, dma_addr_t *qp_offset, dma_ad
 				__func__, __LINE__, err);
 		return err;
 	}
+	
 	qp->local_qp = *qp_offset;
+#if 0	
+	prdebug("%s: sd_base_addr %lx sbox %p %p local_buf %lx @local_q %p(p%lx) local_qp %p @qp %p(p%lx)\n",
+	       __func__, (unsigned long)scifdev->sd_base_addr, scifdev->mm_sbox, scifdev->mm_gtt,
+	       (unsigned long)qp->local_buf, local_q, (unsigned long)virt_to_phys(local_q),
+	       (void*)qp->local_qp, qp, (unsigned long)virt_to_phys(qp) );
+#endif	       
 	return err;
 }
 
@@ -358,7 +374,7 @@ int micscif_setup_card_qp(phys_addr_t host_phys, struct micscif_dev *scifdev)
 	struct nodemsg tmp_msg;
 	uint16_t host_scif_ver;
 
-	pr_debug("Got 0x%llx from the host\n", host_phys);
+	pr_debug("micscif_card(): Got 0x%llx from the host\n", host_phys);
 
 	local_size = NODE_QP_SIZE;
 

@@ -9,7 +9,7 @@
 #include <linux/kthread.h>
 #include <linux/semaphore.h>
 #include <linux/pcn_kmsg.h>
-#include <scif.h>
+#include "./scif.h"
 
 #define FALSE 0
 #define TRUE 1
@@ -93,7 +93,8 @@ static int __init initialize(){
 	uint16_t fromcpu;
 	int i;
 	INIT_LIST_HEAD(&send_wait_q.list);
-	
+
+	printk("In pcn new messaging layer init\n");	
 	//sema_init(&(send_q_mutex), 0);
 	sema_init(&(send_q_empty), 0);
 	
@@ -161,7 +162,7 @@ int send_thread(void* arg0)
 	portID.node = dest_cpu;
 	portID.port = PORT_DATA_IN;
 	while((rc = scif_connect(epd, &portID)) < 0){
-		mdelay(10);
+		msleep(65000);
 		//printk(KERN_INFO "scif_connect failed with error %d! Could not send message\n", rc);
 		//return rc;
 	}
@@ -290,6 +291,7 @@ int connection_handler(void *arg0){
 				scif_close(dataepd);
 				return 0;
 			}
+			msleep(65000);
 		}
 	//	dma_rcv_buffer=kmalloc(2*PAGE_SIZE, GFP_KERNEL);
 		

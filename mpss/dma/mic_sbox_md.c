@@ -48,7 +48,7 @@
 
 extern  void *mic_sbox_mmio_va;
 
-void *mic_sbox_md_init(void)
+void *my_mic_sbox_md_init(void)
 {
 	return mic_sbox_mmio_va;
 }

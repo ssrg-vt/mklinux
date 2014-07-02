@@ -52,6 +52,12 @@ static int major, index = 0;
 static long virtio_addr = 0;
 static mic_data_t virtblk_mic_data;
 
+
+
+
+
+
+
 struct virtio_blk
 {
 	spinlock_t lock;
@@ -700,6 +706,14 @@ static int virtblk_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 	/* create the vring */
 	vq = vring_new_virtqueue(VIRTQUEUE_LENGTH, MIC_VRING_ALIGN,
 							 vdev, queue, virtblk_notify, callbacks[0], names[0]);
+	pr_debug("%s: VIRTQUEUE_LENGTH %d, MIC_VRING_ALIGN %ld, size %ld (pages)\n",
+		__func__, VIRTQUEUE_LENGTH, MIC_VRING_ALIGN, size);
+	pr_debug("%s: vvq->vring num %d, desc %p(%lx), avail %p(%lx), used %p(%lx)\n",
+		__func__, to_vvq(vq)->vring.num,
+		to_vvq(vq)->vring.desc, 0l,
+		to_vvq(vq)->vring.avail, (unsigned long)(to_vvq(vq)->vring.avail) - (unsigned long)(to_vvq(vq)->vring.desc),
+		to_vvq(vq)->vring.used, (unsigned long)(to_vvq(vq)->vring.used) - (unsigned long)(to_vvq(vq)->vring.avail));
+
 	if (vq == NULL) {
 		err = -ENOMEM;
 		goto out_activate_queue;
@@ -753,7 +767,7 @@ static struct virtio_driver __refdata virtio_blk = {
 	.driver.owner =	THIS_MODULE,
 };
 
-struct class block_class = {
+struct class my_block_class = {
 	.name		= "block",
 };
 
@@ -826,7 +840,7 @@ static int __init init(void)
 	vdev->config = &virtio_blk_config_ops;
 	INIT_LIST_HEAD(&vdev->vqs);
 	vdev->dev.driver = &virtio_blk.driver;
-	vdev->dev.class = &block_class;
+	vdev->dev.class = &my_block_class;
 	vdev->dev.type = &disk_type;
 	device_initialize(&vdev->dev);
 	mic_virtblk->vdev = (void *)vdev;
@@ -851,12 +865,18 @@ static void __exit fini(void)
 	kfree(bd_info->bi_virtio);
 	kfree(bd_info);
 }
-late_initcall(init);
-
-//module_init(init);
-//module_exit(fini);
+module_init(init);
+module_exit(fini);
 
 MODULE_DESCRIPTION("Virtio block driver");
 MODULE_LICENSE("GPL");
-MODULE_PARM_DESC(virtio_addr, "address of virtio related structure");
-module_param(virtio_addr, long, S_IRUGO);
+static int __init _setup_virtio_addr(char *str)
+{
+        virtio_addr = simple_strtoull(str, 0, 16);
+        return 0;
+}
+early_param("virtio_addr", _setup_virtio_addr);
+
+
+//MODULE_PARM_DESC(virtio_addr, "address of virtio related structure");
+//module_param(virtio_addr, long, S_IRUGO);

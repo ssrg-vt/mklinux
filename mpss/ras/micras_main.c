@@ -64,6 +64,7 @@
 #include <linux/cpumask.h>
 #include <linux/io.h>
 #include <linux/cred.h>
+#include <linux/delay.h>
 #include <asm/msr.h>
 #include <asm/mce.h>
 #include <asm/apic.h>
@@ -2645,9 +2646,8 @@ micras_exit(void)
   printk("RAS module unload completed\n");
 }
 
-late_initcall(micras_init);
-//module_init(micras_init);
-//module_exit(micras_exit);
+module_init(micras_init);
+module_exit(micras_exit);
 
 MODULE_AUTHOR("Intel Corp. 2013 (" __DATE__ ") ver " RAS_VER);
 MODULE_DESCRIPTION("RAS and HW monitoring module for MIC");

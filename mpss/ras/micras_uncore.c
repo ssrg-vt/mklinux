@@ -65,6 +65,7 @@
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
 #include <linux/nmi.h>
+#include <linux/delay.h>
 #include <asm/mce.h>
 #include <asm/msr.h>
 #include <asm/processor.h>

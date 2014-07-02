@@ -43,6 +43,7 @@
 #if (LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,34))
 #include <linux/pm_qos_params.h>
 #endif
+#include <linux/module.h>
 
 #include <mic/micscif.h>
 #include <mic/micscif_smpt.h>
@@ -65,20 +66,20 @@ extern void micpm_device_unregister(struct notifier_block *n);
 #endif
 
 int scif_id = 0;
-module_param(scif_id, int, 0400);
-MODULE_PARM_DESC(scif_id, "Set scif driver node ID");
+//module_param(scif_id, int, 0400);
+//MODULE_PARM_DESC(scif_id, "Set scif driver node ID");
 
 ulong scif_addr = 0;
-module_param(scif_addr, ulong, 0400);
-MODULE_PARM_DESC(scif_addr, "Set scif driver host address");
+//module_param(scif_addr, ulong, 0400);
+//MODULE_PARM_DESC(scif_addr, "Set scif driver host address");
 
 struct kmem_cache *unaligned_cache;
 
 struct mic_info {
-	dev_t		 m_dev;
-	struct cdev	 m_cdev;
-	struct class *	 m_class;
-	struct device *	 m_scifdev;
+        dev_t            m_dev;
+        struct cdev      m_cdev;
+        struct class *   m_class;
+        struct device *  m_scifdev;
 } micinfo;
 
 int micscif_major = SCIF_MAJOR;
@@ -90,9 +91,76 @@ struct micscif_info ms_info;
 struct micscif_dev scif_dev[MAX_BOARD_SUPPORTED + 1];
 
 extern mic_dma_handle_t mic_dma_handle;
-
+//
 static int mic_pm_qos_cpu_dma_lat = -1;
 static int mic_host_numa_node = -1;
+//
+
+static int __init _setup_scif_id(char *str)
+{
+        scif_id = simple_strtoull(str, 0, 16);
+        return 0;
+}
+early_param("scif_id", _setup_scif_id);
+
+static int __init _setup_scif_addr(char *str)
+{
+        scif_addr = simple_strtoull(str, 0, 16);
+        return 0;
+}
+early_param("scif_addr", _setup_scif_addr);
+
+static int __init _setup_ulimit(char *str)
+{
+        mic_ulimit_check = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("ulimit", _setup_ulimit);
+
+static int __init _setup_reg_cache(char *str)
+{
+        mic_reg_cache_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("reg_cache", _setup_reg_cache);
+
+static int __init _setup_huge_page(char *str)
+{
+        mic_huge_page_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("huge_page", _setup_huge_page);
+
+
+static int __init _setup_p2p(char *str)
+{
+        mic_p2p_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("p2p", _setup_p2p);
+
+
+static int __init _setup_p2p_proxy(char *str)
+{
+        mic_p2p_proxy_enable = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("p2p_proxy", _setup_p2p_proxy);
+
+static int __init _setup_pm_qos_cpu_dma_lat(char *str)
+{
+        mic_pm_qos_cpu_dma_lat = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("pm_qos_cpu_dma_lat", _setup_pm_qos_cpu_dma_lat);
+
+static int __init _setup_numa_node(char *str)
+{
+        mic_host_numa_node = simple_strtoull(str, 0, 10);
+        return 0;
+}
+early_param("numa_node", _setup_numa_node);
+
 
 #ifdef CONFIG_MK1OM
 static int micscif_devevent_handler(struct notifier_block *nb,
@@ -584,12 +652,10 @@ error:
 	return result;
 }
 
-late_initcall(micscif_init);
+module_init(micscif_init);
+module_exit(micscif_exit);
 
-//module_init(micscif_init);
-//module_exit(micscif_exit);
-
-module_param_named(huge_page, mic_huge_page_enable, bool, 0600);
+/*module_param_named(huge_page, mic_huge_page_enable, bool, 0600);
 MODULE_PARM_DESC(huge_page, "SCIF Huge Page Support");
 
 module_param_named(ulimit, mic_ulimit_check, bool, 0600);
@@ -608,7 +674,7 @@ MODULE_PARM_DESC(pm_qos_cpu_dma_lat, "PM QoS CPU DMA latency in usecs.");
 
 module_param_named(numa_node, mic_host_numa_node, int, 0600);
 MODULE_PARM_DESC(numa_node, "Host Numa node to which MIC is attached");
-
+*/
 MODULE_LICENSE("GPL");
 MODULE_INFO(build_number, BUILD_NUMBER);
 MODULE_INFO(build_bywhom, BUILD_BYWHOM);

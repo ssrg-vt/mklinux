@@ -259,11 +259,12 @@ static void __pollwait(struct file *filp __attribute__((unused)), wait_queue_hea
 	 * doesn't pass event check of the next iteration.  Note that
 	 * this problem doesn't exist for the first iteration as
 	 * add_wait_queue() has full barrier semantics.
-	 
+	/
 	set_mb(pwq->triggered, 0);
 
 	return rc;
-}*/
+}
+*/
 
 static unsigned int scif_poll_kernel(poll_table *pwait, struct endpt *ep)
 {
