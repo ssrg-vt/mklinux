@@ -35,6 +35,7 @@
 #include <linux/gfp.h>
 #include <linux/smp.h>
 #include <linux/cpu.h>
+#include <linux/cpu_namespace.h>
 
 #ifdef CONFIG_X86_MIC_EMULATION
 static void *____sbox;
@@ -670,8 +671,18 @@ static int __init nrcpus(char *str)
 	int nr_cpus;
 
 	get_option(&str, &nr_cpus);
-	if (nr_cpus > 0 && nr_cpus < nr_cpu_ids)
+	if (nr_cpus > 0 && nr_cpus < nr_cpu_ids) {
 		nr_cpu_ids = nr_cpus;
+	}
+	
+//#ifdef CONFIG_CPU_NAMESPACE
+	init_cpu_ns.nr_cpu_ids = nr_cpu_ids;
+		init_cpu_ns._nr_cpumask_bits = nr_cpumask_bits;
+		//	printk(KERN_INFO"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
+			printk(KERN_ERR"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
+					__func__, nr_cpu_ids, nr_cpumask_bits);
+					//#endif
+
 
 	return 0;
 }
@@ -688,6 +699,20 @@ static int __init maxcpus(char *str)
 }
 
 early_param("maxcpus", maxcpus);
+
+/* this is only valid in Popcorn */
+unsigned int offset_cpus =0;
+EXPORT_SYMBOL(offset_cpus);
+
+static int __init offsetcpus(char *str)
+{
+	get_option(&str, &offset_cpus);
+
+	return 0;
+}
+
+early_param("offsetcpus", offsetcpus);
+
 
 /* Setup number of possible processor ids */
 int nr_cpu_ids __read_mostly = NR_CPUS;
@@ -713,7 +738,7 @@ void __init smp_init(void)
 
 	/* FIXME: This should be done in userspace --RR */
 	for_each_present_cpu(cpu) {
-		if (ncpu >= setup_max_cpus)
+		if (num_online_cpus() >= setup_max_cpus)
 			break;
 		if (!cpu_online(cpu))
 #ifndef CONFIG_PARALLEL_AP_BOOT		  

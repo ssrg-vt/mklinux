@@ -653,6 +653,7 @@ error:
 }
 
 module_init(micscif_init);
+//early_initcall(micscif_init);
 module_exit(micscif_exit);
 
 /*module_param_named(huge_page, mic_huge_page_enable, bool, 0600);

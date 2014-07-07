@@ -1304,11 +1304,12 @@ int
 mic_dma_init(void)
 {
 	int i;
-
+	printk("%s: insode\n",__func__);
 	for (i = 0; i < MAX_BOARD_SUPPORTED; i++)
 		mutex_init (&lock_dma_dev_init[i]);
 #ifdef CONFIG_PAGE_CACHE_DMA
 #ifdef _MIC_SCIF_
+	printk("%s:CONFIG_PAGE_CACHE_DMA  _MIC_SCIF_\n",__func__);
 	register_dma_for_fast_copy(&fdma_callback);
 #endif
 #endif

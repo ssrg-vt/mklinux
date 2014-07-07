@@ -42,6 +42,6 @@
 #define DIFF_PAGE 0
 #endif
 
-#define SUPPORT_FOR_CLUSTERING
+//#define SUPPORT_FOR_CLUSTERING
 
 #endif /* PROCESS_SERVER_MACRO_H_ */

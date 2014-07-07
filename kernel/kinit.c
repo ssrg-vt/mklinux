@@ -1,5 +1,5 @@
 // Copyright (c) 2013 - 2014, Akshay
-// modified by Antonio Barbalace
+// modified by Antonio Barbalace (c) 2014
 
 #include <linux/kernel.h>
 #include <asm/bootparam.h>
@@ -46,6 +46,7 @@ unsigned long *token_bucket;
 unsigned int Kernel_Id;
 EXPORT_SYMBOL(Kernel_Id);
 
+// TODO this must be refactored
 static int _cpu=0;
 
 /*
@@ -56,43 +57,7 @@ static DECLARE_WAIT_QUEUE_HEAD( wq_cpu);
 struct list_head rlist_head;
 
 #include <linux/popcorn.h>
-/*
- struct _remote_cpu_info_data
- {
-                 unsigned int _processor;
-                 char _vendor_id[16];
-                 int _cpu_family;
-                unsigned int _model;
-                 char _model_name[64];
-                 int _stepping;
-                 unsigned long _microcode;
-                 unsigned _cpu_freq;
-                 int _cache_size;
-                 char _fpu[3];
-                 char _fpu_exception[3];
-                 int _cpuid_level;
-                 char _wp[3];
-                 char _flags[512];
-                 unsigned long _nbogomips;
-                int _TLB_size;
-                unsigned int _clflush_size;
-                int _cache_alignment;
-                unsigned int _bits_physical;
-                 unsigned int _bits_virtual;
-                char _power_management[64];
-                 struct cpumask _cpumask;
- };
 
-
-typedef struct _remote_cpu_info_data _remote_cpu_info_data_t;
-struct _remote_cpu_info_list
- {
-         _remote_cpu_info_data_t _data;
-         struct list_head cpu_list_member;
- 
-  };
-typedef struct _remote_cpu_info_list _remote_cpu_info_list_t;
-*/
 /*void popcorn_init (void)
 {
   Kernel_Id=smp_processor_id();
@@ -100,9 +65,9 @@ typedef struct _remote_cpu_info_list _remote_cpu_info_list_t;
 }
 */
 
-/*
- * Message structures for obtaining PID status ********************************
- */
+/*****************************************************************************
+ * Message structures for obtaining PID status                               *
+ *****************************************************************************/
 void add_node(_remote_cpu_info_data_t *arg, struct list_head *head)
 {
   _remote_cpu_info_list_t *Ptr =
@@ -146,10 +111,11 @@ static void display(struct list_head *head)
         objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 
 	memset(buffer, 0, DISPLAY_BUFFER);
-	cpumask_scnprintf(buffer, (DISPLAY_BUFFER -1), &(objPtr->_data._cpumask));
-        printk("%s: cpu:%d fam:%d %s\n", __func__,
+//	cpumask_scnprintf(buffer, (DISPLAY_BUFFER -1), &(objPtr->_data._cpumask));
+	bitmap_scnprintf(buffer, (DISPLAY_BUFFER -1), &(objPtr->_data.cpumask), POPCORN_CPUMASK_BITS);
+        printk("%s: cpu:%d fam:%d %s off:%d\n", __func__,
 		objPtr->_data._processor, objPtr->_data._cpu_family,
-		buffer);
+		buffer, objPtr->_data.cpumask_offset);
     }
 }
 
@@ -178,6 +144,8 @@ static _remote_cpu_info_response_t cpu_result;
  * ******************************* Common Functions **********************************************************
  */
 
+extern unsigned int offset_cpus; //from kernel/smp.c
+
 struct cpumask cpu_global_online_mask;
 #define for_each_global_online_cpu(cpu)   for_each_cpu((cpu), cpu_global_online_mask)
 
@@ -192,7 +160,7 @@ int flush_cpu_info_var(void)
 static int handle_remote_proc_cpu_info_response(struct pcn_kmsg_message* inc_msg)
 {
   _remote_cpu_info_response_t* msg = (_remote_cpu_info_response_t*) inc_msg;
-  printk("%s: entered\n", __func__);
+  printk("%s: OCCHIO answer cpu request received\n", __func__);
 
   wait_cpu_list = 1;
   if (msg != NULL)
@@ -211,33 +179,44 @@ static int handle_remote_proc_cpu_info_request(struct pcn_kmsg_message* inc_msg)
   int i;
   _remote_cpu_info_request_t* msg = (_remote_cpu_info_request_t*) inc_msg;
   _remote_cpu_info_response_t response;
-  printk("%s: entered\n", __func__);
 
-  printk("%s: kernel representative %d(%d), online cpus { ", 
+  printk("%s: OCCHIO request proc cpu received \n", __func__);
+
+  /*printk("%s: kernel representative %d(%d), online cpus { ", 
          __func__, _cpu, my_cpu);
   for_each_online_cpu(i) {
     printk("%d, ", i);
   }
-  printk("}\n");
+  printk("}\n");*/
 
   // constructing response
   response.header.type = PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE;
   response.header.prio = PCN_KMSG_PRIO_NORMAL;
-  //response._data._cpumask = kmalloc( sizeof(struct cpumask), GFP_KERNEL); //this is an error, how you can pass a pointer to another kernel?!
+  //response._data._cpumask = kmalloc( sizeof(struct cpumask), GFP_KERNEL); //this is an error, how you can pass a pointer to another kernel?!i
+#if 1
+  bitmap_zero(&(response._data.cpumask), POPCORN_CPUMASK_BITS);
+  bitmap_copy(&(response._data.cpumask), cpumask_bits(cpu_present_mask),
+	(nr_cpu_ids > POPCORN_CPUMASK_BITS) ? POPCORN_CPUMASK_BITS : nr_cpu_ids);
+#else
   memcpy(&(response._data._cpumask), cpu_present_mask, sizeof(struct cpumask));
+#endif
+  response._data.cpumask_offset = offset_cpus;
+  response._data.cpumask_size = cpumask_size();
   response._data._processor = my_cpu;
 
   // Adding the new cpuset to the list
   add_node(&msg->_data,&rlist_head); //add_node copies the content
   display(&rlist_head);
+  //notify_cpu_ns(); <<<< <<<< <<<< <<<< <<<< <<<< <<<< <<<<
   //cpumask_or(&cpu_global_online_mask,&cpu_global_online_mask,(const struct cpumask *)(msg->_data._cpumask));
-  /*printk("%s: kernel %d, global online cpus { ",
+ /* printk("%s: kernel %d, global online cpus { ",
 	 __func__, _cpu);
   for_each_global_online_cpu(i) {
     printk("%d, ", i);
   }
-  printk("}\n");
-*/
+  printk("}\n");*/
+
+
 
   // Send response
   pcn_kmsg_send_long(msg->header.from_cpu,
@@ -257,7 +236,15 @@ int send_cpu_info_request(int KernelId)
   // Build request
   request->header.type = PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST;
   request->header.prio = PCN_KMSG_PRIO_NORMAL;
+#if 1
+  bitmap_zero(&(request->_data.cpumask), POPCORN_CPUMASK_BITS);
+  bitmap_copy(&(request->_data.cpumask), cpumask_bits(cpu_present_mask),
+	(nr_cpu_ids > POPCORN_CPUMASK_BITS) ? POPCORN_CPUMASK_BITS : nr_cpu_ids);
+#else
   memcpy(&(request->_data._cpumask), cpu_present_mask, sizeof(struct cpumask));
+#endif
+  request->_data.cpumask_offset = offset_cpus;
+  request->_data.cpumask_size = cpumask_size();
   request->_data._processor = my_cpu;
 
   // Send response
@@ -269,7 +256,6 @@ int send_cpu_info_request(int KernelId)
 /*
  * ************************************* Function (hook) to be called from other file ********************
  */
-#ifdef CONFIG_X86_EARLYMIC
 int _init_RemoteCPUMask(void)
 {
   unsigned int i;
@@ -287,7 +273,7 @@ int _init_RemoteCPUMask(void)
       continue;
     }
 
-    printk("%s: checking cpu %d\n", __func__, i);
+  /*  printk("%s: checking cpu %d\n", __func__, i);
     result = send_cpu_info_request(i);
     if (!result) {
       PRINTK("%s : go to sleep!!!!", __func__);
@@ -297,19 +283,38 @@ int _init_RemoteCPUMask(void)
       //cpumask_or(cpu_global_online_mask,cpu_global_online_mask,(const struct cpumask *)(cpu_result->_data._cpumask));
       add_node(&(cpu_result._data), &rlist_head);
       display(&rlist_head);
-    }
+    }*/
   }
+
+	printk("%s: OCCHIO checking other kernel\n", __func__);
+  result = send_cpu_info_request(1);
+    if (result!=-1) {
+	
+	printk("OCCHIO waiting for answer proc cpu\n");
+      PRINTK("%s : go to sleep!!!!", __func__);
+      wait_event_interruptible(wq_cpu, wait_cpu_list != -1);
+      wait_cpu_list = -1;
+
+      //cpumask_or(cpu_global_online_mask,cpu_global_online_mask,(const struct cpumask *)(cpu_result->_data._cpumask));
+      add_node(&(cpu_result._data), &rlist_head);
+      display(&rlist_head);
+     }
+else{
+printk("OCCHIO other kernel not reacheble error is %d\n",result);
+
+}
+      //
 
   /*printk("%s: kernel %d, global online cpus { ",
 	 __func__, _cpu);
   for_each_cpu(i,cpu_global_online_mask) {
     printk("%d, ", i);
   }
-  printk("}\n");
-*/
+  printk("}\n");*/
+
   return 0;
 }
-#endif
+
 
 static int __init cpu_info_handler_init(void)
 {
@@ -319,7 +324,7 @@ static int __init cpu_info_handler_init(void)
   _cpu = my_cpu;
 #endif
   INIT_LIST_HEAD(&rlist_head);
-
+  printk("%s: inside \n",__func__);	
   pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
 		handle_remote_proc_cpu_info_request);
   pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE,

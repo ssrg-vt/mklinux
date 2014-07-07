@@ -863,7 +863,9 @@ micveth_module_exit(void)
 
 #ifdef HOST
 #else  // card
-module_init(micveth_module_init);
+//early_initcall(micveth_module_init);
+//module_init(micveth_module_init);
+late_initcall(micveth_module_init);
 module_exit(micveth_module_exit);
 
 MODULE_LICENSE("GPL");

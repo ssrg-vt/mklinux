@@ -58,12 +58,13 @@ subdir-ccflags-y += -D__LINUX_GPL__ -D_MODULE_SCIF_
 
 #subdir-ccflags-y += -I$(M)/include
 
-obj-$(CONFIG_X86_MICPCI) += dma/ micscif/ pm_scif/ ras/  
+obj-$(CONFIG_X86_MICPCI) += dma/ micscif/ 
+#pm_scif/ ras/  
 obj-$(CONFIG_X86_MICPCI) += vcons/ vnet/ mpssboot/ ramoops/ virtio/
 
 #obj-$(m-not-$(CONFIG_X86_MICPCI)) += mic.o
 
-obj-y	+= pcn_scif.o
+
 
 ifeq ($(CONFIG_X86_MICPCI),n)
 obj-y	 += dma/mic_dma_lib.o
@@ -106,7 +107,7 @@ obj-y	 += micscif/micscif_va_node.o
 obj-y	 += vnet/micveth_dma.o
 obj-y	 += vnet/micveth_param.o
 endif
-
+obj-y	+= pcn_scif.o
 version-le = $(shell printf '%s\n' $(1) | sort -t. -k 1,1n -k 2,2n -k 3,3n -k 4,4n -c >/dev/null 2>&1 && echo t)
 ifeq ($(call version-le, 2.6.23 $(KERNELRELEASE)),t)
 ccflags-y += $(mic-cflags)

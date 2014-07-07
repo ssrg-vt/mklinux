@@ -89,8 +89,13 @@ int mic_vnet_mode = VNET_MODE_DMA;
 #undef __VNET_MODE
 static int __init _setup_vnet(char *str)
 {
-        mic_vnet_mode = simple_strtoull(str, 0, 10);
-        return 0;
+    int i;
+	for (i = 0; i < sizeof(mic_vnet_modes) / sizeof(char *); i++)
+		if (!strcmp(str, mic_vnet_modes[i])) {
+			mic_vnet_mode = i;
+			return 0;
+		}
+		return -EINVAL;
 }
 early_param("vnet", _setup_vnet);
 
@@ -113,7 +118,7 @@ static int __init _setup_vnet_addr(char *str)
         vnet_addr = simple_strtoull(str, 0, 16);
         return 0;
 }
-early_param("vnet", _setup_vnet_addr);
+early_param("vnet_addr", _setup_vnet_addr);
 
 
 

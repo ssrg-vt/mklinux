@@ -1,3 +1,4 @@
-obj-y += intel_micveth.o
+#obj-y += intel_micveth.o
 
-obj-y := micveth.o micveth_param.o micveth_dma.o
+#obj-$(CONFIG_X86_MICPCI):= micveth.o 
+obj-y := micveth_param.o micveth_dma.o micveth.o

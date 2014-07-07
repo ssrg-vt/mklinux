@@ -242,6 +242,7 @@ micvnet_msg_send_msg(struct micvnet_info *vnet_info, struct micvnet_msg *msg)
 {
 	micvnet_msg_rb_write_msg(vnet_info, msg);
 #ifdef HOST
+	//printk("%s: HOST\n",__func__);
 	if (micpm_get_reference(vnet_to_ctx(vnet_info), true))
 		return;
 #endif

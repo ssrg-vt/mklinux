@@ -6,8 +6,13 @@
  * (C) Ben Shelton <beshelto@vt.edu> 2013
  */
 
+enum pcn_connection_status{
+	PCN_CONN_WATING,
+	PCN_CONN_CONNECTED,
+	PCN_CONN_TYPE_MAX
+};
 typedef unsigned long pcn_kmsg_mcast_id;
-
+int pcn_connection_staus();
 /* MESSAGING */
 
 /* Enum for message types.  Modules should add types after
@@ -46,6 +51,7 @@ enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_SHMTUN,
 PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE,
 PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
+PCN_KMSG_TERMINATE,
 	PCN_KMSG_TYPE_MAX
 };
 

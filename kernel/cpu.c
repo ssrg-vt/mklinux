@@ -16,6 +16,7 @@
 #include <linux/mutex.h>
 #include <linux/gfp.h>
 #include <linux/suspend.h>
+#include <linux/cpu_namespace.h>
 
 #ifdef CONFIG_SMP
 /* Serializes the updates to cpu_online_mask, cpu_present_mask */
@@ -787,3 +788,18 @@ void init_cpu_online(const struct cpumask *src)
 {
 	cpumask_copy(to_cpumask(cpu_online_bits), src);
 }
+
+struct cpu_namespace init_cpu_ns = {
+    .kref = {
+         .refcount = ATOMIC_INIT(2),
+    },
+    .nr_cpus = NR_CPUS,
+    .cpumask_size = (BITS_TO_LONGS(NR_CPUS) * sizeof(long)),
+    .cpu_online_mask = to_cpumask(cpu_online_bits),
+//.get_online_cpus = get_online_cpus;
+////.get_offline_cpus = get_offline_cpus,
+    .parent = NULL,
+        .level = 0,
+        };
+        EXPORT_SYMBOL_GPL(init_cpu_ns);
+

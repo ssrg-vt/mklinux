@@ -1,5 +1,5 @@
 ccflags-y += -DDMA_CHAN_MIC_OWNER=0
-obj-y := dma_module.o
+#obj-y := dma_module.o
 
 obj-y := mic_dma_lib.o mic_dma_md.o mic_sbox_md.o
-
+#obj-$(CONFIG_X86_MICPCI) := mic_sbox_md.o

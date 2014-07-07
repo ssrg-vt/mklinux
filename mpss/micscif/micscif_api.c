@@ -952,9 +952,9 @@ __scif_accept(scif_epd_t epd, struct scif_portID *peer, scif_epd_t *newepd, int 
 	int err;
 
 	//pr_debug("SCIFAPI accept: ep %p %s, [%d:%d]\n",
-printk("SCIFAPI accept: ep %p %s, [%d:%d]\n",	  
-     lep, scif_ep_states[lep->state], peer->node, peer->port);
-
+//printk("SCIFAPI accept: ep %p %s, [%d:%d]\n",	  
+  //   lep, scif_ep_states[lep->state], peer->node, peer->port);
+		//dump_stack();
 	// Error if flags other than SCIF_ACCEPT_SYNC are set
 	if (flags & ~SCIF_ACCEPT_SYNC) {
 		printk("SCIFAPI accept: ep %p invalid flags %x\n", lep, flags & ~SCIF_ACCEPT_SYNC);

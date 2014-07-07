@@ -18,17 +18,21 @@
 #define START_OFFSET 0x80000
 #define BACKLOG 5 // Length of incoming message queue for control messages
 #define _NO_DMA_
-#define DMA_THRESH 1024
+#define DMA_THRESH 2048
 #define DMA_DONE 1
 int connection_handler(void *arg0);
 int send_thread(void* arg0);
 int msg_count;
 int err=0,control_msg=1;
 
+int is_connection_done=PCN_CONN_WATING;
 
 extern scif_epd_t scif_open(void);
 
-
+int pcn_connection_staus()
+{
+	return is_connection_done;
+}
 
 #define BARRIER(newepd, string) { \
 	printk("%s\n", string); \
@@ -45,8 +49,13 @@ typedef struct _send_wait{
 	int error;
 }send_wait;
 
+
+
 //struct semaphore send_q_mutex;
 struct semaphore send_q_empty;
+
+struct semaphore send_connDone;
+struct semaphore rcv_connDone;
 
 DEFINE_SPINLOCK(send_q_mutex); 
 
@@ -93,17 +102,20 @@ static int __init initialize(){
 	uint16_t fromcpu;
 	int i;
 	INIT_LIST_HEAD(&send_wait_q.list);
-
+	
 	printk("In pcn new messaging layer init\n");	
 	//sema_init(&(send_q_mutex), 0);
 	sema_init(&(send_q_empty), 0);
+	
+	sema_init(&send_connDone,0);
+	sema_init(&rcv_connDone,0);
 	
 	if(scif_get_nodeIDs(NULL, 0, &fromcpu) == -1){
 		printk(KERN_INFO "scif_get_nodeIDs failed! Messaging layer not initialized\n");
 		return -1;
 	}
 	my_cpu = fromcpu;
-	for(i = 0; i < PCN_KMSG_TYPE_MAX; i++) callbacks[i] = NULL;
+	//for(i = 0; i < PCN_KMSG_TYPE_MAX; i++) callbacks[i] = NULL;
 	handler = kthread_run(connection_handler, &callbacks, "pcnscifd");
 	if(handler < 0){
 		printk(KERN_INFO "kthread_run failed! Messaging Layer not initialized\n");
@@ -115,6 +127,13 @@ static int __init initialize(){
 		printk(KERN_INFO "kthread_run failed! Messaging Layer not initialized\n");
 		return (long long int)handler;
 	}
+	
+	if(my_cpu!=0)
+	{
+		down_interruptible(&send_connDone);
+		down_interruptible(&rcv_connDone);
+	}
+	
 	
 	printk(KERN_INFO "Popcorn SCIF Messaging Layer Initialized\n");
 	
@@ -162,16 +181,19 @@ int send_thread(void* arg0)
 	portID.node = dest_cpu;
 	portID.port = PORT_DATA_IN;
 	while((rc = scif_connect(epd, &portID)) < 0){
-		msleep(65000);
+		msleep(1000);
 		//printk(KERN_INFO "scif_connect failed with error %d! Could not send message\n", rc);
 		//return rc;
 	}
 	dma_send_buffer=vmalloc(1024*PAGE_SIZE);
 	buffer = scif_register(epd, dma_send_buffer, 1024*PAGE_SIZE, 0x80000, SCIF_PROT_WRITE | SCIF_PROT_READ, SCIF_MAP_KERNEL | SCIF_MAP_FIXED);
 	BARRIER(epd,"Register Send");
-	printk("Connection Done...PCN_SEND Thread\n");
 	struct pcn_kmsg_long_message *lmsg;
 	int use_dma=0;
+	is_connection_done=PCN_CONN_CONNECTED;
+	up(&send_connDone);
+	printk("Connection Done...PCN_SEND Thread\n");
+	
 	while(1){
 		int data_send=-1;
 		wait_data=dq_send();
@@ -185,6 +207,16 @@ int send_thread(void* arg0)
 			return 0;
 		}
 		lmsg=wait_data->msg;
+/*		
+		if(lmsg->hdr.type==PCN_KMSG_TERMINATE)
+		{
+			printk("%s:Terminatind pcn_sendD\n",__func__);
+			up(&wait_data->_sem);
+			is_connection_done = PCN_CONN_WATING;
+			return;
+		}
+		
+*/	
 		char *curr_addr = (char*) lmsg;
 		lmsg->hdr.from_cpu = my_cpu;
 		//lmsg->hdr.is_lg_msg = 1;
@@ -196,7 +228,7 @@ int send_thread(void* arg0)
 		{
 			sts_from_peer=-1;
 			memcpy(dma_send_buffer,curr_addr+sizeof(struct pcn_kmsg_message),lmsg->hdr.size-sizeof(struct pcn_kmsg_message));
-			//printk("Through DMA\n");
+			//printk("%s:Through DMA\n",__func__);
 			//printk("%s\n",dma_send_buffer);
 			err=scif_writeto(epd, buffer, lmsg->hdr.size-sizeof(struct pcn_kmsg_message), 0x80000, SCIF_RMA_SYNC);
 			if(err<0)
@@ -206,6 +238,15 @@ int send_thread(void* arg0)
 			}
 			if((no_bytes = scif_send(epd, curr_addr, sizeof(struct pcn_kmsg_message), SCIF_SEND_BLOCK)<0))
 			{
+				//printk("%s:Through NON-DMA\n",__func__);
+				if(no_bytes==-ENODEV)
+				{
+					printk("%s:Terminatind pcn_sendD\n",__func__);
+					up(&wait_data->_sem);
+					data_send=no_bytes;
+					is_connection_done = PCN_CONN_WATING;
+					return;
+				}
 				printk("Some thing went wrong Send Failed");
 				data_send=no_bytes;
 				goto _out;
@@ -223,6 +264,17 @@ int send_thread(void* arg0)
 		else{
 			
 			while((no_bytes = scif_send(epd, curr_addr, curr_size, SCIF_SEND_BLOCK)) >= 0){
+				
+				
+				if(no_bytes==-ENODEV)
+				{
+					printk("%s:Terminatind pcn_sendD\n",__func__);
+					up(&wait_data->_sem);
+					data_send=no_bytes;
+					is_connection_done = PCN_CONN_WATING;
+					return;
+				}
+				
 				if(no_bytes<0)
 				{
 					printk("Some thing went wrong Send Failed");
@@ -291,7 +343,7 @@ int connection_handler(void *arg0){
 				scif_close(dataepd);
 				return 0;
 			}
-			msleep(65000);
+			msleep(1000);
 		}
 	//	dma_rcv_buffer=kmalloc(2*PAGE_SIZE, GFP_KERNEL);
 		
@@ -301,6 +353,8 @@ int connection_handler(void *arg0){
 		int msg_size;
 		
 		BARRIER(newepd,"Register RCV");
+		up(&rcv_connDone);
+		
 while(TRUE){		
 
 		if(kthread_should_stop()){
@@ -312,10 +366,21 @@ while(TRUE){
 		dflt_size = sizeof(struct pcn_kmsg_message);
 		curr_addr = (char*) msg;
 		
-		if((no_bytes = scif_recv(newepd, curr_addr, dflt_size, SCIF_RECV_BLOCK))>=0)
+		if((no_bytes = scif_recv(newepd, curr_addr, dflt_size, SCIF_RECV_BLOCK)))
 		{
+			
+			
+			if(no_bytes==-ECONNRESET)
+			{
+				printk("%s: Peer lost Terminating PCN_Messaging....\n",__func__);
+				return;
+				
+			}
 			if(no_bytes<0)
+			{
 				continue;
+				
+			}
 			tmp=(struct pcn_kmsg_message*)curr_addr;
 			msg_size=tmp->hdr.size;
 			//printk("Size %d NoRcv %d\n",tmp->hdr.size,no_bytes);
@@ -364,11 +429,11 @@ _process:
 			printk(KERN_INFO "Received invalid message type %d\n", msg->hdr.type);
 			vfree(msg);
 		}else{
-			ftn = cbtbl[msg->hdr.type];
+			ftn = callbacks[msg->hdr.type];
 			if(ftn != NULL){
 				ftn(msg);
 			}else{
-				printk(KERN_INFO "Recieved message type %d size %d has no registered callback!\n", msg->hdr.type,msg->hdr.size,msg_count++);
+				printk(KERN_INFO "Recieved message type %d size %d err %d has no registered callback!\n", msg->hdr.type,msg->hdr.size,msg_count++,no_bytes);
 				vfree(msg);
 			}
 		}
@@ -382,6 +447,7 @@ _process:
 
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback){
 	if(type >= PCN_KMSG_TYPE_MAX) return -1; //invalid type
+	printk("%s: registering %d \n",type);
 	callbacks[type] = callback;
 	return 0;
 }
@@ -393,6 +459,10 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type){
 }
 
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg){
+	
+	
+	if( pcn_connection_staus()==PCN_CONN_WATING)
+		return -1;
 	send_wait wait_ptr;
 	sema_init(&wait_ptr._sem,0);
 	msg->hdr.from_cpu = my_cpu;
@@ -405,7 +475,8 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg){
 }
 
 int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size){
-	
+	if( pcn_connection_staus()==PCN_CONN_WATING)
+		return -1;
 	send_wait wait_ptr;
 	sema_init(&wait_ptr._sem,0);
 	lmsg->hdr.from_cpu = my_cpu;
@@ -420,6 +491,15 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 inline void pcn_kmsg_free_msg(void *msg){
 	vfree(msg);
 }
+
+
+EXPORT_SYMBOL(pcn_kmsg_free_msg);
+EXPORT_SYMBOL(pcn_kmsg_send_long);
+EXPORT_SYMBOL(pcn_kmsg_send);
+EXPORT_SYMBOL(pcn_kmsg_unregister_callback);
+EXPORT_SYMBOL(pcn_kmsg_register_callback);
+
+
 
 
 

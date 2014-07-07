@@ -481,6 +481,7 @@ mic_pm_accept_work(struct work_struct *work)
 
 	PM_DEBUG("Accept thread waiting for new PM connections\n");
 	err =  scif_accept(mic_data.dd_pm.epd, &portID, &newepd, SCIF_ACCEPT_SYNC);
+	printk("%s: err %d node %d port %d\n",__func__,err,portID.node,portID.port);
 	if (err == -EBUSY || err == -ENODEV) {
 		PM_DEBUG("scif_accept error %d\n", err);
 		goto continue_accepting;
