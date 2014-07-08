@@ -12,6 +12,7 @@
 #include <linux/mnt_namespace.h>
 #include <linux/ipc_namespace.h>
 #include <linux/pid_namespace.h>
+#include <linux/cpu_namespace.h>
 #include "internal.h"
 
 
@@ -25,9 +26,21 @@ static const struct proc_ns_operations *ns_entries[] = {
 #ifdef CONFIG_IPC_NS
 	&ipcns_operations,
 #endif
+#ifdef CONFIG_PID_NS
+        &pidns_operations,
+#endif
+//#ifdef CONFIG_CPU_NS
+	&cpuns_operations,
+//#endif
 };
 
-static const struct file_operations ns_file_operations = {
+/*const struct file_operations ns_popcorn_operations = {
+	.llseek		= no_llseek,
+};
+*/
+
+//static 
+const struct file_operations ns_file_operations = {
 	.llseek		= no_llseek,
 };
 
@@ -188,7 +201,10 @@ struct file *proc_ns_fget(int fd)
 	file = fget(fd);
 	if (!file)
 		return ERR_PTR(-EBADF);
-
+//antonio
+/*	if (file->f_op == &ns_popcorn_operations)
+		printk("%s: ns_popcorn_operations\n", __func__);
+*///antonio	  
 	if (file->f_op != &ns_file_operations)
 		goto out_invalid;
 

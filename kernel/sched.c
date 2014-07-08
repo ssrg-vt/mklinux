@@ -70,6 +70,7 @@
 #include <linux/blkdev.h>
 #include <linux/delay.h>
 #include <linux/pid_namespace.h>
+#include <linux/cpu_namespace.h>
 #include <linux/smp.h>
 #include <linux/threads.h>
 #include <linux/timer.h>
@@ -110,6 +111,9 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
+#ifdef SUPPORT_FOR_CLUSTERING
+#include <linux/popcorn.h>
+#endif
 
 /*
  * Convert user-nice values [ -20 ... 0 ... 19 ]
@@ -5645,8 +5649,8 @@ long sched_setaffinity_on_popcorn(pid_t pid, const struct cpumask *in_mask, stru
 	cpumask_var_t cpus_allowed, new_mask;
 	struct task_struct *p;
 	int retval;
-    int current_cpu = smp_processor_id();
-    int i,ret;
+	int current_cpu = smp_processor_id();
+    	int i,ret;
 
 	get_online_cpus();
 	rcu_read_lock();
@@ -5659,6 +5663,9 @@ long sched_setaffinity_on_popcorn(pid_t pid, const struct cpumask *in_mask, stru
 	}
 	pid = current->pid;
 
+#define CONFIG_CPU_NAMESPACE
+#ifndef CONFIG_CPU_NAMESPACE
+
     /*
      * Multikernel
      */
@@ -5670,8 +5677,20 @@ long sched_setaffinity_on_popcorn(pid_t pid, const struct cpumask *in_mask, stru
 		cpumask_scnprintf(buf_in, 63, in_mask);
 		cpumask_scnprintf(buf_present, 63, cpu_present_mask);
 
-		for(i = 0; i < NR_CPUS; i++) {
-			if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
+#ifndef SUPPORT_FOR_CLUSTERING
+	for(i = 0; i < NR_CPUS; i++) {
+        	if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
+#else
+    struct list_head *iter;
+    _remote_cpu_info_list_t *objPtr;
+    struct cpumask *pcpum;
+    extern struct list_head rlist_head;
+    list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+        pcpum = &(objPtr->_data._cpumask);
+        if ( cpumask_intersects(in_mask, pcpum) ) {
+#endif
 				// do the migration
 				get_task_struct(p);
 				rcu_read_unlock();
@@ -5691,11 +5710,57 @@ long sched_setaffinity_on_popcorn(pid_t pid, const struct cpumask *in_mask, stru
 				}
 
 				return task_pt_regs(current)->orig_ax;
-
 			}
 		}
 	}
+#else
+ // TODO if is migrating out of this core put cpus_allowed all to ->0 (or is not required?!)
+ // TODO if we are doing that maybe schedule will not schedule the task back anymore!!!
+ /* the following is similar to intersecting on local */
+  if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
+                struct list_head *iter;
+                _remote_cpu_info_list_t *objPtr;
+                struct cpumask *pcpum;
+                int size = CPUBITMAP_SIZE(p->nsproxy->cpu_ns->nr_cpu_ids);
+                unsigned long * cbitmap = kmalloc (size, GFP_KERNEL);
+                extern struct list_head rlist_head;
 
+                list_for_each(iter, &rlist_head) {
+                        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+                        i = objPtr->_data._processor; // TODO should be kernel (but depends on the messaging layer)
+                        pcpum = &(objPtr->_data.cpumask); // &(objPtr->_data._cpumask);
+
+                        bitmap_zero(cbitmap, p->nsproxy->cpu_ns->nr_cpu_ids);
+                        bitmap_copy(cbitmap, cpumask_bits(pcpum), nr_cpu_ids); // TODO must be variable size
+                        bitmap_shift_left(cbitmap, cbitmap, objPtr->_data.cpumask_offset, p->nsproxy->cpu_ns->nr_cpu_ids);
+ 			// find the first cpumask that intersect
+  			if ( bitmap_intersects(cpumask_bits(in_mask), cbitmap, p->nsproxy->cpu_ns->nr_cpu_ids) ) {
+				// TODO ask the global scheduler if there are multiple affinities    
+                                // do the migration
+ 				get_task_struct(p);
+                                rcu_read_unlock();
+                                ret= process_server_do_migration(p,i,regs);
+                                put_task_struct(p);
+                                put_online_cpus();
+
+				schedule();
+
+                                if(ret==PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote){
+                                        if(current->group_exit){
+                                                do_group_exit(current->distributed_exit_code);
+                                        }
+                                        else
+                                                do_exit(current->distributed_exit_code);
+
+                                }
+
+                                return task_pt_regs(current)->orig_ax;
+
+                        }
+                }
+        } /* if cpus_allowed_map is not existent or its ns does not point to the current ns DO NOT mig */
+
+#endif
 	/* Prevent p going away */
 	get_task_struct(p);
 	rcu_read_unlock();
@@ -5743,15 +5808,20 @@ out_put_task:
 	return retval;
 }
 
-static int get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
-			     struct cpumask *new_mask)
+static int _get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
+                             struct cpumask *new_mask, unsigned mask_len)
 {
-	if (len < cpumask_size())
-		cpumask_clear(new_mask);
-	else if (len > cpumask_size())
-		len = cpumask_size();
+        if (len < cpumask_size())
+                cpumask_clear(new_mask);
+        else if (len > mask_len)
+                len = mask_len;
 
-	return copy_from_user(new_mask, user_mask_ptr, len) ? -EFAULT : 0;
+        return copy_from_user(new_mask, user_mask_ptr, len) ? -EFAULT : 0;
+}
+
+static int get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
+                             struct cpumask *new_mask) {
+  return _get_user_cpu_mask(user_mask_ptr, len, new_mask, cpumask_size());
 }
 
 /**
@@ -5764,21 +5834,65 @@ static int get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
 //		unsigned long __user *, user_mask_ptr)
 asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long __user * user_mask_ptr, struct pt_regs* regs)
 {
+
 	cpumask_var_t new_mask;
 	int retval;
+//#ifdef CONFIG_CPU_NAMESPACE
+	int nr_cpus;
+        struct cpu_namespace * ns = current->nsproxy->cpu_ns;
 
-	if (!alloc_cpumask_var(&new_mask, GFP_KERNEL))
-		return -ENOMEM;
+	// WARN the following maybe requires a per process lock
+	 if (ns !=  &init_cpu_ns) {
+                printk("%s:not the init cpu namespace\n", __func__);
+                nr_cpus = ns->nr_cpu_ids;
+        }
+        else
+                nr_cpus = nr_cpu_ids;
 
-	retval = get_user_cpu_mask(user_mask_ptr, len, new_mask);
-	if (retval == 0){
-		if(cpumask_intersects(new_mask, cpu_present_mask))
-			retval = sched_setaffinity(pid, new_mask);
-		else
-			retval= sched_setaffinity_on_popcorn(pid, new_mask, regs);
+        if ( !(nr_cpus > nr_cpu_ids) ) {
+//#endif
+		if (!alloc_cpumask_var(&new_mask, GFP_KERNEL))
+                        return -ENOMEM;
+//#ifdef CONFIG_CPU_NAMESPACE
 	}
-	free_cpumask_var(new_mask);
-	return retval;
+        else { /* gloabl cpumask is bigger than local cpumask */
+ 		long* cpumask_var = (long *)&new_mask;
+
+                *cpumask_var = kmalloc_node(ns->cpumask_size , GFP_KERNEL, NUMA_NO_NODE);
+                if (*cpumask_var) {
+                        unsigned char *ptr = (unsigned char*)cpumask_var;
+                        unsigned int tail;
+                        tail = BITS_TO_LONGS(ns->nr_cpus - ns->nr_cpu_ids) * sizeof(long);
+                        memset(ptr + ns->cpumask_size - tail, 0, tail);
+                }
+                else
+                        return -ENOMEM;
+        }
+//#endif        
+ 
+	retval = _get_user_cpu_mask(user_mask_ptr, len, new_mask, ( !(nr_cpus > nr_cpu_ids) ) ? cpumask_size() : ns->cpumask_size);
+	if (retval == 0){
+		struct task_struct * p = find_process_by_pid(pid);
+        	if (!p) {
+                      		 return -ESRCH;
+        	}
+
+                if(!(p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)))
+                        retval = sched_setaffinity(pid, new_mask);
+                else
+                        retval= sched_setaffinity_on_popcorn(pid, new_mask, regs);
+        }
+
+//#ifdef CONFIG_CPU_NAMESPACE
+	 if ( !(nr_cpus > nr_cpu_ids))
+//#endif
+ 		free_cpumask_var(new_mask);
+//#ifdef CONFIG_CPU_NAMESPACE
+         else
+                kfree (new_mask);
+//#endif
+        return retval;
+                               
 }
 
 long sched_getaffinity(pid_t pid, struct cpumask *mask)
@@ -5787,7 +5901,20 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 	unsigned long flags;
 	int retval;
 
-	get_online_cpus();
+	int cpumask_bits = nr_cpumask_bits;
+	unsigned long * online_mask =  NULL; //bitmaps are unsigned long arrays
+	struct cpu_namespace * ns =  current->nsproxy->cpu_ns;
+
+	if (ns != &init_cpu_ns) {
+//TODO		get_popcorn_cpus();	  
+		cpumask_bits = ns->nr_cpu_ids; //ns->_nr_cpumask_bits;
+		online_mask = (unsigned long*)ns->cpu_online_mask;
+	}
+	else {
+		get_online_cpus(); //maybe this should be done in any case
+		online_mask = (unsigned long*)cpumask_bits(cpu_online_mask);
+	}
+											
 	rcu_read_lock();
 
 	retval = -ESRCH;
@@ -5800,12 +5927,22 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 		goto out_unlock;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	cpumask_and(mask, &p->cpus_allowed, cpu_online_mask);
+	extern unsigned int offset_cpus; //from kernel/smp.c
+// TODO based on the namespace select cpus_allowed --- more work todo here, but for the moment is ok
+ 	if ( (ns != &init_cpu_ns) && (ns == p->cpus_allowed_map->ns) )
+ 		bitmap_and(cpumask_bits(mask), p->cpus_allowed_map->bitmap, online_mask, cpumask_bits);
+	else
+		bitmap_and(cpumask_bits(mask), cpumask_bits(&p->cpus_allowed), online_mask, cpumask_bits);
+ 								
+ 								
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
 out_unlock:
 	rcu_read_unlock();
-	put_online_cpus();
+	if (ns != &init_cpu_ns) {}
+//		put_popcorn_cpus();
+	else 
+		put_online_cpus();
 
 	return retval;
 }

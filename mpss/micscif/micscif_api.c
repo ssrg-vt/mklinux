@@ -970,14 +970,14 @@ __scif_accept(scif_epd_t epd, struct scif_portID *peer, scif_epd_t *newepd, int 
 	might_sleep();
 	spin_lock_irqsave(&lep->lock, sflags);
 	if (lep->state != SCIFEP_LISTENING) {
-		printk("SCIFAPI accept: ep %p not listending\n", lep);
+		//printk("SCIFAPI accept: ep %p not listending\n", lep);
 		spin_unlock_irqrestore(&lep->lock, sflags);
 		return -EINVAL;
 	}
 
 	if (!lep->conreqcnt && !(flags & SCIF_ACCEPT_SYNC)) {
 		// No connection request present and we do not want to wait
-		printk("SCIFAPI accept: ep %p async request with nothing pending\n", lep);
+		//printk("SCIFAPI accept: ep %p async request with nothing pending\n", lep);
 		spin_unlock_irqrestore(&lep->lock, sflags);
 		return -EAGAIN;
 	}
@@ -1104,7 +1104,7 @@ retry:
 		// Connect sequence complete return new endpoint information
 		*newepd = (scif_epd_t)cep;
 		spin_unlock_irqrestore(&cep->lock, sflags);
-		printk("SCIFAPI accept: ep %p new %p returning new epnd point\n", lep, cep);
+		//printk("SCIFAPI accept: ep %p new %p returning new epnd point\n", lep, cep);
 		return 0;
 	}
 

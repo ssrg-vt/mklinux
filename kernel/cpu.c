@@ -797,9 +797,9 @@ struct cpu_namespace init_cpu_ns = {
     .cpumask_size = (BITS_TO_LONGS(NR_CPUS) * sizeof(long)),
     .cpu_online_mask = to_cpumask(cpu_online_bits),
 //.get_online_cpus = get_online_cpus;
-////.get_offline_cpus = get_offline_cpus,
+//.get_offline_cpus = get_offline_cpus,
     .parent = NULL,
-        .level = 0,
-        };
-        EXPORT_SYMBOL_GPL(init_cpu_ns);
+    .level = 0,
+};
+EXPORT_SYMBOL_GPL(init_cpu_ns);
 

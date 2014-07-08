@@ -29,6 +29,7 @@
 #define CLONE_NEWPID		0x20000000	/* New pid namespace */
 #define CLONE_NEWNET		0x40000000	/* New network namespace */
 #define CLONE_IO		0x80000000	/* Clone io context */
+#define CLONE_NEWCPU		0x02000000
 
 /*
  * Scheduling policies
@@ -1260,6 +1261,7 @@ struct task_struct {
 
 	unsigned int policy;
 	cpumask_t cpus_allowed;
+	struct cpubitmap * cpus_allowed_map; // SHOULD BE struct list_head cpus_allowed_map
 
 #ifdef CONFIG_PREEMPT_RCU
 	int rcu_read_lock_nesting;
@@ -2128,6 +2130,7 @@ extern struct task_struct init_task;
 extern struct   mm_struct init_mm;
 
 extern struct pid_namespace init_pid_ns;
+extern struct cpu_namespace init_cpu_ns;
 
 /*
  * find a task by one of its numerical ids

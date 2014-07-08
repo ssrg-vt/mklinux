@@ -160,7 +160,7 @@ int flush_cpu_info_var(void)
 static int handle_remote_proc_cpu_info_response(struct pcn_kmsg_message* inc_msg)
 {
   _remote_cpu_info_response_t* msg = (_remote_cpu_info_response_t*) inc_msg;
-  printk("%s: OCCHIO answer cpu request received\n", __func__);
+  //printk("%s: OCCHIO answer cpu request received\n", __func__);
 
   wait_cpu_list = 1;
   if (msg != NULL)
@@ -180,7 +180,7 @@ static int handle_remote_proc_cpu_info_request(struct pcn_kmsg_message* inc_msg)
   _remote_cpu_info_request_t* msg = (_remote_cpu_info_request_t*) inc_msg;
   _remote_cpu_info_response_t response;
 
-  printk("%s: OCCHIO request proc cpu received \n", __func__);
+  //printk("%s: OCCHIO request proc cpu received \n", __func__);
 
   /*printk("%s: kernel representative %d(%d), online cpus { ", 
          __func__, _cpu, my_cpu);
@@ -285,22 +285,24 @@ int _init_RemoteCPUMask(void)
       display(&rlist_head);
     }*/
   }
+	if(my_cpu!=0)
+	{
+	//printk("%s: OCCHIO checking other kernel\n", __func__);
+	result = send_cpu_info_request(0);
+		if (result!=-1) 
+		{
+			//printk("OCCHIO waiting for answer proc cpu\n");
+			PRINTK("%s : go to sleep!!!!", __func__);
+			wait_event_interruptible(wq_cpu, wait_cpu_list != -1);
+			wait_cpu_list = -1;
 
-	printk("%s: OCCHIO checking other kernel\n", __func__);
-  result = send_cpu_info_request(1);
-    if (result!=-1) {
-	
-	printk("OCCHIO waiting for answer proc cpu\n");
-      PRINTK("%s : go to sleep!!!!", __func__);
-      wait_event_interruptible(wq_cpu, wait_cpu_list != -1);
-      wait_cpu_list = -1;
-
-      //cpumask_or(cpu_global_online_mask,cpu_global_online_mask,(const struct cpumask *)(cpu_result->_data._cpumask));
-      add_node(&(cpu_result._data), &rlist_head);
-      display(&rlist_head);
+		  //cpumask_or(cpu_global_online_mask,cpu_global_online_mask,(const struct cpumask *)(cpu_result->_data._cpumask));
+			add_node(&(cpu_result._data), &rlist_head);
+			display(&rlist_head);
+		}
      }
 else{
-printk("OCCHIO other kernel not reacheble error is %d\n",result);
+//printk("OCCHIO other kernel not reacheble error is %d\n",result);
 
 }
       //

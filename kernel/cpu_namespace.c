@@ -451,6 +451,7 @@ printk(KERN_ERR"%s: cpu_ns %p\n", __func__, current->nsproxy->cpu_ns);
 int register_popcorn_ns(void)
 {
 // if kernels > 1 then create /proc/popcorn
+printk("inserting popcorn in proc\n");
 	struct proc_dir_entry *res; // TODO mettiamola globale
 	res = create_proc_entry("popcorn", S_IRUGO, NULL);
 	if (!res) {
@@ -540,6 +541,8 @@ extern const struct file_operations ns_file_operations;
 
 static __init int cpu_namespaces_init(void)
 {
+
+printk("Initializing cpu_namespace\n");
 	cpu_ns_cachep = KMEM_CACHE(cpu_namespace, SLAB_PANIC);
 	if (!cpu_ns_cachep)
 	  printk("%s: ERROR KMEM_CACHE\n", __func__);
@@ -550,7 +553,7 @@ static __init int cpu_namespaces_init(void)
 	return 0;
 }
 
-//__initcall(cpu_namespaces_init);
+__initcall(cpu_namespaces_init);
 
 /* the idea is indeed to do similarly to net, i.e. there will be a file
 somewhere and can be in /proc/popcorn or /var/run/cpuns/possible_configurations

@@ -4,7 +4,7 @@
 
 MIC="mic0"
 
-KERNEL_PATH="./"
+KERNEL_PATH="../mklinux-build-phi/"
 KERNEL_BZIMAGE=$KERNEL_PATH"arch/x86/boot/bzImage"
 KERNEL_SYSMAP=$KERNEL_PATH"System.map"
 

@@ -677,11 +677,11 @@ static int __init nrcpus(char *str)
 	
 //#ifdef CONFIG_CPU_NAMESPACE
 	init_cpu_ns.nr_cpu_ids = nr_cpu_ids;
-		init_cpu_ns._nr_cpumask_bits = nr_cpumask_bits;
-		//	printk(KERN_INFO"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
-			printk(KERN_ERR"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
-					__func__, nr_cpu_ids, nr_cpumask_bits);
-					//#endif
+	init_cpu_ns._nr_cpumask_bits = nr_cpumask_bits;
+//	printk(KERN_INFO"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
+	printk(KERN_ERR"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
+	__func__, nr_cpu_ids, nr_cpumask_bits);
+//#endif
 
 
 	return 0;

@@ -25,7 +25,7 @@ CFLAGS_REMOVE_sched_clock.o = -pg
 CFLAGS_REMOVE_irq_work.o = -pg
 endif
 
-obj-$(CONFIG_POPCORN) += kinit.o 
+obj-$(CONFIG_POPCORN) += kinit.o cpu_namespace.o 
 obj-$(CONFIG_FREEZER) += freezer.o
 obj-$(CONFIG_PROFILING) += profile.o
 obj-$(CONFIG_SYSCTL_SYSCALL_CHECK) += sysctl_check.o

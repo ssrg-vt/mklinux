@@ -4,6 +4,7 @@
 #include <linux/spinlock.h>
 #include <linux/sched.h>
 
+struct cpu_namespace;
 struct mnt_namespace;
 struct uts_namespace;
 struct ipc_namespace;
@@ -24,6 +25,7 @@ struct fs_struct;
  */
 struct nsproxy {
 	atomic_t count;
+	struct cpu_namespace *cpu_ns;
 	struct uts_namespace *uts_ns;
 	struct ipc_namespace *ipc_ns;
 	struct mnt_namespace *mnt_ns;

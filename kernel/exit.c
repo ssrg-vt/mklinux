@@ -973,6 +973,13 @@ NORET_TYPE void do_exit(long code)
 	exit_irq_thread();
 
 	exit_signals(tsk);  /* sets PF_EXITING */
+//#ifdef CONFIG_CPU_NAMESPACE    
+	// should I do any kind of unlinking somewhere else
+	// TODO when ported to linked list you must do unlinking
+    if (tsk->cpus_allowed_map)
+    	kfree(tsk->cpus_allowed_map); //this is in any case safe because is pointing to other stuff but duplicate per task
+//#endif
+
 	/*
 	 * tsk->flags are checked in the futex code to protect against
 	 * an exiting task cleaning up the robust pi futexes.

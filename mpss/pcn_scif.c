@@ -47,6 +47,7 @@ typedef struct _send_wait{
 	struct semaphore _sem;
 	void * msg;
 	int error;
+	int dst_cpu;
 }send_wait;
 
 
@@ -151,7 +152,7 @@ int send_thread(void* arg0)
 	int rc;
 	int err;
 	int dest_cpu;
-	
+	pcn_kmsg_cbftn ftn;
 //	off_t offset,remote_offset;
 	struct scif_portID portID;
 	int curr_size, no_bytes;
@@ -223,6 +224,25 @@ int send_thread(void* arg0)
 		curr_size = lmsg->hdr.size;
 		int sts_from_peer=0;
 		int err;
+		if(wait_data->dst_cpu==my_cpu)
+		{
+			if(lmsg->hdr.type < 0 || lmsg->hdr.type >= PCN_KMSG_TYPE_MAX){
+				printk(KERN_INFO "Received invalid Selfie message type %d\n", lmsg->hdr.type);
+				//vfree(msg);
+			}else{
+				ftn = callbacks[lmsg->hdr.type];
+				if(ftn != NULL){
+					ftn(lmsg);
+				}else{
+					printk(KERN_INFO "Recieved Selfie message type %d size %d err %d has no registered callback!\n", lmsg->hdr.type,lmsg->hdr.size,msg_count++,no_bytes);
+					//vfree(msg);
+				}
+		}
+			
+			printk("%s: This is a selfie...\n",__func__);
+			goto _out;
+		}
+		
 		
 		if(lmsg->hdr.size>DMA_THRESH)
 		{
@@ -390,10 +410,10 @@ while(TRUE){
 			}
 			else if(msg_size>DMA_THRESH)
 			{
-				printk("Must be DMA \n");
+				//printk("Must be DMA \n");
 				if(msg_size>sizeof(struct pcn_kmsg_long_message))
 				{
-					printk("DMA Huge Message size %d\n",tmp->hdr.size);
+					//printk("DMA Huge Message size %d\n",tmp->hdr.size);
 					msg_del=msg;
 					msg=vmalloc(msg_size);
 					if(msg==NULL)
@@ -411,7 +431,7 @@ while(TRUE){
 			}
 			else
 			{
-				printk("Must be NoN-DMA Large %d\n",tmp->hdr.size);
+				//printk("Must be NoN-DMA Large %d\n",tmp->hdr.size);
 				curr_size = tmp->hdr.size - dflt_size;	
 				curr_addr = (char*) msg+no_bytes;
 				while((no_bytes = scif_recv(newepd, curr_addr, curr_size, SCIF_RECV_BLOCK)) >= 0)
@@ -447,7 +467,7 @@ _process:
 
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback){
 	if(type >= PCN_KMSG_TYPE_MAX) return -1; //invalid type
-	printk("%s: registering %d \n",type);
+	//printk("%s: registering %d \n",type);
 	callbacks[type] = callback;
 	return 0;
 }
@@ -468,6 +488,7 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg){
 	msg->hdr.from_cpu = my_cpu;
 	msg->hdr.is_lg_msg = 0;
 	wait_ptr.msg=msg;
+	wait_ptr.dst_cpu=dest_cpu;
 	msg->hdr.size=sizeof(struct pcn_kmsg_message);
 	enq_send(&wait_ptr);
 	down_interruptible(&wait_ptr._sem);
@@ -482,6 +503,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	lmsg->hdr.from_cpu = my_cpu;
 	lmsg->hdr.is_lg_msg = 1;
 	wait_ptr.msg=lmsg;
+	wait_ptr.dst_cpu=dest_cpu;
 	lmsg->hdr.size=sizeof(struct pcn_kmsg_hdr) + payload_size;
 	enq_send(&wait_ptr);
 	down_interruptible(&wait_ptr._sem);
