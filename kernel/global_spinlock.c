@@ -32,6 +32,12 @@ DEFINE_SPINLOCK(request_queue_lock);
 #define GENERAL_SPIN_LOCK(x,f) spin_lock_irqsave(x,f)
 #define GENERAL_SPIN_UNLOCK(x,f) spin_unlock_irqrestore(x,f)
 
+#define GSP_VERBOSE 0
+#if GSP_VERBOSE
+#define GSPRINTK(...) printk(__VA_ARGS__)
+#else
+#define GSPRINTK(...) ;
+#endif
 //extern functions
  extern struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr);
  extern pte_t *do_page_walk(unsigned long address);
@@ -180,8 +186,6 @@ _global_value *hashgroup(struct task_struct *group_pid)
 int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value * value,_local_rq_t *rq_ptr,int localticket_value)
 __releases(&value->_sp)
 {
-	//preempt_disable();
-
 	int res = 0;
 	int cpu=0;
 	unsigned int flgs;
@@ -195,7 +199,7 @@ __releases(&value->_sp)
 	if(_data->ops==WAIT_OPS){
 
 //	printk(KERN_ALERT"%s: request -- entered whos calling{%s} \n", __func__,current->comm);
-//	printk(KERN_ALERT"%s:  uaddr {%lx}  pid{%d} current->tgroup_home_id{%d}\n",				__func__,uaddr,current->pid,current->tgroup_home_id);
+	GSPRINTK(KERN_ALERT"%s:  uaddr {%lx}  pid{%d} current->tgroup_home_id{%d}\n",				__func__,uaddr,current->pid,current->tgroup_home_id);
 
 	// Finish constructing response
 	wait_req->header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST;
@@ -233,7 +237,7 @@ __releases(&value->_sp)
 		wake_req->flags = _data->flags;
 
 		wake_req->ticket = localticket_value;//GET_TOKEN; //set the request has no ticket
-//		printk(KERN_ALERT"%s: wake uaddr2{%lx} data{%lx} \n",__func__,wake_req->uaddr2,_data->uaddr2);
+		GSPRINTK(KERN_ALERT"%s: wake uaddr2{%lx} data{%lx} \n",__func__,wake_req->uaddr2,_data->uaddr2);
 	}
 
 
@@ -252,7 +256,7 @@ __releases(&value->_sp)
 				}
 				else
 					wake_req->fn_flag |= FLAGS_REMOTECALL;
-  //  			printk(KERN_ALERT"%s: sending to origin remote callpfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
+    			GSPRINTK(KERN_ALERT"%s: sending to origin remote callpfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
     			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
 				spin_unlock(&value->_sp);
     				
@@ -266,7 +270,7 @@ __releases(&value->_sp)
 					wake_req->fn_flag |= FLAGS_ORIGINCALL;
 					wake_req->rflag = current->pid;
 				}
-//    			printk(KERN_ALERT"%s: sending to origin origin call cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
+    			GSPRINTK(KERN_ALERT"%s: sending to origin origin call cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
     			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
 				spin_unlock(&value->_sp);
     				
@@ -276,7 +280,7 @@ __releases(&value->_sp)
 
     	//	printk(KERN_ALERT"%s:goto sleep after ticket request: 0x{%d} {%d}\n",__func__,cpu,current->pid);
     		wait_event_interruptible(rq_ptr->_wq, (rq_ptr->status == DONE));
-    	//	printk(KERN_ALERT"%s:after wake up process: task woken{%d}\n",__func__,current->pid);
+    		GSPRINTK(KERN_ALERT"%s:after wake up process: task woken{%d}\n",__func__,current->pid);
 
 out:
    kfree(wake_req);

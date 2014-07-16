@@ -72,7 +72,7 @@
 #include <linux/mmu_context.h>
 #include <linux/string.h>
 
-#define FUTEX_VERBOSE 1 
+#define FUTEX_VERBOSE 0 
 #if FUTEX_VERBOSE
 #define FPRINTK(...) printk(__VA_ARGS__)
 #else

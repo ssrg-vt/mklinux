@@ -570,6 +570,9 @@ static int handle_remote_futex_wake_response(struct pcn_kmsg_message* inc_msg) {
 	FRPRINTK(KERN_ALERT"%s: response {%d} \n",
 			__func__, msg->errno);
 	struct task_struct *p =  pid_task(find_vpid(msg->rem_pid), PIDTYPE_PID);
+        
+	if(!p)
+	   goto out;
 
 	get_task_struct(p);
 
@@ -587,7 +590,7 @@ static int handle_remote_futex_wake_response(struct pcn_kmsg_message* inc_msg) {
 
 	put_task_struct(p);
 
-	pcn_kmsg_free_msg(inc_msg);
+out:	pcn_kmsg_free_msg(inc_msg);
 	
 	preempt_enable();
 
@@ -727,6 +730,9 @@ static int handle_remote_futex_key_response(struct pcn_kmsg_message* inc_msg) {
 
 	struct task_struct *p =  pid_task(find_vpid(msg->rem_pid), PIDTYPE_PID);
 
+	if(!p)
+		goto out;
+	
 	get_task_struct(p);
 
 	struct spin_key sk;
@@ -745,7 +751,7 @@ static int handle_remote_futex_key_response(struct pcn_kmsg_message* inc_msg) {
 
 	put_task_struct(p);
 
-	pcn_kmsg_free_msg(inc_msg);
+out:	pcn_kmsg_free_msg(inc_msg);
 	
 	preempt_enable();
 	

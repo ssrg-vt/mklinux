@@ -3596,11 +3596,20 @@ int error = -ESRCH;
 
 rcu_read_lock();
 p = find_task_by_vpid(pid);
-printk(KERN_ALERT"%s: pid{%d} tgid{%d} p{%d} \n",__func__,pid,tgid,(!p)?0:1);
+
+if(!p){
+	if(_cpu == ORIG_NODE(pid))
+		goto out;
+   goto do_remote;
+}
+
+get_task_struct(p);
+printk(KERN_ALERT"%s: cpu {%d} pid{%d} tgid{%d} p{%d} \n",__func__,_cpu,pid,tgid,(!p)?0:1);
 
 if(p && p->tgroup_distributed && !p->executing_for_remote){
 	if(p->return_disposition == RETURN_DISPOSITION_NONE) {
 		printk(KERN_ALERT"%s: ret disp pid{%d} next{%d} \n",__func__,pid,p->next_pid);
+	        put_task_struct(p);	
 		rcu_read_unlock();
 		return remote_do_send_specific(ORIG_NODE(p->next_pid),tgid,p->next_pid,sig,info);
 	}
@@ -3629,13 +3638,16 @@ if (p && (tgid <= 0 || task_tgid_vnr(p) == tgid) || p->executing_for_remote) {
 			error = 0;
 	}
 }
+do_remote:
 if (p == NULL) {
 	printk(KERN_ALERT"%s: tgid{%d} pid{%d} sig{%d} \n",__func__ ,tgid,pid,sig);
-	rcu_read_unlock();
-	return remote_do_send_specific(ORIG_NODE(pid), tgid, pid, sig, info);
+	 rcu_read_unlock();
+	if(!cpumask_test_cpu(ORIG_NODE(pid), cpu_present_mask))
+		return remote_do_send_specific(ORIG_NODE(pid), tgid, pid, sig, info);
 }
+put_task_struct(p);
+out:
 rcu_read_unlock();
-
 return error;
 }
 
