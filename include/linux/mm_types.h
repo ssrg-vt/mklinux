@@ -162,7 +162,7 @@ struct page {
 	int status;
 	int owner;
 	long last_write;
-	int other_owners[NR_CPUS];
+	int other_owners[MAX_KERNEL_IDS];
 	int writing;
 	int reading;
 
@@ -174,7 +174,7 @@ struct page {
 	unsigned long long time_stamp;
 	int concurrent_writers;
 	int concurrent_fetch;
-	int need_fetch[NR_CPUS];
+	int need_fetch[MAX_KERNEL_IDS];
 #endif
 }
 /*

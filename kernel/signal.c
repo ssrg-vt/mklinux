@@ -1255,7 +1255,7 @@ int zap_other_threads(struct task_struct *p)
 		count++;
 
 		/* Don't bother with already dead threads */
-		if (t->exit_state)
+		if (t->exit_state|| (t->tgroup_distributed==1 && t->main==1))
 			continue;
 		sigaddset(&t->pending.signal, SIGKILL);
 		signal_wake_up(t, 1);

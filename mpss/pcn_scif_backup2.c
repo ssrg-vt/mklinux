@@ -248,7 +248,7 @@ int send_thread(void* arg0)
 		{
 			sts_from_peer=-1;
 			memcpy(dma_send_buffer,curr_addr+sizeof(struct pcn_kmsg_message),lmsg->hdr.size-sizeof(struct pcn_kmsg_message));
-			//printk("%s:Through DMA size %d\n",__func__,lmsg->hdr.size);
+			//printk("%s:Through DMA\n",__func__);
 			//printk("%s\n",dma_send_buffer);
 			err=scif_writeto(epd, buffer, lmsg->hdr.size-sizeof(struct pcn_kmsg_message), 0x80000, SCIF_RMA_SYNC);
 			if(err<0)
@@ -336,7 +336,7 @@ int connection_handler(void *arg0){
 	}
 	char *dma_rcv_buffer;
 	off_t buffer;
-	
+	struct scif_pollepd spollfd;
 	
 	rc = scif_bind(dataepd, PORT_DATA_IN);
 	if(rc != PORT_DATA_IN){
@@ -372,6 +372,10 @@ int connection_handler(void *arg0){
 		int sts_msg=DMA_DONE;
 		int msg_size;
 		
+		bool do_once=true;
+		spollfd.epd = newepd;
+		spollfd.events = SCIF_POLLIN;
+		spollfd.revents = 0;
 		BARRIER(newepd,"Register RCV");
 		up(&rcv_connDone);
 		
@@ -382,35 +386,58 @@ while(TRUE){
 				return 0;
 		}
 	
-		msg = (struct pcn_kmsg_message*)vmalloc(sizeof(struct pcn_kmsg_long_message));
+		msg = (struct pcn_kmsg_long_message*)vmalloc(sizeof(struct pcn_kmsg_long_message));
 		dflt_size = sizeof(struct pcn_kmsg_message);
 		curr_addr = (char*) msg;
-		
-		if((no_bytes = scif_recv(newepd, curr_addr, dflt_size, SCIF_RECV_BLOCK)))
+		long bytes_recvd=0;
+		if((1))
 		{
-			
-			
-			if(no_bytes==-ECONNRESET)
+			scif_poll(&spollfd, 1, -1);
+			do_once=-1;
+			while((no_bytes = scif_recv(newepd, curr_addr, DMA_THRESH, 0)) >= 0)
 			{
-				printk("%s: Peer lost Terminating PCN_Messaging....\n",__func__);
-				return;
-				
+				if(do_once==true)
+				{
+					tmp=(struct pcn_kmsg_message*)curr_addr;
+					msg_size=tmp->hdr.size;
+					curr_size=msg_size;
+				}	
+				if(no_bytes==-ECONNRESET||no_bytes==-ENODEV)
+				{
+					printk("%s: Peer lost Terminating PCN_Messaging....\n",__func__);
+					return;
+				}
+
+				curr_addr = curr_addr + no_bytes;
+				curr_size = curr_size - no_bytes;
+				bytes_recvd=+no_bytes;
+				if(msg_size>=DMA_THRESH&&bytes_recvd==sizeof(struct pcn_kmsg_message))
+				{
+					break;
+				}
+				if(curr_size == 0)
+				{
+					printk("Data Rcved : %d\n",bytes_recvd);
+					break ;
+				}
 			}
+			
 			if(no_bytes<0)
 			{
 				continue;
 				
 			}
-			tmp=(struct pcn_kmsg_message*)curr_addr;
-			msg_size=tmp->hdr.size;
+			
+			
+			
 			//printk("Size %d NoRcv %d\n",tmp->hdr.size,no_bytes);
 			if(msg_size<=sizeof(struct pcn_kmsg_message))
 			{
-				//printk("Must be NoNDMA Small\n");
+				printk("Must be NoNDMA Small\n");
 			}
 			else if(msg_size>DMA_THRESH)
 			{
-				//printk("Must be DMA \n");
+				printk("Must be DMA \n");
 				if(msg_size>sizeof(struct pcn_kmsg_long_message))
 				{
 					//printk("DMA Huge Message size %d\n",tmp->hdr.size);
@@ -431,16 +458,7 @@ while(TRUE){
 			}
 			else
 			{
-				//printk("Must be NoN-DMA Large %d size of long %d\n",tmp->hdr.size,sizeof(struct pcn_kmsg_long_message));
-				curr_size = tmp->hdr.size - dflt_size;	
-				curr_addr = (char*) msg+no_bytes;
-				while((no_bytes = scif_recv(newepd, curr_addr, curr_size, SCIF_RECV_BLOCK)) >= 0)
-				{
-					curr_addr = curr_addr + no_bytes;
-					curr_size = curr_size - no_bytes;
-					if(curr_size == 0)
-						break ;
-				}
+				printk("Must be NoN-DMA Large %d size of long %d\n",tmp->hdr.size,sizeof(struct pcn_kmsg_long_message));				
 			}	
 		}
 
@@ -491,7 +509,7 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg){
 	wait_ptr.dst_cpu=dest_cpu;
 	msg->hdr.size=sizeof(struct pcn_kmsg_message);
 	enq_send(&wait_ptr);
-	down(&wait_ptr._sem);
+	down_interruptible(&wait_ptr._sem);
 	return wait_ptr.error;
 }
 
@@ -506,7 +524,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	wait_ptr.dst_cpu=dest_cpu;
 	lmsg->hdr.size=sizeof(struct pcn_kmsg_hdr) + payload_size;
 	enq_send(&wait_ptr);
-	down(&wait_ptr._sem);
+	down_interruptible(&wait_ptr._sem);
 	return wait_ptr.error;
 }
 

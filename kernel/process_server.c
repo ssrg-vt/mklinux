@@ -53,6 +53,7 @@
 #include <asm/uaccess.h>
 #include <linux/popcorn.h>
 #include <asm/i387.h>
+#include <linux/cpu_namespace.h>
 #include "WKdm.h"
 
 #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
@@ -122,7 +123,7 @@ typedef struct _fetching_struct {
 	int tgroup_home_id;
 	unsigned long vaddr;
 	int status;
-	int owners[NR_CPUS];
+	int owners[MAX_KERNEL_IDS];
 	int owner;
 	long last_invalid;
 
@@ -156,7 +157,7 @@ typedef struct ack_answers {
 	int expected_responses;
 	int nack;
 	int concurrent;
-	int writers[NR_CPUS];
+	int writers[MAX_KERNEL_IDS];
 	int owner;
 	unsigned long long time_stamp;
 	raw_spinlock_t lock;
@@ -223,7 +224,7 @@ typedef struct _memory_struct {
 	struct task_struct* waiting_for_op;
 	int arrived_op;
 	int my_lock;
-	int kernel_set[NR_CPUS];
+	int kernel_set[MAX_KERNEL_IDS];
 	int exp_answ;
 	int answers;
 	int setting_up;
@@ -270,9 +271,10 @@ typedef struct {
 
 }__attribute__((packed)) ack_t;
 
+//int my_set[NR_CPUS]; saif changed
 #define NEW_KERNEL_ANSWER_FIELDS int tgroup_home_cpu;\
 int tgroup_home_id; \
-int my_set[NR_CPUS];\
+int my_set[MAX_KERNEL_IDS];\
 int vma_operation_index;
 
 struct _new_kernel_answer {
@@ -327,12 +329,13 @@ typedef struct {
 		unsigned short thread_fsindex;\
 		unsigned long thread_gs;\
 		unsigned short thread_gsindex;\
-		unsigned int  task_flags;\
-	    unsigned char task_fpu_counter;\
+		int tgroup_home_cpu;\
+                int tgroup_home_id;\
+/*#ifdef MIGRATE_FPU		unsigned int  task_flags;\
+  	    	unsigned char task_fpu_counter;\
 		unsigned char thread_has_fpu;\
 		union thread_xstate fpu_state;\
-		int tgroup_home_cpu;\
-		int tgroup_home_id;\
+#endif	*/	
 
 
 struct _clone_request {
@@ -383,11 +386,12 @@ typedef struct _clone_data {
 	unsigned long thread_gs;
 	unsigned int personality;
 	unsigned long def_flags;
+#if MIGRATE_FPU
 	unsigned int  task_flags; //FPU, but should be extended to support all flags
 	unsigned char task_fpu_counter;
 	unsigned char thread_has_fpu;
 	union thread_xstate fpu_state; //FPU migration support
-
+#endif
 	int tgroup_home_cpu;
 	int tgroup_home_id;
 
@@ -487,10 +491,11 @@ typedef struct {
 		unsigned short thread_ds;\
 		unsigned short thread_fsindex;\
 		unsigned short thread_gsindex;\
-		unsigned int  task_flags; \
+/*#ifdef MIGRATE_FPU		unsigned int  task_flags; \
 		unsigned char task_fpu_counter;\
 		unsigned char thread_has_fpu;\
 		union thread_xstate fpu_state;\
+#endif*/
 
 struct _exiting_process {
 	EXITING_PROCESS_FIELDS
@@ -730,7 +735,7 @@ typedef struct mapping_answers_2_kernels {
 	int owner;
 	int address_present;
 	long last_write;
-	int owners [NR_CPUS];
+	int owners [MAX_KERNEL_IDS];
 	data_response_for_2_kernels_t* data;
 	int arrived_response;
 	struct task_struct* waiting;
@@ -770,7 +775,7 @@ typedef struct {
 		char data[PAGE_SIZE]; \
 		__wsum checksum; \
 		long last_write;\
-		int owners[NR_CPUS];\
+		int owners[MAX_KERNEL_IDS];\
 		int vma_present; \
 		unsigned long vaddr_start;\
 		unsigned long vaddr_size;\
@@ -807,7 +812,7 @@ typedef struct {
 		pgprot_t prot; \
 		int address_present; \
 		int fetching; \
-		int owners[NR_CPUS];\
+		int owners[MAX_KERNEL_IDS];\
 		__wsum checksum; \
 
 struct _data_void_response {
@@ -846,7 +851,7 @@ typedef struct mapping_answers {
 	int fetching;
 	int responses;
 	int expected_responses;
-	int owners[NR_CPUS];
+	int owners[MAX_KERNEL_IDS];
 	int owner;
 	data_response_t* data;
 	raw_spinlock_t lock;
@@ -1004,6 +1009,11 @@ typedef struct {
 	struct work_struct work;
 	exiting_process_t* request;
 } exit_work_t;
+
+typedef struct {
+	struct work_struct work;
+	remote_thread_count_request_t* request;
+}count_work_t;
 
 typedef struct {
 	struct work_struct work;
@@ -2166,8 +2176,9 @@ int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t
 
 	down_read(&mm_data->kernel_set_sem);
 
+	//printk("%s before sending data->expected_responses %d data->responses %d\n",__func__,data->expected_responses,data->responses);
 #ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < NR_CPUS; i++) {
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
 		// Skip the current cpu
 		if(i == _cpu) continue;
 
@@ -2181,8 +2192,9 @@ int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t
 #endif
 		if(mm_data->kernel_set[i]==1){
 			// Send the request to this cpu.
-			s = pcn_kmsg_send(i, (struct pcn_kmsg_message*) (&request));
-			if (!s) {
+			//s = pcn_kmsg_send(i, (struct pcn_kmsg_message*) (&request));
+			s = pcn_kmsg_send_long(i, (struct pcn_kmsg_message*) (&request),sizeof(remote_thread_count_request_t)- sizeof(struct pcn_kmsg_hdr));
+			if (s!=-1) {
 				// A successful send operation, increase the number
 				// of expected responses.
 				data->expected_responses++;
@@ -2191,7 +2203,7 @@ int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t
 	}
 
 	up_read(&mm_data->kernel_set_sem);
-
+        //printk("%s going to sleep data->expected_responses %d data->responses %d\n",__func__,data->expected_responses,data->responses);
 	while (data->expected_responses != data->responses) {
 
 		set_task_state(current, TASK_UNINTERRUPTIBLE);
@@ -2201,9 +2213,11 @@ int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t
 		set_task_state(current, TASK_RUNNING);
 	}
 
+//printk("%s waked up data->expected_responses%d data->responses%d\n",__func__,data->expected_responses,data->responses);
 	raw_spin_lock_irqsave(&(data->lock), flags);
 	raw_spin_unlock_irqrestore(&(data->lock), flags);
 	// OK, all responses are in, we can proceed.
+//printk("%s data->count is %d",__func__,data->count);
 	ret = data->count;
 	remove_count_entry(data);
 	kfree(data);
@@ -2219,17 +2233,19 @@ static int process_new_kernel_answer(struct work_struct* work){
 
 	if(answer->header.from_cpu==answer->tgroup_home_cpu){
 		down_write(&memory->mm->mmap_sem);
+	//	printk("%s answer->vma_operation_index %d NR_CPU %d\n",__func__,answer->vma_operation_index,MAX_KERNEL_IDS);
 		memory->mm->vma_operation_index= answer->vma_operation_index;
 		up_write(&memory->mm->mmap_sem);
 	}
 
 	down_write(&memory->kernel_set_sem);
 	int i;
-	for(i=0;i<NR_CPUS;i++){
-		if(answer->my_set[i]==1)
-			memory->kernel_set[i]= 1;
-	}
+         for(i=0;i<MAX_KERNEL_IDS;i++){
+                 if(answer->my_set[i]==1)
+                         memory->kernel_set[i]= 1;
+         }
 	memory->answers++;
+	
 
 	if(memory->answers >= memory->exp_answ)
 		wake_up_process(memory->main);
@@ -2248,6 +2264,7 @@ static int handle_new_kernel_answer(struct pcn_kmsg_message* inc_msg){
 			answer->tgroup_home_id);
 
 	PSNEWTHREADPRINTK("received new kernel answer\n");
+	//printk("%s: %d\n",__func__,answer->vma_operation_index);
 	if(memory!=NULL){
 		new_kernel_work_answer_t* work= (new_kernel_work_answer_t*)kmalloc(sizeof(new_kernel_work_answer_t), GFP_ATOMIC);
 		if(work!=NULL){
@@ -2272,6 +2289,7 @@ static int process_new_kernel(struct work_struct* work){
 	memory_t* memory;
 
 	PSNEWTHREADPRINTK("received new kernel request\n");
+	
 	new_kernel_answer_t* answer= (new_kernel_answer_t*) kmalloc(sizeof(new_kernel_answer_t), GFP_ATOMIC);
 
 	if(answer!=NULL){
@@ -2281,29 +2299,31 @@ static int process_new_kernel(struct work_struct* work){
 
 			down_write(&memory->kernel_set_sem);
 			memory->kernel_set[new_kernel_work->request->header.from_cpu]= 1;
-			memcpy(answer->my_set,memory->kernel_set,NR_CPUS*sizeof(int));
+			memcpy(answer->my_set,memory->kernel_set,MAX_KERNEL_IDS*sizeof(int));
 			up_write(&memory->kernel_set_sem);
 
 			if(_cpu==new_kernel_work->request->tgroup_home_cpu){
 				down_read(&memory->mm->mmap_sem);
-				answer->vma_operation_index= memory->mm->vma_operation_index;
+ 				answer->vma_operation_index= memory->mm->vma_operation_index;
+				 //printk("%s answer->vma_operation_index %d \n",__func__,answer->vma_operation_index);
 				up_read(&memory->mm->mmap_sem);
 			}
 
 		}
 		else{
-			memset(answer->my_set,0,NR_CPUS*sizeof(int));
+			memset(answer->my_set,0,MAX_KERNEL_IDS*sizeof(int));
 		}
-
+	
 		answer->tgroup_home_cpu= new_kernel_work->request->tgroup_home_cpu;
 		answer->tgroup_home_id= new_kernel_work->request->tgroup_home_id;
 		answer->header.type= PCN_KMSG_TYPE_PROC_SRV_NEW_KERNEL_ANSWER;
 		answer->header.prio= PCN_KMSG_PRIO_NORMAL;
-
-		pcn_kmsg_send_long(new_kernel_work->request->header.from_cpu,
+		//printk("just before send %s answer->vma_operation_index %d NR_CPU %d\n",__func__,answer->vma_operation_index,MAX_KERNEL_IDS);
+	int ret=	pcn_kmsg_send_long(new_kernel_work->request->header.from_cpu,
 						(struct pcn_kmsg_long_message*) answer,
 						sizeof(new_kernel_answer_t) - sizeof(struct pcn_kmsg_hdr));
-
+	//int ret=pcn_kmsg_send(new_kernel_work->request->header.from_cpu, (struct pcn_kmsg_long_message*) answer);
+//printk("%s send long ret is %d sizeof new_kernel_answer_t is %d size of header is %d\n",__func__,ret,sizeof(new_kernel_answer_t),sizeof(struct pcn_kmsg_hdr));
 		kfree(answer);
 
 	}
@@ -2341,6 +2361,7 @@ static int exit_distributed_process(memory_t* mm_data, int flush) {
 	int count = 0, i, status;
 	thread_group_exited_notification_t exit_notification;
 
+//printk("%s, entered\n",__func__	);
 	lock_task_sighand(current, &flags);
 	g = current;
 	while_each_thread(current, g)
@@ -2413,6 +2434,7 @@ static int exit_distributed_process(memory_t* mm_data, int flush) {
 			mmput(mm_data->mm);
 			kfree(mm_data);
 
+//printk("main exit\n");
 #if STATISTICS
 			printk("page_fault %i fetch %i local_fetch %i write %i read %i most_long_read %i invalid %i ack %i answer_request %i answer_request_void %i request_data %i most_written_page %i concurrent_writes %i most long write %i pages_allocated %i compressed_page_sent %i not_compressed_page %i not_compressed_diff_page %i\n",
 					page_fault_mio,fetch,local_fetch,write,read,most_long_read,invalid,ack,answer_request,answer_request_void, request_data,most_written_page, concurrent_write,most_long_write, pages_allocated,compressed_page_sent,not_compressed_page,not_compressed_diff_page);
@@ -2464,9 +2486,8 @@ static int exit_distributed_process(memory_t* mm_data, int flush) {
 					PSPRINTK(
 							"%s: This is the last thread of process (id %d, cpu %d) in the system, "
 							"sending an erase mapping message!\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
-					printk(
-												"%s: This is the last thread of process (id %d, cpu %d) in the system, "
-												"sending an erase mapping message!\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
+					//printk(		"%s: This is the last thread of process (id %d, cpu %d) in the system, "
+					//		"sending an erase mapping message!\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 
 					exit_notification.header.type =
 							PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION;
@@ -2476,7 +2497,7 @@ static int exit_distributed_process(memory_t* mm_data, int flush) {
 					exit_notification.tgroup_home_id = current->tgroup_home_id;
 
 #ifndef SUPPORT_FOR_CLUSTERING
-					for(i = 0; i < NR_CPUS; i++) {
+					for(i = 0; i < MAX_KERNEL_IDS; i++) {
 						// Skip the current cpu
 						if(i == _cpu) continue;
 
@@ -2489,8 +2510,9 @@ static int exit_distributed_process(memory_t* mm_data, int flush) {
 								list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 						i = objPtr->_data._processor;
 #endif
-						pcn_kmsg_send(i,
-								(struct pcn_kmsg_message*) (&exit_notification));
+						//pcn_kmsg_send(i,
+						//		(struct pcn_kmsg_message*) (&exit_notification));
+						pcn_kmsg_send_long(i,(struct pcn_kmsg_message*)(&exit_notification),sizeof(thread_group_exited_notification_t)- sizeof(struct pcn_kmsg_hdr));
 					}
 				}
 
@@ -2582,7 +2604,7 @@ static void main_for_distributed_kernel_thread(memory_t* mm_data) {
 					task->prev_cpu = app->placeholder_cpu;
 					task->prev_pid = app->placeholder_pid;
 					task->personality = app->personality;
-
+#if MIGRATE_FPU
 					//FPU migration code --- server
 					/* PF_USED_MATH is set if the task used the FPU before
 					 * fpu_counter is incremented every time you go in __switch_to while owning the FPU
@@ -2614,7 +2636,7 @@ static void main_for_distributed_kernel_thread(memory_t* mm_data) {
 					if (tsk_used_math(task) && task->fpu_counter >5) //fpu.preload
 						__math_state_restore(task); //it uses current. Does it restore fpu in current registers???
 
-					//Why thread_has_fpu is not copied?
+#endif					//Why thread_has_fpu is not copied?
 
 					wake_up_process(task);
 
@@ -2739,9 +2761,15 @@ static int create_kernel_thread_for_distributed_process_from_user_one(
 		void *data) {
 
 	memory_t* entry = (memory_t*) data;
-
+	int ret;
 	entry->main = current;
 	current->main = 1;
+
+	if (!popcorn_ns) {
+		printk("OCCHIO in %s there is no popcorn_ns...\n",__func__);
+             if ((ret=build_popcorn_ns(0)))
+               printk("%s: build_popcorn returned: %d\n", ret);
+         }
 
 	main_for_distributed_kernel_thread(entry);
 
@@ -2760,7 +2788,9 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	struct mm_struct *mm;
 	struct file* f;
 	memory_t* entry = NULL;
+	int ret;
 
+	//printk("%s entered. my cpu is %i\n",__func__,_cpu);
 	spin_lock_irq(&current->sighand->siglock);
 	flush_signal_handlers(current, 1);
 	spin_unlock_irq(&current->sighand->siglock);
@@ -2829,7 +2859,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	entry->waiting_for_op = NULL;
 	entry->arrived_op = 0;
 	entry->my_lock = 0;
-	memset(entry->kernel_set,0,NR_CPUS*sizeof(int));
+	memset(entry->kernel_set,0,MAX_KERNEL_IDS*sizeof(int));
 	entry->kernel_set[_cpu]= 1;
 	init_rwsem(&entry->kernel_set_sem);
 
@@ -2866,6 +2896,11 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 
 	add_memory_entry(entry);
 
+	if (!popcorn_ns) {
+	     if ((ret = build_popcorn_ns(0))) 
+	       printk("%s: build_popcorn returned: %d\n", __func__,ret);
+	 }
+
 	new_kernel_t* new_kernel_msg= (new_kernel_t*)kmalloc(sizeof(new_kernel_t),GFP_ATOMIC);
 	if(new_kernel_msg==NULL){
 		printk("ERROR: impossible to alloc new kernel message\n");
@@ -2881,7 +2916,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	raw_spin_lock_init(&(entry->lock_for_answer));
 	//inform all kernel that a new distributed process is present here
 #ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < NR_CPUS; i++) {
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
 		// Skip the current cpu
 		if(i == _cpu) continue;
 
@@ -2892,9 +2927,13 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 		list_for_each(iter, &rlist_head) {
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
+			printk("sending new kernel message to %d\n",i);
+//printk("cpu %d id %d\n",new_kernel_msg->tgroup_home_cpu,
+        //new_kernel_msg->tgroup_home_id);
 #endif
-			if (pcn_kmsg_send(i, (struct pcn_kmsg_message*) (new_kernel_msg))
-					!= -1) {
+			//if (pcn_kmsg_send(i, (struct pcn_kmsg_message*) (new_kernel_msg))
+			//		!= -1) {
+			if(pcn_kmsg_send_long(i,(struct pcn_kmsg_message*) (new_kernel_msg),sizeof(new_kernel_t)-sizeof(struct pcn_kmsg_hdr))!=-1){
 				// Message delivered
 				entry->exp_answ++;
 			}
@@ -2938,6 +2977,7 @@ void process_exec_item(struct work_struct* work) {
 	clone_exec_work_t* info_work = (clone_exec_work_t*) work;
 	clone_data_t* clone = info_work->clone_data;
 
+//printk("%s\n",__func__);
 	memory_t* memory = find_memory_entry(clone->tgroup_home_cpu,
 			clone->tgroup_home_id);
 	if (memory != NULL) {
@@ -3084,7 +3124,7 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg) {
 
 	out:
 
-	for (i = 0; i < NR_CPUS; i++) {
+	for (i = 0; i < MAX_KERNEL_IDS; i++) {
 		fetched_data->owners[i] = fetched_data->owners[i] | response->owners[i];
 	}
 
@@ -3117,6 +3157,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 	fetched_data = find_mapping_entry(response->tgroup_home_cpu,
 			response->tgroup_home_id, response->address);
 
+//printk("sizeof(data_response_for_2_kernels_t) %d PAGE_SIZE %d response->data_size %d \n",sizeof(data_response_for_2_kernels_t),PAGE_SIZE,response->data_size);
 	#if STATISTICS
 		answer_request++;
 	#endif
@@ -3144,6 +3185,9 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 				printk(
 						"ERROR: a kernel that is not the server is sending the mapping\n");
 	#endif
+ PSPRINTK("response->vma_pesent %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s\n",
+response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path);
+
 			if (fetched_data->vma_present == 0) {
 				PSPRINTK("Set vma\n");
 				fetched_data->vma_present = 1;
@@ -3270,7 +3314,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 		}
 	}
 
-	for (i = 0; i < NR_CPUS; i++) {
+	for (i = 0; i < MAX_KERNEL_IDS; i++) {
 		fetched_data->owners[i] = fetched_data->owners[i] | response->owners[i];
 	}
 
@@ -3635,8 +3679,8 @@ void process_invalid_request_for_2_kernels(struct work_struct* work){
 		response->tgroup_home_id = data->tgroup_home_id;
 		response->address = data->address;
 		response->ack = 1;
-		pcn_kmsg_send(from_cpu, (struct pcn_kmsg_message*) (response));
-
+		//pcn_kmsg_send(from_cpu, (struct pcn_kmsg_message*) (response));
+		pcn_kmsg_send_long(from_cpu,(struct pcn_kmsg_message*) (response),sizeof(ack_t)-sizeof(struct pcn_kmsg_hdr));
 		kfree(response);
 		pcn_kmsg_free_msg(data);
 		kfree(work);
@@ -3978,7 +4022,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 
 	//check the vma era first
 	if(mm->vma_operation_index < request->vma_operation_index){
-		printk("different era request\n");
+		printk("different era request mm->vma_operation_index %d request->vma_operation_index%d\n",mm->vma_operation_index,request->vma_operation_index);
 		delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
 
 		if (delay) {
@@ -4556,6 +4600,8 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 				plpath = d_path(&vma->vm_file->f_path, lpath, 512);
 				strcpy(response->path, plpath);
 			}
+			 PSPRINTK("response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s\n",
+response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path);
 		}
 
 		else
@@ -4570,10 +4616,13 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 	#endif
 #endif
 
-		// Send response
-		pcn_kmsg_send_long(from_cpu, (struct pcn_kmsg_long_message*) (response),
-				sizeof(data_response_for_2_kernels_t) - sizeof(struct pcn_kmsg_hdr) + response->data_size);
+//printk("sizeof(data_response_for_2_kernels_t) %d PAGE_SIZE %d response->data_size %d \n",sizeof(data_response_for_2_kernels_t),PAGE_SIZE,response->data_size);
 
+
+		// Send response
+		int ret=pcn_kmsg_send_long(from_cpu, (struct pcn_kmsg_long_message*) (response),
+				sizeof(data_response_for_2_kernels_t) - sizeof(struct pcn_kmsg_hdr) + response->data_size);
+//	printk("send long ret is %d\n",ret);
 		// Clean up incoming messages
 		pcn_kmsg_free_msg(request);
 		kfree(work);
@@ -4603,7 +4652,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 			pcn_kmsg_free_msg(request);
 			kfree(work);
 			return;
-		}
+	e	}
 
 		vfrom = kmap_atomic(page, KM_USER0);
 
@@ -4810,9 +4859,9 @@ void process_mapping_request(struct work_struct* work) {
 	int fetching = 0;
 	char* plpath;
 	char lpath[512];
-	int app[NR_CPUS];
+	int app[MAX_KERNEL_IDS];
 	memory_t * memory;
-	int owners[NR_CPUS];
+	int owners[MAX_KERNEL_IDS];
 	//unsigned long long start,end;
 
 #if STATISTICS
@@ -4824,7 +4873,7 @@ void process_mapping_request(struct work_struct* work) {
 
 	//start= native_read_tsc();
 
-	memset(owners,0,NR_CPUS*sizeof(int));
+	memset(owners,0,MAX_KERNEL_IDS*sizeof(int));
 
 	memory = find_memory_entry(request->tgroup_home_cpu,
 			request->tgroup_home_id);
@@ -4913,7 +4962,7 @@ void process_mapping_request(struct work_struct* work) {
 				raw_spin_lock_irqsave(&(fetched_data->lock), flags);
 				fetched_data->fetching = 1;
 				fetched_data->owners[from_cpu] = 1;
-				memcpy(owners,fetched_data->owners,NR_CPUS*sizeof(int));
+				memcpy(owners,fetched_data->owners,MAX_KERNEL_IDS*sizeof(int));
 				owners[_cpu]=1;
 				raw_spin_unlock_irqrestore(&(fetched_data->lock), flags);
 				fetching = 1;
@@ -5050,7 +5099,7 @@ void process_mapping_request(struct work_struct* work) {
 			page->other_owners[_cpu] = 1;
 		}
 
-		memcpy(owners,page->other_owners,NR_CPUS*sizeof(int));
+		memcpy(owners,page->other_owners,MAX_KERNEL_IDS*sizeof(int));
 	}
 
 	//page replicated
@@ -5093,7 +5142,7 @@ void process_mapping_request(struct work_struct* work) {
 		//invalid page case
 		if (page->status == REPLICATION_STATUS_INVALID) {
 			page->other_owners[from_cpu] = 1;
-			memcpy(owners,page->other_owners,NR_CPUS*sizeof(int));
+			memcpy(owners,page->other_owners,MAX_KERNEL_IDS*sizeof(int));
 			spin_unlock(ptl);
 			up_read(&mm->mmap_sem);
 			PSPRINTK("Request in status invalid\n");
@@ -5195,7 +5244,7 @@ void process_mapping_request(struct work_struct* work) {
 #endif
 
 			response->last_write = page->last_write;
-			for (i = 0; i < NR_CPUS; i++) {
+			for (i = 0; i < MAX_KERNEL_IDS; i++) {
 				response->owners[i] = page->other_owners[i];
 			}
 
@@ -5214,7 +5263,7 @@ void process_mapping_request(struct work_struct* work) {
 			page->concurrent_fetch = 0;
 			page->time_stamp = 0;
 
-			for (i = 0; i < NR_CPUS; i++)
+			for (i = 0; i < MAX_KERNEL_IDS; i++)
 				if (page->need_fetch[i]) {
 					app[i] = 1;
 					page->need_fetch[i] = 0;
@@ -5223,7 +5272,7 @@ void process_mapping_request(struct work_struct* work) {
 
 			spin_unlock(ptl);
 
-			for (i = 0; i < NR_CPUS; i++)
+			for (i = 0; i < MAX_KERNEL_IDS; i++)
 				if (app[i]) {
 					pcn_kmsg_send_long(i,
 							(struct pcn_kmsg_long_message*) (response),
@@ -5273,7 +5322,7 @@ void process_mapping_request(struct work_struct* work) {
 
 	response->last_write = page->last_write;
 
-	for (i = 0; i < NR_CPUS; i++) {
+	for (i = 0; i < MAX_KERNEL_IDS; i++) {
 		response->owners[i] = page->other_owners[i];
 	}
 
@@ -5347,7 +5396,7 @@ void process_mapping_request(struct work_struct* work) {
 	void_response->tgroup_home_id = request->tgroup_home_id;
 	void_response->address = request->address;
 	void_response->address_present = REPLICATION_STATUS_INVALID;
-	memcpy(void_response->owners,owners,NR_CPUS*sizeof(int));
+	memcpy(void_response->owners,owners,MAX_KERNEL_IDS*sizeof(int));
 
 	if (fetching)
 		void_response->fetching = 1;
@@ -5583,8 +5632,8 @@ void process_exiting_process_notification(struct work_struct* work) {
 		task->thread.gsindex = msg->thread_gsindex;
 		task->group_exit = msg->group_exit;
 		task->distributed_exit_code = msg->code;
-
-
+//printk("%s half way\n",__func__);
+#if MIGRATE_FPU
 		if (msg->task_flags & PF_USED_MATH)
 			//set_used_math();
 			set_stopped_child_used_math(task);
@@ -5610,7 +5659,7 @@ void process_exiting_process_notification(struct work_struct* work) {
 		if (tsk_used_math(task) && task->fpu_counter >5) //fpu.preload
 			__math_state_restore(task);
 
-
+#endif
 		wake_up_process(task);
 
 	} else
@@ -5688,17 +5737,14 @@ static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
 }
 
 static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg) {
-	remote_thread_count_response_t* msg =
-			(remote_thread_count_response_t*) inc_msg;
+	remote_thread_count_response_t* msg= (remote_thread_count_response_t*) inc_msg;
 	count_answers_t* data = find_count_entry(msg->tgroup_home_cpu,
 			msg->tgroup_home_id);
 	unsigned long flags;
 	struct task_struct* to_wake = NULL;
 
-	PSPRINTK(
-			"%s: entered - cpu{%d}, id{%d}, count{%d}\n", __func__, msg->tgroup_home_cpu, msg->tgroup_home_id, msg->count);
-	printk(
-				"%s: entered - cpu{%d}, id{%d}, count{%d}\n", __func__, msg->tgroup_home_cpu, msg->tgroup_home_id, msg->count);
+	PSPRINTK("%s: entered - cpu{%d}, id{%d}, count{%d}\n", __func__, msg->tgroup_home_cpu, msg->tgroup_home_id, msg->count);
+	//printk("%s: entered - cpu{%d}, id{%d}, count{%d}\n", __func__, msg->tgroup_home_cpu, msg->tgroup_home_id, msg->count);
 
 	if (data == NULL) {
 		PSPRINTK("unable to find remote thread count data\n");
@@ -5725,61 +5771,73 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
 	return 0;
 }
 
-static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) {
-	remote_thread_count_request_t* msg =
-			(remote_thread_count_request_t*) inc_msg;
-	remote_thread_count_response_t response;
-	struct task_struct *tgroup_iterator;
+void process_count_request(struct work_struct* work) {
+        count_work_t* request_work = (count_work_t*) work;
+        remote_thread_count_request_t* msg = request_work->request;
+ 	remote_thread_count_response_t response;
+        struct task_struct *tgroup_iterator;
 
-	PSPRINTK(
-			"%s: entered - cpu{%d}, id{%d}\n", __func__, msg->tgroup_home_cpu, msg->tgroup_home_id);
+        PSPRINTK("%s: entered - cpu{%d}, id{%d}\n", __func__, msg->tgroup_home_cpu, msg->tgroup_home_id);
 
-	response.count = 0;
+        response.count = 0;
 
-	/* This is needed to know if the requesting kernel has to save the mapping or send the group dead message.
-	 * If there is at least one alive thread of the process in the system the mapping must be saved.
-	 * I count how many threads there are but actually I can stop when I know that there is one.
-	 * If there are no more threads in the system, a group dead message should be sent by at least one kernel.
-	 * I do not need to take the sighand lock (used to set task->distributed_exit=1) because:
-	 * --count remote thread is called AFTER set task->distributed_exit=1
-	 * --if I am here the last thread of the process in the requesting kernel already set his flag distributed_exit to 1
-	 * --two things can happend if the last thread of the process is in this kernel and it is dying too:
-	 * --1. set its flag before I check it => I send 0 => the other kernel will send the message
-	 * --2. set its flag after I check it => I send 1 => I will send the message
-	 * Is important to not take the lock so everything can be done in the messaging layer without fork another kthread.
-	 * */
+        /* This is needed to know if the requesting kernel has to save the mapping or send the group dead message.
+          * If there is at least one alive thread of the process in the system the mapping must be saved.
+          * I count how many threads there are but actually I can stop when I know that there is one.
+          * If there are no more threads in the system, a group dead message should be sent by at least one kernel.
+          * I do not need to take the sighand lock (used to set task->distributed_exit=1) because:
+          * --count remote thread is called AFTER set task->distributed_exit=1
+          * --if I am here the last thread of the process in the requesting kernel already set his flag distributed_exit to 1
+          * --two things can happend if the last thread of the process is in this kernel and it is dying too:
+          * --1. set its flag before I check it => I send 0 => the other kernel will send the message
+          * --2. set its flag after I check it => I send 1 => I will send the message
+          * Is important to not take the lock so everything can be done in the messaging layer without fork another kthread.
+          */
 
-	memory_t* memory = find_memory_entry(msg->tgroup_home_cpu,
-			msg->tgroup_home_id);
-	if (memory != NULL) {
-		while (memory->main == NULL)
-			schedule();
-		tgroup_iterator = memory->main;
-		while_each_thread(memory->main, tgroup_iterator)
-		{
-			if (tgroup_iterator->distributed_exit == EXIT_ALIVE
-					&& tgroup_iterator->main != 1) {
-				response.count++;
-				goto out;
-			}
-		};
-	}
+        memory_t* memory = find_memory_entry(msg->tgroup_home_cpu,
+                        msg->tgroup_home_id);
+        if (memory != NULL) {
+                while (memory->main == NULL)
+                        schedule();
+                tgroup_iterator = memory->main;
+                while_each_thread(memory->main, tgroup_iterator)
+                {
+                        if (tgroup_iterator->distributed_exit == EXIT_ALIVE
+                                        && tgroup_iterator->main != 1) {
+                                response.count++;
+                                goto out;
+                        }
+                };
+        }
 
-	// Finish constructing response
-	out: response.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE;
-	response.header.prio = PCN_KMSG_PRIO_NORMAL;
-	response.tgroup_home_cpu = msg->tgroup_home_cpu;
-	response.tgroup_home_id = msg->tgroup_home_id;
-
-	PSPRINTK(
-			"%s: responding to thread count request with %d\n", __func__, response.count);
-
-	// Send response
-	pcn_kmsg_send(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response));
-
-	pcn_kmsg_free_msg(inc_msg);
-
+        // Finish constructing response
+        out: response.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE;
+        response.header.prio = PCN_KMSG_PRIO_NORMAL;
+        response.tgroup_home_cpu = msg->tgroup_home_cpu;
+        response.tgroup_home_id = msg->tgroup_home_id;
+        PSPRINTK("%s: responding to thread count request with %d\n", __func__, response.count);
+        // Send response
+        pcn_kmsg_send(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response));
+        pcn_kmsg_free_msg(msg);
+        kfree(request_work);
 	return 0;
+        
+}
+
+static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg) {
+	count_work_t* request_work;
+        remote_thread_count_request_t* request =(remote_thread_count_request_t*) inc_msg;
+        request_work = kmalloc(sizeof(count_work_t), GFP_ATOMIC);
+
+        if (request_work) {
+                request_work->request = request;
+                INIT_WORK( (struct work_struct*)request_work,
+                                process_count_request);
+                queue_work(exit_wq, (struct work_struct*) request_work);
+        }
+
+        return 1;
+
 }
 
 /**
@@ -5791,7 +5849,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 	clone_data_t* clone_data;
 	int previous;
 	// perf_cc = native_read_tsc();
-	PSPRINTK("%s : received request\n", __func__);
+	//printk("%s : received request\n", __func__);
 	/*
 	 * Remember this request
 	 */
@@ -5822,6 +5880,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 	clone_data->back= request->back;
 	clone_data->prev_pid= request->prev_pid;
 	clone_data->placeholder_cpu = inc_msg->hdr.from_cpu;
+//printk("size of struct pt_regs id %d \n",sizeof(struct pt_regs));
 
 	memcpy(&clone_data->regs, &request->regs, sizeof(struct pt_regs));
 	clone_data->thread_usersp = request->thread_usersp;
@@ -5834,11 +5893,13 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 	clone_data->thread_gs = request->thread_gs;
 	clone_data->tgroup_home_cpu = request->tgroup_home_cpu;
 	clone_data->tgroup_home_id = request->tgroup_home_id;
+#if MIGRATE_FPU
 	clone_data->task_flags = request->task_flags;
 	clone_data->task_fpu_counter = request->task_fpu_counter;
 	clone_data->thread_has_fpu = request->thread_has_fpu;
 	clone_data->fpu_state = request->fpu_state;
-
+#endif
+	//printk("received request for cpu %d id %d SS %x exe %s prev_pid %d\n",request->tgroup_home_cpu,request->tgroup_home_id,request->stack_start,request->exe_path,request->prev_pid);
 	previous = add_clone_entry(clone_data);
 
 	if (previous == 0) {
@@ -5872,7 +5933,7 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 	PSPRINTK(
 			"MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
 	//dump_stack();
-
+//printk("%s, entered\n",__func__);
 	entry = find_memory_entry(tsk->tgroup_home_cpu, tsk->tgroup_home_id);
 	if (entry) {
 
@@ -5920,6 +5981,7 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 
 			msg->is_last_tgroup_member = (count == 1 ? 1 : 0);
 
+#if MIGRATE_FPU
 			//FPU migration code --- initiator
 			PSPRINTK(KERN_ERR"%s: task flags %x fpu_counter %x has_fpu %x [%d:%d] %d:%d %x\n",
 					__func__, tsk->flags, (int)tsk->fpu_counter, (int)tsk->thread.has_fpu,
@@ -5942,9 +6004,9 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 			struct fpu temp; temp.state = &msg->fpu_state;
 
 			fpu_copy(&temp,&tsk->thread.fpu);
-
+#endif
 			//    }
-
+//printk("message exit to shadow sent\n");
 			tx_ret = pcn_kmsg_send_long(tsk->prev_cpu,
 					(struct pcn_kmsg_long_message*) msg,
 					sizeof(exiting_process_t) - sizeof(struct pcn_kmsg_hdr));
@@ -6279,7 +6341,7 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 					page->status = REPLICATION_STATUS_INVALID;
 				page->owner = fetched_data->owner;
 
-				for (i = 0; i < NR_CPUS; i++) {
+				for (i = 0; i < MAX_KERNEL_IDS; i++) {
 					page->other_owners[i] = fetched_data->owners[i];
 				}
 
@@ -6313,7 +6375,7 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 
 			} else {
 				page->replicated = 0;
-				for (i = 0; i < NR_CPUS; i++) {
+				for (i = 0; i < MAX_KERNEL_IDS; i++) {
 					page->other_owners[i] = fetched_data->owners[i];
 				}
 				page->other_owners[_cpu] = 1;
@@ -6322,7 +6384,7 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 		} else {
 
 			page->replicated = 0;
-			for (i = 0; i < NR_CPUS; i++) {
+			for (i = 0; i < MAX_KERNEL_IDS; i++) {
 				page->other_owners[i] = fetched_data->owners[i];
 			}
 			page->other_owners[_cpu] = 1;
@@ -6358,7 +6420,7 @@ void process_server_clean_page(struct page* page) {
 	page->replicated = 0;
 	page->status = REPLICATION_STATUS_NOT_REPLICATED;
 	page->owner = 0;
-	memset(page->other_owners, 0, NR_CPUS*sizeof(int));
+	memset(page->other_owners, 0, MAX_KERNEL_IDS*sizeof(int));
 	page->writing = 0;
 	page->reading = 0;
 
@@ -6366,7 +6428,7 @@ void process_server_clean_page(struct page* page) {
 	page->time_stamp = 0;
 	page->concurrent_writers = 0;
 	page->concurrent_fetch = 0;
-	memset(page->need_fetch, 0, NR_CPUS*sizeof(int));
+	memset(page->need_fetch, 0, MAX_KERNEL_IDS*sizeof(int));
 	page->last_write = 0;
 #endif
 
@@ -6453,7 +6515,7 @@ static int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	reading_page->arrived_response=0;
 
 #ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < NR_CPUS; i++) {
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
 		// Skip the current cpu
 		if(i == _cpu) continue;
 
@@ -6800,7 +6862,7 @@ static int do_remote_read(int tgroup_home_cpu, int tgroup_home_id,
 		/*PTE UNLOCKED*/
 
 #ifndef SUPPORT_FOR_CLUSTERING
-		for(i = 0; i < NR_CPUS; i++) {
+		for(i = 0; i < MAX_KERNEL_IDS; i++) {
 			// Skip the current cpu
 			if(i == _cpu) continue;
 #else
@@ -7023,7 +7085,7 @@ static int do_remote_read(int tgroup_home_cpu, int tgroup_home_id,
 			PSMINPRINTK("sending invalid message for address %lu \n",address);
 
 #ifndef SUPPORT_FOR_CLUSTERING
-			for(i = 0; i < NR_CPUS; i++) {
+			for(i = 0; i < MAX_KERNEL_IDS; i++) {
 				// Skip the current cpu
 				if(i == _cpu) continue;
 
@@ -7147,7 +7209,7 @@ static int do_remote_read(int tgroup_home_cpu, int tgroup_home_id,
 				writing_page->arrived_response=0;
 
 #ifndef SUPPORT_FOR_CLUSTERING
-				for(i = 0; i < NR_CPUS; i++) {
+				for(i = 0; i < MAX_KERNEL_IDS; i++) {
 					// Skip the current cpu
 					if(i == _cpu) continue;
 
@@ -7631,7 +7693,7 @@ static int do_remote_write(int tgroup_home_cpu, int tgroup_home_id,
 	PSMINPRINTK("writing %i address %lu iter %i \n", write, address,attemps_write);
 
 #ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < NR_CPUS; i++) {
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
 		// Skip the current cpu
 		if(i == _cpu) continue;
 
@@ -7709,7 +7771,7 @@ static int do_remote_write(int tgroup_home_cpu, int tgroup_home_id,
 		most_long_write= attemps_write;
 #endif
 
-		memset(page->need_fetch, 0, NR_CPUS*sizeof(int));
+		memset(page->need_fetch, 0, MAX_KERNEL_IDS*sizeof(int));
 		page->concurrent_fetch = 0;
 		page->concurrent_writers = answers->concurrent;
 
@@ -8175,7 +8237,7 @@ static int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id
 	down_read(&memory->kernel_set_sem);
 
 #ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < NR_CPUS; i++) {
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
 		// Skip the current cpu
 		if(i == _cpu) continue;
 
@@ -8186,6 +8248,7 @@ static int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id
 		list_for_each(iter, &rlist_head) {
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
+
 #endif
 			if(memory->kernel_set[i]==1)
 				if ((ret=pcn_kmsg_send(i, (struct pcn_kmsg_message*) (fetch_message)))
@@ -8545,7 +8608,7 @@ static int do_remote_fetch(int tgroup_home_cpu, int tgroup_home_id,
 	fetching_page->last_invalid = -1;
 	fetching_page->last_write = 0;
 	fetching_page->owner = -1;
-	memset(fetching_page->owners, 0, sizeof(int) * NR_CPUS);
+	memset(fetching_page->owners, 0, sizeof(int) * MAX_KERNEL_IDS);
 	fetching_page->vma_present = 0;
 	fetching_page->vaddr_start = 0;
 	fetching_page->vaddr_size = 0;
@@ -8595,7 +8658,7 @@ static int do_remote_fetch(int tgroup_home_cpu, int tgroup_home_id,
 	down_read(&memory->kernel_set_sem);
 
 #ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < NR_CPUS; i++) {
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
 		// Skip the current cpu
 		if(i == _cpu) continue;
 
@@ -8771,7 +8834,7 @@ static int do_remote_fetch(int tgroup_home_cpu, int tgroup_home_id,
 #endif
 
 				memcpy(page->other_owners, fetching_page->owners,
-						sizeof(int) * NR_CPUS);
+						sizeof(int) * MAX_KERNEL_IDS);
 				page->other_owners[_cpu] = 1;
 				page->owner = fetching_page->owner;
 
@@ -8787,7 +8850,7 @@ static int do_remote_fetch(int tgroup_home_cpu, int tgroup_home_id,
 			} else {
 				page->replicated = 0;
 				memcpy(page->other_owners, fetching_page->owners,
-						sizeof(int) * NR_CPUS);
+						sizeof(int) * MAX_KERNEL_IDS);
 				page->other_owners[_cpu] = 1;
 				entry = pte_set_flags(entry, _PAGE_PRESENT);
 			}
@@ -9347,6 +9410,7 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 int process_server_dup_task(struct task_struct* orig, struct task_struct* task) {
 	unsigned long flags;
 	clone_data_t* clone_data;
+	int ret;
 
 	task->executing_for_remote = 0;
 	task->represents_remote = 0;
@@ -9385,6 +9449,24 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 
 			task->executing_for_remote = 1;
 
+			if (!popcorn_ns) {
+				printk("ERROR: no popcorn_ns when forking migrating threads\n");
+			 }
+ 
+			/* if we are already attached, let's skip the unlinking and linking */
+			 if (task->nsproxy->cpu_ns != popcorn_ns) { 
+			     //i TODO temp fix or of all active cpus?! ---- TODO this must be fixed is not acceptable
+			     do_set_cpus_allowed(task, cpu_online_mask);
+     
+			     put_cpu_ns(task->nsproxy->cpu_ns);
+			     task->nsproxy->cpu_ns = get_cpu_ns(popcorn_ns);
+			 } else
+			     printk(KERN_ERR "%s: already attached to popcorn namespace?! how it is possible?!\n", __func__);
+  
+		   	//associate the task with the namespace
+			 if (ret = associate_to_popcorn_ns(task))  {
+			       printk(KERN_ERR"%s: associate_to_popcorn_ns returned: %d\n", __func__,ret);
+			 }
 			//task->thread.usersp = clone_data->thread_usersp;
 			task->thread.usersp = clone_data->old_rsp;
 			memcpy(task_pt_regs(task), &clone_data->regs,
@@ -9406,6 +9488,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 
 			task->personality = clone_data->personality;
 
+#if MIGRATE_FPU
 			//FPU migration code --- server
 			/* PF_USED_MATH is set if the task used the FPU before
 			 * fpu_counter is incremented every time you go in __switch_to while owning the FPU
@@ -9436,7 +9519,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 			//FPU migration code --- is the following optional?
 			if (tsk_used_math(task) && task->fpu_counter >5) //fpu.preload
 				__math_state_restore(task);
-
+#endif
 			// Notify of PID/PID pairing.
 			process_server_notify_delegated_subprocess_starting(task->pid,
 					clone_data->placeholder_pid, clone_data->placeholder_cpu);
@@ -9497,8 +9580,8 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	unsigned long flags;
 
 
-
-#ifndef SUPPORT_FOR_CLUSTERING
+//printk("%s entered \n",__func__);
+/*#ifndef SUPPORT_FOR_CLUSTERING
 	// Nothing to do if we're migrating to the current cpu
 	if (dst_cpu == _cpu) {
 		return PROCESS_SERVER_CLONE_FAIL;
@@ -9518,12 +9601,12 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
      list_for_each(iter, &rlist_head) {
          objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
          cpuid = objPtr->_data._processor;
-         pcpum = &(objPtr->_data._cpumask);
+         pcpum = &(objPtr->_data.cpumask);
          if (cpumask_test_cpu(dst_cpu, pcpum)) {
                  dst_cpu= cpuid;
          }
      }
-#endif
+#endif*/
 
 
 	request = kmalloc(sizeof(clone_request_t), GFP_ATOMIC);
@@ -9577,7 +9660,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 		unsigned short fsindex, gsindex;
 		unsigned short es, ds;
 		unsigned long fs, gs;
-
+//printk("size of struct pt_regs id %d \n",sizeof(struct pt_regs));
 		memcpy(&request->regs, regs, sizeof(struct pt_regs));
 		request->thread_usersp = task->thread.usersp;
 
@@ -9621,6 +9704,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 			request->thread_gs = gs;
 		}
 
+#if MIGRATE_FPU
 		//FPU migration code --- initiator
 		PSPRINTK(KERN_ERR"%s: task flags %x fpu_counter %x has_fpu %x [%d:%d] %d:%d %x\n",
 				__func__, task->flags, (int)task->fpu_counter, (int)task->thread.has_fpu,
@@ -9643,6 +9727,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 
 		fpu_copy(&temp,&task->thread.fpu);
 
+#endif
 		//    }
 
 	}
@@ -9660,6 +9745,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 		task->tgroup_home_id = task->tgid;
 		task->tgroup_home_cpu = _cpu;
 
+		//printk("I am cpu %i tgroup id is %d\n",_cpu,task->tgroup_home_id);
 		entry = (memory_t*) kmalloc(sizeof(memory_t), GFP_ATOMIC);
 		if (!entry)
 			printk(
@@ -9679,7 +9765,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 		entry->waiting_for_op = NULL;
 		entry->arrived_op = 0;
 		entry->my_lock = 0;
-		memset(entry->kernel_set,0,NR_CPUS*sizeof(int));
+		memset(entry->kernel_set,0,MAX_KERNEL_IDS*sizeof(int));
 		entry->kernel_set[_cpu]= 1;
 		init_rwsem(&entry->kernel_set_sem);
 		entry->setting_up= 0;
@@ -9702,7 +9788,6 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 			tgroup_iterator->tgroup_distributed = 1;
 		};
 
-
 	}
 
 	task->represents_remote = 1;
@@ -9712,11 +9797,13 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	request->tgroup_home_cpu = task->tgroup_home_cpu;
 	request->tgroup_home_id = task->tgroup_home_id;
 
+//printk("sending message with tgroup cpu %d tgroup id %d\n",request->tgroup_home_cpu,request->tgroup_home_id);
 	// Send request
 	tx_ret = pcn_kmsg_send_long(dst_cpu,
 			(struct pcn_kmsg_long_message*) request,
 			sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
 
+	//printk("%s message sent ret is %d\n",__func__,tx_ret);
 	if (first)
 		kernel_thread(
 				create_kernel_thread_for_distributed_process_from_user_one,
@@ -10327,7 +10414,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 			} else {
 
 #ifndef SUPPORT_FOR_CLUSTERING
-				for(i = 0; i < NR_CPUS; i++) {
+				for(i = 0; i < MAX_KERNEL_IDS; i++) {
 					// Skip the current cpu
 					if(i == _cpu) continue;
 
@@ -10619,7 +10706,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 				down_read(&entry->kernel_set_sem);
 
 #ifndef SUPPORT_FOR_CLUSTERING
-				for(i = 0; i < NR_CPUS; i++) {
+				for(i = 0; i < MAX_KERNEL_IDS; i++) {
 					// Skip the current cpu
 					if(i == _cpu) continue;
 
@@ -10686,7 +10773,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 					|| ((operation == VMA_OP_REMAP) && (flags & MREMAP_FIXED))) {
 
 #ifndef SUPPORT_FOR_CLUSTERING
-				for(i = 0; i < NR_CPUS; i++) {
+				for(i = 0; i < MAX_KERNEL_IDS; i++) {
 					// Skip the current cpu
 					if(i == _cpu) continue;
 #else
@@ -10813,7 +10900,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 			down_read(&entry->kernel_set_sem);
 
 #ifndef SUPPORT_FOR_CLUSTERING
-			for(i = 0; i < NR_CPUS; i++) {
+			for(i = 0; i < MAX_KERNEL_IDS; i++) {
 				// Skip the current cpu
 				if(i == _cpu) continue;
 #else
@@ -10899,7 +10986,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 			if (!(operation == VMA_OP_REMAP) || (flags & MREMAP_FIXED)) {
 
 #ifndef SUPPORT_FOR_CLUSTERING
-				for(i = 0; i < NR_CPUS; i++) {
+				for(i = 0; i < MAX_KERNEL_IDS; i++) {
 					// Skip the current cpu
 					if(i == _cpu) continue;
 #else
@@ -11155,7 +11242,7 @@ long process_server_do_unmap_start(struct mm_struct *mm, unsigned long start,
 	int i, error;
 
 #ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < NR_CPUS; i++) {
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
 		// Skip the current cpu
 		if(i == _cpu) continue;
 #else
@@ -11364,14 +11451,14 @@ long process_server_do_mremap_end(unsigned long addr, unsigned long old_len,
  * Propagate origin thread group to children, and initialize other
  * task members.
  */
-
+extern int scif_get_nodeIDs(uint16_t *nodes, int len, uint16_t *self);
 /**
  * process_server_init
  * Start the process loop in a new kthread.
  */
 static int __init process_server_init(void) {
 
-printk("Popcorn version with user data replication\n\n");
+printk("\n\nPopcorn version with user data replication\n\n");
 printk("Per me si va ne la città dolente,\n"
 "per me si va ne l'etterno dolore,\n"
 "per me si va tra la perduta gente.\n"
@@ -11383,12 +11470,23 @@ printk("Per me si va ne la città dolente,\n"
 "Lasciate ogne speranza, voi ch'intrate\n\n");
 
 
-#ifndef SUPPORT_FOR_CLUSTERING
+/*#ifndef SUPPORT_FOR_CLUSTERING
      _cpu= smp_processor_id();
- #else
+#else
      _cpu= cpumask_first(cpu_present_mask);
 #endif
-			/*
+*/
+
+uint16_t copy_cpu;
+if(scif_get_nodeIDs(NULL, 0, &copy_cpu)==-1)
+	printk("ERROR process_server cannot initialize _cpu\n");
+
+else{
+	_cpu= copy_cpu;
+	printk("I am cpu %d\n",_cpu);	
+}
+
+		/*
 			 * Create a work queue so that we can do bottom side
 			 * processing on data that was brought in by the
 			 * communications module interrupt handlers.
@@ -11427,6 +11525,8 @@ not_compressed_page=0;
 not_compressed_diff_page=0;
 
 #endif
+
+printk("sizeof wsum %d size of pgprot%d  new_kernel_answer_t %d\n", sizeof(__wsum),sizeof(pgprot_t),sizeof( new_kernel_answer_t));
 /*
  * Register to receive relevant incomming messages.
  */

@@ -42,6 +42,10 @@
 #define DIFF_PAGE 0
 #endif
 
-//#define SUPPORT_FOR_CLUSTERING
+#define SUPPORT_FOR_CLUSTERING
 
+#define MIGRATE_FPU 0
+
+//#define MAX_KERNEL_IDS NR_CPUS
+#define MAX_KERNEL_IDS 2
 #endif /* PROCESS_SERVER_MACRO_H_ */

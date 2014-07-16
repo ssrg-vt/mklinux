@@ -2076,7 +2076,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	//Multikernel
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
-		printk("WARNING: unmap called \n");
+		//printk("WARNING: unmap called \n");
 		ret= process_server_do_unmap_start(mm, start, len);
 		if(ret<0 && ret!=VMA_OP_SAVE && ret!=VMA_OP_NOT_SAVE){
 			return ret;

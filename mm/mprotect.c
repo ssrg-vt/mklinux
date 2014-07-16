@@ -91,7 +91,7 @@ static void change_pte_range(struct mm_struct *mm, pmd_t *pmd,
 							}
 							//check if somebody else fetched the page
 							int i,count=0;
-							for (i = 0; i < NR_CPUS; i++) {
+							for (i = 0; i < MAX_KERNEL_IDS; i++) {
 								count=count+page->other_owners[i];
 							}
 							if(count>1){

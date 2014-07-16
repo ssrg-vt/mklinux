@@ -265,6 +265,8 @@ printk(KERN_ERR"%s: cnr_cpu_ids: %d size:%d summary %p tmp %p\n",
         cpuid = objPtr->_data._processor;
         pcpum = &(objPtr->_data.cpumask);//&(objPtr->_data._cpumask);
 	offset = objPtr->_data.cpumask_offset;
+
+	printk("%s, cpumask_offset %d\n",__func__,offset);
 	//TODO we should update kinit.c in order to support variable length cpumask
 	
 	bitmap_zero(tmp, size * BITS_PER_BYTE);
@@ -330,6 +332,8 @@ int associate_to_popcorn_ns(struct task_struct * tsk)
   
     if (tsk->cpus_allowed_map == NULL)
     {
+
+      //printk("%s, in task->cpus_allowed_map null\n",__func__);
       // in this case I have to convert allowed to global mask
       int size = CPUBITMAP_SIZE(popcorn_ns->nr_cpu_ids);
       struct cpubitmap * cbitm = kmalloc(size, GFP_KERNEL);// here we should use  a cache instead of mkalloc
@@ -337,14 +341,27 @@ int associate_to_popcorn_ns(struct task_struct * tsk)
 	printk(KERN_ERR"%s: kmalloc allocation failed\n", __func__);
 	return -ENOMEM;
       }
-      cbitm->size = size;
+      cbitm->size = size-sizeof(struct cpubitmap);
+      //printk("%s, cbitm->size %lu \n",__func__,cbitm->size);
       cbitm->ns = popcorn_ns; // add reference to it?! --> actually the task already did it!!! so not necessary
       
       // TODO we are always assuming that the previous namespace was init_cpu_ns but maybe is not correct
-      bitmap_zero(cbitm->bitmap, popcorn_ns->nr_cpu_ids);
-      bitmap_copy(cbitm->bitmap, cpumask_bits(&current->cpus_allowed), cpumask_size());
-      bitmap_shift_left(cbitm->bitmap, cbitm->bitmap, offset_cpus, popcorn_ns->nr_cpu_ids);
-      current->cpus_allowed_map = cbitm;
+      //bitmap_fill(cbitm->bitmap, popcorn_ns->nr_cpu_ids);
+      //bitmap_complement (cbitm->bitmap,  cpumask_bits(cpu_online_mask),nr_cpu_ids);
+      //bitmap_or(cbitm->bitmap,cbitm->bitmap, cpumask_bits(&current->cpus_allowed), nr_cpu_ids);
+      //printk("%s, cbitm->bitmap %lu, cbitm->bitmap %lu, offset_cpus %d, popcorn_ns->nr_cpu_ids %lu\n",__func__,cbitm->bitmap, cbitm->bitmap, offset_cpus, popcorn_ns->nr_cpu_ids);
+      //bitmap_shift_left(cbitm->bitmap, cbitm->bitmap, offset_cpus, popcorn_ns->nr_cpu_ids);
+	//if(!(offset_cpus==0))
+	//bitmap_fill(cbitm->bitmap, offset_cpus);      
+//bitmap_or (cbitm->bitmap, cbitm->bitmap, tsk->nsproxy->cpu_ns->cpu_online_mask, popcorn_ns->nr_cpu_ids);
+//bitmap_complement (cbitm->bitmap, cbitm->bitmap, popcorn_ns->nr_cpu_ids);      
+//bitmap_xor (cbitm->bitmap, cbitm->bitmap, tsk->nsproxy->cpu_ns->cpu_online_mask, popcorn_ns->nr_cpu_ids);
+//bitmap_and (cbitm->bitmap, cbitm->bitmap, tsk->nsproxy->cpu_ns->cpu_online_mask, popcorn_ns->nr_cpu_ids);  
+    //bitmap_complement (cbitm->bitmap, cbitm->bitmap, popcorn_ns->nr_cpu_ids);
+bitmap_copy (cbitm->bitmap, tsk->nsproxy->cpu_ns->cpu_online_mask, popcorn_ns->nr_cpu_ids);
+      
+current->cpus_allowed_map = cbitm;
+      //printk("%s, cbitm->size %lu \n",__func__,cbitm->size);
     }
     // NOTE the else case do not need to be handled, i.e. we are already linked and updated to popcorn
     
@@ -358,6 +375,8 @@ int associate_to_popcorn_ns(struct task_struct * tsk)
  */
 int write_notify_cpu_ns(struct file *file, const char __user *buffer, unsigned long count, void *data)
 {
+
+printk("%s, entered in write proc popcorn\n",__func__);
   int ret;
     get_task_struct(current);
 
@@ -392,7 +411,7 @@ struct cpu_namespace *ns;
 	
 	cnr_cpu_ids += cpumask_weight(pcpum);
     }
-  
+  printk("%s, after list for each of cpus\n",__func__);
   //associate the new cpu mask with the namespace
   ns->cpu_online_mask = summary;
   ns->nr_cpus = NR_CPUS;
@@ -441,17 +460,19 @@ printk(KERN_ERR"%s: cpu_ns %p\n", __func__, current->nsproxy->cpu_ns);
       return count;
   }
 #endif
-  
+ 
   printk("task %p %s associated with popcorn (local nr_cpu_ids %d NR_CPUS %d cpumask_bits %d OFFSET %d\n", current, current->comm, nr_cpu_ids, NR_CPUS, nr_cpumask_bits, offset_cpus);
   
   put_task_struct(current);
+
+  printk("%s, after put_task_struct\n",__func__);
   return count;
 }
 
 int register_popcorn_ns(void)
 {
 // if kernels > 1 then create /proc/popcorn
-printk("inserting popcorn in proc\n");
+	printk("inserting popcorn in proc\n");
 	struct proc_dir_entry *res; // TODO mettiamola globale
 	res = create_proc_entry("popcorn", S_IRUGO, NULL);
 	if (!res) {

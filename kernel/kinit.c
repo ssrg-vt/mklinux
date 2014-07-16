@@ -201,6 +201,7 @@ static int handle_remote_proc_cpu_info_request(struct pcn_kmsg_message* inc_msg)
   memcpy(&(response._data._cpumask), cpu_present_mask, sizeof(struct cpumask));
 #endif
   response._data.cpumask_offset = offset_cpus;
+//TODO aggiungere numero bit
   response._data.cpumask_size = cpumask_size();
   response._data._processor = my_cpu;
 
@@ -326,7 +327,13 @@ static int __init cpu_info_handler_init(void)
   _cpu = my_cpu;
 #endif
   INIT_LIST_HEAD(&rlist_head);
-  printk("%s: inside \n",__func__);	
+
+#ifdef CONFIG_X86_EARLYMIC
+offset_cpus= 4;
+#else
+offset_cpus=0;
+#endif
+  printk("%s: inside , offsetcpus %d \n",__func__,offset_cpus);	
   pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
 		handle_remote_proc_cpu_info_request);
   pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE,

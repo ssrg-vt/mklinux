@@ -976,8 +976,10 @@ NORET_TYPE void do_exit(long code)
 //#ifdef CONFIG_CPU_NAMESPACE    
 	// should I do any kind of unlinking somewhere else
 	// TODO when ported to linked list you must do unlinking
-    if (tsk->cpus_allowed_map)
-    	kfree(tsk->cpus_allowed_map); //this is in any case safe because is pointing to other stuff but duplicate per task
+    if (tsk->cpus_allowed_map){
+ 
+	kfree(tsk->cpus_allowed_map); //this is in any case safe because is pointing to other stuff but duplicate per task
+    }
 //#endif
 
 	/*
