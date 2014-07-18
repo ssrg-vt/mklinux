@@ -14,7 +14,7 @@
  * Migration hook.
  */
 int process_server_do_migration(struct task_struct* task, int cpu, struct pt_regs* regs);
-int process_server_update_page(struct task_struct * tsk,struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address);
+int process_server_update_page(struct task_struct * tsk,struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address, unsigned long page_fault_flags);
 int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu);
 int process_server_task_exit_notification(struct task_struct *tsk,long code);
 int process_server_try_handle_mm_fault(struct task_struct *tsk,struct mm_struct *mm, struct vm_area_struct *vma,

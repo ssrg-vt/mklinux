@@ -1215,7 +1215,7 @@ good_area:
 
 	if(tsk->tgroup_distributed==1 && (repl_ret & VM_CONTINUE_WITH_CHECK)){
 
-		repl_ret= process_server_update_page(tsk,mm,vma,address);
+		repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
 
 		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
 			bad_area(regs, error_code, address);

@@ -20,12 +20,8 @@
 #define _NO_DMA_
 #define DMA_THRESH 2048
 #define DMA_DONE 1
-
 int connection_handler(void *arg0);
 int send_thread(void* arg0);
-int executer_thread(void* arg0);
-int test_thread(void* arg0);
-
 int msg_count;
 int err=0,control_msg=1;
 
@@ -54,26 +50,17 @@ typedef struct _send_wait{
 	int dst_cpu;
 }send_wait;
 
-typedef struct _rcv_wait{
-	struct list_head list;
-	void * msg;
-}rcv_wait;
+
 
 //struct semaphore send_q_mutex;
 struct semaphore send_q_empty;
-struct semaphore rcv_q_empty;
 
 struct semaphore send_connDone;
 struct semaphore rcv_connDone;
 
 DEFINE_SPINLOCK(send_q_mutex); 
+
 static send_wait send_wait_q;
-
-DEFINE_SPINLOCK(rcv_q_mutex); 
-static rcv_wait rcv_wait_q;
-
-
-
 
 static int __init initialize(void);
 static void __exit unload(void);
@@ -83,8 +70,6 @@ unsigned int my_cpu;
 pcn_kmsg_cbftn callbacks[PCN_KMSG_TYPE_MAX];
 struct task_struct *handler;
 struct task_struct *sender_handler;
-struct task_struct *exect_handler;
-struct task_struct *test_handler;
 
 void enq_send(send_wait *strc)
 {
@@ -113,50 +98,16 @@ send_wait * dq_send(void)
 	}
 }
 
-
-
-void enq_rcv(rcv_wait *strc)
-{
-	spin_lock(&rcv_q_mutex);
-	INIT_LIST_HEAD(&(strc->list));
-	list_add_tail(&(strc->list), &(rcv_wait_q.list));
-	up(&rcv_q_empty);
-	spin_unlock(&rcv_q_mutex);
-}
-
-rcv_wait * dq_rcv(void)
-{
-	rcv_wait *tmp;
-	down_interruptible(&rcv_q_empty);
-	spin_lock(&rcv_q_mutex);
-	if(list_empty(&rcv_wait_q.list)){
-		printk("List is empty...\n");
-		spin_unlock(&rcv_q_mutex);
-		return NULL;	
-	}
-	else{
-		tmp = list_first_entry (&rcv_wait_q.list, rcv_wait, list);
-		list_del(rcv_wait_q.list.next);
-		spin_unlock(&rcv_q_mutex);
-		return tmp;
-	}
-}
-
-
-
 // Initialize callback table to null, set up control and data channels
 static int __init initialize(){
 	uint16_t fromcpu;
 	int i;
 	INIT_LIST_HEAD(&send_wait_q.list);
-	INIT_LIST_HEAD(&rcv_wait_q.list);
 	
 	printk("In pcn new messaging layer init\n");	
 	//sema_init(&(send_q_mutex), 0);
 	sema_init(&(send_q_empty), 0);
-	sema_init(&(rcv_q_empty), 0);
 	
-		
 	sema_init(&send_connDone,0);
 	sema_init(&rcv_connDone,0);
 	
@@ -175,83 +126,22 @@ static int __init initialize(){
 	sender_handler = kthread_run(send_thread, NULL, "pcnscif_sendD");
 	if(sender_handler < 0){
 		printk(KERN_INFO "kthread_run failed! Messaging Layer not initialized\n");
-		return (long long int)sender_handler;
+		return (long long int)handler;
 	}
-	exect_handler = kthread_run(executer_thread, NULL, "pcnscif_execD");
-	if(exect_handler < 0){
-		printk(KERN_INFO "kthread_run failed! Messaging Layer not initialized\n");
-		return (long long int)exect_handler;
-	}
+	
 	if(my_cpu!=0)
 	{
 		down_interruptible(&send_connDone);
 		down_interruptible(&rcv_connDone);
 	}
-#ifdef __TEST__
-	test_handler = kthread_run(test_thread, NULL, "pcnscif_testD");
-	if(test_handler < 0){
-		printk(KERN_INFO "kthread_run failed! Messaging Layer not initialized\n");
-		return (long long int)exect_handler;
-	}
-#endif	
+	
+	
 	printk(KERN_INFO "Popcorn SCIF Messaging Layer Initialized\n");
 	
 	return 0;
 }
 
 late_initcall(initialize);
-
-int handle_selfie_test(struct pcn_kmsg_message* inc_msg)
-{
-	printk("%s:%s",__func__,inc_msg->payload);
-	
-}
-#ifdef __TEST__
-int test_thread(void* arg0)
-{
-	int i;
-	printk("%s:called\n",__func__);
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_SELFIE_TEST,
-		handle_selfie_test);
-	for (i=0;i<10;i++)
-	{
-		struct pcn_kmsg_message msg;
-		msg.hdr.type= PCN_KMSG_TYPE_SELFIE_TEST;
-		memset(msg.payload,'a',PCN_KMSG_PAYLOAD_SIZE);
-		pcn_kmsg_send(my_cpu,&msg);
-	}
-}
-#endif
-
-int executer_thread(void* arg0)
-{
-	rcv_wait * wait_data;
-	pcn_kmsg_cbftn ftn;
-	while(1)
-	{
-		wait_data=dq_rcv();
-		
-		struct pcn_kmsg_message *msg = wait_data->msg;
-		//printk("Executer Thread\n type %d size %d\n",msg->hdr.type,msg->hdr.size);
-		if(msg->hdr.type < 0 || msg->hdr.type >= PCN_KMSG_TYPE_MAX){
-			printk(KERN_INFO "Received invalid message type %d\n", msg->hdr.type);
-			vfree(msg);
-		}else{
-			ftn = callbacks[msg->hdr.type];
-			if(ftn != NULL){
-				ftn(msg);
-			}else{
-				printk(KERN_INFO "Recieved message type %d size %d has no registered callback!\n", msg->hdr.type,msg->hdr.size,msg_count++);
-				vfree(msg);
-			}
-		}
-		kfree(wait_data);
-	
-	}
-	
-}
-
-
 
 
 
@@ -334,28 +224,31 @@ int send_thread(void* arg0)
 		curr_size = lmsg->hdr.size;
 		int sts_from_peer=0;
 		int err;
-		if(wait_data->dst_cpu==my_cpu)
+		/*if(wait_data->dst_cpu==my_cpu)
 		{
-			rcv_wait *exec_data = NULL;
-			while(exec_data==NULL)
-			{
-				exec_data = kmalloc(sizeof(rcv_wait),GFP_KERNEL);
-			}
-			exec_data->msg=vmalloc(lmsg->hdr.size);
-			memcpy(exec_data->msg,lmsg,lmsg->hdr.size);
-			//exec_data->msg=wait_data->msg;
-			enq_rcv(exec_data);
+			if(lmsg->hdr.type < 0 || lmsg->hdr.type >= PCN_KMSG_TYPE_MAX){
+				printk(KERN_INFO "Received invalid Selfie message type %d\n", lmsg->hdr.type);
+				//vfree(msg);
+			}else{
+				ftn = callbacks[lmsg->hdr.type];
+				if(ftn != NULL){
+					ftn(lmsg);
+				}else{
+					printk(KERN_INFO "Recieved Selfie message type %d size %d err %d has no registered callback!\n", lmsg->hdr.type,lmsg->hdr.size,msg_count++,no_bytes);
+					//vfree(msg);
+				}
+		}
 			
 			printk("%s: This is a selfie...\n",__func__);
 			goto _out;
 		}
-		
+		*/
 		
 		if(lmsg->hdr.size>DMA_THRESH)
 		{
 			sts_from_peer=-1;
 			memcpy(dma_send_buffer,curr_addr+sizeof(struct pcn_kmsg_message),lmsg->hdr.size-sizeof(struct pcn_kmsg_message));
-			//printk("%s:Through DMA\n",__func__);
+			//printk("%s:Through DMA size %d\n",__func__,lmsg->hdr.size);
 			//printk("%s\n",dma_send_buffer);
 			err=scif_writeto(epd, buffer, lmsg->hdr.size-sizeof(struct pcn_kmsg_message), 0x80000, SCIF_RMA_SYNC);
 			if(err<0)
@@ -431,12 +324,11 @@ int connection_handler(void *arg0){
 	scif_epd_t newepd;
 	int dflt_size;
 	struct pcn_kmsg_message *msg,*tmp,*msg_del;
-//	pcn_kmsg_cbftn ftn;
+	pcn_kmsg_cbftn ftn;
 	struct scif_portID portID;
 	int no_bytes, curr_size;
 	char *curr_addr;
-	rcv_wait *wait_data;
-//	pcn_kmsg_cbftn* cbtbl = (pcn_kmsg_cbftn*)arg0;
+	pcn_kmsg_cbftn* cbtbl = (pcn_kmsg_cbftn*)arg0;
 	scif_epd_t dataepd = scif_open();
 	if(dataepd == SCIF_OPEN_FAILED){
 		printk(KERN_INFO "scif_open failed! Messaging layer not initialized\n");
@@ -539,7 +431,7 @@ while(TRUE){
 			}
 			else
 			{
-				//printk("Must be NoN-DMA Large %d\n",tmp->hdr.size);
+				//printk("Must be NoN-DMA Large %d size of long %d\n",tmp->hdr.size,sizeof(struct pcn_kmsg_long_message));
 				curr_size = tmp->hdr.size - dflt_size;	
 				curr_addr = (char*) msg+no_bytes;
 				while((no_bytes = scif_recv(newepd, curr_addr, curr_size, SCIF_RECV_BLOCK)) >= 0)
@@ -553,11 +445,21 @@ while(TRUE){
 		}
 
 _process:
-			
-			wait_data=kmalloc(sizeof(rcv_wait),GFP_KERNEL);
-			wait_data->msg = msg;
-			enq_rcv(wait_data);
-			
+		if(msg->hdr.type < 0 || msg->hdr.type >= PCN_KMSG_TYPE_MAX){
+			printk(KERN_INFO "Received invalid message type %d\n", msg->hdr.type);
+			vfree(msg);
+		}else{
+			ftn = callbacks[msg->hdr.type];
+			if(ftn != NULL){
+				ftn(msg);
+			}else{
+				printk(KERN_INFO "Recieved message type %d size %d err %d has no registered callback!\n", msg->hdr.type,msg->hdr.size,msg_count++,no_bytes);
+				vfree(msg);
+			}
+		}
+
+	
+		
 	}
 	scif_close(newepd);
 	return (long long int)NULL;
@@ -624,5 +526,3 @@ EXPORT_SYMBOL(pcn_kmsg_register_callback);
 
 
 
- 
- 

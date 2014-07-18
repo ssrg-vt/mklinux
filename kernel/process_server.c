@@ -68,6 +68,7 @@
 
 #define CHECKSUM 0
 #define STATISTICS 1
+#define TIMING 1
 
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
@@ -394,6 +395,11 @@ typedef struct _clone_data {
 #endif
 	int tgroup_home_cpu;
 	int tgroup_home_id;
+
+#if TIMING
+	unsigned long long start;
+	int first;
+#endif
 
 } clone_data_t;
 
@@ -739,6 +745,9 @@ typedef struct mapping_answers_2_kernels {
 	data_response_for_2_kernels_t* data;
 	int arrived_response;
 	struct task_struct* waiting;
+#if TIMING
+	unsigned long long start;
+#endif
 
 } mapping_answers_for_2_kernels_t;
 
@@ -856,7 +865,9 @@ typedef struct mapping_answers {
 	data_response_t* data;
 	raw_spinlock_t lock;
 	struct task_struct* waiting;
-
+#if TIMING
+        unsigned long long start;
+#endif
 } mapping_answers_t;
 
 #endif
@@ -1225,6 +1236,158 @@ DECLARE_WAIT_QUEUE_HEAD( request_distributed_vma_op);
 /**
  * Data library
  */
+/* For timing mesurements
+ *
+ *
+ * */
+#if TIMING
+typedef struct {
+	unsigned long long min;
+	unsigned long long max;
+	unsigned long long tot;
+	unsigned long count;
+	spinlock_t spinlock;
+} time_values_t;
+
+#define FRL 0 //fetch read local
+#define FWL 1 //fetch write local
+#define FRR 2 //fetch read remote
+#define FWR 3 //fetch write remote
+#define VW 4 // write on a valid copy
+#define VR 5 // read on a valid copy (in multithread)
+#define MW 6 // write on a mofified copy (in multithread)
+#define MR 7 // read on a mofified copy (in multithread) 
+#define IW 8 // write on a invalid copy (only 2 kernels)
+#define IR 9 // read invalid copy
+#define NRR 10 //read on a not replicated copy (in multithread)
+#define NRW 11 // write on a not replicated copy (in multithread)
+#define NR_TYPES 12
+
+#define FIRST_MIG 0
+#define FIRST_MIG_WITH_FORK 1
+#define NORMAL_MIG 2
+#define BACK_MIG 3
+#define NR_MIG 4
+
+time_values_t times[NR_TYPES];
+time_values_t migration_times[NR_MIG];
+time_values_t times_ptep_clear_flush;
+
+static void update_ptep_clear_flush(unsigned long long time_elapsed){
+
+	spin_lock(&(times_ptep_clear_flush.spinlock));
+        times_ptep_clear_flush.tot+=time_elapsed;
+        times_ptep_clear_flush.count++;
+        if(time_elapsed>times_ptep_clear_flush.max)
+                times_ptep_clear_flush.max=time_elapsed;
+        if(times_ptep_clear_flush.min==0)
+                times_ptep_clear_flush.min=time_elapsed;
+        else
+                if(time_elapsed<times_ptep_clear_flush.min)
+                        times_ptep_clear_flush.min=time_elapsed;
+        spin_unlock(&(times_ptep_clear_flush.spinlock));
+
+}
+
+static void update_time(unsigned long long time_elapsed, int type){
+
+	if(type<0 || type>=NR_TYPES)
+		return;
+
+	spin_lock(&(times[type].spinlock));
+	times[type].tot+=time_elapsed;
+	times[type].count++;
+        if(time_elapsed>times[type].max)
+        	times[type].max=time_elapsed;
+        if(times[type].min==0)
+        	times[type].min=time_elapsed;
+       	else
+        	if(time_elapsed<times[type].min)
+                	times[type].min=time_elapsed;
+	spin_unlock(&(times[type].spinlock));
+
+}
+
+static void update_time_migration(unsigned long long time_elapsed, int type){
+
+
+        if(type<0 || type>=NR_MIG)
+                return;
+
+        spin_lock(&(migration_times[type].spinlock));
+        migration_times[type].tot+=time_elapsed;
+        migration_times[type].count++;
+        if(time_elapsed>migration_times[type].max)
+                migration_times[type].max=time_elapsed;
+        if(migration_times[type].min==0)
+                migration_times[type].min=time_elapsed;
+        else
+                if(time_elapsed<migration_times[type].min)
+                        migration_times[type].min=time_elapsed;
+        spin_unlock(&(migration_times[type].spinlock));
+
+}
+
+
+static void print_time(){
+	int i;
+	printk("\nPage fault times:\n");
+	/*printk(" #define FRL 0 //fetch read local\n"
+"#define FWL 1 //fetch write local\n"
+"#define FRR 2 //fetch read remote\n"
+"#define FWR 3 //fetch write remote\n"
+"#define VW 4 // write on a valid copy\n"
+"#define VR 5 // read on a valid copy (in multithread)\n"
+"#define MW 6 // write on a mofified copy (in multithread)\n"
+"#define MR 7 // read on a mofified copy (in multithread) \n"
+"#define IW 8 // write on a invalid copy (only 2 kernels)\n"
+"#define IR 9 // read invalid copy\n"
+"#define NRR 10 //read on a not replicated copy (in multithread)\n"
+"# NRW 11 // write on a not replicated copy (in multithread)\n\n");*/
+	for(i=0;i<NR_TYPES;i++){
+		spin_lock(&(times[i].spinlock));
+		unsigned long long avg=0;
+		if(times[i].count!=0)
+			avg= times[i].tot/times[i].count;
+		printk("Type %d avg %lu max %lu min %lu count %lu tot %lu\n", i, avg, times[i].max, times[i].min, times[i].count, times[i].tot);
+		times[i].max=0; times[i].min=0;times[i].tot=0;times[i].count=0;
+		spin_unlock(&(times[i].spinlock));
+	}
+}
+
+static void print_times_ptep_clear_flush(){
+		
+	printk("\ntimes_ptep_clear_flush\n");
+		spin_lock(&(times_ptep_clear_flush.spinlock));
+                unsigned long long avg=0;
+                if(times_ptep_clear_flush.count!=0)
+                        avg= times_ptep_clear_flush.tot/times_ptep_clear_flush.count;
+                printk("avg %lu max %lu min %lu count %lu tot %lu\n", avg, times_ptep_clear_flush.max, times_ptep_clear_flush.min, times_ptep_clear_flush.count, times_ptep_clear_flush.tot);
+                times_ptep_clear_flush.max=0; times_ptep_clear_flush.min=0;times_ptep_clear_flush.tot=0;times_ptep_clear_flush.count=0;
+                spin_unlock(&(times_ptep_clear_flush.spinlock));
+
+}
+static void print_migration_time(){
+        int i;
+        printk("\nMigration times:\n");
+        /*printk(" #define FIRST_MIG 0"
+ * "#define NORMAL_MIG 1"
+ * "#define BACK_MIG 2"
+ * "#define NR_MIG 3"
+ * "\n\n");*/
+        for(i=0;i<NR_MIG;i++){
+                spin_lock(&(migration_times[i].spinlock));
+                unsigned long long avg=0;
+                if(migration_times[i].count!=0)
+                        avg= migration_times[i].tot/migration_times[i].count;
+                printk("Type %d avg %lu max %lu min %lu count %lu tot %lu\n", i, avg, migration_times[i].max, migration_times[i].min, migration_times[i].count, migration_times[i].tot);
+                migration_times[i].max=0; migration_times[i].min=0;migration_times[i].tot=0;migration_times[i].count=0;
+                spin_unlock(&(migration_times[i].spinlock));
+        }
+}
+
+
+#endif
 
 /**
  * Add data entry
@@ -2361,7 +2524,7 @@ static int exit_distributed_process(memory_t* mm_data, int flush) {
 	int count = 0, i, status;
 	thread_group_exited_notification_t exit_notification;
 
-//printk("%s, entered\n",__func__	);
+	//printk("%s, entered\n",__func__	);
 	lock_task_sighand(current, &flags);
 	g = current;
 	while_each_thread(current, g)
@@ -2440,6 +2603,12 @@ static int exit_distributed_process(memory_t* mm_data, int flush) {
 					page_fault_mio,fetch,local_fetch,write,read,most_long_read,invalid,ack,answer_request,answer_request_void, request_data,most_written_page, concurrent_write,most_long_write, pages_allocated,compressed_page_sent,not_compressed_page,not_compressed_diff_page);
 
 
+#endif
+
+#if TIMING
+print_time();
+print_migration_time();
+print_times_ptep_clear_flush();
 #endif
 
 #if STATISTICS
@@ -2642,6 +2811,11 @@ static void main_for_distributed_kernel_thread(memory_t* mm_data) {
 
 					find_and_remove_clone_entry(current->tgroup_home_cpu,
 					current->tgroup_home_id);
+#if TIMING
+unsigned long long stop= native_read_tsc();
+unsigned long long elapsed_time =stop-app->start;
+update_time_migration(elapsed_time,BACK_MIG);
+#endif
 
 					kfree(app);
 				} else
@@ -2765,6 +2939,7 @@ static int create_kernel_thread_for_distributed_process_from_user_one(
 	entry->main = current;
 	current->main = 1;
 
+	//printk("%s entered\n",__func__);
 	if (!popcorn_ns) {
 		printk("OCCHIO in %s there is no popcorn_ns...\n",__func__);
              if ((ret=build_popcorn_ns(0)))
@@ -2802,7 +2977,8 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	new = prepare_kernel_cred(current);
 	commit_creds(new);
 
-	PSPRINTK("Creating memory for main distributed process\n");
+	//PSPRINTK("Creating memory for main distributed process\n");
+	//printk("Creating memory for main distributed process pid %d tgid %d\n",current->pid,current->tgid);
 
 	mm = mm_alloc();
 	if (!mm)
@@ -2927,7 +3103,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 		list_for_each(iter, &rlist_head) {
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
-			printk("sending new kernel message to %d\n",i);
+		//	printk("sending new kernel message to %d\n",i);
 //printk("cpu %d id %d\n",new_kernel_msg->tgroup_home_cpu,
         //new_kernel_msg->tgroup_home_id);
 #endif
@@ -2959,6 +3135,16 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 		//raw_spin_unlock_irqrestore(&(entry->lock_for_answer), flags);
 
 		entry->setting_up= 0;
+
+#if TIMING
+ clone_data_t* app = find_clone_entry(current->tgroup_home_cpu, current->tgroup_home_id);
+ if(app!=NULL)
+	app->first=1;
+ else
+   printk("WARNING timing didn't find app\n");
+
+#endif
+
 		main_for_distributed_kernel_thread(entry);
 
 	/* if here something went wrong....
@@ -2985,7 +3171,7 @@ void process_exec_item(struct work_struct* work) {
 		while (memory->main == NULL)
 			schedule();
 
-		wake_up_process(memory->main);
+	wake_up_process(memory->main);
 
 	} else {
 
@@ -3659,8 +3845,16 @@ void process_invalid_request_for_2_kernels(struct work_struct* work){
 			entry = pte_clear_flags(entry, _PAGE_PRESENT);
 			entry = pte_set_flags(entry, _PAGE_ACCESSED);
 
+#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
 			ptep_clear_flush(vma, address, pte);
-			set_pte_at_notify(mm, address, pte, entry);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif	
+
+		set_pte_at_notify(mm, address, pte, entry);
 
 			update_mmu_cache(vma, address, pte);
 			//flush_tlb_page(vma, address);
@@ -4022,7 +4216,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 
 	//check the vma era first
 	if(mm->vma_operation_index < request->vma_operation_index){
-		printk("different era request mm->vma_operation_index %d request->vma_operation_index%d\n",mm->vma_operation_index,request->vma_operation_index);
+		printk("different era request mm->vma_operation_index %d request->vma_operation_index %d\n",mm->vma_operation_index,request->vma_operation_index);
 		delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
 
 		if (delay) {
@@ -4172,8 +4366,14 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 				if(_cpu==request->tgroup_home_cpu){
 					entry = pte_set_flags(entry, _PAGE_UNUSED1);
 
-					ptep_clear_flush(vma, address, pte);
-
+#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 					set_pte_at_notify(mm, address, pte, entry);
 					//in x86 does nothing
 					update_mmu_cache(vma, address, pte);
@@ -4306,7 +4506,15 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 				entry = pte_set_flags(entry, _PAGE_USER);
 				entry = pte_set_flags(entry, _PAGE_ACCESSED);
 
-				ptep_clear_flush(vma, address, pte);
+				//ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 
 				set_pte_at_notify(mm, address, pte, entry);
 
@@ -4402,7 +4610,15 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 					entry = pte_clear_flags(entry, _PAGE_PRESENT);
 					entry = pte_set_flags(entry, _PAGE_ACCESSED);
 
-					ptep_clear_flush(vma, address, pte);
+					//ptep_clear_flush(vma, address, pte);
+					#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 					set_pte_at_notify(mm, address, pte, entry);
 
 					update_mmu_cache(vma, address, pte);
@@ -4434,7 +4650,15 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 					entry = pte_clear_flags(entry, _PAGE_PRESENT);
 					entry = pte_set_flags(entry, _PAGE_ACCESSED);
 
-					ptep_clear_flush(vma, address, pte);
+					//ptep_clear_flush(vma, address, pte);
+					#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 					set_pte_at_notify(mm, address, pte, entry);
 
 					update_mmu_cache(vma, address, pte);
@@ -4452,7 +4676,15 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 					entry = pte_set_flags(entry, _PAGE_ACCESSED);
 					entry = pte_clear_flags(entry, _PAGE_RW);
 
-					ptep_clear_flush(vma, address, pte);
+					//ptep_clear_flush(vma, address, pte);
+					#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 					set_pte_at_notify(mm, address, pte, entry);
 
 					update_mmu_cache(vma, address, pte);
@@ -5073,8 +5305,15 @@ void process_mapping_request(struct work_struct* work) {
 			entry = pte_set_flags(entry, _PAGE_USER);
 			entry = pte_set_flags(entry, _PAGE_ACCESSED);
 
-			ptep_clear_flush(vma, address, pte);
-
+			//ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 			set_pte_at_notify(mm, address, pte, entry);
 
 			//in x86 does nothing
@@ -5187,7 +5426,15 @@ void process_mapping_request(struct work_struct* work) {
 			entry = pte_set_flags(entry, _PAGE_ACCESSED);
 			entry = pte_clear_flags(entry, _PAGE_RW);
 
-			ptep_clear_flush(vma, address, pte);
+			//ptep_clear_flush(vma, address, pte);
+			#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 			set_pte_at_notify(mm, address, pte, entry);
 
 			update_mmu_cache(vma, address, pte);
@@ -5673,6 +5920,7 @@ void process_exiting_process_notification(struct work_struct* work) {
 static int handle_thread_group_exited_notification(
 		struct pcn_kmsg_message* inc_msg) {
 
+	printk("%s, entered\n",__func__);
 	exit_group_work_t* request_work;
 	thread_group_exited_notification_t* request =
 			(thread_group_exited_notification_t*) inc_msg;
@@ -5693,6 +5941,7 @@ static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
 	exit_work_t* request_work;
 	exiting_process_t* request = (exiting_process_t*) inc_msg;
 
+	//printk("%s, entered\n",__func__);
 	request_work = kmalloc(sizeof(exit_work_t), GFP_ATOMIC);
 
 	if (request_work) {
@@ -5853,6 +6102,10 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 	/*
 	 * Remember this request
 	 */
+
+#if TIMING
+unsigned long long start= native_read_tsc();
+#endif
 	clone_data = (clone_data_t*) kmalloc(sizeof(clone_data_t), GFP_ATOMIC);
 	if (clone_data == NULL)
 		return -1;
@@ -5899,6 +6152,11 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 	clone_data->thread_has_fpu = request->thread_has_fpu;
 	clone_data->fpu_state = request->fpu_state;
 #endif
+
+#if TIMING
+	clone_data->start= start;
+ 	clone_data->first=0;
+#endif
 	//printk("received request for cpu %d id %d SS %x exe %s prev_pid %d\n",request->tgroup_home_cpu,request->tgroup_home_id,request->stack_start,request->exe_path,request->prev_pid);
 	previous = add_clone_entry(clone_data);
 
@@ -5933,7 +6191,7 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 	PSPRINTK(
 			"MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
 	//dump_stack();
-//printk("%s, entered\n",__func__);
+//	printk("%s, entered\n",__func__);
 	entry = find_memory_entry(tsk->tgroup_home_cpu, tsk->tgroup_home_id);
 	if (entry) {
 
@@ -6055,7 +6313,7 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid,
  * 0, updated;
  */
 int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
-		struct vm_area_struct *vma, unsigned long address_not_page) {
+		struct vm_area_struct *vma, unsigned long address_not_page, unsigned long page_fault_flags) {
 
 	unsigned long address;
 
@@ -6361,8 +6619,15 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 				entry = pte_set_flags(entry, _PAGE_USER);
 				entry = pte_set_flags(entry, _PAGE_ACCESSED);
 
-				ptep_clear_flush(vma, address, pte);
-
+				//ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 				set_pte_at_notify(mm, address, pte, entry);
 
 				update_mmu_cache(vma, address, pte);
@@ -6402,9 +6667,24 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 	spin_unlock(ptl);
 
 	out_not_locked:
+#if TIMING
+		if(ret==0){
+			unsigned long long stop= native_read_tsc();
+               		unsigned long long time_elapsed= stop-fetched_data->start;
 
+                	if(page_fault_flags & FAULT_FLAG_WRITE){
+                        	update_time(time_elapsed,FWL);
+                	}
+                	else{
+                        	update_time(time_elapsed,FRL);
+                	}
+		}else
+			printk("WARNING: after updating page ret is %d when updating time\n",ret);
+		
+	
+#endif
 	remove_mapping_entry(fetched_data);
-
+	kfree(fetched_data);
 	out_not_data:
 
 	wake_up(&read_write_wait);
@@ -6667,8 +6947,17 @@ static int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 			value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
 
-			ptep_clear_flush(vma, address, pte);
-			set_pte_at_notify(mm, address, pte, value_pte);
+			//ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    			
+
+set_pte_at_notify(mm, address, pte, value_pte);
 
 			update_mmu_cache(vma, address, pte);
 
@@ -6988,7 +7277,17 @@ static int do_remote_read(int tgroup_home_cpu, int tgroup_home_id,
 	//value_pte= pte_set_flags(value_pte,_PAGE_USER);
 	value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
 
-	ptep_clear_flush(vma, address, pte);
+	//ptep_clear_flush(vma, address, pte);
+	
+#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
+
 	set_pte_at_notify(mm, address, pte, value_pte);
 
 	update_mmu_cache(vma, address, pte);
@@ -7409,7 +7708,15 @@ static int do_remote_read(int tgroup_home_cpu, int tgroup_home_id,
 				//value_pte=pte_set_flags(value_pte,_PAGE_USER);
 				value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
 				//value_pte=pte_set_flags(value_pte,_PAGE_DIRTY);
-				ptep_clear_flush(vma, address, pte);
+				//ptep_clear_flush(vma, address, pte);
+				#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 				set_pte_at_notify(mm, address, pte, value_pte);
 
 				update_mmu_cache(vma, address, pte);
@@ -7657,7 +7964,15 @@ static int do_remote_write(int tgroup_home_cpu, int tgroup_home_id,
 		//value_pte= pte_set_flags(value_pte,_PAGE_USER);
 		value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
 
-		ptep_clear_flush(vma, address, pte);
+		//ptep_clear_flush(vma, address, pte);
+		#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 		set_pte_at_notify(mm, address, pte, value_pte);
 
 		update_mmu_cache(vma, address, pte);
@@ -7784,7 +8099,15 @@ static int do_remote_write(int tgroup_home_cpu, int tgroup_home_id,
 		//value_pte=pte_set_flags(value_pte,_PAGE_USER);
 		value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
 		//value_pte=pte_set_flags(value_pte,_PAGE_DIRTY);
-		ptep_clear_flush(vma, address, pte);
+		//ptep_clear_flush(vma, address, pte);
+		#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 		set_pte_at_notify(mm, address, pte, value_pte);
 
 		update_mmu_cache(vma, address, pte);
@@ -8508,7 +8831,16 @@ static int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id
 			entry = pte_set_flags(entry, _PAGE_USER);
 			entry = pte_set_flags(entry, _PAGE_ACCESSED);
 
-			ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
+
+			//ptep_clear_flush(vma, address, pte);
 
 			page_add_new_anon_rmap(page, vma, address);
 
@@ -8860,7 +9192,16 @@ static int do_remote_fetch(int tgroup_home_cpu, int tgroup_home_id,
 			entry = pte_set_flags(entry, _PAGE_USER);
 			entry = pte_set_flags(entry, _PAGE_ACCESSED);
 
-			ptep_clear_flush(vma, address, pte);
+			//ptep_clear_flush(vma, address, pte);
+
+#if TIMING
+unsigned long long my_start= native_read_tsc();
+#endif
+                        ptep_clear_flush(vma, address, pte);
+#if TIMING
+unsigned long long my_stop= native_read_tsc();
+update_ptep_clear_flush(my_stop-my_start);
+#endif    
 
 			page_add_new_anon_rmap(page, vma, address);
 
@@ -8952,6 +9293,10 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	int tgroup_home_cpu = tsk->tgroup_home_cpu;
 	int tgroup_home_id = tsk->tgroup_home_id;
 	int ret;
+
+#if TIMING
+	unsigned long long start= native_read_tsc();
+#endif
 
 	address = page_faul_address & PAGE_MASK;
 
@@ -9080,6 +9425,12 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 				spin_unlock(ptl);
 				return VM_FAULT_VMA;
 			}
+#if TIMING
+ 		unsigned long long stop= native_read_tsc();
+                unsigned long long time_elapsed= stop-start;
+
+                update_time(time_elapsed,FWR);
+#endif
 
 			goto start;
 		}
@@ -9089,6 +9440,39 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 		spin_unlock(ptl);
 		wake_up(&read_write_wait);
 
+#if TIMING
+	if(ret==0){//case without check
+		unsigned long long stop= native_read_tsc();
+		unsigned long long time_elapsed= stop-start;
+
+		if(page_fault_flags & FAULT_FLAG_WRITE){
+			update_time(time_elapsed,FWR);
+		}
+		else{
+			update_time(time_elapsed,FRR);
+		}
+	}
+	else
+		if(ret==VM_CONTINUE_WITH_CHECK){
+#if FOR_2_KERNELS
+			mapping_answers_for_2_kernels_t* fetched_data= find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address);
+			if(fetched_data!=NULL)
+				fetched_data->start= start;
+			else
+				printk("WARNING: after fetch is not possible to find fetched data while trying to store timing\n");
+#else			
+			mapping_answers_t* fetched_data= find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address);
+                        if(fetched_data!=NULL)
+                                fetched_data->start= start;
+                        else
+                                printk("WARNING: after fetch is not possible to find fetched data while trying to store timing\n");
+
+#endif	
+		}
+		else
+			printk("WARNING: ret from fetch is %d when trying to store timing\n");
+
+#endif
 		return ret;
 
 	}
@@ -9233,6 +9617,21 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 			}
 
 			spin_unlock(ptl);
+
+#if TIMING
+
+                unsigned long long stop= native_read_tsc();
+                unsigned long long time_elapsed= stop-start;
+
+                if(page_fault_flags & FAULT_FLAG_WRITE){
+                        update_time(time_elapsed,NRW);
+                }
+                else{
+                        update_time(time_elapsed,NRR);
+                }
+
+#endif
+
 			return 0;
 		}
 
@@ -9252,6 +9651,14 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 			 */
 			if (!(page_fault_flags & FAULT_FLAG_WRITE)) {
 				spin_unlock(ptl);
+#if TIMING
+                                unsigned long long stop= native_read_tsc();
+                                unsigned long long time_elapsed= stop-start;
+
+                                update_time(time_elapsed,VR);
+
+#endif
+
 				return 0;
 			}
 
@@ -9312,7 +9719,16 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 #endif
 				spin_unlock(ptl);
 				wake_up(&read_write_wait);
+#if TIMING
+       				 if(ret==0){
+                			unsigned long long stop= native_read_tsc();
+                			unsigned long long time_elapsed= stop-start;
 
+                			update_time(time_elapsed,VW);
+                			
+        			 }else
+					printk("WARNING not possible update time ret is %d in valid write\n",ret);
+#endif
 				return ret;
 			}
 		} else
@@ -9323,6 +9739,16 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 		if (page->status == REPLICATION_STATUS_WRITTEN) {
 			PSPRINTK("Page status written address %lu \n", address);
 			spin_unlock(ptl);
+#if TIMING
+                        unsigned long long stop= native_read_tsc();
+                        unsigned long long time_elapsed= stop-start;
+                        if(page_fault_flags & FAULT_FLAG_WRITE){
+				update_time(time_elapsed,MW);
+			}
+			else
+				update_time(time_elapsed,MR);	
+#endif
+
 			return 0;
 		}
 
@@ -9400,6 +9826,19 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 			spin_unlock(ptl);
 			wake_up(&read_write_wait);
 
+#if TIMING
+
+                unsigned long long stop= native_read_tsc();
+                unsigned long long time_elapsed= stop-start;
+                        
+                if(page_fault_flags & FAULT_FLAG_WRITE){
+                        update_time(time_elapsed,IW);
+                }
+                else{
+                        update_time(time_elapsed,IR);
+                }
+
+#endif
 			return ret;
 
 		}
@@ -9437,6 +9876,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 		task->tgroup_home_cpu = orig->tgroup_home_cpu;
 		task->tgroup_home_id = orig->tgroup_home_id;
 		task->tgroup_distributed = 1;
+		//printk("thread pid %d tgid %d is forking\n",current->pid,current->tgid);
 	}
 
 	unlock_task_sighand(orig, &flags);
@@ -9460,8 +9900,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
      
 			     put_cpu_ns(task->nsproxy->cpu_ns);
 			     task->nsproxy->cpu_ns = get_cpu_ns(popcorn_ns);
-			 } else
-			     printk(KERN_ERR "%s: already attached to popcorn namespace?! how it is possible?!\n", __func__);
+			 } 
   
 		   	//associate the task with the namespace
 			 if (ret = associate_to_popcorn_ns(task))  {
@@ -9524,6 +9963,15 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 			process_server_notify_delegated_subprocess_starting(task->pid,
 					clone_data->placeholder_pid, clone_data->placeholder_cpu);
 
+#if TIMING
+unsigned long long stop= native_read_tsc();
+unsigned long long elapsed_time =stop-clone_data->start;
+if(clone_data->first==1)
+	update_time_migration(elapsed_time,FIRST_MIG);
+else
+ 	update_time_migration(elapsed_time,NORMAL_MIG);
+#endif
+
 			kfree(clone_data);
 		} else
 			printk(
@@ -9577,10 +10025,15 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	char* rpath;
 	memory_t* entry;
 	int first = 0;
+	int back= 0;
 	unsigned long flags;
 
 
-//printk("%s entered \n",__func__);
+printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
+
+#if TIMING
+unsigned long long start= native_read_tsc();
+#endif
 /*#ifndef SUPPORT_FOR_CLUSTERING
 	// Nothing to do if we're migrating to the current cpu
 	if (dst_cpu == _cpu) {
@@ -9644,7 +10097,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 		task->next_cpu = task->prev_cpu;
 		task->next_pid = task->prev_pid;
 		task->executing_for_remote= 0;
-
+		back=1;
 	}
 	else
 		request->back=0;
@@ -9741,6 +10194,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 
 	if (task->tgroup_distributed == 0) {
 
+	//	printk("group distributed is 0 pid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",task->pid,task->tgroup_home_id,task->tgroup_home_cpu);
 		task->tgroup_distributed = 1;
 		task->tgroup_home_id = task->tgid;
 		task->tgroup_home_cpu = _cpu;
@@ -9803,6 +10257,19 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 			(struct pcn_kmsg_long_message*) request,
 			sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
 
+#if TIMING
+if(first){
+	unsigned long long stop= native_read_tsc();
+	unsigned long long elapsed_time =stop-start;
+	if(tx_ret!=-1){
+
+                update_time_migration(elapsed_time,FIRST_MIG);
+       	}
+	else
+        	printk("WARNING in timing for migration ret is %d\n",tx_ret);
+}
+#endif
+
 	//printk("%s message sent ret is %d\n",__func__,tx_ret);
 	if (first)
 		kernel_thread(
@@ -9810,6 +10277,25 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 				entry, CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | SIGCHLD);
 
 	kfree(request);
+
+#if TIMING
+unsigned long long stop= native_read_tsc();
+unsigned long long elapsed_time =stop-start;
+if(tx_ret!=-1){
+
+	if(first)
+		update_time_migration(elapsed_time,FIRST_MIG_WITH_FORK);
+	else 
+		if(back)
+			update_time_migration(elapsed_time,BACK_MIG);
+		else
+			update_time_migration(elapsed_time,NORMAL_MIG);
+
+}
+else
+	printk("WARNING in timing for migration ret is %d\n",tx_ret);
+
+#endif
 
 	if (tx_ret != -1) {
 		PSPRINTK("%s clone request sent \n", __func__);
@@ -11526,7 +12012,32 @@ not_compressed_diff_page=0;
 
 #endif
 
-printk("sizeof wsum %d size of pgprot%d  new_kernel_answer_t %d\n", sizeof(__wsum),sizeof(pgprot_t),sizeof( new_kernel_answer_t));
+#if TIMING
+int i=0;
+for(i=0;i<NR_TYPES;i++){
+	times[i].max=0;
+	times[i].min=0;
+	times[i].tot=0;
+	times[i].count=0;
+	spin_lock_init(&(times[i].spinlock));
+}
+
+for(i=0;i<NR_MIG;i++){
+        migration_times[i].max=0;
+        migration_times[i].min=0;
+        migration_times[i].tot=0;
+        migration_times[i].count=0;
+        spin_lock_init(&(migration_times[i].spinlock));
+}
+
+times_ptep_clear_flush.max=0;
+        times_ptep_clear_flush.min=0;
+        times_ptep_clear_flush.tot=0;
+        times_ptep_clear_flush.count=0;
+        spin_lock_init(&(times_ptep_clear_flush.spinlock));
+
+#endif
+
 /*
  * Register to receive relevant incomming messages.
  */
