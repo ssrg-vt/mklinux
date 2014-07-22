@@ -68,7 +68,7 @@
 
 #define CHECKSUM 0
 #define STATISTICS 1
-#define TIMING 0
+#define TIMING 1
 
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
@@ -1267,10 +1267,7 @@ typedef struct {
 #define FIRST_MIG_WITH_FORK 1
 #define NORMAL_MIG 2
 #define BACK_MIG 3
-#define FIRST_MIG_R 4
-#define NORMAL_MIG_R 5
-#define BACK_MIG_R 6
-#define NR_MIG 7
+#define NR_MIG 4
 
 time_values_t times[NR_TYPES];
 time_values_t migration_times[NR_MIG];
@@ -2756,15 +2753,15 @@ static void main_for_distributed_kernel_thread(memory_t* mm_data) {
 			mm_data->alive = 1;
 			if(app->back==1){
 				struct task_struct * task = pid_task(find_get_pid(app->prev_pid), PIDTYPE_PID);
-				//printk("After pid_task\n");
-			if (task!=NULL && (task->next_pid == app->placeholder_pid) && (task->next_cpu == app->placeholder_cpu)
-						&& (task->represents_remote == 1)) {
-	
-					//if(task!=NULL){
-					//printk("task %p \n",task);
 
-					//if(task->next_pid==app->placeholder_pid)
-					//	printk("no problem in paradise\n");
+				//if (task!=NULL && (task->next_pid == app->placeholder_pid) && (task->next_cpu == app->placeholder_cpu)
+				//		&& (task->represents_remote == 1)) {
+	
+					if(task!=NULL){
+					printk("task %p \n",task);
+
+					if(task->next_pid==app->placeholder_pid)
+						printk("no problem in paradise\n");
 					// set regs
 					memcpy(task_pt_regs(task), &app->regs, sizeof(struct pt_regs));
 					task_pt_regs(task)->ax = 0;
@@ -2822,20 +2819,14 @@ static void main_for_distributed_kernel_thread(memory_t* mm_data) {
 #if TIMING
 unsigned long long stop= native_read_tsc();
 unsigned long long elapsed_time =stop-app->start;
-update_time_migration(elapsed_time,BACK_MIG_R);
+update_time_migration(elapsed_time,BACK_MIG);
 #endif
 
 					kfree(app);
 				} else{
- 					//printk(" app->prev_pid %d task->next_pid %d app->placeholder_pid %d task->next_cpu %d app->placeholder_cpu %d\n",
-	//app->prev_pid,task->next_pid,app->placeholder_pid,task->next_cpu,app->placeholder_cpu);
+ 					printk(" app->prev_pid %d task->next_pid %d app->placeholder_pid %d task->next_cpu %d app->placeholder_cpu %d\n",
+	app->prev_pid,task->next_pid,app->placeholder_pid,task->next_cpu,app->placeholder_cpu);
 					printk("ERROR: task not found. Impossible to re-run shadow.");
-					if(task!=NULL){
-						printk("app->prev_pid %d app->placeholder_pid %d app->placeholder_cpu %d task->next_pid %d task->next_cpu %d\n",app->prev_pid,app->placeholder_pid,app->placeholder_cpu,task->next_pid,task->next_cpu);
-					}
-					else
-					 printk("app->prev_pid %d app->placeholder_pid %d app->placeholder_cpu %d\n",app->prev_pid,app->placeholder_pid,app->placeholder_cpu);
-					
 					find_and_remove_clone_entry(current->tgroup_home_cpu,
                                 current->tgroup_home_id);
 				}
@@ -5939,7 +5930,7 @@ void process_exiting_process_notification(struct work_struct* work) {
 static int handle_thread_group_exited_notification(
 		struct pcn_kmsg_message* inc_msg) {
 
-	//printk("%s, entered\n",__func__);
+	printk("%s, entered\n",__func__);
 	exit_group_work_t* request_work;
 	thread_group_exited_notification_t* request =
 			(thread_group_exited_notification_t*) inc_msg;
@@ -6209,8 +6200,8 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 
 	PSPRINTK(
 			"MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
-//	dump_stack();
-	//printk("%s, entered pid %d\n",__func__,tsk->pid);
+	//dump_stack();
+//	printk("%s, entered\n",__func__);
 	entry = find_memory_entry(tsk->tgroup_home_cpu, tsk->tgroup_home_id);
 	if (entry) {
 
@@ -9881,7 +9872,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 	task->tgroup_home_cpu = -1;
 	task->tgroup_home_id = -1;
 	task->main = 0;
-	task->group_exit= -1;
+
 	// If the new task is not in the same thread group as the parent,
 	// then we do not need to propagate the old thread info.
 	if (orig->tgid != task->tgid) {
@@ -9921,12 +9912,13 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 			     task->nsproxy->cpu_ns = get_cpu_ns(popcorn_ns);
 			 } 
   	
-		//	printk("main forking pid %d \n",task->pid);
+			printk("main forking pid %d \n",task->pid);
 		   	//associate the task with the namespace
 			 if (ret = associate_to_popcorn_ns(task))  {
 			       printk(KERN_ERR"%s: associate_to_popcorn_ns returned: %d\n", __func__,ret);
 			 }
-			
+			else
+			 	printk("Already associated\n");
 			//task->thread.usersp = clone_data->thread_usersp;
 			task->thread.usersp = clone_data->old_rsp;
 			memcpy(task_pt_regs(task), &clone_data->regs,
@@ -9988,9 +9980,9 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 unsigned long long stop= native_read_tsc();
 unsigned long long elapsed_time =stop-clone_data->start;
 if(clone_data->first==1)
-	update_time_migration(elapsed_time,FIRST_MIG_R);
+	update_time_migration(elapsed_time,FIRST_MIG);
 else
- 	update_time_migration(elapsed_time,NORMAL_MIG_R);
+ 	update_time_migration(elapsed_time,NORMAL_MIG);
 #endif
 
 			kfree(clone_data);
@@ -10050,7 +10042,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	unsigned long flags;
 
 
-//printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
+printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
 
 #if TIMING
 unsigned long long start= native_read_tsc();
@@ -10119,8 +10111,8 @@ unsigned long long start= native_read_tsc();
 		task->next_pid = task->prev_pid;
 		task->executing_for_remote= 0;
 		back=1;
-//	printk("task %p task->prev_pid %d task->next_pid %d task->next_cpu %d task->prev_cpu %d\n",
-        //task,task->prev_pid,task->next_pid,task->next_cpu,task->prev_cpu);
+	printk("task %p task->prev_pid %d task->next_pid %d task->next_cpu %d task->prev_cpu %d\n",
+        task,task->prev_pid,task->next_pid,task->next_cpu,task->prev_cpu);
 
 	}
 	else

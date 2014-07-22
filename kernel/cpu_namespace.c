@@ -318,6 +318,8 @@ printk(KERN_ERR"%s: cnr_cpu_ids: %d size:%d summary %p tmp %p\n",
  */
 int associate_to_popcorn_ns(struct task_struct * tsk)
 {
+
+	//printk("%s entered pid %d \n",__func__,tsk->pid);
     if (tsk->nsproxy->cpu_ns != popcorn_ns) {
       printk("%s assumes the namespace is popcorn but is not\n", __func__);
       return -ENODEV;
@@ -336,7 +338,7 @@ int associate_to_popcorn_ns(struct task_struct * tsk)
       //printk("%s, in task->cpus_allowed_map null\n",__func__);
       // in this case I have to convert allowed to global mask
       int size = CPUBITMAP_SIZE(popcorn_ns->nr_cpu_ids);
-      struct cpubitmap * cbitm = kmalloc(size, GFP_KERNEL);// here we should use  a cache instead of mkalloc
+      struct cpubitmap * cbitm = kmalloc(size, GFP_ATOMIC);// here we should use  a cache instead of mkalloc
       if (!cbitm) {
 	printk(KERN_ERR"%s: kmalloc allocation failed\n", __func__);
 	return -ENOMEM;
@@ -360,7 +362,7 @@ int associate_to_popcorn_ns(struct task_struct * tsk)
     //bitmap_complement (cbitm->bitmap, cbitm->bitmap, popcorn_ns->nr_cpu_ids);
 bitmap_copy (cbitm->bitmap, tsk->nsproxy->cpu_ns->cpu_online_mask, popcorn_ns->nr_cpu_ids);
       
-current->cpus_allowed_map = cbitm;
+tsk->cpus_allowed_map = cbitm;
       //printk("%s, cbitm->size %lu \n",__func__,cbitm->size);
     }
     // NOTE the else case do not need to be handled, i.e. we are already linked and updated to popcorn
@@ -536,8 +538,6 @@ int notify_cpu_ns(void)
 	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME;
 	inode->i_op = dir->i_op; //&proc_def_inode_operations;
 
-	ei->pid = NULL;	
-//back to proc_ns_instantiate	
 
 /*	ns = ns_ops->get(task);
 	if (!ns)
