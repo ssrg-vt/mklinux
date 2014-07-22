@@ -707,7 +707,7 @@ EXPORT_SYMBOL(offset_cpus);
 static int __init offsetcpus(char *str)
 {
 #ifdef CONFIG_X86_EARLYMIC
-	offset_cpus=4;
+	offset_cpus=48;
 #else
 	get_option(&str, &offset_cpus);
 #endif

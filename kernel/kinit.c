@@ -24,8 +24,10 @@
 #include <linux/pcn_kmsg.h>
 #include <linux/delay.h>
 #include <linux/string.h>
+#include <linux/jhash.h>
 #include <linux/cpufreq.h>
 
+#include <linux/popcorn_cpuinfo.h>
 #include <linux/bootmem.h>
 //#include <linux/multikernel.h>
 
@@ -41,6 +43,21 @@ extern unsigned long orig_boot_params;
 #define PRINTK(...) ;
 #endif
 
+
+static inline int __getproccessor(){
+
+	unsigned int a,b,feat;
+
+	asm volatile(
+		     "cpuid"                       // call cpuid
+		     : "=a" (a), "=b" (b), "=d" (feat)           // outputs
+		     : "0" (1)                                   // inputs
+		     : "cx" );
+	if(feat & (1 << 25)) //TODO: Need to be refactored
+		return 0;
+return 1;
+}
+
 unsigned long *token_bucket;
 
 unsigned int Kernel_Id;
@@ -52,11 +69,24 @@ static int _cpu=0;
 /*
  *  Variables
  */
+ 
+
+typedef enum allVendors {
+	    AuthenticAMD,
+	    GenuineIntel,
+	    unknown
+} vendor;
+
+
+
+
 static int wait_cpu_list = -1;
+
 static DECLARE_WAIT_QUEUE_HEAD( wq_cpu);
+
 struct list_head rlist_head;
 
-#include <linux/popcorn.h>
+//#include <linux/popcorn.h>
 
 /*void popcorn_init (void)
 {
@@ -118,7 +148,33 @@ static void display(struct list_head *head)
 		buffer, objPtr->_data.cpumask_offset);
     }
 }
+void popcorn_init(void)
+{
+	int cnt=0;
+	int vendor_id=0;
+	printk("POP_INIT:first_online_node{%d} cpumask_first{%d} \n",first_online_node,cpumask_first(cpu_present_mask));
+	struct cpuinfo_x86 *c = &boot_cpu_data;
+	
 
+	if(!strcmp(((const char *) c->x86_vendor_id),((const char *)"AuthenticAMD"))){
+		vendor amd = AuthenticAMD;
+		vendor_id = amd;
+	}
+	else if(!strcmp(((const char *) c->x86_vendor_id),((const char *) "GenuineIntel"))){
+		vendor intel = GenuineIntel;
+		vendor_id = intel;
+	}
+	printk("POP_INIT:vendor{%s} cpufam{%d} model{%u} cpucnt{%d} jhas{%u}\n",c->x86_vendor_id[0] ? c->x86_vendor_id : "unknown",c->x86,c->x86_model,vendor_id, (jhash_2words((u32)vendor_id,cpumask_first(cpu_present_mask), JHASH_INITVAL) & ((1<<8)-1)));
+	
+	
+	Kernel_Id=__getproccessor();//cpumask_first(cpu_present_mask);
+
+    printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
+    //printk("POP_INIT: kernel start add is 0x%lx",kernel_start_addr);
+    printk("POP_INIT:max_low_pfn id is 0x%lx\n",PFN_PHYS(max_low_pfn));
+    printk("POP_INIT:min_low_pfn id is 0x%lx\n",PFN_PHYS(min_low_pfn));
+
+}
 ///////////////////////////////////////////////////////////////////////////////
 
 struct _remote_cpu_info_request {
@@ -146,7 +202,7 @@ static _remote_cpu_info_response_t cpu_result;
 
 extern unsigned int offset_cpus; //from kernel/smp.c
 
-struct cpumask cpu_global_online_mask;
+//struct cpumask cpu_global_online_mask;
 #define for_each_global_online_cpu(cpu)   for_each_cpu((cpu), cpu_global_online_mask)
 
 // TODO rewrite with a list
@@ -156,7 +212,93 @@ int flush_cpu_info_var(void)
   wait_cpu_list = -1;
   return 0;
 }
+static void *remote_c_start(loff_t *pos) {
+	if (*pos == 0) /* just in case, cpu 0 is not the first */
+		*pos = cpumask_first(cpu_online_mask);
+	else
+		*pos = cpumask_next(*pos - 1, cpu_online_mask);
+	if ((*pos) < nr_cpu_ids)
+		return &cpu_data(*pos);
+	return NULL;
+}
 
+int fill_cpu_info(_remote_cpu_info_data_t *res) {
+
+	void *p;
+	loff_t pos = 0;
+	p = remote_c_start(&pos);
+
+	struct cpuinfo_x86 *c = p;
+	unsigned int cpu = 0;
+	int i;
+
+#ifdef CONFIG_SMP
+	cpu = c->cpu_index;
+#endif
+
+
+	res->_processor = cpu;
+	strcpy(res->_vendor_id, c->x86_vendor_id[0] ? c->x86_vendor_id : "unknown");
+	res->_cpu_family = c->x86;
+	res->_model = c->x86_model;
+	strcpy(res->_model_name, c->x86_model_id[0] ? c->x86_model_id : "unknown");
+
+	if (c->x86_mask || c->cpuid_level >= 0)
+		res->_stepping = c->x86_mask;
+	else
+		res->_stepping = -1;
+
+	if (c->microcode)
+		res->_microcode = c->microcode;
+
+	if (cpu_has(c, X86_FEATURE_TSC)) {
+		unsigned int freq = cpufreq_quick_get(cpu);
+
+		if (!freq)
+			freq = cpu_khz;
+		res->_cpu_freq = freq / 1000, (freq % 1000);
+	}
+
+	/* Cache size */
+	if (c->x86_cache_size >= 0)
+		res->_cache_size = c->x86_cache_size;
+
+	strcpy(res->_fpu, "yes");
+	strcpy(res->_fpu_exception, "yes");
+	res->_cpuid_level = c->cpuid_level;
+	strcpy(res->_wp, "yes");
+
+	strcpy(res->_flags, "");
+	//strcpy(res->_flags,"flags\t\t:");
+	for (i = 0; i < 32 * NCAPINTS; i++)
+		if (cpu_has(c, i) && x86_cap_flags[i] != NULL)
+			strcat(res->_flags, x86_cap_flags[i]);
+
+	res->_nbogomips = c->loops_per_jiffy / (500000 / HZ);
+	//(c->loops_per_jiffy/(5000/HZ)) % 100);
+
+#ifdef CONFIG_X86_64
+	if (c->x86_tlbsize > 0)
+	res->_TLB_size= c->x86_tlbsize;
+#endif
+	res->_clflush_size = c->x86_clflush_size;
+	res->_cache_alignment = c->x86_cache_alignment;
+	res->_bits_physical = c->x86_phys_bits;
+	res->_bits_virtual = c->x86_virt_bits;
+
+	strcpy(res->_power_management, "");
+	for (i = 0; i < 32; i++) {
+		if (c->x86_power & (1 << i)) {
+			if (i < ARRAY_SIZE(x86_power_flags) && x86_power_flags[i])
+				strcat(res->_flags, x86_power_flags[i][0] ? " " : "");
+			//  x86_power_flags[i]);
+
+			//seq_printf(m, " [%d]", i);
+		}
+	}
+
+	return 0;
+}
 static int handle_remote_proc_cpu_info_response(struct pcn_kmsg_message* inc_msg)
 {
   _remote_cpu_info_response_t* msg = (_remote_cpu_info_response_t*) inc_msg;
@@ -180,19 +322,14 @@ static int handle_remote_proc_cpu_info_request(struct pcn_kmsg_message* inc_msg)
   _remote_cpu_info_request_t* msg = (_remote_cpu_info_request_t*) inc_msg;
   _remote_cpu_info_response_t response;
 
-  //printk("%s: OCCHIO request proc cpu received \n", __func__);
+  printk("%s: Entered remote  cpu info request \n", "handle_remote_proc_cpu_info_request");
 
-  /*printk("%s: kernel representative %d(%d), online cpus { ", 
-         __func__, _cpu, my_cpu);
-  for_each_online_cpu(i) {
-    printk("%d, ", i);
-  }
-  printk("}\n");*/
 
   // constructing response
   response.header.type = PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE;
   response.header.prio = PCN_KMSG_PRIO_NORMAL;
   //response._data._cpumask = kmalloc( sizeof(struct cpumask), GFP_KERNEL); //this is an error, how you can pass a pointer to another kernel?!i
+  fill_cpu_info(&response._data);
 #if 1
   bitmap_zero(&(response._data.cpumask), POPCORN_CPUMASK_BITS);
   bitmap_copy(&(response._data.cpumask), cpumask_bits(cpu_present_mask),
@@ -237,6 +374,9 @@ int send_cpu_info_request(int KernelId)
   // Build request
   request->header.type = PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST;
   request->header.prio = PCN_KMSG_PRIO_NORMAL;
+  
+  fill_cpu_info(&request->_data);
+  
 #if 1
   bitmap_zero(&(request->_data.cpumask), POPCORN_CPUMASK_BITS);
   bitmap_copy(&(request->_data.cpumask), cpumask_bits(cpu_present_mask),
@@ -329,7 +469,7 @@ static int __init cpu_info_handler_init(void)
   INIT_LIST_HEAD(&rlist_head);
 
 #ifdef CONFIG_X86_EARLYMIC
-offset_cpus= 4;
+offset_cpus= 48;
 #else
 offset_cpus=0;
 #endif

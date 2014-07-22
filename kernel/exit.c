@@ -84,6 +84,8 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#include "futex_remote.h"
+#include <popcorn/global_spinlock.h>
 static void exit_mm(struct task_struct * tsk);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
@@ -981,7 +983,14 @@ NORET_TYPE void do_exit(long code)
 	kfree(tsk->cpus_allowed_map); //this is in any case safe because is pointing to other stuff but duplicate per task
     }
 //#endif
-
+#ifdef FUTEX_STAT
+    if(current->tgroup_distributed && current->pid == current->tgroup_home_id){
+    print_wait_perf();
+    print_wake_perf();
+    print_wakeop_perf();
+    print_requeue_perf();
+    }
+#endif
 	/*
 	 * tsk->flags are checked in the futex code to protect against
 	 * an exiting task cleaning up the robust pi futexes.
@@ -994,6 +1003,9 @@ NORET_TYPE void do_exit(long code)
 				current->comm, task_pid_nr(current),
 				preempt_count());
 
+    //cleanup global worker thread only for the thread group leader
+	futex_global_worker_cleanup(tsk);
+	
 	acct_update_integrals(tsk);
 	/* sync mm's RSS info before statistics gathering */
 	if (tsk->mm)

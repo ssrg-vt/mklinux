@@ -1599,6 +1599,11 @@ struct task_struct {
 	int distributed_exit_code;
 	int group_exit;
 	int distributed_exit;
+	
+	/*akshay*/
+	int return_disposition;
+	int origin_pid;
+	pid_t surrogate;
 
 
 };

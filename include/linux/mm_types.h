@@ -165,6 +165,8 @@ struct page {
 	int other_owners[MAX_KERNEL_IDS];
 	int writing;
 	int reading;
+	//Futex
+	int futex_owner;
 
 #if FOR_2_KERNELS
 #if DIFF_PAGE

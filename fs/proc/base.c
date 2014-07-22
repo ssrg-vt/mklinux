@@ -88,6 +88,8 @@
 #endif
 #include "internal.h"
 
+/*mklinux_akshay*/
+#include "remote_proc_pid.h"
 /* NOTE:
  *	Implementing inode permission operations in /proc is almost
  *	certainly an error.  Permission checks need to happen during
@@ -287,6 +289,8 @@ static int proc_pid_wchan(struct task_struct *task, char *buffer)
 
 	wchan = get_wchan(task);
 
+    printk("%s: %pB\n", __func__, wchan);
+    
 	if (lookup_symbol_name(wchan, symname) < 0)
 		if (!ptrace_may_access(task, PTRACE_MODE_READ))
 			return 0;
@@ -574,7 +578,8 @@ int proc_setattr(struct dentry *dentry, struct iattr *attr)
 	return 0;
 }
 
-static const struct inode_operations proc_def_inode_operations = {
+/*mklinux_akshay*/ //static /*mklinux_akshay*/
+const struct inode_operations proc_def_inode_operations = {
 	.setattr	= proc_setattr,
 };
 
@@ -2934,23 +2939,27 @@ struct dentry *proc_pid_lookup(struct inode *dir, struct dentry * dentry, struct
 	if (task)
 		get_task_struct(task);
 	rcu_read_unlock();
-	if (!task)
+	if (!task) /*mklinux_akshay*/
+	{
+		result = remote_proc_pid_lookup(dir, dentry, tgid);/*mklinux_akshay*/
 		goto out;
+	/*mklinux_akshay*/}/*mklinux_akshay*/
 
 	result = proc_pid_instantiate(dir, dentry, task, NULL);
 	put_task_struct(task);
 out:
 	return result;
 }
-
+/*mklinux_akshay*/
 /*
  * Find the first task with tgid >= tgid
- *
- */
+ * moved to proc_fs
+
 struct tgid_iter {
 	unsigned int tgid;
 	struct task_struct *task;
-};
+};*/
+/*mklinux_akshay*/
 static struct tgid_iter next_tgid(struct pid_namespace *ns, struct tgid_iter iter)
 {
 	struct pid *pid;
@@ -3024,13 +3033,24 @@ int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 	iter.tgid = filp->f_pos - TGID_OFFSET;
 	for (iter = next_tgid(ns, iter);
 	     iter.task;
+	     
 	     iter.tgid += 1, iter = next_tgid(ns, iter)) {
-		filp->f_pos = iter.tgid + TGID_OFFSET;
+	/*	if((iter.task)->origin_pid !=-1 &&
+				(iter.task)->origin_pid != (iter.task)->pid)
+			    	 continue;
+	*/	filp->f_pos = iter.tgid + TGID_OFFSET;
 		if (proc_pid_fill_cache(filp, dirent, filldir, iter) < 0) {
 			put_task_struct(iter.task);
 			goto out;
 		}
 	}
+	/*mklinux_akshay*/
+	/*
+	 * populate remote pids in /proc
+	 */
+	if(remote_proc_pid_readdir(filp, dirent, filldir, TGID_OFFSET))
+			goto out_no_task;
+	/*mklinux_akshay*/
 	filp->f_pos = PID_MAX_LIMIT + TGID_OFFSET;
 out:
 	put_task_struct(reaper);

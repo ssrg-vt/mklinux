@@ -51,11 +51,19 @@
 #include <asm/mmu_context.h>
 #include <linux/tsacct_kern.h>
 #include <asm/uaccess.h>
-#include <linux/popcorn.h>
+#include <linux/popcorn_cpuinfo.h>
 #include <asm/i387.h>
 #include <linux/cpu_namespace.h>
 #include "WKdm.h"
 
+/*akshay*/
+#include <linux/futex.h>
+#define  NSIG 32
+
+#include<linux/signal.h>
+#include <linux/fcntl.h>
+#include "futex_remote.h"
+/*akshay*/
 #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 
 /**
@@ -67,12 +75,12 @@
 #define PROCESS_SERVER_MINIMAL_PGF_VERBOSE 0
 
 #define CHECKSUM 0
-#define STATISTICS 1
+#define STATISTICS 0
 
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #undef STATISTICS
-#define STATISTICS 1
+#define STATISTICS 0
 #else
 #define PSPRINTK(...) ;
 #endif
@@ -331,11 +339,19 @@ typedef struct {
 		unsigned short thread_gsindex;\
 		int tgroup_home_cpu;\
                 int tgroup_home_id;\
+        int origin_pid;\
+        sigset_t remote_blocked, remote_real_blocked;\
+        sigset_t remote_saved_sigmask;\
+        struct sigpending remote_pending;\
+        unsigned long sas_ss_sp;\
+        size_t sas_ss_size;\
+        struct k_sigaction action[_NSIG];\
 /*#ifdef MIGRATE_FPU		unsigned int  task_flags;\
   	    	unsigned char task_fpu_counter;\
 		unsigned char thread_has_fpu;\
 		union thread_xstate fpu_state;\
 #endif	*/	
+
 
 
 struct _clone_request {
@@ -394,7 +410,13 @@ typedef struct _clone_data {
 #endif
 	int tgroup_home_cpu;
 	int tgroup_home_id;
-
+	/*mklinux_akshay*/int origin_pid;
+	sigset_t remote_blocked, remote_real_blocked;
+	sigset_t remote_saved_sigmask;
+	struct sigpending remote_pending;
+	unsigned long sas_ss_sp;
+	size_t sas_ss_size;
+	struct k_sigaction action[_NSIG];
 } clone_data_t;
 
 /**
@@ -668,6 +690,7 @@ typedef struct {
 		unsigned int data_size;\
 		int diff;\
 		char data; \
+		int futex_owner; \
 
 struct _data_response_for_2_kernels {
 	DATA_RESPONSE_FIELDS_FOR_2_KERNELS
@@ -699,6 +722,7 @@ typedef struct {
 		int fetching_write;\
 		int owner;\
 		__wsum checksum; \
+		int futex_owner; \
 
 struct _data_void_response_for_2_kernels {
 	DATA_VOID_RESPONSE_FIELDS_FOR_2_KERNELS
@@ -739,6 +763,7 @@ typedef struct mapping_answers_2_kernels {
 	data_response_for_2_kernels_t* data;
 	int arrived_response;
 	struct task_struct* waiting;
+	int futex_owner;
 
 } mapping_answers_for_2_kernels_t;
 
@@ -749,7 +774,7 @@ int tgroup_home_id; \
 unsigned long address; \
 long last_write;\
 unsigned long long time_stamp;\
-int vma_operation_index;
+int vma_operation_index;\
 
 struct _invalid {
 	INVALID_FIELDS
@@ -2604,6 +2629,14 @@ static void main_for_distributed_kernel_thread(memory_t* mm_data) {
 					task->prev_cpu = app->placeholder_cpu;
 					task->prev_pid = app->placeholder_pid;
 					task->personality = app->personality;
+					//mklinux_akshay
+					task->origin_pid = app->origin_pid;
+					sigorsets(&task->blocked,&current->blocked,&app->remote_blocked) ;
+					sigorsets(&task->real_blocked,&task->real_blocked,&app->remote_real_blocked);
+					sigorsets(&task->saved_sigmask,&task->saved_sigmask,&app->remote_saved_sigmask);
+					task->pending = app->remote_pending;
+					task->sas_ss_sp = app->sas_ss_sp;
+					task->sas_ss_size = app->sas_ss_size;
 #if MIGRATE_FPU
 					//FPU migration code --- server
 					/* PF_USED_MATH is set if the task used the FPU before
@@ -3057,6 +3090,8 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg) {
 
 	fetched_data->arrived_response++;
 
+	fetched_data->futex_owner = response->futex_owner;
+
 	wake_up_process(fetched_data->waiting);
 
 	pcn_kmsg_free_msg(inc_msg);
@@ -3185,8 +3220,8 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 				printk(
 						"ERROR: a kernel that is not the server is sending the mapping\n");
 	#endif
- PSPRINTK("response->vma_pesent %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s\n",
-response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path);
+ PSPRINTK("response->vma_pesent %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->fowner %d\n",
+response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,reponse->futex_owner);
 
 			if (fetched_data->vma_present == 0) {
 				PSPRINTK("Set vma\n");
@@ -3227,6 +3262,8 @@ response->vma_present, response->vaddr_start , response->vaddr_size,response->pr
 		fetched_data->owners[inc_msg->hdr.from_cpu] = 1;
 
 		fetched_data->arrived_response++;
+
+		fetched_data->futex_owner = response->futex_owner;
 
 		wake_up_process(fetched_data->waiting);
 
@@ -4578,6 +4615,8 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 		response->address = request->address;
 		response->owner= owner;
 
+		response->futex_owner = (!page) ? 0 : page->futex_owner;//akshay
+
 	#if NOT_REPLICATED_VMA_MANAGEMENT
 		if (_cpu == request->tgroup_home_cpu && vma != NULL)
 		//only the vmas SERVER sends the vma
@@ -4600,8 +4639,8 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 				plpath = d_path(&vma->vm_file->f_path, lpath, 512);
 				strcpy(response->path, plpath);
 			}
-			 PSPRINTK("response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s\n",
-response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path);
+			 PSPRINTK("response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->futex_owner %d\n",
+response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
 		}
 
 		else
@@ -4652,7 +4691,7 @@ response->vma_present, response->vaddr_start , response->vaddr_size,response->pr
 			pcn_kmsg_free_msg(request);
 			kfree(work);
 			return;
-	e	}
+		}
 
 		vfrom = kmap_atomic(page, KM_USER0);
 
@@ -4714,6 +4753,8 @@ response->vma_present, response->vaddr_start , response->vaddr_size,response->pr
 		flush_cache_page(vma, address, pte_pfn(*pte));
 
 		response->last_write = page->last_write;
+
+		response->futex_owner = page->futex_owner;//akshay
 
 		response->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
 		response->header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -4788,6 +4829,8 @@ response->vma_present, response->vaddr_start , response->vaddr_size,response->pr
 	void_response->tgroup_home_id = request->tgroup_home_id;
 	void_response->address = request->address;
 	void_response->owner=owner;
+
+	void_response->futex_owner = 0;//TODO: page->futex_owner;//akshay
 
 
 #if NOT_REPLICATED_VMA_MANAGEMENT
@@ -5899,6 +5942,18 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 	clone_data->thread_has_fpu = request->thread_has_fpu;
 	clone_data->fpu_state = request->fpu_state;
 #endif
+    /*mklinux_akshay*/
+    clone_data->origin_pid =request->origin_pid;
+    clone_data->remote_blocked = request->remote_blocked ;
+    clone_data->remote_real_blocked = request->remote_real_blocked;
+    clone_data->remote_saved_sigmask = request->remote_saved_sigmask ;
+    clone_data->remote_pending = request->remote_pending;
+
+    clone_data->sas_ss_sp = request->sas_ss_sp;
+    clone_data->sas_ss_size = request->sas_ss_size;
+    int cnt=0;
+    for(cnt=0;cnt<_NSIG;cnt++)
+    	clone_data->action[cnt] = request->action[cnt];
 	//printk("received request for cpu %d id %d SS %x exe %s prev_pid %d\n",request->tgroup_home_cpu,request->tgroup_home_id,request->stack_start,request->exe_path,request->prev_pid);
 	previous = add_clone_entry(clone_data);
 
@@ -8188,6 +8243,7 @@ static int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id
 	fetching_page->address_present= 0;
 	fetching_page->last_write= 0;
 	fetching_page->data= NULL;
+	fetching_page->futex_owner = -1;//akshay
 
 	fetching_page->waiting = current;
 
@@ -8502,6 +8558,7 @@ static int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id
 			entry = pte_set_flags(entry, _PAGE_PRESENT);
 			page->other_owners[_cpu]=1;
 			page->other_owners[other_cpu]=1;
+			page->futex_owner = fetching_page->futex_owner;//akshay
 
 			flush_cache_page(vma, address, pte_pfn(*pte));
 
@@ -9423,6 +9480,10 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 	task->tgroup_home_cpu = -1;
 	task->tgroup_home_id = -1;
 	task->main = 0;
+	task->surrogate = -1;
+
+	/*akshay*/
+	task->origin_pid = -1;
 
 	// If the new task is not in the same thread group as the parent,
 	// then we do not need to propagate the old thread info.
@@ -9446,7 +9507,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 		clone_data = find_and_remove_clone_entry(orig->tgroup_home_cpu,
 				orig->tgroup_home_id);
 		if (clone_data != NULL) {
-
+			printk("duplicating thread\n");
 			task->executing_for_remote = 1;
 
 			if (!popcorn_ns) {
@@ -9580,7 +9641,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	unsigned long flags;
 
 
-//printk("%s entered \n",__func__);
+printk("%s entered \n",__func__);
 /*#ifndef SUPPORT_FOR_CLUSTERING
 	// Nothing to do if we're migrating to the current cpu
 	if (dst_cpu == _cpu) {
@@ -9636,6 +9697,20 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	// struct task_struct ---------------------------------------------------------
 	request->placeholder_pid = task->pid;
 	request->placeholder_tgid = task->tgid;
+    /*mklinux_akshay*/
+    if (task->prev_pid == -1)
+    	request->origin_pid = task->pid;
+    else
+    	request->origin_pid = task->origin_pid;
+    request->remote_blocked = task->blocked;
+    request->remote_real_blocked = task->real_blocked;
+    request->remote_saved_sigmask = task->saved_sigmask;
+    request->remote_pending = task->pending;
+    request->sas_ss_sp = task->sas_ss_sp;
+    request->sas_ss_size = task->sas_ss_size;
+    int cnt = 0;
+    for (cnt = 0; cnt < _NSIG; cnt++)
+    	request->action[cnt] = task->sighand->action[cnt];
 
 #if FOR_2_KERNELS
 	if(task->executing_for_remote==1){
@@ -9651,6 +9726,12 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 #else
 	request->back=0;
 #endif
+
+    /*mklinux_akshay*/
+    if(task->prev_pid==-1)
+    	task->origin_pid=task->pid;
+    else
+    	task->origin_pid=task->origin_pid;
 
 	request->personality = task->personality;
 	// struct thread_struct -------------------------------------------------------

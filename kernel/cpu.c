@@ -734,6 +734,12 @@ static DECLARE_BITMAP(cpu_online_bits, CONFIG_NR_CPUS) __read_mostly;
 const struct cpumask *const cpu_online_mask = to_cpumask(cpu_online_bits);
 EXPORT_SYMBOL(cpu_online_mask);
 
+/*mklinux_akshay*/
+static DECLARE_BITMAP(cpu_global_online_bits, CONFIG_NR_CPUS) __read_mostly;
+const struct cpumask *const cpu_global_online_mask = to_cpumask(cpu_global_online_bits);
+EXPORT_SYMBOL(cpu_global_online_mask);
+/*mklinux_akshay*/
+
 static DECLARE_BITMAP(cpu_present_bits, CONFIG_NR_CPUS) __read_mostly;
 const struct cpumask *const cpu_present_mask = to_cpumask(cpu_present_bits);
 EXPORT_SYMBOL(cpu_present_mask);

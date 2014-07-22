@@ -1003,8 +1003,10 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
 					(write ? FAULT_FLAG_WRITE : 0);
 
-	tsk = current;
+	tsk = (current->surrogate == -1) ? current : pid_task(find_get_pid(current->surrogate), PIDTYPE_PID);
 	mm = tsk->mm;
+	if(current->surrogate != -1)
+	printk("%s: server {%s} in action for {%s} ",__func__,current->comm,tsk->comm);
 
 	/* Get the faulting address: */
 	address = read_cr2();

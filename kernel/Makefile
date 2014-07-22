@@ -11,7 +11,7 @@ obj-y     = sched.o fork.o exec_domain.o panic.o printk.o \
 	    hrtimer.o rwsem.o nsproxy.o srcu.o semaphore.o \
 	    notifier.o ksysfs.o sched_clock.o cred.o \
 	    async.o range.o process_server.o \
-	    WKdmCompress.o WKdmDecompress.o
+	    WKdmCompress.o WKdmDecompress.o futex_remote.o global_spinlock.o
 obj-y += groups.o
 
 ifdef CONFIG_FUNCTION_TRACER

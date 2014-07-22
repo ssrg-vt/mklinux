@@ -6,7 +6,7 @@
 #include <linux/nsproxy.h>
 #include <linux/kref.h>
 
-#include <linux/popcorn.h>
+#include <linux/popcorn_cpuinfo.h>
 
 
 
