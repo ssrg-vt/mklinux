@@ -2967,6 +2967,10 @@ out:
 int wake_up_process(struct task_struct *p)
 {
 	WARN_ON(task_is_stopped_or_traced(p)); 
+//	if(p->tgroup_distributed==1){
+//		printk("%s waking up pid %d",__func__,p->pid);
+//		dump_stack();
+//	}
 	return try_to_wake_up(p, TASK_NORMAL, 0); //AB: having TASK_ALL, we will also wake up traced and stopped tasks
 //	return try_to_wake_up(p, TASK_ALL, 0); //AB: original implementation of wake_up_process(..) both gives error (deadlock)
 }
@@ -5665,7 +5669,7 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	int current_cpu = smp_processor_id();
     	int i,ret;
 
-	printk("%s, in popcorn sched set affinity!!!!\n",__func__);
+//	printk("%s, in popcorn sched set affinity!!!!\n",__func__);
 	get_online_cpus();
 	rcu_read_lock();
 
@@ -5737,7 +5741,7 @@ if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
                 _remote_cpu_info_list_t *objPtr;
                 struct cpumask *pcpum;
                 int size = CPUBITMAP_SIZE(p->nsproxy->cpu_ns->nr_cpu_ids);
-                unsigned long * cbitmap = kmalloc (size, GFP_KERNEL);
+                unsigned long * cbitmap = kmalloc (size, GFP_ATOMIC);
                 //unsigned long * cbitmap2 = kmalloc (size, GFP_KERNEL);
 		extern struct list_head rlist_head;
 
@@ -5762,13 +5766,13 @@ if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
 			//bitmap_copy(cbitmap2, cpumask_bits(in_mask),len * 8);
 			
 			// find the first cpumask that intersect
- 			char pippo [128] ;
-			memset(pippo,0,128);
-			bitmap_scnprintf(pippo,128,cpumask_bits(in_mask),p->nsproxy->cpu_ns->nr_cpu_ids);
-			printk("in mask %s\n",pippo);
- 			memset(pippo,0,128);	
-			bitmap_scnprintf(pippo,128,cbitmap,p->nsproxy->cpu_ns->nr_cpu_ids);
-                        printk("in cbitmap %s\n",pippo);
+ 			//char pippo [128] ;
+			//memset(pippo,0,128);
+			//bitmap_scnprintf(pippo,128,cpumask_bits(in_mask),p->nsproxy->cpu_ns->nr_cpu_ids);
+			//printk("in mask %s\n",pippo);
+ 			//memset(pippo,0,128);	
+			//bitmap_scnprintf(pippo,128,cbitmap,p->nsproxy->cpu_ns->nr_cpu_ids);
+                        //printk("in cbitmap %s\n",pippo);
 			//memset(pippo,0,128);
                         //bitmap_scnprintf(pippo,128,cbitmap2,p->nsproxy->cpu_ns->nr_cpu_ids);
                     	//printk("in mask extended %s\n",pippo);
@@ -5787,9 +5791,10 @@ if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
                                 put_task_struct(p);
                                 put_online_cpus();
 
+sleep_again:
 				schedule();
 
-                                if(ret==PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote){
+                                if(ret==PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote && current->group_exit!=-1){
                                         if(current->group_exit){
                                                 do_group_exit(current->distributed_exit_code);
                                         }
@@ -5797,7 +5802,13 @@ if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
                                                 do_exit(current->distributed_exit_code);
 
                                 }
-
+				else
+					if(ret==PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote && current->group_exit==-1){
+						printk("OCCHIO qualche maledetto tenta di svegliarmi (pid %d)\n",current->pid);
+						__set_task_state(current, TASK_UNINTERRUPTIBLE);
+						goto sleep_again;					
+					}
+			
                                 return task_pt_regs(current)->orig_ax;
 
                         }
@@ -5806,7 +5817,7 @@ if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
 
 #endif
 
-printk("not migration\n");
+//printk("not migration\n");
 	/* Prevent p going away */
 	get_task_struct(p);
 	rcu_read_unlock();
@@ -5912,7 +5923,7 @@ printk("%s entered\n",__func__);
         else { /* gloabl cpumask is bigger than local cpumask */
  		cpumask_var = (long *)&new_mask;
 		 //cpumask_var = &new_mask;
-		printk("dove mi aspetto che entri\n");
+	//	printk("dove mi aspetto che entri\n");
                 *cpumask_var = kmalloc_node(ns->cpumask_size , GFP_KERNEL, NUMA_NO_NODE);
                 if (*cpumask_var) {
                         unsigned char *ptr = (unsigned char*)cpumask_var;
@@ -5949,7 +5960,7 @@ printk("%s entered\n",__func__);
 //#ifdef CONFIG_CPU_NAMESPACE
          else{
                 //kfree (new_mask);
-                kfree(*cpumask_var);
+               // kfree(*cpumask_var);
 		
 	}
 //#endif
