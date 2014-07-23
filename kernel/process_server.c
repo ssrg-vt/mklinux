@@ -68,7 +68,7 @@
 
 #define CHECKSUM 0
 #define STATISTICS 1
-#define TIMING 0
+#define TIMING 1
 
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
@@ -3892,14 +3892,7 @@ if (pte == NULL || pte_none(pte_clear_flags(*pte,_PAGE_UNUSED1)) ) {
 	entry = pte_clear_flags(entry, _PAGE_PRESENT);
 	entry = pte_set_flags(entry, _PAGE_ACCESSED);
 
-#if TIMING
-	unsigned long long my_start= native_read_tsc();
-#endif
 	ptep_clear_flush(vma, address, pte);
-#if TIMING
-	unsigned long long my_stop= native_read_tsc();
-	update_ptep_clear_flush(my_stop-my_start);
-#endif	
 
 	set_pte_at_notify(mm, address, pte, entry);
 
@@ -4412,14 +4405,8 @@ if (pte == NULL || pte_none(pte_clear_flags(entry, _PAGE_UNUSED1))) {
 			if(_cpu==request->tgroup_home_cpu){
 				entry = pte_set_flags(entry, _PAGE_UNUSED1);
 
-#if TIMING
-				unsigned long long my_start= native_read_tsc();
-#endif
 				ptep_clear_flush(vma, address, pte);
-#if TIMING
-				unsigned long long my_stop= native_read_tsc();
-				update_ptep_clear_flush(my_stop-my_start);
-#endif    
+    
 				set_pte_at_notify(mm, address, pte, entry);
 				//in x86 does nothing
 				update_mmu_cache(vma, address, pte);
