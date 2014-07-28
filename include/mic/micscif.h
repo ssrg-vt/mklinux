@@ -394,9 +394,9 @@ struct conreq {
 };
 
 /* Size of the RB for the Node QP */
-#define NODE_QP_SIZE    0x10000
+#define NODE_QP_SIZE    0x100000
 /* Size of the RB for the Endpoint QP */
-#define ENDPT_QP_SIZE   0x1000
+#define ENDPT_QP_SIZE   0x100000
 
 struct endpt_qp_info {
 	/* Qpair for this endpoint */

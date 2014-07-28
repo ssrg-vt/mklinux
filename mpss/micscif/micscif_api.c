@@ -1301,6 +1301,7 @@ _scif_send(scif_epd_t epd, void *msg, int len, int flags)
 			 */
 			micscif_rb_commit(&ep->qp_info.qp->outbound_q);
 #ifdef SCIF_BLAST
+//#error "scif_blast defined"
 			if (flags & SCIF_BLAST) {
 				/*
 				 * Bypass-path; set flag int the host side node_qp
@@ -1326,6 +1327,7 @@ _scif_send(scif_epd_t epd, void *msg, int len, int flags)
 				}
 			}
 #else
+
 			/*
 			 * Send a notification to the peer about the
 			 * produced data message.

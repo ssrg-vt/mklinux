@@ -6380,7 +6380,7 @@ tx_ret = pcn_kmsg_send_long(tsk->prev_cpu,
 				create_process_pairing_t* msg;
 				int tx_ret = -1;
 
-				msg=(create_process_pairing_t*)kmalloc(sizeof(create_process_pairing_t*),GFP_ATOMIC);
+				msg= (create_process_pairing_t*) kmalloc(sizeof(create_process_pairing_t),GFP_ATOMIC);
 				if(!msg)
 					return -1;
 				// Notify remote cpu of pairing between current task and remote
@@ -8415,7 +8415,9 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 				if (!IS_ERR(f)) {
 
+					
 					//check if other threads already installed the vma
+					vma = find_vma(mm, address);
 					if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 						vma = NULL;
 					}
