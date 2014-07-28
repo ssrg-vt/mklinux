@@ -22,31 +22,32 @@ enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_TEST_LONG,
 	PCN_KMSG_TYPE_CHECKIN,
 	PCN_KMSG_TYPE_MCAST,
-   PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST,
-             PCN_KMSG_TYPE_PROC_SRV_CREATE_PROCESS_PAIRING,
-             PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS,
-             PCN_KMSG_TYPE_PROC_SRV_VMA_OP,
-             PCN_KMSG_TYPE_PROC_SRV_VMA_LOCK,
-             PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST,
-             PCN_KMSG_TYPE_PROC_SRV_NEW_KERNEL,
-             PCN_KMSG_TYPE_PROC_SRV_NEW_KERNEL_ANSWER,
-             PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE,
-             PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_VOID,
-             PCN_KMSG_TYPE_PROC_SRV_INVALID_DATA,
-             PCN_KMSG_TYPE_PROC_SRV_ACK_DATA,
-             PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_REQUEST,
-             PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE,
-             PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION,
-             PCN_KMSG_TYPE_PROC_SRV_VMA_ACK,
-    PCN_KMSG_TYPE_PROC_SRV_BACK_MIGRATION,
+	PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST,
+	PCN_KMSG_TYPE_PROC_SRV_CREATE_PROCESS_PAIRING,
+	PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS,
+	PCN_KMSG_TYPE_PROC_SRV_BACK_MIG_REQUEST,
+	PCN_KMSG_TYPE_PROC_SRV_VMA_OP,
+	PCN_KMSG_TYPE_PROC_SRV_VMA_LOCK,
+	PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST,
+	PCN_KMSG_TYPE_PROC_SRV_NEW_KERNEL,
+	PCN_KMSG_TYPE_PROC_SRV_NEW_KERNEL_ANSWER,
+	PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE,
+	PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_VOID,
+	PCN_KMSG_TYPE_PROC_SRV_INVALID_DATA,
+	PCN_KMSG_TYPE_PROC_SRV_ACK_DATA,
+	PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_REQUEST,
+	PCN_KMSG_TYPE_PROC_SRV_THREAD_COUNT_RESPONSE,
+	PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION,
+	PCN_KMSG_TYPE_PROC_SRV_VMA_ACK,
+	PCN_KMSG_TYPE_PROC_SRV_BACK_MIGRATION,
 	PCN_KMSG_TYPE_PCN_PERF_START_MESSAGE,
 	PCN_KMSG_TYPE_PCN_PERF_END_MESSAGE,
 	PCN_KMSG_TYPE_PCN_PERF_CONTEXT_MESSAGE,
 	PCN_KMSG_TYPE_PCN_PERF_ENTRY_MESSAGE,
 	PCN_KMSG_TYPE_PCN_PERF_END_ACK_MESSAGE,
-    PCN_KMSG_TYPE_START_TEST,
-    PCN_KMSG_TYPE_REQUEST_TEST,
-    PCN_KMSG_TYPE_ANSWER_TEST,
+	PCN_KMSG_TYPE_START_TEST,
+	PCN_KMSG_TYPE_REQUEST_TEST,
+	PCN_KMSG_TYPE_ANSWER_TEST,
 	PCN_KMSG_TYPE_MCAST_CLOSE,
 	PCN_KMSG_TYPE_SHMTUN,
 		PCN_KMSG_TYPE_REMOTE_PROC_MEMINFO_REQUEST,
@@ -80,9 +81,9 @@ enum pcn_kmsg_type {
 		PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST,
 		PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE,
 		PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_TOKEN_REQUEST,
-PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE,
-PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
-PCN_KMSG_TERMINATE,
+	PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_RESPONSE,
+	PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
+	PCN_KMSG_TERMINATE,
 	PCN_KMSG_TYPE_MAX
 };
 
@@ -158,7 +159,7 @@ typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);
 /* Register a callback function to handle a new message type.  Intended to
    be called when a kernel module is loaded. */
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type,
-			       pcn_kmsg_cbftn callback);
+		pcn_kmsg_cbftn callback);
 
 /* Unregister a callback function for a message type.  Intended to
    be called when a kernel module is unloaded. */
@@ -171,8 +172,8 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg);
 
 /* Send a long message to the specified destination CPU. */
 int pcn_kmsg_send_long(unsigned int dest_cpu,
-		       struct pcn_kmsg_long_message *lmsg,
-		       unsigned int payload_size);
+		struct pcn_kmsg_long_message *lmsg,
+		unsigned int payload_size);
 
 /* Free a received message (called at the end of the callback function) */
 inline void pcn_kmsg_free_msg(void *msg);
@@ -216,7 +217,7 @@ int pcn_kmsg_mcast_send(pcn_kmsg_mcast_id id, struct pcn_kmsg_message *msg);
 
 /* Send a long message to the specified multicast group. */
 int pcn_kmsg_mcast_send_long(pcn_kmsg_mcast_id id,
-			     struct pcn_kmsg_long_message *msg,
-			     unsigned int payload_size);
+		struct pcn_kmsg_long_message *msg,
+		unsigned int payload_size);
 
 #endif /* __LINUX_PCN_KMSG_H */

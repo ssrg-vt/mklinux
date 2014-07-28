@@ -387,7 +387,7 @@ int kernel_mprotect(unsigned long start, size_t len,
 	//Multikernel
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
-		printk("WARNING: mprotect called \n");
+		//printk("WARNING: mprotect called \n");
 		distr_ret= process_server_mprotect_start( start, len, prot);
 		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
 			up_write(&current->mm->mmap_sem);
@@ -505,7 +505,7 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	//Multikernel
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
-		printk("WARNING: mprotect called\n");
+		//printk("WARNING: mprotect called\n");
 		distr_ret= process_server_mprotect_start( start, len, prot);
 		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
 			up_write(&current->mm->mmap_sem);
