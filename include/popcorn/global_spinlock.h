@@ -55,6 +55,7 @@ struct local_request_queue {
 			DONE, IDLE, INPROG
 	} status;
 	int errno;
+	int _st; 	//Maintain state after server reponse
 	struct list_head lrq_member;
 } __attribute__((packed));
 typedef struct local_request_queue _local_rq_t;
@@ -124,7 +125,7 @@ int find_and_delete_request(int request_id, struct list_head *head);
 _local_rq_t * find_request(int request_id, struct list_head *head) ;
 _local_rq_t * find_request_by_pid(pid_t pid, struct list_head *head) ;
 _local_rq_t * set_err_request(int request_id,int err, struct list_head *head) ;
-
+int find_and_delete_pid(int pid, struct list_head *head);
 
 extern _spin_value spin_bucket[1 << _SPIN_HASHBITS];
 extern _global_value global_bucket[1 << _SPIN_HASHBITS];

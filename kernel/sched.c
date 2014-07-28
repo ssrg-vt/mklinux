@@ -5669,7 +5669,7 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	int current_cpu = smp_processor_id();
     	int i,ret;
 
-//	printk("%s, in popcorn sched set affinity!!!!\n",__func__);
+	printk("%s, in popcorn sched set affinity!!!!\n",__func__);
 	get_online_cpus();
 	rcu_read_lock();
 
@@ -5817,7 +5817,7 @@ sleep_again:
 
 #endif
 
-//printk("not migration\n");
+printk("not migration\n");
 	/* Prevent p going away */
 	get_task_struct(p);
 	rcu_read_unlock();
@@ -6097,12 +6097,12 @@ SYSCALL_DEFINE3(sched_getaffinity, pid_t, pid, unsigned int, len,
 	}
 
 	if ( !(nr_cpus > nr_cpu_ids) ){
-                free_cpumask_var(mask);
+                //free_cpumask_var(mask);
 		}
         else{
-              //kfree(mask);
-              kfree(*cpumask_var);
-              
+     		/*kfree(mask);
+           	 kfree(*cpumask_var);
+              */
              // printk("%s,remember free not called\n",__func__);
 	}
 	return ret;

@@ -69,19 +69,19 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 0
+#define PROCESS_SERVER_VERBOSE 1
 #define PROCESS_SERVER_VMA_VERBOSE 0
 #define PROCESS_SERVER_NEW_THREAD_VERBOSE 0
 #define PROCESS_SERVER_MINIMAL_PGF_VERBOSE 0
 
 #define CHECKSUM 0
 #define STATISTICS 0
-#define TIMING 0
+#define TIMING 1
 
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
 #undef STATISTICS
-#define STATISTICS 0
+#define STATISTICS 1
 #else
 #define PSPRINTK(...) ;
 #endif
@@ -3017,7 +3017,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	memory_t* entry = NULL;
 	int ret;
 
-	//printk("%s entered. my cpu is %i\n",__func__,_cpu);
+printk("%s entered. my cpu is %i\n",__func__,_cpu);
 	spin_lock_irq(&current->sighand->siglock);
 	flush_signal_handlers(current, 1);
 	spin_unlock_irq(&current->sighand->siglock);
@@ -3215,7 +3215,7 @@ void process_exec_item(struct work_struct* work) {
 	clone_exec_work_t* info_work = (clone_exec_work_t*) work;
 	clone_data_t* clone = info_work->clone_data;
 
-//printk("%s\n",__func__);
+printk("%s\n",__func__);
 	memory_t* memory = find_memory_entry(clone->tgroup_home_cpu,
 			clone->tgroup_home_id);
 	if (memory != NULL) {
@@ -3426,7 +3426,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 						"ERROR: a kernel that is not the server is sending the mapping\n");
 	#endif
  PSPRINTK("response->vma_pesent %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->fowner %d\n",
-response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,reponse->futex_owner);
+response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
 
 			if (fetched_data->vma_present == 0) {
 				PSPRINTK("Set vma\n");
@@ -4253,7 +4253,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 	PSPRINTK(
 			"Request %i address %lu from cpu %i\n", request_data, request->address, from_cpu);
 
-	PSMINPRINTK("Request %i address %lu is fetch %i is write %i\n", request_data, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
+	printk("Request %i address %lu is fetch %i is write %i\n", request_data, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
 
 	memory = find_memory_entry(request->tgroup_home_cpu,
 			request->tgroup_home_id);
@@ -4292,6 +4292,11 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 	vma = find_vma(mm, address);
 	if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 		vma = NULL;
+		if(_cpu == request->tgroup_home_cpu){
+			printk(KERN_ALERT"%s:OCCHIO vma NULL in xeon address{%lx}\n",__func__,address);
+			up_read(&mm->mmap_sem);
+			goto out;
+		}
 	} else {
 
 		if (unlikely(is_vm_hugetlb_page(vma))
@@ -4362,6 +4367,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 
 	entry = *pte;
 	lock= 1;
+	printk(KERN_ALERT"%s: entry{%lx}  pte{%p} \n",__func__,entry,pte);
 
 
 	if (pte == NULL || pte_none(pte_clear_flags(entry, _PAGE_UNUSED1))) {
@@ -4425,6 +4431,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 #if TIMING
 unsigned long long my_start= native_read_tsc();
 #endif
+			printk(KERN_ALERT"%s: vma {%d} ,address {%lx} pte{%p} enrty{%lx} \n",__func__, (vma) ? 0:1,address, (pte)?0:1,entry);
                         ptep_clear_flush(vma, address, pte);
 #if TIMING
 unsigned long long my_stop= native_read_tsc();
@@ -6160,7 +6167,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 	clone_data_t* clone_data;
 	int previous;
 	// perf_cc = native_read_tsc();
-	//printk("%s : received request\n", __func__);
+	printk("%s : received request\n", __func__);
 	/*
 	 * Remember this request
 	 */
@@ -6264,8 +6271,8 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 
 	PSPRINTK(
 			"MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
-//	dump_stack();
-	//printk("%s, entered pid %d\n",__func__,tsk->pid);
+	dump_stack();
+printk("%s, entered pid %d\n",__func__,tsk->pid);
 	entry = find_memory_entry(tsk->tgroup_home_cpu, tsk->tgroup_home_id);
 	if (entry) {
 
@@ -8441,6 +8448,7 @@ static int do_mapping_for_distributed_process(mapping_answers_t* fetching_page,
 			if (!IS_ERR(f)) {
 
 				//check if other threads already installed the vma
+				vma = find_vma(mm, address);
 				if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 					vma = NULL;
 				}
@@ -8702,7 +8710,9 @@ static int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id
 		}
 
 		if (vma == NULL) {
-			PSPRINTK("ERROR: no vma for address %lu in the system\n", address);
+			//PSPRINTK
+			dump_stack();
+			printk(KERN_ALERT"%s: ERROR: no vma for address %lu in the system {%d} \n",__func__, address,current->pid);
 			ret = VM_FAULT_VMA;
 			goto exit_fetch_message;
 		}
@@ -9382,6 +9392,11 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	PSPRINTK(
 			"Page fault %i address %lu in page %lu task pid %d t_group_cpu %d t_group_id %d \n", page_fault_mio, page_faul_address, address, tsk->pid, tgroup_home_cpu, tgroup_home_id);
 
+	if(page_fault_flags & FAULT_FLAG_WRITE)
+		printk(KERN_ALERT"write\n");
+	else
+		printk(KERN_ALERT"read\n");
+
 	if (address == 0) {
 		printk("ERROR: accessing page at address 0 pid %i\n",tsk->pid);
 		return VM_FAULT_ACCESS_ERROR | VM_FAULT_VMA;
@@ -9940,6 +9955,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 	task->main = 0;
 	task->surrogate = -1;
 	task->group_exit= -1;
+	task->uaddr = 0;
 
 	/*akshay*/
 	task->origin_pid = -1;
@@ -10111,7 +10127,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	unsigned long flags;
 
 
-printk("%s entered \n",__func__);
+printk("%s entered dst{%d} \n",__func__,dst_cpu);
 //printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
 
 #if TIMING
@@ -10404,7 +10420,7 @@ else
 #endif
 
 	if (tx_ret != -1) {
-		PSPRINTK("%s clone request sent \n", __func__);
+		printk(KERN_ALERT"%s clone request sent \n", __func__);
 
 		__set_task_state(task, TASK_UNINTERRUPTIBLE);
 

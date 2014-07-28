@@ -19,7 +19,7 @@
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
 #include <asm/kmemcheck.h>		/* kmemcheck_*(), ...		*/
 #include <asm/fixmap.h>			/* VSYSCALL_START		*/
-
+#include <linux/cpu_namespace.h>
 /*
  * Page fault error code bits:
  *
@@ -986,6 +986,38 @@ static int fault_in_kernel_space(unsigned long address)
 	return address >= TASK_SIZE_MAX;
 }
 
+static void dump_regs(struct pt_regs* regs) {
+    unsigned long fs, gs;
+   printk(KERN_ALERT"DUMP REGS\n");
+    if(NULL != regs) {
+        printk(KERN_ALERT"r15{%lx}\n",regs->r15);
+        printk(KERN_ALERT"r14{%lx}\n",regs->r14);
+        printk(KERN_ALERT"r13{%lx}\n",regs->r13);
+        printk(KERN_ALERT"r12{%lx}\n",regs->r12);
+        printk(KERN_ALERT"r11{%lx}\n",regs->r11);
+        printk(KERN_ALERT"r10{%lx}\n",regs->r10);
+        printk(KERN_ALERT"r9{%lx}\n",regs->r9);
+        printk(KERN_ALERT"r8{%lx}\n",regs->r8);
+        printk(KERN_ALERT"bp{%lx}\n",regs->bp);
+        printk(KERN_ALERT"bx{%lx}\n",regs->bx);
+        printk(KERN_ALERT"ax{%lx}\n",regs->ax);
+        printk(KERN_ALERT"cx{%lx}\n",regs->cx);
+        printk(KERN_ALERT"dx{%lx}\n",regs->dx);
+        printk(KERN_ALERT"di{%lx}\n",regs->di);
+        printk(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
+        printk(KERN_ALERT"ip{%lx}\n",regs->ip);
+        printk(KERN_ALERT"cs{%lx}\n",regs->cs);
+        printk(KERN_ALERT"flags{%lx}\n",regs->flags);
+        printk(KERN_ALERT"sp{%lx}\n",regs->sp);
+        printk(KERN_ALERT"ss{%lx}\n",regs->ss);
+    }
+    rdmsrl(MSR_FS_BASE, fs);
+    rdmsrl(MSR_GS_BASE, gs);
+    printk(KERN_ALERT"fs{%lx}\n",fs);
+    printk(KERN_ALERT"gs{%lx}\n",gs);
+    printk(KERN_ALERT"REGS DUMP COMPLETE\n");
+}
+
 /*
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
@@ -1005,9 +1037,9 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 
 	tsk = (current->surrogate == -1) ? current : pid_task(find_get_pid(current->surrogate), PIDTYPE_PID);
 	mm = tsk->mm;
-	if(current->surrogate != -1)
-	printk("%s: server {%s} in action for {%s} ",__func__,current->comm,tsk->comm);
-
+/*	if(current->surrogate != -1)
+	      printk("%s: server {%s} in action for {%s} ",__func__,current->comm,tsk->comm);
+*/
 	/* Get the faulting address: */
 	address = read_cr2();
 
@@ -1136,6 +1168,14 @@ retry:
 	}
 
 	vma = find_vma(mm, address);
+
+	if(current->nsproxy->cpu_ns == popcorn_ns ){
+		printk(KERN_ALERT"%s:Page fault for address %lu in page %lu pid %d\n",__func__,address,address&PAGE_MASK,current->pid);
+		if(flags&FAULT_FLAG_WRITE)
+			printk(KERN_ALERT"write\n");
+		else
+			printk(KERN_ALERT"read\n");
+	}
 	// Multikernel
 	repl_ret= 0;
 	// Nothing to do for a thread group that's not distributed.
@@ -1147,6 +1187,7 @@ retry:
 			goto out;
 
 		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
+			dump_regs(regs);
 			bad_area(regs, error_code, address);
 			goto out_distr;
 		}

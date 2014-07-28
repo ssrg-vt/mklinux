@@ -16,6 +16,9 @@ MY_SYSMAP=$MPSS_BOOT"System.map-3.2.14+mpss3.2-knightscorner"
 cp $KERNEL_BZIMAGE $MY_BZIMAGE
 cp $KERNEL_SYSMAP $MY_SYSMAP
 
+diff $KERNEL_BZIMAGE $MY_BZIMAGE 
+
+
 ELEM="\$1"
 BUFF_ADDR_PAT="[\t ]__log_buf$"
 cat $MY_SYSMAP | grep "$BUFF_ADDR_PAT"

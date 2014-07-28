@@ -32,7 +32,7 @@ DEFINE_SPINLOCK(request_queue_lock);
 #define GENERAL_SPIN_LOCK(x,f) spin_lock_irqsave(x,f)
 #define GENERAL_SPIN_UNLOCK(x,f) spin_unlock_irqrestore(x,f)
 
-#define GSP_VERBOSE 1
+#define GSP_VERBOSE 0
 #if GSP_VERBOSE
 #define GSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -84,6 +84,24 @@ static int _cpu =0;
  	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
  }
 
+int find_and_delete_pid(int pid, struct list_head *head) {
+
+ 	struct list_head *iter;
+ 	_local_rq_t *objPtr;
+	unsigned long f;
+ 	 GENERAL_SPIN_LOCK(&request_queue_lock,f);
+ 	list_for_each(iter, head)
+ 	{
+ 		objPtr = list_entry(iter, _local_rq_t, lrq_member);
+ 		if (objPtr->_pid == pid) {
+ 			list_del(&objPtr->lrq_member);
+ 			kfree(objPtr);
+ 			 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
+ 			return 1;
+ 		}
+ 	}
+ 	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
+ }
 
  _local_rq_t * find_request(int request_id, struct list_head *head) {
 
@@ -255,10 +273,12 @@ __releases(&value->_sp)
 				if(_data->ops==WAIT_OPS){
 					wait_req->fn_flags |= FLAGS_REMOTECALL;
 				}
-				else
+				else{
 					wake_req->fn_flag |= FLAGS_REMOTECALL;
+				printk(KERN_ALERT"%s: uaddr{%lx}  uaddr2{%lx}\n",__func__,wake_req->uaddr,wake_req->uaddr2);
+				}
 
-    			GSPRINTK(KERN_ALERT"%s: sending to origin remote callpfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
+    			GSPRINTK(KERN_ALERT"%s: sending to origin remote callpfn cpu: 0x{%d} request->ticket{%d}  \n",__func__,cpu,localticket_value);
     			if (cpu >= 0)
     			{
 				spin_unlock(&value->_sp);
@@ -273,16 +293,18 @@ __releases(&value->_sp)
 				else{
 					wake_req->fn_flag |= FLAGS_ORIGINCALL;
 					wake_req->rflag = current->pid;
+				
+				printk(KERN_ALERT"%s: uaddr{%lx}  uaddr2{%lx}\n",__func__,wake_req->uaddr,wake_req->uaddr2);
 				}
 
-    			GSPRINTK(KERN_ALERT"%s: sending to origin origin call cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
+    			GSPRINTK(KERN_ALERT"%s: sending to origin origin call cpu: 0x{%d}  \n",__func__,cpu,localticket_value);
     			if (cpu >= 0)
     			{
 				spin_unlock(&value->_sp);
 				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) ((_data->ops==WAKE_OPS)? (wake_req):(wait_req)));
     			}
     		}
-
+//		rq_ptr->_st=0;
     		wait_event_interruptible(rq_ptr->_wq, (rq_ptr->status == DONE));
     		GSPRINTK(KERN_ALERT"%s:after wake up process: task woken{%d}\n",__func__,current->pid);
 
@@ -294,67 +316,6 @@ out:
 }
 
 
-int global_spinunlock(unsigned long uaddr, unsigned int fn_flag){
-
-	int localticket_value;
-	int res = 0;	int cpu=0;
-
-	_spin_key sk ;
-	spin_key_init(&sk);
-
-	getKey(uaddr, &sk,current->tgroup_home_id);
-	_spin_value *value = hashspinkey(&sk);
-
-	_remote_key_request_t *request = kmalloc(sizeof(_remote_key_request_t),
-					GFP_ATOMIC);
-		printk(KERN_ALERT"%s: request -- entered whos calling{%s} \n", __func__,current->comm);
-		printk(KERN_ALERT"%s:  uaddr {%lx} fn_flag {%lx} val{%d}  pid{%d} \n",
-					__func__,uaddr,fn_flag,current->pid);
-
-		// Finish constructing response
-		request->header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST;
-		request->header.prio = PCN_KMSG_PRIO_NORMAL;
-
-		struct vm_area_struct *vma;
-		vma = getVMAfromUaddr(uaddr);
-
-		request->flags = 0;
-		request->uaddr =(unsigned long)uaddr;
-		request->pid = current->pid;
-		request->tghid = current->tgroup_home_id;
-		request->fn_flags = fn_flag;
-
-		request->ticket = 2;// WAIT_RELEASE_TOKEN; //set the request to release lock
-
-		unsigned long pfn;
-		pte_t pte;
-		pte = *((pte_t *) do_page_walk((unsigned long)uaddr));
-	//	printk(KERN_ALERT"%s pte ptr : ox{%lx} cpu{%d} \n",__func__,pte,smp_processor_id());
-		pfn = pte_pfn(pte);
-		printk(KERN_ALERT"%s pte pfn : 0x{%lx}\n",__func__,pfn);
-
-
-
-	    if(1){
-	    	//pcn_kmsg and wait
-	    	if (vma->vm_flags & VM_PFNMAP) {
-	    			if (1)//TODO: modify (cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1)
-	    					{
-	    				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
-	    			}
-	    		} else {//if ((fn_flag & FLAGS_ORIGINCALL)) {
-	    			if (1)//TODO: modify(cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1)
-	    					{
-	    				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) (request));
-	    			}
-	    		}
-
-	    }
-
-out:
-	kfree(request);
-	return 0;
-}
 static int __init global_spinlock_init(void)
 {
 	int i=0;

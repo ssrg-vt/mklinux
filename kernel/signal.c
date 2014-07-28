@@ -2133,13 +2133,22 @@ if (pid > 0) {
 		next_pid = p->next_pid;
 		prev_pid = p->prev_pid;
 		origin_pid = p->origin_pid;
+		if(p->tgroup_distributed == 1)
+		   printk(KERN_ALERT"%s: distributed process kill {%d}\n",pid);
 		}
+	
 
 	if(origin_pid!=-1 && next_pid != -1){
-			/* struct task_struct *task = pid_task(find_vpid(pid), PIDTYPE_PID);
-			 if(task){
-			 __set_task_state(task,TASK_INTERRUPTIBLE);}*/
 			 ret=0;
+	}
+	else if(p && p->tgroup_distributed == 1  && p->represents_remote == 1){
+	printk(KERN_ALERT"%s:signal for shadow pid{%d} sig{%d} next{%d} \n",__func__,p->pid,sig,p->next_pid);
+	if(p->group_exit != -1){
+		printk(KERN_ALERT"%s group exit\n",__func__);
+		return 0;
+	}
+	if(p->next_pid != -1)
+	 	return remote_kill_pid_info(ORIG_NODE(p->next_pid),sig,pid,info);
 	}
 	else{
 	rcu_read_lock();
@@ -3115,6 +3124,9 @@ relock:
 			do_coredump(info->si_signo, info->si_signo, regs);
 		}
 
+		if(current->tgroup_distributed && (current->pid!=current->tgid) && current->represents_remote == 1)
+-			printk(KERN_ALERT" handling group exit signal for shadow through devil path\n");
+
 		/*
 		 * Death signals, no core dump.
 		 */
@@ -3645,10 +3657,9 @@ rcu_read_lock();
 p = find_task_by_vpid(pid);
 printk(KERN_ALERT"%s: pid{%d} tgid{%d} p{%d} \n",__func__,pid,tgid,(!p)?0:1);
 
-if(p && p->tgroup_distributed && !p->executing_for_remote){
-	//if(p->return_disposition == RETURN_DISPOSITION_NONE)
+if(p && p->tgroup_distributed &&  p->represents_remote){
 	{
-		printk(KERN_ALERT"%s: ret disp pid{%d} next{%d} \n",__func__,pid,p->next_pid);
+		printk(KERN_ALERT"%s: ret disp pid{%d} next{%d} tg {%d} \n",__func__,pid,p->next_pid,p->group_exit);
 		rcu_read_unlock();
 		return remote_do_send_specific(ORIG_NODE(p->next_pid),tgid,p->next_pid,sig,info);
 	}

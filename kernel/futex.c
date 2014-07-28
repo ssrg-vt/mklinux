@@ -286,10 +286,20 @@ get_futex_key(u32 __user *uaddr, int fshared, union futex_key *key, int rw)
 		if (unlikely(!access_ok(VERIFY_WRITE, uaddr, sizeof(u32))))
 			return -EFAULT;
 
+		int nr_cpus;
+        	struct cpu_namespace * _ns = current->nsproxy->cpu_ns;
+	 	if (_ns != &init_cpu_ns) {
+	        	 nr_cpus = nr_cpu_ids + 228;//((struct cpu_namespace *)_ns)->nr_cpu_ids;
+	         }
+	         else
+		         nr_cpus = nr_cpu_ids;
+	
+                if ((nr_cpus > nr_cpu_ids) ) {
 		//TODO: make it only for Popcorn threads.
-		owner = setFutexOwnerToPage(address,uaddr);
+		//if((current->cpus_allowed_map  && (current->cpus_allowed_map->ns == current->nsproxy->cpu_ns)))
+			owner = setFutexOwnerToPage(address,uaddr);
 		//printk(KERN_ALERT "%s: owner for addr {%d} \n",__func__,owner);
-
+		}
 		key->private.mm = mm;
 		key->private.address = address;
 		get_futex_key_refs(key);
@@ -434,13 +444,26 @@ int fault_in_user_writeable(u32 __user *uaddr)
 {
 	struct mm_struct *mm = current->mm;
 	int ret;
+#if NOT_REPLICATED_VMA_MANAGEMENT
+        int lock_aquired= 0;
+        if(current->tgroup_distributed==1){
+                        down_read(&mm->distribute_sem);
+                        lock_aquired= 1;
+               }
+               else
+                        lock_aquired= 0;
+#endif
+                down_read(&mm->mmap_sem);
+                ret = fixup_user_fault(current, mm, (unsigned long)uaddr,
+                                               FAULT_FLAG_WRITE);
+                up_read(&mm->mmap_sem);
+#if NOT_REPLICATED_VMA_MANAGEMENT
+                if(current->tgroup_distributed==1 && lock_aquired){
+                        up_read(&mm->distribute_sem);
+                }
+#endif
+        return ret < 0 ? ret : 0;
 
-	down_read(&mm->mmap_sem);
-	ret = fixup_user_fault(current, mm, (unsigned long)uaddr,
-			       FAULT_FLAG_WRITE);
-	up_read(&mm->mmap_sem);
-
-	return ret < 0 ? ret : 0;
 }
 
 //static
@@ -448,10 +471,27 @@ int fault_in_user_writeable(u32 __user *uaddr)
 {
 	struct mm_struct *mm = tgid->mm;
 	int ret;
-	down_read(&mm->mmap_sem);
-	ret = fixup_user_fault(tgid, mm, (unsigned long)uaddr, FAULT_FLAG_WRITE);
-	up_read(&mm->mmap_sem);
-	return ret < 0 ? ret : 0;
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+        int lock_aquired= 0;
+        if(current->tgroup_distributed==1){
+                        down_read(&mm->distribute_sem);
+                        lock_aquired= 1;
+               }
+               else
+                        lock_aquired= 0;
+#endif
+                down_read(&mm->mmap_sem);
+                ret = fixup_user_fault(current, mm, (unsigned long)uaddr,
+                                               FAULT_FLAG_WRITE);
+                up_read(&mm->mmap_sem);
+#if NOT_REPLICATED_VMA_MANAGEMENT
+                if(current->tgroup_distributed==1 && lock_aquired){
+                        up_read(&mm->distribute_sem);
+                }
+#endif
+        return ret < 0 ? ret : 0;
+
 }
 /**
  * futex_top_waiter() - Return the highest priority waiter on a futex
@@ -1069,6 +1109,7 @@ __acquires(&value->_sp)
 	_local_rq_t *rq_ptr= add_request_node(localticket_value,current->pid,&value->_lrq_head);
 	rq_ptr->_pid = current->pid;
 	rq_ptr->status = INPROG;
+	rq_ptr->_st = 0;
 
 	//populate the hb
 	hb = hash_futex(&q->key);
@@ -1090,22 +1131,15 @@ __acquires(&value->_sp)
 	smp_mb();
 
 	if(ret){
-		y  = get_user(x,uaddr);
-		//printk(KERN_ALERT "%s: uadrr{%lx} ti{%lx} check if there is wake up {%d} - {%d} {%d} {%d} \n",__func__,uaddr,localticket_value,rq_ptr->wake_st,ret,x,y);
 		if(rq_ptr->wake_st == 1) //no need to queue it.
-		{
 			ret = 0;
-		}
 	}
 	else if (!ret){
-		get_user(dval,uaddr);
 		FPRINTK(KERN_ALERT"%s: check if there is wake up on ret=0 {%d} davl{%d}  \n",__func__,rq_ptr->wake_st,ret,dval);
 		if(rq_ptr->wake_st == 1)//no neew to queue
-		{
 			ret = -EWOULDBLOCK;
-		}
 	}
-	find_and_delete_request(localticket_value, &value->_lrq_head);
+//	find_and_delete_request(localticket_value, &value->_lrq_head);
 
 	return ret;
 }
@@ -2399,6 +2433,19 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 	 * queue_me() calls spin_unlock() upon completion, both serializing
 	 * access to the hash list and forcing another memory barrier.
 	 */
+	
+	struct spin_key sk;
+	_spin_value *value = NULL;
+	_local_rq_t * l = NULL;
+	int counter = 0;
+	/*if(current->tgroup_distributed == 1){
+		__spin_key_init(&sk);
+		printk(KERN_ALERT"%s: uaddr{%lx} pid{%d} tgid{%d}\n",__func__,current->uaddr,current->pid,current->tgroup_home_id);
+		getKey((unsigned long) current->uaddr, &sk,current->tgroup_home_id);
+		value = hashspinkey(&sk);
+		l= find_request_by_pid(current->pid, &value->_lrq_head);
+		printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->_st);
+	}*/
 	set_current_state(TASK_INTERRUPTIBLE);
 	queue_me(q, hb);
 
@@ -2422,7 +2469,21 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 		if (!timeout || timeout->task){
 			schedule();
 		}
+	/*	if(current->tgroup_distributed == 1 && l){
+			while(l->_st != 1){
+			 if(counter != 0)
+				printk(KERN_ALERT"%s: woke up illegal ptr{%p} _st{%d} uaddr{%lx} pid{%d}\n",__func__,l,l->_st,current->uaddr,current->pid);
+			 
+			 counter++;
+		 	 set_current_state(TASK_INTERRUPTIBLE);
+		   		if(l->_st !=  1)
+					schedule();	
+			}
+		} */
 	}
+/*	if(current->tgroup_distributed == 1 && l)
+		find_and_delete_pid(current->pid, &value->_lrq_head);
+*/	
 	__set_current_state(TASK_RUNNING);
 }
 
@@ -2483,6 +2544,8 @@ retry_private:
 #ifdef FUTEX_STAT
                 perf_bb = native_read_tsc();
 #endif
+		current->uaddr = (unsigned long) uaddr;
+		printk(KERN_ALERT"%s: pid{%d} setting uaddr{%lx} \n",__func__,current->pid,current->uaddr);
 		g_errno = global_queue_wait_lock(q, uaddr, *hb, fn_flag, val,
 				flags & FLAGS_SHARED, VERIFY_READ, bitset);
 #ifdef FUTEX_STAT
@@ -2675,7 +2738,6 @@ retry:
 
 	/* queue_me and wait for wakeup, timeout, or a signal. */
 	futex_wait_queue_me(hb, &q, to);
-
 	/* If we were woken (and unqueued), we succeeded, whatever. */
 	ret = 0;
 
@@ -3543,12 +3605,19 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 	ktime_t t, *tp = NULL;
 	u32 val2 = 0;
 	int cmd = op & FUTEX_CMD_MASK;
+	int retn=0;
+
+	if(current->tgroup_distributed ==1)
+		printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid);
 
 	if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
 		      cmd == FUTEX_WAIT_BITSET ||
 		      cmd == FUTEX_WAIT_REQUEUE_PI)) {
-		if (copy_from_user(&ts, utime, sizeof(ts)) != 0)
+		if ((retn = copy_from_user(&ts, utime, sizeof(ts))) != 0){
+			if(current->tgroup_distributed)
+				printk(KERN_ALERT"%s: retn {%d}\n",retn);
 			return -EFAULT;
+		}
 		if (!timespec_valid(&ts))
 			return -EINVAL;
 
@@ -3564,8 +3633,11 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 	if (cmd == FUTEX_REQUEUE || cmd == FUTEX_CMP_REQUEUE ||
 	    cmd == FUTEX_CMP_REQUEUE_PI || cmd == FUTEX_WAKE_OP)
 		val2 = (u32) (unsigned long) utime;
-
-	return do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
+	retn =  do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
+	
+	if(current->tgroup_distributed ==1)
+		printk(KERN_ALERT"%s: END +++++++++++++pid{%d}\n",__func__,current->pid);
+	return retn;
 }
 
 static int __init futex_init(void)
