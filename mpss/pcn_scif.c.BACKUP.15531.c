@@ -8,13 +8,9 @@
 #include <linux/delay.h>
 #include <linux/kthread.h>
 #include <linux/semaphore.h>
-#include <linux/file.h>
 #include <linux/pcn_kmsg.h>
-#include <linux/fdtable.h>
-#include "scif.h"
-extern 	int __scif_flush(ep);
+#include "./scif.h"
 
-#define min_val(x,y) ((x)<=(y)?(x):(y))
 #define FALSE 0
 #define TRUE 1
 #define PORT_DATA_IN 10
@@ -22,16 +18,13 @@ extern 	int __scif_flush(ep);
 #define START_OFFSET 0x80000
 #define BACKLOG 5 // Length of incoming message queue for control messages
 #define _NO_DMA_
-#define DMA_THRESH 17*PAGE_SIZE
+#define DMA_THRESH 2048
 #define DMA_DONE 1
 
 int connection_handler(void *arg0);
 int send_thread(void* arg0);
 int executer_thread(void* arg0);
 int test_thread(void* arg0);
-
-
-scif_epd_t send_epd;
 
 int msg_count;
 int err=0,control_msg=1;
@@ -79,7 +72,6 @@ static send_wait send_wait_q;
 DEFINE_SPINLOCK(rcv_q_mutex); 
 static rcv_wait rcv_wait_q;
 
-DEFINE_SPINLOCK(send_lock); 
 
 
 
@@ -93,36 +85,6 @@ struct task_struct *handler;
 struct task_struct *sender_handler;
 struct task_struct *exect_handler;
 struct task_struct *test_handler;
-
-scif_epd_t test_func()
-{
-/*	struct files_struct *current_files,*sender_files;
-	current_files = current->files;
-	sender_files = sender_handler->files;
-	int fd;
-	
-//	spin_lock(&current_files->file_lock);
-	fd=get_unused_fd();
-	printk("%s:send_epd %d\n",__func__,send_epd);
-	struct fdtable *curr_fdt,*send_fdt;
-	
-	curr_fdt = files_fdtable(current_files);
-	send_fdt = files_fdtable(sender_files);
-	curr_fdt[fd]=send_fdt[send_epd];
-	
-	if (!current_files)
-	{
-		printk("%s:Wired stuff\n",__func__);
-	}
-*/	
-//spin_unlock(&current_files->file_lock);
-	return send_epd;
-	
-}
-
-
-
-
 
 void enq_send(send_wait *strc)
 {
@@ -289,6 +251,10 @@ int executer_thread(void* arg0)
 	
 }
 
+
+
+
+
 int send_thread(void* arg0)
 {
 	uint16_t fromcpu;
@@ -302,7 +268,7 @@ int send_thread(void* arg0)
 	int curr_size, no_bytes;
 	send_wait * wait_data;
 	char *dma_send_buffer;
-	off_t send_buffer;
+	off_t buffer;
 	if(scif_get_nodeIDs(NULL, 0, &fromcpu) == -1){
 		printk(KERN_INFO "scif_get_nodeIDs failed! Messaging layer not initialized\n");
 		return -1;
@@ -331,14 +297,11 @@ int send_thread(void* arg0)
 		//return rc;
 	}
 	dma_send_buffer=vmalloc(1024*PAGE_SIZE);
-	send_buffer = scif_register(epd, dma_send_buffer, 1024*PAGE_SIZE, 0x80000, SCIF_PROT_WRITE | SCIF_PROT_READ, SCIF_MAP_KERNEL | SCIF_MAP_FIXED);
+	buffer = scif_register(epd, dma_send_buffer, 1024*PAGE_SIZE, 0x80000, SCIF_PROT_WRITE | SCIF_PROT_READ, SCIF_MAP_KERNEL | SCIF_MAP_FIXED);
 	BARRIER(epd,"Register Send");
 	struct pcn_kmsg_long_message *lmsg;
 	int use_dma=0;
 	is_connection_done=PCN_CONN_CONNECTED;
-	
-	send_epd = epd;
-	printk("%s: epd %d send_epd %d\n",__func__,epd,send_epd);
 	up(&send_connDone);
 	printk("Connection Done...PCN_SEND Thread\n");
 	
@@ -394,7 +357,7 @@ int send_thread(void* arg0)
 			memcpy(dma_send_buffer,curr_addr+sizeof(struct pcn_kmsg_message),lmsg->hdr.size-sizeof(struct pcn_kmsg_message));
 			//printk("%s:Through DMA\n",__func__);
 			//printk("%s\n",dma_send_buffer);
-			err=scif_writeto(epd, send_buffer, lmsg->hdr.size-sizeof(struct pcn_kmsg_message), 0x80000, SCIF_RMA_SYNC);
+			err=scif_writeto(epd, buffer, lmsg->hdr.size-sizeof(struct pcn_kmsg_message), 0x80000, SCIF_RMA_SYNC);
 			if(err<0)
 			{
 				printk("error in DMA Transfer %d",err);
@@ -527,7 +490,7 @@ while(TRUE){
 				return 0;
 		}
 	
-		msg = (struct pcn_kmsg_message*)vmalloc(128*PAGE_SIZE);
+		msg = (struct pcn_kmsg_message*)vmalloc(sizeof(struct pcn_kmsg_long_message));
 		dflt_size = sizeof(struct pcn_kmsg_message);
 		curr_addr = (char*) msg;
 		
@@ -548,7 +511,7 @@ while(TRUE){
 			}
 			tmp=(struct pcn_kmsg_message*)curr_addr;
 			msg_size=tmp->hdr.size;
-	//		printk("Size %d NoRcv %d\n",tmp->hdr.size,no_bytes);
+			//printk("Size %d NoRcv %d\n",tmp->hdr.size,no_bytes);
 			if(msg_size<=sizeof(struct pcn_kmsg_message))
 			{
 				//printk("Must be NoNDMA Small\n");
@@ -618,7 +581,6 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg){
 	
 	if( pcn_connection_staus()==PCN_CONN_WATING)
 		return -1;
-/*	
 	send_wait wait_ptr;
 	sema_init(&wait_ptr._sem,0);
 	msg->hdr.from_cpu = my_cpu;
@@ -629,12 +591,9 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg){
 	enq_send(&wait_ptr);
 	down(&wait_ptr._sem);
 	return wait_ptr.error;
-*/
-	return pcn_kmsg_send_long(dest_cpu,msg,sizeof(struct pcn_kmsg_message)-sizeof(struct pcn_kmsg_hdr));
 }
 
 int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size){
-/*/
 	if( pcn_connection_staus()==PCN_CONN_WATING)
 		return -1;
 	send_wait wait_ptr;
@@ -643,113 +602,10 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	lmsg->hdr.is_lg_msg = 1;
 	wait_ptr.msg=lmsg;
 	wait_ptr.dst_cpu=dest_cpu;
-	
+	lmsg->hdr.size=sizeof(struct pcn_kmsg_hdr) + payload_size;
 	enq_send(&wait_ptr);
 	down(&wait_ptr._sem);
 	return wait_ptr.error;
-*/
-
-	
-	if( pcn_connection_staus()==PCN_CONN_WATING)
-		return -1;
-		
-	int no_bytes,data_send=0;
-	char * curr_addr = (char*) lmsg;
-	int curr_size;
-	lmsg->hdr.size = payload_size+sizeof(struct pcn_kmsg_hdr);	
-	lmsg->hdr.from_cpu = my_cpu;
-	//lmsg->hdr.is_lg_msg = 1;
-	//lmsg->hdr.size=curr_size;
-	unsigned long start_time[10], finish_time[10];
-
-	int num_chunks = (int)((lmsg->hdr.size / (PAGE_SIZE/2)));
-	int remainder = lmsg->hdr.size  % (PAGE_SIZE/2);
-	int i;
-	//printk("%s: noc %d\n",__func__,num_chunks);
-/*	for(i=0;i<num_chunks;i++)
-	{
-		curr_addr = (char*) lmsg+data_send;
-		curr_size=(PAGE_SIZE/2);
-		rdtscll(start_time[i]);
-	while((no_bytes = scif_send(send_epd, curr_addr, curr_size, 0)) >= 0){
-				
-			
-				if(no_bytes==-ENODEV)
-				{
-					printk("%s:Terminatind pcn_sendD\n",__func__);
-					//up(&wait_data->_sem);
-					data_send=no_bytes;
-					is_connection_done = PCN_CONN_WATING;
-					return;
-				}
-				
-				if(no_bytes<0)
-				{
-					printk("Some thing went wrong Send Failed\n");
-				}
-				curr_addr = curr_addr + no_bytes;
-				curr_size = curr_size - no_bytes;
-				data_send=data_send+no_bytes;
-				if(curr_size == 0)
-					break;
-				//printk("%s: total %d nobytes %d\n",__func__,lmsg->hdr.size,no_bytes);
-			}
-			rdtscll(finish_time[i]);
-	}	
-	
-*/	
-	if(dest_cpu==my_cpu)
-	{
-		rcv_wait *exec_data = NULL;
-		while(exec_data==NULL)
-		{
-				exec_data = kmalloc(sizeof(rcv_wait),GFP_KERNEL);
-		}
-		exec_data->msg=vmalloc(lmsg->hdr.size);
-		memcpy(exec_data->msg,lmsg,lmsg->hdr.size);
-		//exec_data->msg=wait_data->msg;
-		enq_rcv(exec_data);		
-		printk("%s: This is a selfie...\n",__func__);
-		return lmsg->hdr.size;
-	}
-	
-	spin_lock(&send_lock);	
-	curr_size = lmsg->hdr.size;
-	while((no_bytes = scif_send(send_epd, curr_addr, curr_size, 0)) >= 0){
-				
-				
-				if(no_bytes==-ENODEV)
-				{
-					printk("%s:Terminatind pcn_sendD\n",__func__);
-					//up(&wait_data->_sem);
-					data_send=no_bytes;
-					is_connection_done = PCN_CONN_WATING;
-					return;
-				}
-				
-				if(no_bytes<0)
-				{
-					printk("Some thing went wrong Send Failed\n");
-				}
-				curr_addr = curr_addr + no_bytes;
-				curr_size = curr_size - no_bytes;
-				data_send=data_send+no_bytes;
-				if(curr_size == 0)
-					break;
-				//printk("%s: total %d nobytes %d\n",__func__,lmsg->hdr.size,no_bytes);
-			}	
-	
-	
-/*	for(i=0;i<num_chunks;i++)
-	{
-		printk("%s: Chunck %d send %llu\n",__func__,i,finish_time[i]-start_time[i]);
-	}
-*/	
-//__scif_flush(send_epd);	
-spin_unlock(&send_lock);
-//printk("%s: %d",__func__,data_send);
-return (data_send<0?-1:data_send);
-	
 }
 
 inline void pcn_kmsg_free_msg(void *msg){
@@ -762,8 +618,6 @@ EXPORT_SYMBOL(pcn_kmsg_send_long);
 EXPORT_SYMBOL(pcn_kmsg_send);
 EXPORT_SYMBOL(pcn_kmsg_unregister_callback);
 EXPORT_SYMBOL(pcn_kmsg_register_callback);
-//EXPORT_SYMBOL(epd_fd);
-EXPORT_SYMBOL(test_func);
 
 
 

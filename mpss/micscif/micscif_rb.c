@@ -70,6 +70,9 @@ void micscif_rb_init(struct micscif_rb *rb,
 	 * being a power of 2
 	 */
 	BUG_ON((size & (size-1)) != 0);
+	
+//	printk("%s: RB Size %d\n",__func__,size);
+//	dump_stack();
 	rb->rb_base = rb_base;
 	rb->size = size;
 	rb->read_ptr = read_ptr;

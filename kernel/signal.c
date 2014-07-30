@@ -303,7 +303,7 @@ static int handle_remote_kill_response(struct pcn_kmsg_message* inc_msg) {
 	_remote_kill_response_t* msg = (_remote_kill_response_t*) inc_msg;
 
 	printk("%s: response --- errno stored - errno{%d} \n",
-			"handle_remote_kill_response", msg->errno);
+			"handle_remote_kill_response",__func__, msg->errno);
 
 	_outgoing_remote_signal_pool_t *ptr = find_outgoing(msg->request_id, &out_head);
 	if(!ptr) goto free;
@@ -325,7 +325,7 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	int ret = -ESRCH;
 	int signum = 0;
 
-	printk("%s: request -- entered \n", "handle_remote_kill_request");
+	printk("%s: request -- entered current{%d} comm{%s} for pid{%d}\n", "handle_remote_kill_request",current->pid,current->comm, msg->pid);
 
 	// Finish constructing response
 	response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
@@ -381,14 +381,14 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	return 0;
 }
 
-static int remote_kill_pid_info(int kernel, int sig, pid_t pid,
+int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 		struct siginfo *info) {
 
 	int res = 0;
 
 	_remote_kill_request_t *request = kmalloc(sizeof(_remote_kill_request_t),
 	GFP_ATOMIC);
-
+	printk(KERN_ALERT"%s: current pid{%d} comm {%s} sig{%d} pid{%d}\n",__func__, current->pid,current->comm,sig,pid);
 	_outgoing_remote_signal_pool_t *ptr;
 	// Build request
 
@@ -1905,6 +1905,16 @@ int zap_other_threads(struct task_struct *p)
 	struct task_struct *t = p;
 	int count = 0;
 
+    /*    if(p->tgroup_distributed == 1 && p->main != 1 && p->executing_for_remote){
+	struct siginfo info;
+
+	info.si_signo = SIGKILL;
+	info.si_errno = 0;
+	info.si_code = SI_TKILL;
+	info.si_pid = p->tgroup_home_id;
+	info.si_uid = current_uid();
+		remote_do_send_specific(0,p->tgroup_home_id,p->tgroup_home_id,SIGKILL,&info);	
+	}*/
 	p->signal->group_stop_count = 0;
 
 	while_each_thread(p, t) {
@@ -2134,7 +2144,7 @@ if (pid > 0) {
 		prev_pid = p->prev_pid;
 		origin_pid = p->origin_pid;
 		if(p->tgroup_distributed == 1)
-		   printk(KERN_ALERT"%s: distributed process kill {%d}\n",pid);
+		   printk(KERN_ALERT"%s: distributed process kill {%d}\n",__func__,pid);
 		}
 	
 
@@ -4109,10 +4119,22 @@ void __init signals_init(void)
 {
 	sigqueue_cachep = KMEM_CACHE(sigqueue, SLAB_PANIC);
 }
+
+extern int scif_get_nodeIDs(uint16_t *nodes, int len, uint16_t *self);
+
+
 static int __init kill_handler_init(void) {
 /*mklinux_akshay*/
 
- _cpu= cpumask_first(cpu_present_mask);
+// _cpu= cpumask_first(cpu_present_mask);
+uint16_t copy_cpu;
+	if(scif_get_nodeIDs(NULL, 0, &copy_cpu)==-1)
+		printk("ERROR process_server cannot initialize _cpu\n");
+
+	else{
+		_cpu= copy_cpu;
+		printk("I am cpu %d\n",_cpu);
+	}
 
 printk(KERN_ALERT"%s: cpu{%d}\n",__func__,_cpu);
 INIT_LIST_HEAD(&out_head);

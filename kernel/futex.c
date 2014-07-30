@@ -73,7 +73,7 @@
 #include <linux/string.h>
 #include <popcorn/init.h>
 
-#define FUTEX_VERBOSE 0
+#define FUTEX_VERBOSE 0 
 #if FUTEX_VERBOSE
 #define FPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -1535,7 +1535,7 @@ retry_private:
 		//printk(KERN_ALERT "%s:comm{%s} start{%lx} end{%lx} vmastart{%lx} vmaend{%lx} vmaflag{%lx}\n",__func__,current->comm,current->mm->mmap->vm_start, current->mm->mmap->vm_end, _v->vm_start,_v->vm_end,_v->vm_flags);
  		//find_page(uaddr2,current);
 		g_errno= global_queue_wake_lock(&key1,uaddr1, flags & FLAGS_SHARED, nr_wake, 1,
- 				 0, fn_flags,uaddr2,nr_wake2,op);
+ 				 0, fn_flags,(unsigned long)uaddr2,nr_wake2,op);
  		ret = g_errno;
  		FPRINTK(KERN_ALERT " %s: err {%d}\n",__func__,g_errno);
 #ifdef FUTEX_STAT
@@ -2646,7 +2646,7 @@ static void printPTE(u32 __user *uaddr) {
 
 static void dump_regs(struct pt_regs* regs) {
     unsigned long fs, gs;
-   FPRINTK(KERN_ALERT"DUMP REGS\n");
+   printk(KERN_ALERT"DUMP REGS\n");
     if(NULL != regs) {
         FPRINTK(KERN_ALERT"r15{%lx}\n",regs->r15);
         FPRINTK(KERN_ALERT"r14{%lx}\n",regs->r14);
@@ -2656,23 +2656,23 @@ static void dump_regs(struct pt_regs* regs) {
         FPRINTK(KERN_ALERT"r10{%lx}\n",regs->r10);
         FPRINTK(KERN_ALERT"r9{%lx}\n",regs->r9);
         FPRINTK(KERN_ALERT"r8{%lx}\n",regs->r8);
-        FPRINTK(KERN_ALERT"bp{%lx}\n",regs->bp);
-        FPRINTK(KERN_ALERT"bx{%lx}\n",regs->bx);
-        FPRINTK(KERN_ALERT"ax{%lx}\n",regs->ax);
-        FPRINTK(KERN_ALERT"cx{%lx}\n",regs->cx);
-        FPRINTK(KERN_ALERT"dx{%lx}\n",regs->dx);
-        FPRINTK(KERN_ALERT"di{%lx}\n",regs->di);
-        FPRINTK(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
-        FPRINTK(KERN_ALERT"ip{%lx}\n",regs->ip);
-        FPRINTK(KERN_ALERT"cs{%lx}\n",regs->cs);
-        FPRINTK(KERN_ALERT"flags{%lx}\n",regs->flags);
-        FPRINTK(KERN_ALERT"sp{%lx}\n",regs->sp);
-        FPRINTK(KERN_ALERT"ss{%lx}\n",regs->ss);
+        printk(KERN_ALERT"bp{%lx}\n",regs->bp);
+        printk(KERN_ALERT"bx{%lx}\n",regs->bx);
+        printk(KERN_ALERT"ax{%lx}\n",regs->ax);
+        printk(KERN_ALERT"cx{%lx}\n",regs->cx);
+        printk(KERN_ALERT"dx{%lx}\n",regs->dx);
+        printk(KERN_ALERT"di{%lx}\n",regs->di);
+        printk(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
+        printk(KERN_ALERT"ip{%lx}\n",regs->ip);
+        printk(KERN_ALERT"cs{%lx}\n",regs->cs);
+        printk(KERN_ALERT"flags{%lx}\n",regs->flags);
+        printk(KERN_ALERT"sp{%lx}\n",regs->sp);
+        printk(KERN_ALERT"ss{%lx}\n",regs->ss);
     }
     rdmsrl(MSR_FS_BASE, fs);
     rdmsrl(MSR_GS_BASE, gs);
     FPRINTK(KERN_ALERT"fs{%lx}\n",fs);
-    FPRINTK(KERN_ALERT"gs{%lx}\n",gs);
+    printk(KERN_ALERT"gs{%lx}\n",gs);
     FPRINTK(KERN_ALERT"REGS DUMP COMPLETE\n");
 }
 
@@ -3538,9 +3538,16 @@ long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
 		flags |= FLAGS_SHARED;
 
 	if (op & FUTEX_CLOCK_REALTIME) {
+		if(current->tgroup_distributed == 1 &&  (op & FUTEX_PRIVATE_FLAG) ){
+		  flags = FUTEX_PRIVATE_FLAG;
+		  timeout = NULL;
+		  val3 = 1;
+		}
+		else{
 		flags |= FLAGS_CLOCKRT;
 		if (cmd != FUTEX_WAIT_BITSET && cmd != FUTEX_WAIT_REQUEUE_PI)
 			return -ENOSYS;
+		}
 	}
 
 	switch (cmd) {
@@ -3601,15 +3608,20 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 		struct timespec __user *, utime, u32 __user *, uaddr2,
 		u32, val3)
 {
+
+	if(current->tgroup_distributed ==1){
+		printk(KERN_ALERT"start sys futex\n");
+//		dump_regs(task_pt_regs(current));
+	}
 	struct timespec ts;
 	ktime_t t, *tp = NULL;
 	u32 val2 = 0;
 	int cmd = op & FUTEX_CMD_MASK;
 	int retn=0;
 
-	if(current->tgroup_distributed ==1)
-		printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid);
-
+	if(current->tgroup_distributed ==1){
+		printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id());
+	}
 	if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
 		      cmd == FUTEX_WAIT_BITSET ||
 		      cmd == FUTEX_WAIT_REQUEUE_PI)) {
@@ -3635,8 +3647,12 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 		val2 = (u32) (unsigned long) utime;
 	retn =  do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
 	
-	if(current->tgroup_distributed ==1)
-		printk(KERN_ALERT"%s: END +++++++++++++pid{%d}\n",__func__,current->pid);
+	if(current->tgroup_distributed ==1){
+	   if(op == 393)		
+           	printk(KERN_ALERT" utime {%lx}\n",*tp);
+	printk(KERN_ALERT"%s: END +++++++++++++pid{%d} retn{%d}\n",__func__,current->pid,retn);
+//		dump_regs(task_pt_regs(current));
+	}
 	return retn;
 }
 

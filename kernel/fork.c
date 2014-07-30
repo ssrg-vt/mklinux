@@ -666,12 +666,14 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 	/* Get rid of any futexes when releasing the mm */
 #ifdef CONFIG_FUTEX
 	if (unlikely(tsk->robust_list)) {
-		exit_robust_list(tsk);
+		if(!tsk->main)
+			exit_robust_list(tsk);
 		tsk->robust_list = NULL;
 	}
 #ifdef CONFIG_COMPAT
 	if (unlikely(tsk->compat_robust_list)) {
-		compat_exit_robust_list(tsk);
+		if(!tsk->main)
+			compat_exit_robust_list(tsk);
 		tsk->compat_robust_list = NULL;
 	}
 #endif
@@ -696,7 +698,7 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 	 */
 	if (tsk->clear_child_tid) {
 		if (!(tsk->flags & PF_SIGNALED) &&
-		    atomic_read(&mm->mm_users) > 1) {
+		    (atomic_read(&mm->mm_users) > 1) && !tsk->main) {
 			/*
 			 * We don't check the error code - if userspace has
 			 * not set up a proper pointer then tough luck.

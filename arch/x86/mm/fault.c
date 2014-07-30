@@ -1017,7 +1017,7 @@ static void dump_regs(struct pt_regs* regs) {
     printk(KERN_ALERT"gs{%lx}\n",gs);
     printk(KERN_ALERT"REGS DUMP COMPLETE\n");
 }
-
+extern unsigned long read_old_rsp(void);
 /*
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
@@ -1034,7 +1034,7 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	int write = error_code & PF_WRITE;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
 					(write ? FAULT_FLAG_WRITE : 0);
-
+	int cnt=0;
 	tsk = (current->surrogate == -1) ? current : pid_task(find_get_pid(current->surrogate), PIDTYPE_PID);
 	mm = tsk->mm;
 /*	if(current->surrogate != -1)
@@ -1169,7 +1169,7 @@ retry:
 
 	vma = find_vma(mm, address);
 
-	if(current->nsproxy->cpu_ns == popcorn_ns ){
+	if(current->nsproxy->cpu_ns == popcorn_ns && (strcmp(current->comm,"is") == 0)){
 		printk(KERN_ALERT"%s:Page fault for address %lu in page %lu pid %d\n",__func__,address,address&PAGE_MASK,current->pid);
 		if(flags&FAULT_FLAG_WRITE)
 			printk(KERN_ALERT"write\n");
@@ -1187,18 +1187,29 @@ retry:
 			goto out;
 
 		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
+			printk(KERN_ALERT" stack value old rsp{%lx},cx{%lx} , edi{%lx} address{%lx} \n", read_old_rsp(),regs->cx,regs->di,address);
+			unsigned long *_base= 0x492e10; //read_old_rsp();
+			int ret =0;
+			for(cnt=0 ;cnt< 16;cnt++){
+			unsigned long ptr;
+			ret =  get_user(ptr,((_base)+cnt));
+			printk(KERN_ALERT" {%lx} ret{%d}\t",ptr,ret);
+			}
 			dump_regs(regs);
 			bad_area(regs, error_code, address);
 			goto out_distr;
 		}
 
 		if(unlikely(repl_ret & VM_FAULT_ACCESS_ERROR)){
+			
+			dump_regs(regs);
 			bad_area_access_error(regs, error_code, address);
 			goto out_distr;
 		}
 
 		if (unlikely(repl_ret & VM_FAULT_ERROR)) {
 			mm_fault_error(regs, error_code, address, repl_ret);
+			dump_regs(regs);
 			goto out_distr;
 		}
 
@@ -1271,6 +1282,41 @@ good_area:
 		}
 	}
 
+/*	if(current->nsproxy->cpu_ns == popcorn_ns && (strcmp(current->comm,"cond") == 0)){
+	if((address & PAGE_MASK) == 4222976){
+
+spinlock_t *ptl;
+
+pgd_t* pgd = pgd_offset(mm, address);
+
+pud_t *pud = pud_alloc(mm, pgd, address);
+
+pmd_t *pmd = pmd_alloc(mm, pud, address);
+
+pte_t *pte = pte_offset_map_lock(mm, pmd, address, &ptl);
+
+
+pte_t value_pte = *pte;
+struct page *page = pte_page(value_pte);
+
+void *vfrom = kmap_atomic(page, KM_USER0);
+
+int ct=0;
+unsigned long _buff[16];
+
+for(ct=0;ct<8;ct++){
+_buff[ct]=(unsigned long) *(((unsigned long *)vfrom) + ct);
+}
+kunmap_atomic(vfrom, KM_USER0);
+
+for(ct=0;ct<8;ct++){
+printk(KERN_ALERT"{%lx} ",_buff[ct]);
+}
+ spin_unlock(ptl);
+
+	
+	}	
+}*/
 	/*
 	 * Major/minor page fault accounting is only done on the
 	 * initial attempt. If we go through a retry, it is extremely

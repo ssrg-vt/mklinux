@@ -32,7 +32,7 @@ struct futex_common_data{
 	unsigned int flags;
 	unsigned long uaddr;
 	unsigned long uaddr2;
-	unsigned int ops :1;
+	unsigned int ops;
 } __attribute__((packed));
 
 typedef struct futex_common_data  futex_common_data_t;
@@ -102,7 +102,7 @@ struct global_value {
 	struct workqueue_struct *global_wq;
 	struct task_struct *thread_group_leader;
 	global_request_work_t *worker_task;
-	unsigned int free :1;
+	unsigned int free;
 	char name[32];
 };
 typedef struct global_value _global_value;

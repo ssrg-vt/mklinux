@@ -754,7 +754,7 @@ int micscif_nodeqp_send(struct micscif_dev *scifdev,
 	while ((err = micscif_rb_write(&qp->outbound_q,
 			msg, sizeof(struct nodemsg)))) {
 		cpu_relax();
-		mdelay(1);
+		udelay(100);
 		if (loop_cnt++ > (NODEQP_SEND_TO_MSEC)) {
 			err = -ENODEV;
 			break;

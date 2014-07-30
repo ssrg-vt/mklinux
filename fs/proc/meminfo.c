@@ -203,12 +203,12 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	struct task_struct *t;
 	t=current;
 	int o;
-	printk("show: current comm: %s   pid:%d-%d",t->comm,strlen(t->comm),strlen("cat"));
+	//printk("show: current comm: %s   pid:%d-%d",t->comm,strlen(t->comm),strlen("cat"));
 	if(!(o=strcmp (t->comm,"cat")))
 		remote_proc_meminfo_info(m);
 
 
-	printk("show: O: %d",o);/*mklinux_akshay*/
+	//printk("show: O: %d",o);/*mklinux_akshay*/
 	return 0;
 #undef K
 }

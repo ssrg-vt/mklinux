@@ -74,8 +74,8 @@
 #define PROCESS_SERVER_NEW_THREAD_VERBOSE 0
 #define PROCESS_SERVER_MINIMAL_PGF_VERBOSE 0
 
-#define CHECKSUM 0
-#define STATISTICS 0
+#define CHECKSUM 1
+#define STATISTICS 1
 #define TIMING 1
 
 #if PROCESS_SERVER_VERBOSE
@@ -109,7 +109,7 @@
 #undef NOT_REPLICATED_VMA_MANAGEMENT
 #define NOT_REPLICATED_VMA_MANAGEMENT 0
 #endif
-
+static void dump_regs(struct pt_regs* regs);
 /**
  * Library
  */
@@ -729,8 +729,8 @@ typedef struct {
 		char path[512];\
 		unsigned int data_size;\
 		int diff;\
-		char data; \
 		int futex_owner; \
+		char data; \
 
 struct _data_response_for_2_kernels {
 	DATA_RESPONSE_FIELDS_FOR_2_KERNELS
@@ -3441,7 +3441,7 @@ printk("%s\n",__func__);
 				}
 
 #if CHECKSUM
-				__wsum check= csum_partial(response->data, PAGE_SIZE, 0);
+				__wsum check= csum_partial(&response->data, PAGE_SIZE, 0);
 				if(check!=response->checksum)
 					printk("Checksum sent: %i checksum computed %i\n",response->checksum,check);
 #endif
@@ -3532,7 +3532,7 @@ if (fetched_data == NULL) {
 raw_spin_lock_irqsave(&(fetched_data->lock), flags);
 
 #if CHECKSUM
-__wsum check= csum_partial(response->data, PAGE_SIZE, 0);
+__wsum check= csum_partial(&response->data, PAGE_SIZE, 0);
 if(check!=response->checksum)
 	printk("Checksum sent: %i checksum computed %i\n",response->checksum,check);
 #endif
@@ -4270,10 +4270,8 @@ return 1;
 request_data++;
 #endif
 
-PSPRINTK(
-		"Request %i address %lu from cpu %i\n", request_data, request->address, from_cpu);
 
-	printk("Request %i address %lu is fetch %i is write %i\n", request_data, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
+	PSPRINTK("Request %i address %lu is fetch %i is write %i\n", request_data, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
 
 memory = find_memory_entry(request->tgroup_home_cpu,
 		request->tgroup_home_id);
@@ -4313,7 +4311,7 @@ vma = find_vma(mm, address);
 if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 	vma = NULL;
 		if(_cpu == request->tgroup_home_cpu){
-			printk(KERN_ALERT"%s:OCCHIO vma NULL in xeon address{%lx}\n",__func__,address);
+			printk(KERN_ALERT"%s:OCCHIO vma NULL in xeon address{%lu} \n",__func__,address);
 			up_read(&mm->mmap_sem);
 			goto out;
 		}
@@ -4387,7 +4385,6 @@ retry: pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 
 entry = *pte;
 lock= 1;
-	printk(KERN_ALERT"%s: entry{%lx}  pte{%p} \n",__func__,entry,pte);
 
 
 if (pte == NULL || pte_none(pte_clear_flags(entry, _PAGE_UNUSED1))) {
@@ -4492,13 +4489,15 @@ if (is_zero_page(pte_pfn(entry)) || !(page->replicated == 1)) {
 		printk("ERROR received a request not fetch for a not replicated page\n");
 
 	if (vma->vm_flags & VM_WRITE) {
+printk(KERN_ALERT": OOCHIO writaeble VMA\n");
 
 		//if the page is writable but the pte has not the write flag set, it is a cow page
 		if (!pte_write(entry)) {
 			/*
 			 * I unlock because alloc page may go to sleep
 			 */
-			PSPRINTK("COW page at %lu \n", address);
+			//PSPRINTK
+			printk(KERN_ALERT"COW page at %lu \n", address);
 			spin_unlock(ptl);
 			/*PTE UNLOCKED*/
 			lock =0;
@@ -4556,11 +4555,13 @@ if (is_zero_page(pte_pfn(entry)) || !(page->replicated == 1)) {
 
 			}
 		}
+printk(KERN_ALERT"UUUCHIO \n");
 
 		page->replicated = 1;
 
 		flush_cache_page(vma, address, pte_pfn(*pte));
 		entry = mk_pte(page, vma->vm_page_prot);
+printk(KERN_ALERT"yyyyCHIO \n");
 
 		if(request->is_write==0){
 			//case fetch for read
@@ -4579,6 +4580,7 @@ if (is_zero_page(pte_pfn(entry)) || !(page->replicated == 1)) {
 		}
 
 		page->last_write= 1;
+printk(KERN_ALERT"WWWWCHIO \n");
 
 		entry = pte_set_flags(entry, _PAGE_USER);
 		entry = pte_set_flags(entry, _PAGE_ACCESSED);
@@ -4586,13 +4588,15 @@ if (is_zero_page(pte_pfn(entry)) || !(page->replicated == 1)) {
 		ptep_clear_flush(vma, address, pte);
 
 		set_pte_at_notify(mm, address, pte, entry);
+printk(KERN_ALERT"ZZZZCHIO smp{%d} comm{%s}\n",smp_processor_id(),current->comm);
 
 		//in x86 does nothing
-		update_mmu_cache(vma, address, pte);
-
-		if (old_page != NULL)
+		//update_mmu_cache(vma, address, pte);
+		
+printk(KERN_ALERT"C????????HIO\n");
+	if (old_page != NULL)
 			page_remove_rmap(old_page);
-
+printk(KERN_ALERT"######CHIO\n");
 	} else {
 		//read only vma
 		page->replicated=0;
@@ -4605,9 +4609,11 @@ if (is_zero_page(pte_pfn(entry)) || !(page->replicated == 1)) {
 		owner= 0;
 	}
 
+printk(KERN_ALERT"!!!!!!!CHIO\n");
 	page->other_owners[_cpu]=1;
 	page->other_owners[from_cpu]=1;
 
+printk(KERN_ALERT"@@@@@@@CHIO\n");
 	goto resolved;
 }
 else{
@@ -4831,11 +4837,28 @@ if (response == NULL) {
 
 void* vto = &(response->data);
 vfrom = kmap_atomic(page, KM_USER0);
+
+int ct=0;
+unsigned long _buff[16];
+
+if(address == 4795920){
+for(ct=0;ct<8;ct++){
+_buff[ct]=(unsigned long) *(((unsigned long *)vfrom) + ct);
+}
+}
 copy_page(vto, vfrom);
 kunmap_atomic(vfrom, KM_USER0);
 
 response->data_size= PAGE_SIZE;
 
+if(address == 4795920){
+for(ct=8;ct<16;ct++){
+_buff[ct]=(unsigned long) *((unsigned long*)(&(response->data))+ct-8);
+}
+for(ct=0;ct<16;ct++){
+printk(KERN_ALERT"{%lx} ",_buff[ct]);
+}
+}
 #if CHECKSUM
 vfrom= kmap_atomic(page, KM_USER0);
 __wsum check1= csum_partial(vfrom, PAGE_SIZE, 0);
@@ -4894,7 +4917,7 @@ up_read(&mm->mmap_sem);
 
 #if !DIFF_PAGE
 #if CHECKSUM
-response->checksum= csum_partial(response->data, PAGE_SIZE, 0);
+response->checksum= csum_partial(&response->data, PAGE_SIZE, 0);
 #endif
 #endif
 
@@ -5525,7 +5548,7 @@ PSPRINTK("Handle request end\n");
 						vfrom= kmap_atomic(page, KM_USER0);
 						__wsum check1= csum_partial(vfrom, PAGE_SIZE, 0);
 						kunmap_atomic(vfrom, KM_USER0);
-						__wsum check2= csum_partial(response->data, PAGE_SIZE, 0);
+						__wsum check2= csum_partial(&response->data, PAGE_SIZE, 0);
 						if(check1!=check2)
 							printk("page just copied is not matching, address %lu\n",address);
 #endif
@@ -5543,7 +5566,7 @@ PSPRINTK("Handle request end\n");
 						response->address_present = REPLICATION_STATUS_WRITTEN;
 
 #if CHECKSUM
-response->checksum= csum_partial(response->data, PAGE_SIZE, 0);
+response->checksum= csum_partial(&response->data, PAGE_SIZE, 0);
 #endif
 
 page->concurrent_writers = 0;
@@ -5602,7 +5625,7 @@ return;
 				vfrom= kmap_atomic(page, KM_USER0);
 				__wsum check1= csum_partial(vfrom, PAGE_SIZE, 0);
 				kunmap_atomic(vfrom, KM_USER0);
-				__wsum check2= csum_partial(response->data, PAGE_SIZE, 0);
+				__wsum check2= csum_partial(&response->data, PAGE_SIZE, 0);
 				if(check1!=check2)
 					printk("page just copied is not matching, address %lu\n",address);
 #endif
@@ -5651,7 +5674,7 @@ spin_unlock(ptl);
 up_read(&mm->mmap_sem);
 
 #if CHECKSUM
-response->checksum= csum_partial(response->data, PAGE_SIZE, 0);
+response->checksum= csum_partial(&response->data, PAGE_SIZE, 0);
 #endif
 
 // Send response
@@ -7382,7 +7405,7 @@ kunmap_atomic(vto, KM_USER0);
 vto= kmap_atomic(page, KM_USER0);
 __wsum check1= csum_partial(vto, PAGE_SIZE, 0);
 kunmap_atomic(vto, KM_USER0);
-__wsum check2= csum_partial(reading_page->data->data, PAGE_SIZE, 0);
+__wsum check2= csum_partial(&(reading_page->data->data), PAGE_SIZE, 0);
 if(check1!=check2) {
 	printk("ERROR: page just copied is not matching, address %lu\n",address);
 	pcn_kmsg_free_msg(reading_page->data);
@@ -8875,11 +8898,20 @@ if(memory->kernel_set[i]==1)
 					kunmap_atomic(vto, KM_USER0);
 
 
+int ct=0;
+if(address == 4795920){
+for(ct=0;ct<8;ct++){
+printk(KERN_ALERT"{%lx} ",(unsigned long) *(((unsigned long *)vfrom)+ct));
+}
+}
+
 #if CHECKSUM
 					vto= kmap_atomic(page, KM_USER0);
 					__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
 					kunmap_atomic(vto, KM_USER0);
 					__wsum check2= csum_partial(&(fetching_page->data->data), PAGE_SIZE, 0);
+					
+
 					if(check1!=check2) {
 						printk("ERROR: page just copied is not matching, address %lu\n",address);
 						pcn_kmsg_free_msg(fetching_page->data);
@@ -9408,15 +9440,18 @@ page_fault_mio++;
 PSPRINTK(
 		"Page fault %i address %lu in page %lu task pid %d t_group_cpu %d t_group_id %d \n", page_fault_mio, page_faul_address, address, tsk->pid, tgroup_home_cpu, tgroup_home_id);
 
-	if(page_fault_flags & FAULT_FLAG_WRITE)
-		printk(KERN_ALERT"write\n");
-	else
-		printk(KERN_ALERT"read\n");
+	if(page_fault_flags & FAULT_FLAG_WRITE){
+		PSPRINTK(KERN_ALERT"write\n");
+	}
+	else{
+		PSPRINTK(KERN_ALERT"read\n");
+	}
 
 if (address == 0) {
 	printk("ERROR: accessing page at address 0 pid %i\n",tsk->pid);
 	return VM_FAULT_ACCESS_ERROR | VM_FAULT_VMA;
 }
+
 
 if (vma && (address < vma->vm_end && address >= vma->vm_start)
 		&& (unlikely(is_vm_hugetlb_page(vma))
@@ -10020,7 +10055,8 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 			if (ret)  {
 				printk(KERN_ERR"%s: associate_to_popcorn_ns returned: %d\n", __func__,ret);
 			}
-
+	
+			//dump_regs(&clone_data->regs);
 			//task->thread.usersp = clone_data->thread_usersp;
 			task->thread.usersp = clone_data->old_rsp;
 			memcpy(task_pt_regs(task), &clone_data->regs,
@@ -10252,6 +10288,37 @@ printk("%s entered dst{%d} \n",__func__,dst_cpu);
 
 	return ret;
 }
+static void dump_regs(struct pt_regs* regs) {
+    unsigned long fs, gs;
+   printk(KERN_ALERT"DUMP REGS\n");
+    if(NULL != regs) {
+        printk(KERN_ALERT"r15{%lx}\n",regs->r15);
+        printk(KERN_ALERT"r14{%lx}\n",regs->r14);
+        printk(KERN_ALERT"r13{%lx}\n",regs->r13);
+        printk(KERN_ALERT"r12{%lx}\n",regs->r12);
+        printk(KERN_ALERT"r11{%lx}\n",regs->r11);
+        printk(KERN_ALERT"r10{%lx}\n",regs->r10);
+        printk(KERN_ALERT"r9{%lx}\n",regs->r9);
+        printk(KERN_ALERT"r8{%lx}\n",regs->r8);
+        printk(KERN_ALERT"bp{%lx}\n",regs->bp);
+        printk(KERN_ALERT"bx{%lx}\n",regs->bx);
+        printk(KERN_ALERT"ax{%lx}\n",regs->ax);
+        printk(KERN_ALERT"cx{%lx}\n",regs->cx);
+        printk(KERN_ALERT"dx{%lx}\n",regs->dx);
+        printk(KERN_ALERT"di{%lx}\n",regs->di);
+        printk(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
+        printk(KERN_ALERT"ip{%lx}\n",regs->ip);
+        printk(KERN_ALERT"cs{%lx}\n",regs->cs);
+        printk(KERN_ALERT"flags{%lx}\n",regs->flags);
+        printk(KERN_ALERT"sp{%lx}\n",regs->sp);
+        printk(KERN_ALERT"ss{%lx}\n",regs->ss);
+    }
+    rdmsrl(MSR_FS_BASE, fs);
+    rdmsrl(MSR_GS_BASE, gs);
+    printk(KERN_ALERT"fs{%lx}\n",fs);
+    printk(KERN_ALERT"gs{%lx}\n",gs);
+    printk(KERN_ALERT"REGS DUMP COMPLETE\n");
+}
 
 /*
  * Send a message to <dst_cpu> for migrating a task <task>.
@@ -10467,7 +10534,8 @@ static int do_migration(struct task_struct* task, int dst_cpu,
 
 	request->tgroup_home_cpu = task->tgroup_home_cpu;
 	request->tgroup_home_id = task->tgroup_home_id;
-
+	
+	//dump_regs(&request->regs);
 	tx_ret = pcn_kmsg_send_long(dst_cpu,
 			(struct pcn_kmsg_long_message*) request,
 			sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
@@ -10567,7 +10635,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 #endif
 
 if (ret != -1) {
-		printk(KERN_ALERT"%s clone request sent \n", __func__);
+		printk(KERN_ALERT"%s clone request sent ret{%d} \n", __func__,ret);
 
 	__set_task_state(task, TASK_UNINTERRUPTIBLE);
 

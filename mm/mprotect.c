@@ -501,7 +501,7 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	vm_flags = calc_vm_prot_bits(prot);
 
 	down_write(&current->mm->mmap_sem);
-
+	
 	//Multikernel
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
@@ -535,6 +535,12 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 				goto out;
 		}
 	}
+
+	
+	if(vma && (vma->vm_file != NULL) && strcmp(vma->vm_file,"/bin/is") == 0){
+	printk(KERN_ALERT"%s: vma start{%lx}  end{%lx} \n)",__func__,vma->vm_start,vma->vm_end);	
+	}
+
 	if (start > vma->vm_start)
 		prev = vma;
 

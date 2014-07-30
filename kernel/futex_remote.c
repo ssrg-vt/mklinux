@@ -37,7 +37,7 @@
 #undef STAT
 
 
-#define FUTEX_REMOTE_VERBOSE 0 
+#define FUTEX_REMOTE_VERBOSE 1 
 #if FUTEX_REMOTE_VERBOSE
 #define FRPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -472,7 +472,8 @@ void global_worher_fn(struct work_struct* work) {
 
 	 _global_rq *this, *next;
 	struct task_struct *tsk = current;
-	static unsigned has_work =0;
+	unsigned int has_work =0;
+	int _return = 0;
 	//Set task struct for the worker
 	worker_pid = current->pid;
 
@@ -503,7 +504,7 @@ void global_worher_fn(struct work_struct* work) {
 					current->surrogate = msg->tghid;
 					
 					msg->fn_flag |= FLAGS_REMOTECALL;
-                                        printk(KERN_ALERT"%s: for address uadd{%lx} uadd2{%lx}\n",__func__,msg->uaddr,msg->uaddr2);
+                                        printk(KERN_ALERT"%s: for address uadd{%lx} uadd2{%lx} wake{%d} bit{%d} fn{%lx}\n",__func__,msg->uaddr,msg->uaddr2, msg->nr_wake, msg->bitset,msg->fn_flag);
 					if (msg->fn_flag & FLAGS_WAKECALL)
 						ret = futex_wake(msg->uaddr, msg->flags, msg->nr_wake, msg->bitset,
 								msg->fn_flag,tsk);
@@ -527,9 +528,11 @@ void global_worher_fn(struct work_struct* work) {
 					send_tkt.request_id=msg->ticket;
 					send_tkt.uaddr = msg->uaddr;
 					send_tkt.rem_pid = msg->pid;
-					FRPRINTK(KERN_ALERT "send ticket to wake request {%d} msg->pid{%d} msg->uaddr{%lx} \n",send_tkt.rem_pid,msg->pid,msg->uaddr);
-					pcn_kmsg_send_long(ORIG_NODE(send_tkt.rem_pid), (struct pcn_kmsg_long_message*) (&send_tkt),
+					FRPRINTK(KERN_ALERT "send ticket to wake request {%d} msg->pid{%d} msg->uaddr{%lx} RET{%d} \n",send_tkt.rem_pid,msg->pid,msg->uaddr,ret);
+					_return = pcn_kmsg_send_long(ORIG_NODE(send_tkt.rem_pid), (struct pcn_kmsg_long_message*) (&send_tkt),
 						sizeof(_remote_wakeup_response_t) - sizeof(struct pcn_kmsg_hdr));
+					if(_return == -1)
+ 						printk(KERN_ALERT"%s:wake resp message not sent could DEADLOCK\n",__func__);
 
 
 		} else if(this->ops == WAIT_OPS){ //wait request
@@ -563,15 +566,17 @@ void global_worher_fn(struct work_struct* work) {
 					send_tkt.request_id=msg->ticket;
 					send_tkt.uaddr = msg->uaddr;
 					send_tkt.rem_pid = msg->pid;
-					FRPRINTK(KERN_ALERT "send ticket to wait request {%d} msg->pid{%d} msg->uaddr{%lx} \n",send_tkt.rem_pid,msg->pid,msg->uaddr);
-					pcn_kmsg_send_long(ORIG_NODE(send_tkt.rem_pid), (struct pcn_kmsg_long_message*) (&send_tkt),
+					FRPRINTK(KERN_ALERT "send ticket to wait request {%d} msg->pid{%d} msg->uaddr{%lx} RET{%d} \n",send_tkt.rem_pid,msg->pid,msg->uaddr,ret);
+					_return = pcn_kmsg_send_long(ORIG_NODE(send_tkt.rem_pid), (struct pcn_kmsg_long_message*) (&send_tkt),
 				sizeof(_remote_key_response_t) - sizeof(struct pcn_kmsg_hdr));
 
+					if(_return == -1)
+ 						printk(KERN_ALERT"%s:wait resp message not sent could DEADLOCK\n",__func__);
 
 
 			}
 cleanup:
-
+		 FRPRINTK(KERN_ALERT "done iteration\n");
 #ifdef STAT
 		counter++;
 		FRPRINTK(KERN_ALERT "done iteration moving the head cnt{%d} counter{%d} \n",this->cnt,counter);
@@ -795,7 +800,7 @@ static int handle_remote_futex_key_request(struct pcn_kmsg_message* inc_msg) {
 	 atomic_inc(&progress);
 #endif
 	FRPRINTK(KERN_ALERT"%s: request -- entered whos calling{%s} cpu{%d}\n", __func__,current->comm,Kernel_Id);
-	FRPRINTK(KERN_ALERT"%s: msg: uaddr {%lx}  flags {%lx} val{%d}  pid{%d}  fn_flags{%lx} ticket{%d}\n",
+	printk(KERN_ALERT"%s: msg: uaddr {%lx}  flags {%lx} val{%d}  pid{%d}  fn_flags{%lx} ticket{%d}\n",
 			__func__,msg->uaddr,msg->flags,msg->val,msg->pid,msg->fn_flags,msg->ticket);
 
 	// Finish constructing response
@@ -850,11 +855,33 @@ out:
 
 	return 0;
 }
+extern int remote_kill_pid_info(int kernel, int sig, pid_t pid,
+                struct siginfo *info);
 
+static void zap_remote_threads(struct task_struct *tsk){
+	struct task_struct *tg_itr;
+	tg_itr = tsk;
+	while_each_thread(tsk,tg_itr){
+		if(tg_itr->tgroup_distributed == 1 && tg_itr->tgroup_home_id != tg_itr->pid && tg_itr->represents_remote == 1) {
+			siginfo_t info;
+			memset(&info, 0, sizeof info);
+			info.si_signo = SIGKILL;
+			info.si_code = 1;
+			info.si_pid = task_pid_vnr(current);
+			info.si_uid = current_uid();
+                     remote_kill_pid_info(ORIG_NODE(tg_itr->next_pid), SIGKILL, tg_itr->next_pid,&info); 		
+		}
+	}
+}
 int futex_global_worker_cleanup(struct task_struct *tsk){
 
 
    if(tsk->tgroup_distributed && tsk->pid == tsk->tgroup_home_id){
+
+    if(tsk->distributed_exit == EXIT_ALIVE){
+	printk(KERN_ALERT"remote zoombie kill needed\n");
+	zap_remote_threads(tsk); 
+    }
    _global_value * gvp = hashgroup(tsk);
     FRPRINTK(KERN_INFO "GVP EXISTS{%s} tgid{%d} pid{%d} \n",tsk->comm,tsk->tgroup_home_id,tsk->pid);
 

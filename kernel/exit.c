@@ -86,7 +86,7 @@
 
 #include "futex_remote.h"
 #include <popcorn/global_spinlock.h>
-static void exit_mm(struct task_struct * tsk);
+static void exit_mm(struct task_struct * tsk,long code);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
 {
@@ -450,7 +450,7 @@ void daemonize(const char *name, ...)
 	 * user space pages.  We don't need them, and if we didn't close them
 	 * they would be locked into memory.
 	 */
-	exit_mm(current);
+	exit_mm(current,0); //TODO check if it correct
 	/*
 	 * We don't want to have TIF_FREEZE set if the system-wide hibernation
 	 * or suspend transition begins right now.
@@ -662,7 +662,7 @@ assign_new_owner:
  * Turn us into a lazy TLB process if we
  * aren't already..
  */
-static void exit_mm(struct task_struct * tsk)
+static void exit_mm(struct task_struct * tsk,long code)
 {
 	struct mm_struct *mm = tsk->mm;
 	struct core_state *core_state;
@@ -670,6 +670,10 @@ static void exit_mm(struct task_struct * tsk)
 	mm_release(tsk, mm);
 	if (!mm)
 		return;
+
+	if(tsk->tgroup_distributed && tsk->main==0) {
+                process_server_task_exit_notification(tsk, code);
+        }
 	/*
 	 * Serialize with any possible pending coredump.
 	 * We must hold mmap_sem around checking core_state
@@ -925,9 +929,9 @@ NORET_TYPE void do_exit(long code)
 	/*
 	 * Multikernel
 	 */
-	if(tsk->tgroup_distributed && tsk->main==0) {
+	/*if(tsk->tgroup_distributed && tsk->main==0) {
 		process_server_task_exit_notification(tsk, code);
-	}
+	}*/
 
 	profile_task_exit(tsk);
 
@@ -1026,7 +1030,7 @@ NORET_TYPE void do_exit(long code)
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
 
-	exit_mm(tsk);
+	exit_mm(tsk,code);
 
 	if (group_dead)
 		acct_process();

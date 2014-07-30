@@ -1,7 +1,8 @@
 #!/bin/bash
 #first, get the kernel version
 VER=`cat ../mklinux-build/include/config/kernel.release`
-THREADS=`cat /proc/cpuinfo | grep processor | wc -l`
+THREADS=48
+#`cat /proc/cpuinfo | grep processor | wc -l`
 
 echo "Building kernel ${VER} for both xeon and xeonPhi on ${THREADS} threads"
 
