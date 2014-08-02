@@ -1,0 +1,201 @@
+[  191.712732] sys_futex: END +++++++++++++pid{2100035} retn{-512}
+[  191.719451] Pid: 2100035, comm: mut Not tainted 3.2.14popcorn-replication-xeon+pthread+ #102
+[  375.587576] ZZZZCHIO smp{16} comm{kworker/16:1} tick(59ea4efedb395} for address{-1040506880}
+[  375.597124] ???????HIO smp{16} comm{kworker/16:1} tick(59ea4f14bf53c} for address{-1040506880}
+[  375.607636] ZZZZCHIO smp{16} comm{kworker/16:1} tick(59ea4f2cd7a97} for address{-1040510976}
+[  375.617172] ???????HIO smp{16} comm{kworker/16:1} tick(59ea4f42b45a3} for address{-1040510976}
+[  375.651231] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[  375.693901] global_worher_fn:wake--current msg pid{2133938} msg->ticket{0} 
+[  375.693920] global_worher_fn: for address uadd{699de0} uadd2{0} wake{2147483647} bit{-1} fn{ffff880000000058}
+[  375.693924] send ticket to wake request {2133938} msg->pid{2133938} msg->uaddr{699de0} RET{1} 
+[  375.779699] global_spinlock:  uaddr {699de0}  pid{2100077} current->tgroup_home_id{2100077}
+[  375.814873] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  375.814902] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{0} cnt{0}
+[  375.814944] global_worher_fn:wait --current msg pid{2100077} msg->ticket{0} 
+[  375.814954] send ticket to wait request {2100077} msg->pid{2100077} msg->uaddr{699de0} RET{0} 
+[  375.814968] handle_remote_futex_key_response:  value {0}  p->tgroup_home_id{2100077}  
+[  375.968331] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[  375.968348] global_worher_fn:wake--current msg pid{2133938} msg->ticket{1} 
+[  375.968350] global_worher_fn: for address uadd{699de0} uadd2{0} wake{2147483647} bit{-1} fn{58}
+[  375.968353] send ticket to wake request {2133938} msg->pid{2133938} msg->uaddr{699de0} RET{0} 
+[  376.132774] sys_futex: END +++++++++++++pid{2100077} retn{-512}
+[  376.139469] Pid: 2100077, comm: mut Not tainted 3.2.14popcorn-replication-xeon+pthread+ #102
+[  690.399768] ZZZZCHIO smp{17} comm{kworker/17:1} tick(59f5520a663f6} for address{-314073088}
+[  690.409178] ???????HIO smp{17} comm{kworker/17:1} tick(59f5521ff8e4d} for address{-314073088}
+[  690.419544] ZZZZCHIO smp{17} comm{kworker/17:1} tick(59f55237bbc68} for address{-314077184}
+[  690.428922] ???????HIO smp{17} comm{kworker/17:1} tick(59f5524d3c45b} for address{-314077184}
+[  690.462586] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[  690.504956] global_worher_fn:wake--current msg pid{2133957} msg->ticket{0} 
+[  690.504959] global_worher_fn: for address uadd{69c4a0} uadd2{0} wake{2147483647} bit{-1} fn{ffff880000000058}
+[  690.504963] send ticket to wake request {2133957} msg->pid{2133957} msg->uaddr{69c4a0} RET{1} 
+[  690.569498] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  690.605325] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{0} cnt{0}
+[  690.625152] global_worher_fn:wait --current msg pid{2133957} msg->ticket{0} 
+[  690.633362] global_spinlock:  uaddr {6a1cf0}  pid{2100108} current->tgroup_home_id{2100102}
+[  690.633386] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  690.633414] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{0} cnt{0}
+[  690.633421] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{68} msg-flags{0} cpu{0}
+[  690.901265] send ticket to wait request {2133957} msg->pid{2133957} msg->uaddr{69c464} RET{0} 
+[  690.924852] global_worher_fn:wait --current msg pid{2100108} msg->ticket{0} 
+[  690.971037] send ticket to wait request {2100108} msg->pid{2100108} msg->uaddr{6a1cf0} RET{-11} 
+[  690.980976] handle_remote_futex_key_response: response to revoke wait request as origin is dead {-11} 
+[  690.980995] handle_remote_futex_key_response:  value {0}  p->tgroup_home_id{2100102}  
+[  690.981076] sys_futex: END +++++++++++++pid{2100108} retn{-11}
+[  690.981124] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{68} msg-flags{0} cpu{0}
+[  691.154254] global_worher_fn:wake--current msg pid{2100102} msg->ticket{1} 
+[  691.165307] global_worher_fn: for address uadd{6a1cf0} uadd2{0} wake{1} bit{-1} fn{ffff880000000078}
+[  691.181219] send ticket to wake request {2100102} msg->pid{2100102} msg->uaddr{6a1cf0} RET{0} 
+[  691.190977] handle_remote_futex_wake_response: errno{0} p->tgp(2100102} 
+[  691.191024] global_spinlock:  uaddr {69c4a0}  pid{2100102} current->tgroup_home_id{2100102}
+[  691.191049] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  691.191055] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{0} cnt{0}
+[  691.347891] global_worher_fn:wake--current msg pid{2100108} msg->ticket{2} 
+[  691.358928] global_worher_fn: for address uadd{6a1cf0} uadd2{0} wake{1} bit{-1} fn{ffff880000000078}
+[  691.374839] send ticket to wake request {2100108} msg->pid{2100108} msg->uaddr{6a1cf0} RET{0} 
+[  691.384568] handle_remote_futex_wake_response: errno{0} p->tgp(2100102} 
+[  691.440592] ZZZZCHIO smp{17} comm{kworker/17:1} tick(59f55b5c6268d} for address{-322465792}
+[  691.440597] global_worher_fn:wait --current msg pid{2100102} msg->ticket{0} 
+[  691.440606] send ticket to wait request {2100102} msg->pid{2100102} msg->uaddr{69c4a0} RET{0} 
+[  691.440650] handle_remote_futex_key_response:  value {0}  p->tgroup_home_id{2100102}  
+[  691.558672] ???????HIO smp{17} comm{kworker/17:1} tick(59f55c6b12c76} for address{-322465792}
+[  691.569088] ZZZZCHIO smp{18} comm{kworker/18:1} tick(59f55c82f2b9a} for address{-322469888}
+[  691.578473] ???????HIO smp{18} comm{kworker/18:1} tick(59f55c9876e3d} for address{-322469888}
+[  691.591110] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[  691.633496] global_worher_fn:wake--current msg pid{2133958} msg->ticket{1} 
+[  691.633515] global_worher_fn: for address uadd{69c4a0} uadd2{0} wake{2147483647} bit{-1} fn{ffff880000000058}
+[  691.633519] send ticket to wake request {2133958} msg->pid{2133958} msg->uaddr{69c4a0} RET{1} 
+[  691.697951] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  691.733752] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{1} cnt{0}
+[  691.744169] global_spinlock:  uaddr {69c4a0}  pid{2100102} current->tgroup_home_id{2100102}
+[  691.744183] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  691.744191] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{1} cnt{0}
+[  691.745683] ZZZZCHIO smp{18} comm{kworker/18:1} tick(59f55e17c6659} for address{-330858496}
+[  691.745685] ???????HIO smp{18} comm{kworker/18:1} tick(59f55e17c87f5} for address{-330858496}
+[  691.746573] ZZZZCHIO smp{18} comm{kworker/18:1} tick(59f55e19d083c} for address{-330862592}
+[  691.746575] ???????HIO smp{18} comm{kworker/18:1} tick(59f55e19d2756} for address{-330862592}
+[  691.749665] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[  691.969575] global_worher_fn:wait --current msg pid{2133958} msg->ticket{1} 
+[  691.997041] global_futex_wait:after spin unlock ret{-14} uval{0}
+[  692.032861] send ticket to wait request {2133958} msg->pid{2133958} msg->uaddr{69c464} RET{0} 
+[  692.067518] global_worher_fn:wait --current msg pid{2100102} msg->ticket{1} 
+[  692.113790] send ticket to wait request {2100102} msg->pid{2100102} msg->uaddr{69c4a0} RET{-11} 
+[  692.123721] handle_remote_futex_key_response: response to revoke wait request as origin is dead {-11} 
+[  692.123727] handle_remote_futex_key_response:  value {0}  p->tgroup_home_id{2100102}  
+[  692.123787] sys_futex: END +++++++++++++pid{2100102} retn{-11}
+[  692.162332] global_spinlock:  uaddr {69c420}  pid{2100102} current->tgroup_home_id{2100102}
+[  692.162398] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  692.162418] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{0} cnt{0}
+[  692.286247] global_worher_fn:wake--current msg pid{2133959} msg->ticket{2} 
+[  692.297299] global_worher_fn: for address uadd{69c4a0} uadd2{0} wake{2147483647} bit{-1} fn{ffff880000000058}
+[  692.314098] send ticket to wake request {2133959} msg->pid{2133959} msg->uaddr{69c4a0} RET{0} 
+[  692.325732] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[  692.386804] global_worher_fn:wait --current msg pid{2100102} msg->ticket{0} 
+[  692.414336] global_futex_wait:after spin unlock ret{-14} uval{0}
+[  692.442060] send ticket to wait request {2100102} msg->pid{2100102} msg->uaddr{69c420} RET{-11} 
+[  692.451995] handle_remote_futex_key_response: response to revoke wait request as origin is dead {-11} 
+[  692.452001] handle_remote_futex_key_response:  value {0}  p->tgroup_home_id{2100102}  
+[  692.452050] sys_futex: END +++++++++++++pid{2100102} retn{-11}
+[  692.490618] global_spinlock:  uaddr {69c460}  pid{2100102} current->tgroup_home_id{2100102}
+[  692.490684] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  692.490703] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{0} cnt{0}
+[  692.614517] global_worher_fn:wake--current msg pid{2133959} msg->ticket{0} 
+[  692.625567] global_worher_fn: for address uadd{69c420} uadd2{0} wake{1} bit{-1} fn{ffff880000000058}
+[  692.641477] send ticket to wake request {2133959} msg->pid{2133959} msg->uaddr{69c420} RET{0} 
+[  692.652606] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[  692.714190] global_worher_fn:wait --current msg pid{2100102} msg->ticket{0} 
+[  692.741749] global_futex_wait:after spin unlock ret{-14} uval{0}
+[  692.769465] send ticket to wait request {2100102} msg->pid{2100102} msg->uaddr{69c460} RET{-11} 
+[  692.779389] handle_remote_futex_key_response: response to revoke wait request as origin is dead {-11} 
+[  692.779395] handle_remote_futex_key_response:  value {0}  p->tgroup_home_id{2100102}  
+[  692.779444] sys_futex: END +++++++++++++pid{2100102} retn{-11}
+[  692.818058] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{68} msg-flags{0} cpu{0}
+[  692.940541] global_worher_fn:wake--current msg pid{2133959} msg->ticket{0} 
+[  692.951592] global_worher_fn: for address uadd{69c460} uadd2{0} wake{1} bit{-1} fn{ffff880000000058}
+[  692.967517] send ticket to wake request {2133959} msg->pid{2133959} msg->uaddr{69c460} RET{0} 
+[  692.979181] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  692.979189] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{2} cnt{0}
+[  693.046888] global_worher_fn:wake--current msg pid{2100102} msg->ticket{1} 
+[  693.057937] global_worher_fn: for address uadd{69c460} uadd2{0} wake{1} bit{-1} fn{ffff880000000078}
+[  693.073865] send ticket to wake request {2100102} msg->pid{2100102} msg->uaddr{69c460} RET{0} 
+[  693.083612] handle_remote_futex_wake_response: errno{0} p->tgp(2100102} 
+[  693.084733] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{a8} msg-flags{0} cpu{0}
+[  693.240506] global_worher_fn:wait --current msg pid{2133959} msg->ticket{2} 
+[  693.286784] send ticket to wait request {2133959} msg->pid{2133959} msg->uaddr{69c464} RET{-11} 
+[  693.301374] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  693.301381] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{1} cnt{0}
+[  693.355226] global_worher_fn:wake--current msg pid{2100102} msg->ticket{0} 
+[  693.389340] send ticket to wake request {2100102} msg->pid{2100102} msg->uaddr{69c464} RET{5} 
+[  693.389362] global_spinlock:  uaddr {69c420}  pid{2100103} current->tgroup_home_id{2100102}
+[  693.389430] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[  693.389461] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{1} cnt{0}
+[  693.509150] handle_remote_futex_wake_response: errno{5} p->tgp(2100102} 
+[  693.509215] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{68} msg-flags{0} cpu{0}
+[  693.665850] global_worher_fn:wait --current msg pid{2133959} msg->ticket{1} 
+[  693.712129] send ticket to wait request {2133959} msg->pid{2133959} msg->uaddr{69c420} RET{-11} 
+[  693.725773] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[  693.785028] global_worher_fn:wait --current msg pid{2100103} msg->ticket{1} 
+[  693.812566] global_futex_wait:after spin unlock ret{-14} uval{0}
+[  693.840325] send ticket to wait request {2100103} msg->pid{2100103} msg->uaddr{69c420} RET{-11} 
+[  693.850292] handle_remote_futex_key_response: response to revoke wait request as origin is dead {-11} 
+[  693.850298] handle_remote_futex_key_response:  value {0}  p->tgroup_home_id{2100102}  
+[  693.850313] sys_futex: END +++++++++++++pid{2100103} retn{-11}
+[  693.888967] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{68} msg-flags{0} cpu{0}
+[  694.022520] global_worher_fn:wake--current msg pid{2100102} msg->ticket{2} 
+[  694.033569] global_worher_fn: for address uadd{69c420} uadd2{0} wake{1} bit{-1} fn{ffff880000000078}
+[  694.043979] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{68} msg-flags{0} cpu{0}
+[  694.164476] send ticket to wake request {2100102} msg->pid{2100102} msg->uaddr{69c420} RET{1} 
+[  694.174237] handle_remote_futex_wake_response: errno{1} p->tgp(2100102} 
+[  694.233746] global_worher_fn:wake--current msg pid{2133959} msg->ticket{2} 
+[  694.244795] global_worher_fn: for address uadd{69c420} uadd2{0} wake{1} bit{-1} fn{ffff880000000058}
+[  694.255145] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{68} msg-flags{0} cpu{0}
+[  694.375693] send ticket to wake request {2133959} msg->pid{2133959} msg->uaddr{69c420} RET{1} 
+[  694.392234] sys_futex: END +++++++++++++pid{2100102} retn{-512}
+[  694.392238] Pid: 2100102, comm: cond Not tainted 3.2.14popcorn-replication-xeon+pthread+ #102
+[  694.393210] handle_remote_kill_response: response --- errno stored - errno{-2124029984} 
+[  694.393696] handle_remote_kill_response: response --- errno stored - errno{-2124029984} 
+[  694.395180] handle_remote_kill_response: response --- errno stored - errno{-2124029984} 
+[  694.848753] global_worher_fn:wake--current msg pid{2100103} msg->ticket{3} 
+[  694.856587] global_worher_fn: for address uadd{69c420} uadd2{0} wake{1} bit{-1} fn{ffff880000000078}
+[  694.866825] ------------[ cut here ]------------
+[  694.882439] Hardware name: X9DRG-QF
+[  694.924193] Pid: 2100074, comm: kworker/u:2 Not tainted 3.2.14popcorn-replication-xeon+pthread+ #102
+[  695.058112] ---[ end trace 4dc0ad88d1481fc0 ]---
+[  695.068946] send ticket to wake request {2100103} msg->pid{2100103} msg->uaddr{69c420} RET{0} 
+[  695.112336] global_worher_fn:wake--current msg pid{2100104} msg->ticket{4} 
+[  695.120155] global_worher_fn: for address uadd{69c420} uadd2{0} wake{1} bit{-1} fn{ffff880000000078}
+[  695.136067] send ticket to wake request {2100104} msg->pid{2100104} msg->uaddr{69c420} RET{0} 
+[  695.179427] global_worher_fn:wake--current msg pid{2100105} msg->ticket{5} 
+[  695.187263] global_worher_fn: for address uadd{69c420} uadd2{0} wake{1} bit{-1} fn{ffff880000000078}
+[  695.203187] send ticket to wake request {2100105} msg->pid{2100105} msg->uaddr{69c420} RET{0} 
+[ 1641.866336] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[ 1641.908753] global_worher_fn:wake--current msg pid{2133988} msg->ticket{0} 
+[ 1641.908773] global_worher_fn: for address uadd{699e40} uadd2{0} wake{2147483647} bit{-1} fn{ffff880000000058}
+[ 1641.908777] send ticket to wake request {2133988} msg->pid{2133988} msg->uaddr{699e40} RET{1} 
+[ 1641.974512] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[ 1642.010348] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{0} cnt{0}
+[ 1642.030156] global_worher_fn:wait --current msg pid{2133988} msg->ticket{0} 
+[ 1642.057507] global_futex_wait:after spin unlock ret{-14} uval{0}
+[ 1642.067043] send ticket to wait request {2133988} msg->pid{2133988} msg->uaddr{699e44} RET{-11} 
+[ 1642.102652] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{58} msg-flags{0} cpu{0}
+[ 1642.102668] global_worher_fn:wake--current msg pid{2133988} msg->ticket{1} 
+[ 1642.102671] global_worher_fn: for address uadd{699e44} uadd2{0} wake{1} bit{-1} fn{58}
+[ 1642.102673] send ticket to wake request {2133988} msg->pid{2133988} msg->uaddr{699e44} RET{0} 
+[ 1642.103325] handle_remote_futex_key_request: request -- entered whos calling{pcnscif_execD} cpu{0}
+[ 1642.103332] handle_remote_futex_key_request: wait token aqc trq->wait.ticket{1} cnt{0}
+[ 1642.103343] global_worher_fn:wait --current msg pid{2133988} msg->ticket{1} 
+[ 1642.103351] global_futex_wait:after spin unlock ret{-14} uval{0}
+[ 1642.324215] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{68} msg-flags{0} cpu{0}
+[ 1642.424637] send ticket to wait request {2133988} msg->pid{2133988} msg->uaddr{699e40} RET{0} 
+[ 1642.448253] global_worher_fn:wake--current msg pid{2100160} msg->ticket{0} 
+[ 1642.459290] global_worher_fn: for address uadd{699e44} uadd2{0} wake{1} bit{-1} fn{ffff880000000078}
+[ 1642.475203] send ticket to wake request {2100160} msg->pid{2100160} msg->uaddr{699e44} RET{0} 
+[ 1642.484946] handle_remote_futex_wake_response: errno{0} p->tgp(2100160} 
+[ 1642.485006] handle_remote_futex_wake_request: request -- entered task comm{pcnscif_execD} pid{2097506} msg->fn_flag{68} msg-flags{0} cpu{0}
+[ 1642.652709] global_worher_fn:wake--current msg pid{2100160} msg->ticket{0} 
+[ 1642.663773] global_worher_fn: for address uadd{699e40} uadd2{0} wake{2147483647} bit{-1} fn{ffff880000000078}
+[ 1642.686167] remote_futex_wakeup: -- entered whos calling{kworker/u:2} 
+[ 1642.720403] send ticket to wake request {2100160} msg->pid{2100160} msg->uaddr{699e40} RET{141} 
+[ 1642.730354] handle_remote_futex_wake_response: errno{141} p->tgp(2100160} 
+[ 1642.886363] sys_futex: END +++++++++++++pid{2100160} retn{-512}
+[ 1642.893021] Pid: 2100160, comm: mut Tainted: G        W    3.2.14popcorn-replication-xeon+pthread+ #102
+[ 1642.903871] handle_remote_kill_response: response --- errno stored - errno{-2124029984} 

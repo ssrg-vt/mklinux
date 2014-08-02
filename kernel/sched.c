@@ -3330,6 +3330,10 @@ asmlinkage void schedule_tail(struct task_struct *prev)
 #endif
 	if (current->set_child_tid)
 		put_user(task_pid_vnr(current), current->set_child_tid);
+	//Multikernel
+/*	if(current->represents_remote==1)
+		sleep_shadow();
+*/	
 }
 
 /*
@@ -5600,7 +5604,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	struct task_struct *p;
 	int retval;
 
-	printk("%s entered\n",__func__);	
+//	printk("%s entered\n",__func__);	
 	get_online_cpus();
 	rcu_read_lock();
 
@@ -5669,7 +5673,7 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	int current_cpu = smp_processor_id();
     	int i,ret;
 
-	printk("%s, in popcorn sched set affinity!!!!\n",__func__);
+//	printk("%s, in popcorn sched set affinity!!!!\n",__func__);
 	get_online_cpus();
 	rcu_read_lock();
 
@@ -5817,7 +5821,7 @@ sleep_again:
 
 #endif
 
-printk("not migration\n");
+//printk("not migration\n");
 	/* Prevent p going away */
 	get_task_struct(p);
 	rcu_read_unlock();
@@ -5900,11 +5904,10 @@ asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long 
 	cpumask_var_t new_mask;
 	int retval;
 //#ifdef CONFIG_CPU_NAMESPACE
+	struct cpumask *pmask;
 	int nr_cpus;
         struct cpu_namespace * ns = current->nsproxy->cpu_ns;
-	long* cpumask_var;
-	//cpumask_var_t* cpumask_var;
-printk("%s entered\n",__func__);
+
 	// WARN the following maybe requires a per process lock
 	 if (ns !=  &init_cpu_ns) {
               // printk("%s:not the init cpu namespace\n", __func__);
@@ -5917,52 +5920,47 @@ printk("%s entered\n",__func__);
 //#endif
 		if (!alloc_cpumask_var(&new_mask, GFP_KERNEL))
                         return -ENOMEM;
-		retval = _get_user_cpu_mask(user_mask_ptr,len,new_mask,cpumask_size());
+
 //#ifdef CONFIG_CPU_NAMESPACE
+		pmask = new_mask;
 	}
         else { /* gloabl cpumask is bigger than local cpumask */
- 		cpumask_var = (long *)&new_mask;
-		 //cpumask_var = &new_mask;
-	//	printk("dove mi aspetto che entri\n");
-                *cpumask_var = kmalloc_node(ns->cpumask_size , GFP_KERNEL, NUMA_NO_NODE);
-                if (*cpumask_var) {
-                        unsigned char *ptr = (unsigned char*)cpumask_var;
+		//pmask = kmalloc_node(ns->cpumask_size , GFP_KERNEL, NUMA_NO_NODE);
+                pmask= kmalloc(ns->cpumask_size , GFP_KERNEL);
+		if (pmask) {
+                        unsigned char *ptr = (unsigned char*)pmask;
                         unsigned int tail;
                         tail = BITS_TO_LONGS(ns->nr_cpus - ns->nr_cpu_ids) * sizeof(long);
                         memset(ptr + ns->cpumask_size - tail, 0, tail);
                 }
-                else
+                else {
+			printk(KERN_ALERT"%s: kmalloc_node failed\n", __func__);
                         return -ENOMEM;
-
-		//retval = _get_user_cpu_mask(user_mask_ptr, len,(struct cpumask *) *cpumask_var,  ns->cpumask_size);
-		retval = _get_user_cpu_mask(user_mask_ptr, len,new_mask,  ns->cpumask_size);        
+		}
 	}
 //#endif        
  
-	if (retval == 0){
+ 	retval = _get_user_cpu_mask(user_mask_ptr, len, pmask,
+				    (!(nr_cpus > nr_cpu_ids)) ? cpumask_size() : ns->cpumask_size);
+	if (retval == 0) {
 		struct task_struct * p = find_process_by_pid(pid);
         	if (!p) {
-                      		 return -ESRCH;
+			return -ESRCH;
         	}
 
-                if((p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)))
-                        retval= sched_setaffinity_on_popcorn(pid,p, new_mask,len, regs);
+                if ( (p->cpus_allowed_map &&
+		  (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) )
+                        retval= sched_setaffinity_on_popcorn(pid,p, pmask, len, regs);
                 else
-			retval= sched_setaffinity(pid, new_mask);                        
-
+			retval= sched_setaffinity(pid, pmask);
         }
-
-//printk("%s ret is %d",__func__,retval);
 //#ifdef CONFIG_CPU_NAMESPACE
 	 if ( !(nr_cpus > nr_cpu_ids))
 //#endif
  		free_cpumask_var(new_mask);
 //#ifdef CONFIG_CPU_NAMESPACE
-         else{
-                //kfree (new_mask);
-               // kfree(*cpumask_var);
-		
-	}
+         else
+		kfree(pmask);
 //#endif
 
         return retval;
@@ -6011,12 +6009,12 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
  	if ( (ns != &init_cpu_ns) && (ns == p->cpus_allowed_map->ns) )
 {
 
-#ifdef CONFIG_CPUMASK_OFFSTACK
+//#ifdef CONFIG_CPUMASK_OFFSTACK
 bitmap_and(cpumask_bits(mask), p->cpus_allowed_map->bitmap, online_mask, cpumask_bits);
-#else 
-unsigned long* ptr = mask;
-bitmap_and(*ptr, p->cpus_allowed_map->bitmap, online_mask, cpumask_bits);
-#endif
+//#else 
+//unsigned long* ptr = mask;
+//bitmap_and(*ptr, p->cpus_allowed_map->bitmap, online_mask, cpumask_bits);
+//#endif
 //printk("%s, ns != &init_cpu_ns  && (ns == p->cpus_allowed_map->ns)\n",__func__);
 	}
 	else
@@ -6046,8 +6044,8 @@ SYSCALL_DEFINE3(sched_getaffinity, pid_t, pid, unsigned int, len,
 {
 	int ret, nr_cpus;
 	cpumask_var_t mask;
+	struct cpumask *pmask;
 	struct cpu_namespace * ns = current->nsproxy->cpu_ns;
-	long* cpumask_var;	
 
 	if (ns !=  &init_cpu_ns) {
                //  printk("%s:not the init cpu namespace\n", __func__);
@@ -6064,47 +6062,45 @@ SYSCALL_DEFINE3(sched_getaffinity, pid_t, pid, unsigned int, len,
 	if ( !(nr_cpus > nr_cpu_ids) ) {
                  if (!alloc_cpumask_var(&mask, GFP_KERNEL))
                          return -ENOMEM;
+		 pmask = mask;
         }
         else { /* gloabl cpumask is bigger than local cpumask */
-                //cpumask_var_t * mask_var = &mask;
-                cpumask_var = (long *)&mask;
-		//printk("%s, gloabl cpumask is bigger than local cpumask calling kmalloc_node\n",__func__);
-                *cpumask_var = kmalloc_node(ns->cpumask_size , GFP_KERNEL, NUMA_NO_NODE);
-                if (*cpumask_var) {
-			unsigned char *ptr = (unsigned char*)cpumask_var;
-                        unsigned int tail;
-                      tail = BITS_TO_LONGS(ns->nr_cpus - ns->nr_cpu_ids) * sizeof(long);
-                      memset(ptr + ns->cpumask_size - tail, 0, tail);
+		//pmask = kmalloc_node(ns->cpumask_size , GFP_KERNEL, NUMA_NO_NODE);
+		pmask= kmalloc(ns->cpumask_size , GFP_KERNEL);
+		if (pmask) {
+			unsigned char *ptr = (unsigned char*)pmask;
+			unsigned int tail;
+			tail = BITS_TO_LONGS(ns->nr_cpus - ns->nr_cpu_ids) * sizeof(long);
+			memset(ptr + ns->cpumask_size - tail, 0, tail);
 		}
-                else
-                         return -ENOMEM;
-        }
+		else {
+			printk(KERN_ALERT"%s: kmalloc_node failed\n", __func__);
+			return -ENOMEM;
+		}
+	}
 
-	ret = sched_getaffinity(pid,mask);
+	ret = sched_getaffinity(pid, pmask);
 	if (ret == 0) {
-
 		//printk("%s, sched_getaffinity returned 0\n",__func__);
 		size_t retlen = min_t(size_t, len,
-                                      ( !(nr_cpus > nr_cpu_ids) ) ? cpumask_size() :
-                                       ns->cpumask_size);
+                                      (( !(nr_cpus > nr_cpu_ids) ) ? cpumask_size() :
+                                       ns->cpumask_size));
 
-		if (copy_to_user(user_mask_ptr, mask, retlen))
+		if (copy_to_user(user_mask_ptr, pmask, retlen)){
 			ret = -EFAULT;
-		else
-			ret = retlen;
-
-// printk("%s, ret to user is %lu \n",__func__,ret);
-	}
-
-	if ( !(nr_cpus > nr_cpu_ids) ){
-                //free_cpumask_var(mask);
 		}
-        else{
-     		/*kfree(mask);
-           	 kfree(*cpumask_var);
-              */
-             // printk("%s,remember free not called\n",__func__);
+		else{
+			ret = retlen;
+		}
 	}
+
+	if ( !(nr_cpus > nr_cpu_ids) ) {
+		free_cpumask_var(mask);
+	}
+        else {
+		kfree(pmask);
+	}
+	
 	return ret;
 }
 

@@ -69,14 +69,17 @@
 /**
  * Use the preprocessor to turn off printk.
  */
-#define PROCESS_SERVER_VERBOSE 1
+#define PROCESS_SERVER_VERBOSE 0
 #define PROCESS_SERVER_VMA_VERBOSE 0
 #define PROCESS_SERVER_NEW_THREAD_VERBOSE 0
 #define PROCESS_SERVER_MINIMAL_PGF_VERBOSE 0
 
-#define CHECKSUM 1
-#define STATISTICS 1
-#define TIMING 1
+#define READ_PAGE 0
+#define PAGE_ADDR 0
+
+#define CHECKSUM 0
+#define STATISTICS 0
+#define TIMING 0
 
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
@@ -4489,7 +4492,6 @@ if (is_zero_page(pte_pfn(entry)) || !(page->replicated == 1)) {
 		printk("ERROR received a request not fetch for a not replicated page\n");
 
 	if (vma->vm_flags & VM_WRITE) {
-printk(KERN_ALERT": OOCHIO writaeble VMA\n");
 
 		//if the page is writable but the pte has not the write flag set, it is a cow page
 		if (!pte_write(entry)) {
@@ -4555,13 +4557,12 @@ printk(KERN_ALERT": OOCHIO writaeble VMA\n");
 
 			}
 		}
-printk(KERN_ALERT"UUUCHIO \n");
+		//printk(KERN_ALERT"UUUCHIO \n");
 
 		page->replicated = 1;
 
 		flush_cache_page(vma, address, pte_pfn(*pte));
 		entry = mk_pte(page, vma->vm_page_prot);
-printk(KERN_ALERT"yyyyCHIO \n");
 
 		if(request->is_write==0){
 			//case fetch for read
@@ -4580,7 +4581,6 @@ printk(KERN_ALERT"yyyyCHIO \n");
 		}
 
 		page->last_write= 1;
-printk(KERN_ALERT"WWWWCHIO \n");
 
 		entry = pte_set_flags(entry, _PAGE_USER);
 		entry = pte_set_flags(entry, _PAGE_ACCESSED);
@@ -4588,15 +4588,14 @@ printk(KERN_ALERT"WWWWCHIO \n");
 		ptep_clear_flush(vma, address, pte);
 
 		set_pte_at_notify(mm, address, pte, entry);
-printk(KERN_ALERT"ZZZZCHIO smp{%d} comm{%s}\n",smp_processor_id(),current->comm);
+		//printk(KERN_ALERT"ZZZZCHIO smp{%d} comm{%s} tick(%lx} for address{%d}\n",smp_processor_id(),current->comm,native_read_tsc(),address);
 
 		//in x86 does nothing
-		//update_mmu_cache(vma, address, pte);
+		update_mmu_cache(vma, address, pte);
 		
-printk(KERN_ALERT"C????????HIO\n");
+		//printk(KERN_ALERT"???????HIO smp{%d} comm{%s} tick(%lx} for address{%d}\n",smp_processor_id(),current->comm,native_read_tsc(),address);
 	if (old_page != NULL)
 			page_remove_rmap(old_page);
-printk(KERN_ALERT"######CHIO\n");
 	} else {
 		//read only vma
 		page->replicated=0;
@@ -4609,11 +4608,9 @@ printk(KERN_ALERT"######CHIO\n");
 		owner= 0;
 	}
 
-printk(KERN_ALERT"!!!!!!!CHIO\n");
 	page->other_owners[_cpu]=1;
 	page->other_owners[from_cpu]=1;
 
-printk(KERN_ALERT"@@@@@@@CHIO\n");
 	goto resolved;
 }
 else{
@@ -4838,27 +4835,34 @@ if (response == NULL) {
 void* vto = &(response->data);
 vfrom = kmap_atomic(page, KM_USER0);
 
+#if READ_PAGE
 int ct=0;
 unsigned long _buff[16];
 
-if(address == 4795920){
-for(ct=0;ct<8;ct++){
-_buff[ct]=(unsigned long) *(((unsigned long *)vfrom) + ct);
+if(address == PAGE_ADDR){
+	for(ct=0;ct<8;ct++){
+		_buff[ct]=(unsigned long) *(((unsigned long *)vfrom) + ct);
+	}
 }
-}
+#endif
+
 copy_page(vto, vfrom);
 kunmap_atomic(vfrom, KM_USER0);
 
 response->data_size= PAGE_SIZE;
 
-if(address == 4795920){
-for(ct=8;ct<16;ct++){
-_buff[ct]=(unsigned long) *((unsigned long*)(&(response->data))+ct-8);
+
+#if READ_PAGE
+if(address == PAGE_ADDR){
+	for(ct=8;ct<16;ct++){
+		_buff[ct]=(unsigned long) *((unsigned long*)(&(response->data))+ct-8);
+	}
+	for(ct=0;ct<16;ct++){
+		printk(KERN_ALERT"{%lx} ",_buff[ct]);
+	}
 }
-for(ct=0;ct<16;ct++){
-printk(KERN_ALERT"{%lx} ",_buff[ct]);
-}
-}
+#endif
+
 #if CHECKSUM
 vfrom= kmap_atomic(page, KM_USER0);
 __wsum check1= csum_partial(vfrom, PAGE_SIZE, 0);
@@ -6263,7 +6267,7 @@ return 1;
 				clone_data_t* clone_data;
 				int previous;
 				// perf_cc = native_read_tsc();
-	printk("%s : received request\n", __func__);
+				printk("%s : received request\n", __func__);
 				/*
 				 * Remember this request
 				 */
@@ -6367,8 +6371,8 @@ return 0;
 
 				PSPRINTK(
 						"MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
-	dump_stack();
-printk("%s, entered pid %d\n",__func__,tsk->pid);
+				//	dump_stack();
+				//printk("%s, entered pid %d\n",__func__,tsk->pid);
 				entry = find_memory_entry(tsk->tgroup_home_cpu, tsk->tgroup_home_id);
 				if (entry) {
 
@@ -6408,7 +6412,7 @@ printk("%s, entered pid %d\n",__func__,tsk->pid);
 						msg->thread_ds = tsk->thread.ds;
 						msg->thread_fsindex = tsk->thread.fsindex;
 						msg->thread_gsindex = tsk->thread.gsindex;
-						if (tsk->group_exit)
+						if (tsk->group_exit == 1)
 							msg->group_exit = 1;
 						else
 							msg->group_exit = 0;
@@ -8897,13 +8901,14 @@ if(memory->kernel_set[i]==1)
 					copy_user_page(vto, vfrom, address, page);
 					kunmap_atomic(vto, KM_USER0);
 
-
+#if READ_PAGE
 int ct=0;
-if(address == 4795920){
-for(ct=0;ct<8;ct++){
-printk(KERN_ALERT"{%lx} ",(unsigned long) *(((unsigned long *)vfrom)+ct));
+if(address == PAGE_ADDR)
+	for(ct=0;ct<8;ct++){
+	printk(KERN_ALERT"{%lx} ",(unsigned long) *(((unsigned long *)vfrom)+ct));
+	}
 }
-}
+#endif
 
 #if CHECKSUM
 					vto= kmap_atomic(page, KM_USER0);

@@ -537,9 +537,9 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	}
 
 	
-	if(vma && (vma->vm_file != NULL) && strcmp(vma->vm_file,"/bin/is") == 0){
+	/*if(vma && (vma->vm_file != NULL) && strcmp(vma->vm_file,"/bin/is") == 0){
 	printk(KERN_ALERT"%s: vma start{%lx}  end{%lx} \n)",__func__,vma->vm_start,vma->vm_end);	
-	}
+	}*/
 
 	if (start > vma->vm_start)
 		prev = vma;

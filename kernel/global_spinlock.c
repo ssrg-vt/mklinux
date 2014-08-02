@@ -32,7 +32,7 @@ DEFINE_SPINLOCK(request_queue_lock);
 #define GENERAL_SPIN_LOCK(x,f) spin_lock_irqsave(x,f)
 #define GENERAL_SPIN_UNLOCK(x,f) spin_unlock_irqrestore(x,f)
 
-#define GSP_VERBOSE 0
+#define GSP_VERBOSE 0 
 #if GSP_VERBOSE
 #define GSPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -152,7 +152,6 @@ unsigned long f;
  	{
  		objPtr = list_entry(iter, _local_rq_t, lrq_member);
  		if (objPtr->_pid == pid) {
-			objPtr->wake_st =1; //Set wake state as ON
  			GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
  			return objPtr;
  		}
@@ -161,6 +160,26 @@ unsigned long f;
  	return NULL;
  }
 
+
+ _local_rq_t *set_wake_request_by_pid(pid_t pid, struct list_head *head) {
+
+ 	struct list_head *iter;
+ 	_local_rq_t *objPtr;
+	unsigned long f;
+ 	 GENERAL_SPIN_LOCK(&request_queue_lock,f);
+ 	list_for_each(iter, head)
+ 	{
+ 		objPtr = list_entry(iter, _local_rq_t, lrq_member);
+ 		if (objPtr->_pid == pid) {
+		///	printk(KERN_ALERT"wake stat up\n");
+			objPtr->wake_st =1; //Set wake state as ON
+ 			GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
+ 			return objPtr;
+ 		}
+ 	}
+ 	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
+ 	return NULL;
+ }
 
 
 
@@ -273,14 +292,14 @@ __releases(&value->_sp)
 				if(_data->ops==WAIT_OPS){
 					wait_req->fn_flags |= FLAGS_REMOTECALL;
 			
-				 printk(KERN_ALERT"%s: msg wait: uaddr {%lx}  ticket {%d} tghid{%d} bitset {%u}  pid{%d}  ops{%d} size{%d} \n",
-                        __func__,wait_req->uaddr,wait_req->ticket,wait_req->tghid,wait_req->bitset,wait_req->pid,_data->ops,sizeof(_remote_key_request_t));
+		//		 printk(KERN_ALERT"%s: msg wait: uaddr {%lx}  ticket {%d} tghid{%d} bitset {%u}  pid{%d}  ops{%d} size{%d} \n",
+                 //       __func__,wait_req->uaddr,wait_req->ticket,wait_req->tghid,wait_req->bitset,wait_req->pid,_data->ops,sizeof(_remote_key_request_t));
 				}
 				else{
 					wake_req->fn_flag |= FLAGS_REMOTECALL;
 				//printk(KERN_ALERT"%s: uaddr{%lx}  uaddr2{%lx}\n",__func__,wake_req->uaddr,wake_req->uaddr2);
-				 printk(KERN_ALERT"%s: msg wake: uaddr {%lx}  uaddr2{%lx} ticket {%d} tghid{%d} bitset {%u} rflag{%d} pid{%d} ifn_flags{%lx} ops{%d} size{%d} \n",
-                        __func__,wake_req->uaddr,(wake_req->uaddr2),wake_req->ticket,wake_req->tghid,wake_req->bitset,wake_req->rflag,wake_req->pid,wake_req->fn_flag,_data->ops,sizeof(_remote_wakeup_request_t));
+		//		 printk(KERN_ALERT"%s: msg wake: uaddr {%lx}  uaddr2{%lx} ticket {%d} tghid{%d} bitset {%u} rflag{%d} pid{%d} ifn_flags{%lx} ops{%d} size{%d} \n",
+                  //      __func__,wake_req->uaddr,(wake_req->uaddr2),wake_req->ticket,wake_req->tghid,wake_req->bitset,wake_req->rflag,wake_req->pid,wake_req->fn_flag,_data->ops,sizeof(_remote_wakeup_request_t));
 
 				}
 
@@ -288,11 +307,11 @@ __releases(&value->_sp)
     			if (cpu >= 0)
     			{
 				spin_unlock(&value->_sp);
-				printk(KERN_ALERT"%s: dest_cpu {%d} \n",__func__,cpu);
+		//		printk(KERN_ALERT"%s: dest_cpu {%d} \n",__func__,cpu);
 				res = pcn_kmsg_send_long(cpu, 
 					(struct pcn_kmsg_long_message*)  ((_data->ops==WAKE_OPS)? (wake_req):(wait_req)),
 					(_data->ops==WAKE_OPS) ? sizeof(_remote_wakeup_request_t) - sizeof(struct pcn_kmsg_hdr) : sizeof(_remote_key_request_t) - sizeof(struct pcn_kmsg_hdr));
-				printk(KERN_ALERT"%s: msg return in remote {%d}  \n",__func__, res);
+		//		printk(KERN_ALERT"%s: msg return in remote {%d}  \n",__func__, res);
     			}
 
     		} else if (vma != NULL && _cpu == 0) {// && !(vma->vm_flags & VM_PFNMAP) ) {
@@ -300,26 +319,26 @@ __releases(&value->_sp)
     			if(_data->ops==WAIT_OPS){
 					wait_req->fn_flags |= FLAGS_ORIGINCALL;
 				
-				 printk(KERN_ALERT"%s: msg wait: uaddr {%lx}  ticket {%d} tghid{%d} bitset {%u}  pid{%d}  ops{%d} size{%d} \n",
-                        __func__,wait_req->uaddr,wait_req->ticket,wait_req->tghid,wait_req->bitset,wait_req->pid,_data->ops,sizeof(*wait_req));
+		//		 printk(KERN_ALERT"%s: msg wait: uaddr {%lx}  ticket {%d} tghid{%d} bitset {%u}  pid{%d}  ops{%d} size{%d} \n",
+                  //      __func__,wait_req->uaddr,wait_req->ticket,wait_req->tghid,wait_req->bitset,wait_req->pid,_data->ops,sizeof(*wait_req));
 				}
 				else{
 					wake_req->fn_flag |= FLAGS_ORIGINCALL;
 					wake_req->rflag = current->pid;
 				
-				 printk(KERN_ALERT"%s: msg wake: uaddr {%lx}  uaddr2{%lx} ticket {%d} tghid{%d} bitset {%u} rflag{%d} pid{%d} ifn_flags{%lx} size{%d}\n",
-                        __func__,wake_req->uaddr,(wake_req->uaddr2),wake_req->ticket,wake_req->tghid,wake_req->bitset,wake_req->rflag,wake_req->pid,wake_req->fn_flag,sizeof(*wake_req));
+		//		 printk(KERN_ALERT"%s: msg wake: uaddr {%lx}  uaddr2{%lx} ticket {%d} tghid{%d} bitset {%u} rflag{%d} pid{%d} ifn_flags{%lx} size{%d}\n",
+                  //      __func__,wake_req->uaddr,(wake_req->uaddr2),wake_req->ticket,wake_req->tghid,wake_req->bitset,wake_req->rflag,wake_req->pid,wake_req->fn_flag,sizeof(*wake_req));
 				}
 
     			GSPRINTK(KERN_ALERT"%s: sending to origin origin call cpu: 0x{%d}  \n",__func__,cpu,localticket_value);
     			if (cpu >= 0)
     			{
 				spin_unlock(&value->_sp);
-				printk(KERN_ALERT"%s: dest_cpu {%d} \n",__func__,cpu);
+		//		printk(KERN_ALERT"%s: dest_cpu {%d} \n",__func__,cpu);
 				res = pcn_kmsg_send_long(cpu, 
 					(struct pcn_kmsg_long_message*)  ((_data->ops==WAKE_OPS)? (wake_req):(wait_req)),
 					(_data->ops==WAKE_OPS) ? sizeof(_remote_wakeup_request_t) - sizeof(struct pcn_kmsg_hdr) : sizeof(_remote_key_request_t) - sizeof(struct pcn_kmsg_hdr));
-				printk(KERN_ALERT"%s: msg return in remote {%d}  \n",__func__, res);
+		//		printk(KERN_ALERT"%s: msg return in remote {%d}  \n",__func__, res);
     			}
     		}
 //		rq_ptr->_st=0;

@@ -16,6 +16,7 @@
 #include <linux/file.h>
 #include <linux/module.h>
 #include <linux/namei.h>
+#include <linux/process_server.h>
 
 static DEFINE_MUTEX(cpu_caches_mutex);
 static struct kmem_cache *cpu_ns_cachep;
@@ -180,7 +181,7 @@ int read_notify_cpu_ns(char *page, char **start, off_t off, int count, int *eof,
 	memset(cpumask_buffer, 0,1024);
 	
 	if (ns->cpu_online_mask) 
-		bitmap_scnprintf(cpumask_buffer, 1023, cpumask_bits(ns->cpu_online_mask), nr_cpumask_bits ); // TODO change with ns->nr_cpu_ids
+		bitmap_scnprintf(cpumask_buffer, 1023, cpumask_bits(ns->cpu_online_mask), ns->_nr_cpumask_bits ); // TODO change with ns->nr_cpu_ids
 	else
 	    printk("cpu_online_mask is  zero!?\n");
 
@@ -309,7 +310,7 @@ printk(KERN_ERR"%s: cnr_cpu_ids: %d size:%d summary %p tmp %p\n",
     
     //TODO unlock popcorn namespace
     //TODO unlock kernel list
-    
+   //create_thread_pull(); 
     return 0;
 }
 

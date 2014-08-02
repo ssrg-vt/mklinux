@@ -1169,13 +1169,14 @@ retry:
 
 	vma = find_vma(mm, address);
 
-	if(current->nsproxy->cpu_ns == popcorn_ns && (strcmp(current->comm,"is") == 0)){
+	/*if(current->nsproxy->cpu_ns == popcorn_ns && (strcmp(current->comm,"is") == 0)){
 		printk(KERN_ALERT"%s:Page fault for address %lu in page %lu pid %d\n",__func__,address,address&PAGE_MASK,current->pid);
 		if(flags&FAULT_FLAG_WRITE)
 			printk(KERN_ALERT"write\n");
 		else
 			printk(KERN_ALERT"read\n");
-	}
+	}*/
+
 	// Multikernel
 	repl_ret= 0;
 	// Nothing to do for a thread group that's not distributed.
@@ -1187,7 +1188,7 @@ retry:
 			goto out;
 
 		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
-			printk(KERN_ALERT" stack value old rsp{%lx},cx{%lx} , edi{%lx} address{%lx} \n", read_old_rsp(),regs->cx,regs->di,address);
+			/*printk(KERN_ALERT" stack value old rsp{%lx},cx{%lx} , edi{%lx} address{%lx} \n", read_old_rsp(),regs->cx,regs->di,address);
 			unsigned long *_base= 0x492e10; //read_old_rsp();
 			int ret =0;
 			for(cnt=0 ;cnt< 16;cnt++){
@@ -1195,7 +1196,7 @@ retry:
 			ret =  get_user(ptr,((_base)+cnt));
 			printk(KERN_ALERT" {%lx} ret{%d}\t",ptr,ret);
 			}
-			dump_regs(regs);
+			dump_regs(regs);*/
 			bad_area(regs, error_code, address);
 			goto out_distr;
 		}
@@ -1209,7 +1210,7 @@ retry:
 
 		if (unlikely(repl_ret & VM_FAULT_ERROR)) {
 			mm_fault_error(regs, error_code, address, repl_ret);
-			dump_regs(regs);
+		        //dump_regs(regs);
 			goto out_distr;
 		}
 
