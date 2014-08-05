@@ -302,8 +302,8 @@ void display_request(struct list_head *head) {
 static int handle_remote_kill_response(struct pcn_kmsg_message* inc_msg) {
 	_remote_kill_response_t* msg = (_remote_kill_response_t*) inc_msg;
 
-	printk("%s: response --- errno stored - errno{%d} \n",
-			"handle_remote_kill_response",__func__, msg->errno);
+	//printk("%s: response --- errno stored - errno{%d} \n",
+	//		"handle_remote_kill_response",__func__, msg->errno);
 
 	_outgoing_remote_signal_pool_t *ptr = find_outgoing(msg->request_id, &out_head);
 	if(!ptr) goto free;
@@ -325,7 +325,7 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	int ret = -ESRCH;
 	int signum = 0;
 
-	printk("%s: request -- entered current{%d} comm{%s} for pid{%d}\n", "handle_remote_kill_request",current->pid,current->comm, msg->pid);
+	//printk("%s: request -- entered current{%d} comm{%s} for pid{%d}\n", "handle_remote_kill_request",current->pid,current->comm, msg->pid);
 
 	// Finish constructing response
 	response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
@@ -388,7 +388,7 @@ int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 
 	_remote_kill_request_t *request = kmalloc(sizeof(_remote_kill_request_t),
 	GFP_ATOMIC);
-	printk(KERN_ALERT"%s: current pid{%d} comm {%s} sig{%d} pid{%d}\n",__func__, current->pid,current->comm,sig,pid);
+//	printk(KERN_ALERT"%s: current pid{%d} comm {%s} sig{%d} pid{%d}\n",__func__, current->pid,current->comm,sig,pid);
 	_outgoing_remote_signal_pool_t *ptr;
 	// Build request
 

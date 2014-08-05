@@ -397,7 +397,7 @@ int global_futex_wait(unsigned long uaddr, unsigned int flags, u32 val,
 	//start wait setup
 retry:
 	ret = get_futex_key_tsk((u32 __user *)uaddr, flags & FLAGS_SHARED, &q->key, VERIFY_READ, tsk);
-	FRPRINTK(KERN_ALERT "%s: pid origin {%s} _cpu{%d} uaddr{%lx} uval{%d} ret{%d} \n ",__func__,tsk->comm,smp_processor_id(),uaddr,val,ret);
+	//printk(KERN_ALERT "%s: pid origin {%s} _cpu{%d} uaddr{%lx} uval{%d} ret{%d} \n ",__func__,tsk->comm,smp_processor_id(),uaddr,val,ret);
 	if (unlikely(ret != 0))
 	   return ret;
 
@@ -460,7 +460,7 @@ fault:
 	//queue me the dummy node for remote
 	prio = 100; //min(current->normal_prio, MAX_RT_PRIO);
 	plist_node_init(&q->list, prio);
-	plist_add(&q->list, &hb->chain);
+	//plist_add(&q->list, &hb->chain);
 	if(!rem_struct){
 			q->task = NULL;
 			q->rem_pid = rem;
@@ -471,8 +471,17 @@ fault:
 			q->rem_pid = -1;
 			ret = WAIT_MAIN;
 	}
-
-	FRPRINTK(KERN_ALERT "%s:global request unlock queue me ret{%d}  en ",__func__,ret);
+	plist_add(&q->list, &hb->chain);
+  	head = &hb->chain;
+	int var =0;
+	plist_for_each_entry_safe(this, next, head, list){
+        	if(this->task && q->task == this->task){
+	    		var =1;
+ 		}
+	}
+	/*if(!var)
+		printk(KERN_ALERT "%s:IAM NOT HERE  this->pid{%d}\n ",__func__,(!(this->task)) ? -1 : this->task->pid);
+	*/FRPRINTK(KERN_ALERT "%s:global request unlock queue me ret{%d}  en ",__func__,ret);
 
 	spin_unlock(&hb->lock);
 
@@ -483,8 +492,8 @@ out:
 	}
 	unuse_mm(tsk->mm);
 
-	FRPRINTK(KERN_ALERT "%s: hb {%p} key: word {%lx} offset{%d} ptr{%p} mm{%p} ret{%d}\n ",__func__,
-			hb,q->key.both.word,q->key.both.offset,q->key.both.ptr,q->key.private.mm,ret);
+	//printk(KERN_ALERT "%s: rem{%d} hb {%p} key: word {%lx} offset{%d} ptr{%p} mm{%p} ret{%d}\n ",__func__,
+	//		rem,hb,q->key.both.word,q->key.both.offset,q->key.both.ptr,q->key.private.mm,ret);
 	FRPRINTK(KERN_ALERT "%s:exit\n",__func__);
 	return ret;
 }

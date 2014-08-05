@@ -469,7 +469,7 @@ static int __init cpu_info_handler_init(void)
   INIT_LIST_HEAD(&rlist_head);
 
 #ifdef CONFIG_X86_EARLYMIC
-offset_cpus= 48;
+offset_cpus= 4;
 #else
 offset_cpus=0;
 #endif

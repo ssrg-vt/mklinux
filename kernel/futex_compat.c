@@ -188,7 +188,13 @@ asmlinkage long compat_sys_futex(u32 __user *uaddr, int op, u32 val,
 	ktime_t t, *tp = NULL;
 	int val2 = 0;
 	int cmd = op & FUTEX_CMD_MASK;
-
+   
+	if( (strcmp(current->comm,"matrix_mult")==0)){
+                printk(KERN_ALERT"COMPAT futex\n");
+                printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id());
+//              dump_regs(task_pt_regs(current));
+        }
+//
 	if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
 		      cmd == FUTEX_WAIT_BITSET ||
 		      cmd == FUTEX_WAIT_REQUEUE_PI)) {
@@ -205,6 +211,10 @@ asmlinkage long compat_sys_futex(u32 __user *uaddr, int op, u32 val,
 	if (cmd == FUTEX_REQUEUE || cmd == FUTEX_CMP_REQUEUE ||
 	    cmd == FUTEX_CMP_REQUEUE_PI || cmd == FUTEX_WAKE_OP)
 		val2 = (int) (unsigned long) utime;
-
+	  if( (strcmp(current->comm,"matrix_mult")==0)){
+                printk(KERN_ALERT"%s: COMPAT END +++++++++++++pid{%d} retn{%d} uaddr{%lx}\n",__func__,current->pid,0,uaddr);
+//              dump_regs(task_pt_regs(current));
+            }
+                      
 	return do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
 }

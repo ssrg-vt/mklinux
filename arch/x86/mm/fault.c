@@ -1195,8 +1195,8 @@ retry:
 			unsigned long ptr;
 			ret =  get_user(ptr,((_base)+cnt));
 			printk(KERN_ALERT" {%lx} ret{%d}\t",ptr,ret);
-			}
-			dump_regs(regs);*/
+			}*/
+			dump_regs(regs);
 			bad_area(regs, error_code, address);
 			goto out_distr;
 		}
@@ -1210,7 +1210,7 @@ retry:
 
 		if (unlikely(repl_ret & VM_FAULT_ERROR)) {
 			mm_fault_error(regs, error_code, address, repl_ret);
-		        //dump_regs(regs);
+		        dump_regs(regs);
 			goto out_distr;
 		}
 
