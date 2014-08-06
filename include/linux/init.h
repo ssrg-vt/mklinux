@@ -212,6 +212,7 @@ extern int initcall_debug;
 #define device_initcall_sync(fn)	__define_initcall("6s",fn,6s)
 #define late_initcall(fn)		__define_initcall("7",fn,7)
 #define late_initcall_sync(fn)		__define_initcall("7s",fn,7s)
+#define late_initcall_popcorn(fn)      __define_initcall("8",fn,8)
 
 #define __initcall(fn) device_initcall(fn)
 

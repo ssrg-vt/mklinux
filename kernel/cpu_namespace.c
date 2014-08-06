@@ -310,7 +310,7 @@ printk(KERN_ERR"%s: cnr_cpu_ids: %d size:%d summary %p tmp %p\n",
     
     //TODO unlock popcorn namespace
     //TODO unlock kernel list
-   //create_thread_pull(); 
+    create_thread_pull();
     return 0;
 }
 

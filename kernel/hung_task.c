@@ -82,8 +82,8 @@ static void check_hung_task(struct task_struct *t, unsigned long timeout)
 	/* Multikernel
 	 * a shadow thread can be in interruptible state for very long....
 	 * */
-	if(t->tgroup_distributed && (t->represents_remote || t->main))
-		return;
+	if(t->represents_remote || t->main)
+			return;
 
 	/*
 	 * When a freshly created task is scheduled once, changes its state to

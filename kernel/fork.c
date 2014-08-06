@@ -1460,6 +1460,104 @@ struct task_struct * __cpuinit fork_idle(int cpu)
 	return task;
 }
 
+struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
+		unsigned long stack_start,
+		struct pt_regs *regs,
+		unsigned long stack_size,
+		int __user *parent_tidptr,
+		int __user *child_tidptr){
+
+	struct task_struct *p;
+	int trace = 0;
+	long nr;
+
+	/*
+	 * Do some preliminary argument and permissions checking before we
+	 * actually start allocating stuff
+	 */
+	if (clone_flags & CLONE_NEWUSER) {
+		if (clone_flags & CLONE_THREAD)
+			return -EINVAL;
+		/* hopefully this check will go away when userns support is
+		 * complete
+		 */
+		if (!capable(CAP_SYS_ADMIN) || !capable(CAP_SETUID) ||
+				!capable(CAP_SETGID))
+			return -EPERM;
+	}
+
+	/*
+	 * Determine whether and which event to report to ptracer.  When
+	 * called from kernel_thread or CLONE_UNTRACED is explicitly
+	 * requested, no event is reported; otherwise, report if the event
+	 * for the type of forking is enabled.
+	 */
+	if (likely(user_mode(regs)) && !(clone_flags & CLONE_UNTRACED)) {
+		if (clone_flags & CLONE_VFORK)
+			trace = PTRACE_EVENT_VFORK;
+		else if ((clone_flags & CSIGNAL) != SIGCHLD)
+			trace = PTRACE_EVENT_CLONE;
+		else
+			trace = PTRACE_EVENT_FORK;
+
+		if (likely(!ptrace_event_enabled(current, trace)))
+			trace = 0;
+	}
+
+	p = copy_process(clone_flags, stack_start, regs, stack_size,
+			child_tidptr, NULL, trace);
+	/*
+	 * Do this prior waking up the new thread - the thread pointer
+	 * might get invalid after that point, if the thread exits quickly.
+	 */
+	if (!IS_ERR(p)) {
+		struct completion vfork;
+
+		trace_sched_process_fork(current, p);
+
+		nr = task_pid_vnr(p);
+
+		if (clone_flags & CLONE_PARENT_SETTID)
+			put_user(nr, parent_tidptr);
+
+		if (clone_flags & CLONE_VFORK) {
+			p->vfork_done = &vfork;
+			init_completion(&vfork);
+		}
+
+		audit_finish_fork(p);
+
+		/*
+		 * We set PF_STARTING at creation in case tracing wants to
+		 * use this to distinguish a fully live task from one that
+		 * hasn't finished SIGSTOP raising yet.  Now we clear it
+		 * and set the child going.
+		 */
+		p->flags &= ~PF_STARTING;
+
+		//Multikernel
+		process_server_dup_task(current, p);
+
+		p->represents_remote= 1;
+		p->distributed_exit= EXIT_NOT_ACTIVE;
+
+		wake_up_new_task(p);
+
+		/* forking complete and child started to run, tell ptracer */
+		if (unlikely(trace))
+			ptrace_event(trace, nr);
+
+		if (clone_flags & CLONE_VFORK) {
+			freezer_do_not_count();
+			wait_for_completion(&vfork);
+			freezer_count();
+			ptrace_event(PTRACE_EVENT_VFORK_DONE, nr);
+		}
+	}
+
+	return p;
+
+}
 /*
  *  Ok, this is the main fork-routine.
  *
