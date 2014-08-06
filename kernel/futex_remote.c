@@ -385,8 +385,8 @@ int global_futex_wait(unsigned long uaddr, unsigned int flags, u32 val,
 	q->pi_state = NULL;
 	q->rt_waiter = NULL;
 
-	struct futex_q *this, *next;
-	struct plist_head *head;
+	struct futex_q *this=NULL, *next=NULL;
+	struct plist_head *head=NULL;
 	u32 uval;
 	int ret;
 	int sig;
@@ -467,21 +467,40 @@ fault:
 			ret = 0;
 	}
 	else{
+			get_task_struct(rem_struct);
 			q->task = rem_struct;
 			q->rem_pid = -1;
 			ret = WAIT_MAIN;
+			put_task_struct(rem_struct);
 	}
+
+//	if(_tsk && _tsk->tgroup_distributed){
+//		printk(KERN_ALERT "%s:  hb {%p} head {%p}\n ",__func__,	hb,&hb->chain);
+//	}
+
 	plist_add(&q->list, &hb->chain);
-  	head = &hb->chain;
+	smp_mb();
+  	/*head = &hb->chain;
 	int var =0;
 	plist_for_each_entry_safe(this, next, head, list){
-        	if(this->task && q->task == this->task){
-	    		var =1;
- 		}
+        	if(q->task==NULL && q->rem_pid== this->rem_pid)
+			var=1;
+		else
+			if(this->task && q->task == this->task){
+	    			var =1;
+ 			}
 	}
-	/*if(!var)
-		printk(KERN_ALERT "%s:IAM NOT HERE  this->pid{%d}\n ",__func__,(!(this->task)) ? -1 : this->task->pid);
-	*/FRPRINTK(KERN_ALERT "%s:global request unlock queue me ret{%d}  en ",__func__,ret);
+	if(var==0)
+		if(this!=NULL){
+			if(this->task!=NULL)
+				printk(KERN_ALERT "%s:IAM NOT HERE  and i have not the pid\n ",__func__);
+			else
+				printk(KERN_ALERT "%s:IAM NOT HERE  task is null\n ",__func__);
+		}
+		else
+			printk(KERN_ALERT "%s:IAM NOT HERE  this is null\n ",__func__);
+	*/
+	FRPRINTK(KERN_ALERT "%s:global request unlock queue me ret{%d}  en ",__func__,ret);
 
 	spin_unlock(&hb->lock);
 

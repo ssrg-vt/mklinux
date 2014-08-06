@@ -160,7 +160,7 @@ unsigned long f;
  	return NULL;
  }
 
- _local_rq_t *find_request_by_ops(int ops, unsigned long uaddr, struct list_head *head) {
+ _local_rq_t *find_request_by_ops(int ops, unsigned long uaddr,pid_t pid, struct list_head *head) {
 
         struct list_head *iter;
         _local_rq_t *objPtr;
@@ -169,7 +169,7 @@ unsigned long f;
         list_for_each(iter, head)
         {
                 objPtr = list_entry(iter, _local_rq_t, lrq_member);
-                if (objPtr->ops == 0 && objPtr->uaddr == uaddr) {
+                if (objPtr->ops == 0 && objPtr->uaddr == uaddr && objPtr->_pid == pid) {
                         GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
                         return objPtr;
                 }

@@ -129,7 +129,7 @@ _local_rq_t * find_request_by_pid(pid_t pid, struct list_head *head) ;
 _local_rq_t * set_err_request(int request_id,int err, struct list_head *head) ;
 int find_and_delete_pid(int pid, struct list_head *head);
  _local_rq_t *set_wake_request_by_pid(pid_t pid, struct list_head *head);
- _local_rq_t *find_request_by_ops(int ops, unsigned long uaddr, struct list_head *head);
+ _local_rq_t *find_request_by_ops(int ops, unsigned long uaddr, pid_t pid, struct list_head *head);
 
 extern _spin_value spin_bucket[1 << _SPIN_HASHBITS];
 extern _global_value global_bucket[1 << _SPIN_HASHBITS];

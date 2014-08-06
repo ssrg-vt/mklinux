@@ -383,7 +383,7 @@ int send_thread(void* arg0)
 			//exec_data->msg=wait_data->msg;
 			enq_rcv(exec_data);
 			
-			printk("%s: This is a selfie...\n",__func__);
+			//printk("%s: This is a selfie...\n",__func__);
 			goto _out;
 		}
 		
@@ -709,7 +709,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 		memcpy(exec_data->msg,lmsg,lmsg->hdr.size);
 		//exec_data->msg=wait_data->msg;
 		enq_rcv(exec_data);		
-		printk("%s: This is a selfie...\n",__func__);
+		//printk("%s: This is a selfie...\n",__func__);
 		return lmsg->hdr.size;
 	}
 	

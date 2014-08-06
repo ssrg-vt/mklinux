@@ -1204,7 +1204,7 @@ retry:
 			rq_ptr->_pid = current->pid;
 			rq_ptr->status = INPROG;
 			rq_ptr->ops  = 1;
-                        rq_ptr->uaddr = uaddr;
+			rq_ptr->uaddr = uaddr;
 
 			futex_common_data_t data_;
 
@@ -1258,15 +1258,15 @@ retry:
 			__spin_key_init(&sk);
 
 			/*if(_tsk || strcmp(current->comm,"matrix_mult") == 0){
-				printk(KERN_ALERT " FUTEX_WAKE:current{%d} uaddr {%lx} get_user{%d} comm{%s}  lockval{%d} fn_flags{%d} cpu{%d} \n",current->pid,uaddr,x,current->comm,y,fn_flags,smp_processor_id());
-			}*/
+			  printk(KERN_ALERT " FUTEX_WAKE:current{%d} uaddr {%lx} get_user{%d} comm{%s}  lockval{%d} fn_flags{%d} cpu{%d} \n",current->pid,uaddr,x,current->comm,y,fn_flags,smp_processor_id());
+			  }*/
 			fn_flags |= FLAGS_WAKECALL;
 
 			//printPTE(uaddr);
 			if (!bitset){
-			/*	if(_tsk && strcmp(_tsk->comm,"matrix_mult") == 0){
+				/*	if(_tsk && strcmp(_tsk->comm,"matrix_mult") == 0){
 					printk(KERN_ALERT"bitsetnukk\n");}
-*/
+					*/
 				return -EINVAL;
 			}
 
@@ -1282,6 +1282,7 @@ cont:
 			hb = hash_futex(&key);
 
 			if( !_tsk && !(flags & FLAGS_SHARED) && current->tgroup_distributed  && !(fn_flags & FLAGS_REMOTECALL) ){
+				//printk("client?\n");
 				g_errno= global_queue_wake_lock(&key,uaddr, flags & FLAGS_SHARED, nr_wake, bitset,
 						0, fn_flags, 0,0,0);
 				FPRINTK(KERN_ALERT " %s: err {%d}\n",__func__,g_errno);
@@ -1289,43 +1290,56 @@ cont:
 				goto out;
 			}
 			else{
+				//if(_tsk!=NULL && _tsk->tgroup_distributed)
+				//	printk("server?\n");		
 				spin_lock(&hb->lock);
 				head = &hb->chain;
 				ret = 0;
 				//if(_tsk && head)  printk(KERN_ALERT"%s: head {%p}\n",__func__,head);
 				/*if(_tsk && _tsk->tgroup_distributed){
-					printk(KERN_ALERT "%s:  hb {%p} key: word {%lx} offset{%d} ptr{%p} mm{%p} ret{%d}\n ",__func__,
-							hb,key.both.word,key.both.offset,key.both.ptr,key.private.mm,ret);
-				}*/
+				  printk(KERN_ALERT "%s:  hb {%p} key: word {%lx} head {%p} offset{%d} ptr{%p} mm{%p} ret{%d}\n ",__func__,
+				  hb,key.both.word,head,key.both.offset,key.both.ptr,key.private.mm,ret);
+				  }*/
 				if((fn_flags & FLAGS_REMOTECALL))
 					fn_flags  &= ~(1 << 5); //FLAGS_ORIGINCALL
 
 				plist_for_each_entry_safe(this, next, head, list) {
 
-/*					if(_tsk && strcmp(_tsk->comm,"matrix_mult") == 0){
-						printk(KERN_ALERT "%s:  this->pid{%d}\n ",__func__,(!(this->task)) ? -1 : this->task->pid);
-					}*/
+					/*if(_tsk && strcmp(_tsk->comm,"matrix_mult") == 0){
+					  printk(KERN_ALERT "%s:  this->pid{%d}\n ",__func__,(!(this->task)) ? -1 : this->task->pid);
+					  }*/
 					if(_tsk){
 						getKey(uaddr, &sk,_tsk->tgroup_home_id);
 						value = hashspinkey(&sk);
-						l= find_request_by_ops(0,uaddr, &value->_lrq_head);
 					}
 					if (match_futex (&this->key, &key)) {
-					/*if(_tsk){	
-							printk(KERN_ALERT " %s:sending it to remote after decision; ret{%d} nr_wake{%d} has_req_addr{%lx} cpu{%d} pid{%d}\n",__func__,ret,nr_wake,(this->req_addr != 0) ? this->req_addr : 0,Kernel_Id,!(this->task) ? -1 : this->task->pid);
-						}*/
+						/*if(_tsk){	
+						  printk(KERN_ALERT " %s:sending it to remote after decision; ret{%d} nr_wake{%d} has_req_addr{%lx} cpu{%d} pid{%d}\n",__func__,ret,nr_wake,(this->req_addr != 0) ? this->req_addr : 0,Kernel_Id,!(this->task) ? -1 : this->task->pid);
+						  }*/
 						if (this->rem_pid == -1 && (this->pi_state || this->rt_waiter)) {
 							ret = -EINVAL;
+							//	if(_tsk)
+							//		printk("nooo impossible!\n");
 							break;
 						}
 
 						/* Check if one of the bits is set in both bitsets */
 						if (this->rem_pid == -1 && !(this->bitset & bitset)){
+							//	printk("really?!\n");
 							continue;
 						}
 						if(this->rem_pid == -1){
-							if(_tsk && l)   l->wake_st = 1;
+							if(_tsk){  
+								l= find_request_by_ops(0, uaddr, this->task->pid, &value->_lrq_head);
+								//printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->wake_st);
+								l->wake_st = 1;
+							}
+
 							wake_futex(this);
+
+							/*if(_tsk){
+							  printk("BELLAAAAAAAAAAAAAAAAAAAAAAAA\n");
+							  }*/
 						}
 						else
 						{
@@ -1337,7 +1351,7 @@ cont:
 							smp_wmb();
 							this->lock_ptr = NULL;
 						}
-						
+
 						if (++ret >= nr_wake)
 							break;
 					}
@@ -1355,9 +1369,9 @@ out:
 				_wake += wake_bb - wake_aa;
 			}
 #endif
-			if(strcmp(current->comm,"matrix_mult") == 0){
+			/*	if(strcmp(current->comm,"matrix_mult") == 0){
 				printk(KERN_ALERT "%s: exit {%d}\n",__func__,current->pid);
-			}
+				}*/
 			return ret;
 		}
 
@@ -1536,6 +1550,10 @@ exit:
 		int g_errno=0;
 		int x=0;
 		struct mm_struct *act=NULL,*old=NULL;
+		_spin_value *value1 =NULL, *value2 =NULL;
+		_local_rq_t *l =NULL;
+		struct spin_key sk;
+		__spin_key_init(&sk);
 
 		fn_flags |= FLAGS_WAKEOPCALL;
 		/*	
@@ -1637,14 +1655,26 @@ retry_private:
 
 
 			head = &hb1->chain;
+			if(or_task){
+				getKey(uaddr1, &sk,or_task->tgroup_home_id);
+				value1 = hashspinkey(&sk);
+			}
+
 
 			plist_for_each_entry_safe(this, next, head, list)
 			{
 
 				FPRINTK(KERN_ALERT "%s:key1 pid{%d} comm{%s} rem{%d}\n",__func__,current->pid,current->comm,this->rem_pid);
 				if (match_futex (&this->key, &key1)) {
-					if(this->rem_pid == -1)
+					if(this->rem_pid == -1){
+						if(or_task){
+							l= find_request_by_ops(0, uaddr1, this->task->pid, &value1->_lrq_head);
+							//printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->wake_st);
+							l->wake_st = 1;
+						}
+
 						wake_futex(this);
+					}
 					else
 					{	u32 bitset=1;
 						remote_futex_wakeup(uaddr1, flags & FLAGS_SHARED,nr_wake, bitset,&key1,this->rem_pid, fn_flags, 0,0,0);
@@ -1659,6 +1689,11 @@ retry_private:
 				}
 			}
 
+			if(or_task){
+				getKey(uaddr2, &sk,or_task->tgroup_home_id);
+				value2 = hashspinkey(&sk);
+			}
+
 			if (op_ret > 0) {
 				head = &hb2->chain;
 
@@ -1668,8 +1703,15 @@ retry_private:
 
 					FPRINTK(KERN_ALERT "%s:key2 pid{%d} comm{%s} rem{%d}\n",__func__,current->pid,current->comm,this->rem_pid);
 					if (match_futex (&this->key, &key2)) {
-						if(this->rem_pid == -1)
+						if(this->rem_pid == -1){
+							if(or_task){
+								l= find_request_by_ops(0, uaddr2, this->task->pid, &value2->_lrq_head);
+								//printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->wake_st);
+								l->wake_st = 1;
+							}
+
 							wake_futex(this);
+						}
 						else
 						{	u32 bitset=1;
 							remote_futex_wakeup(uaddr2, flags & FLAGS_SHARED,nr_wake, bitset,&key2,this->rem_pid, fn_flags, 0,0,0);
@@ -1876,6 +1918,11 @@ out:
 		int requeued=0;
 		int g_errno=0;
 		unsigned long bp = stack_frame(current,NULL);
+		_spin_value *value1 =NULL, *value2 =NULL;
+		_local_rq_t *l =NULL;
+		struct spin_key sk;
+		__spin_key_init(&sk);
+
 
 		fn_flags |= FLAGS_REQCALL;
 
@@ -2036,6 +2083,12 @@ retry_private:
 				fn_flags |=FLAGS_REQCALL;//FLAGS_ORIGINCALL
 				unuse_mm(re_task->mm);
 			}
+			if(re_task){
+				getKey(uaddr1, &sk,re_task->tgroup_home_id);
+				value1 = hashspinkey(&sk);
+			}
+
+
 
 			head1 = &hb1->chain;
 			plist_for_each_entry_safe(this, next, head1, list) {
@@ -2064,14 +2117,21 @@ retry_private:
 
 				if (++task_count <= nr_wake && !requeue_pi) {
 
-					if(this->rem_pid == -1)
+					if(this->rem_pid == -1){
+						if(re_task){
+							l= find_request_by_ops(0, uaddr1, this->task->pid, &value1->_lrq_head);
+							//printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->wake_st);
+							l->wake_st = 1;
+						}
+
 						wake_futex(this);
+					}
 					else
 					{	u32 bitset=1;
 						if(!requeued)
 							remote_futex_wakeup(uaddr1, flags & FLAGS_SHARED,nr_wake, bitset,&key1,this->rem_pid, fn_flags,0,0,0);
 						else
-							 remote_futex_wakeup(uaddr2, flags & FLAGS_SHARED,nr_wake, bitset,&key2,this->rem_pid, fn_flags, 0,0,0);
+							remote_futex_wakeup(uaddr2, flags & FLAGS_SHARED,nr_wake, bitset,&key2,this->rem_pid, fn_flags, 0,0,0);
 						this->rem_pid=NULL;
 						__unqueue_futex(this);
 						smp_wmb();
@@ -2478,22 +2538,22 @@ out:
 		_spin_value *value = NULL;
 		_local_rq_t * l = NULL;
 		int counter = 0;
-                int ret = 0;
+		int ret = 0;
 		if(current->tgroup_distributed == 1){
 			__spin_key_init(&sk);
 			//	printk(KERN_ALERT"%s: uaddr{%lx} pid{%d} tgid{%d}\n",__func__,current->uaddr,current->pid,current->tgroup_home_id);
 			getKey((unsigned long) current->uaddr, &sk,current->tgroup_home_id);
 			value = hashspinkey(&sk);
 			smp_rmb();
-			l= find_request_by_pid(current->pid, &value->_lrq_head);
-			//	printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->wake_st);
+			l= find_request_by_ops(0, current->uaddr, current->pid, &value->_lrq_head);
+			//printk(KERN_ALERT"%s: l ptr{%p} _st{%d} pid {%d}",__func__,l,l->wake_st,current->pid);
 		}
 
 
 
 		if(current->tgroup_distributed == 1 && l && l->wake_st == 1){
-			printk(KERN_ALERT" NO need to schedule wait 1\n");
-                        ret = 1;
+			//printk(KERN_ALERT" NO need to schedule wait 1\n");
+			ret = 1;
 			spin_unlock(&hb->lock);
 		}
 		else{
@@ -2524,9 +2584,9 @@ out:
 				 */
 				if (!timeout || timeout->task){
 					if(current->tgroup_distributed == 1 && l && l->wake_st == 1){
-						printk(KERN_ALERT" NO need to schedule wait 2\n");
+						//printk(KERN_ALERT" NO need to schedule wait 2\n");
 						ret = 1;
- 					}
+					}
 					else
 						schedule();
 				}
@@ -2772,8 +2832,8 @@ exit:
 
 		//	printPTE(uaddr);
 		if (!bitset){
-			if(current->tgroup_distributed)
-				printk(KERN_ALERT"%s: biset not right\n",__func__);
+			//if(current->tgroup_distributed)
+			//printk(KERN_ALERT"%s: biset not right\n",__func__);
 			return -EINVAL;
 		}
 		q.bitset = bitset;
@@ -2813,7 +2873,7 @@ retry:
 		/* unqueue_me() drops q.key ref */
 		if(ret != WAIT_MAIN  ){
 			if(retf == 0 ){
-	//			printk("%s ret %d is retf is %d",ret,retf);
+				//			printk("%s ret %d is retf is %d",ret,retf);
 				if (!unqueue_me(&q))
 					goto out;
 			}
@@ -3682,10 +3742,10 @@ retry:
 			struct timespec __user *, utime, u32 __user *, uaddr2,
 			u32, val3)
 	{
-		if( (strcmp(current->comm,"matrix_mult")==0)){
-			printk(KERN_ALERT"%s: start futex uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id());
-			//		dump_regs(task_pt_regs(current));
-		}
+		/*	if( (strcmp(current->comm,"matrix_mult")==0)){
+			printk(KERN_ALERT"%s: start futex uadd{%lx} op{%d} val{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,val,utime,uaddr2,current->pid,smp_processor_id());
+		//		dump_regs(task_pt_regs(current));
+		}*/
 		struct timespec ts;
 		ktime_t t, *tp = NULL;
 		u32 val2 = 0;
@@ -3699,8 +3759,8 @@ retry:
 						cmd == FUTEX_WAIT_BITSET ||
 						cmd == FUTEX_WAIT_REQUEUE_PI)) {
 				if ((retn = copy_from_user(&ts, utime, sizeof(ts))) != 0){
-					if(current->tgroup_distributed)
-						printk(KERN_ALERT"%s: retn {%d}\n",retn);
+					//if(current->tgroup_distributed)
+					//	printk(KERN_ALERT"%s: retn {%d}\n",retn);
 					return -EFAULT;
 				}
 				if (!timespec_valid(&ts))
@@ -3720,10 +3780,10 @@ retry:
 				val2 = (u32) (unsigned long) utime;
 			retn =  do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
 
-			if( (strcmp(current->comm,"matrix_mult")==0)){
-				printk(KERN_ALERT"%s: END +++++++++++++pid{%d} retn{%d} uaddr{%lx}\n",__func__,current->pid,retn,uaddr);
-				//		dump_regs(task_pt_regs(current));
-			}
+			/*if( (strcmp(current->comm,"matrix_mult")==0)){
+			  printk(KERN_ALERT"%s: END +++++++++++++pid{%d} retn{%d} uaddr{%lx}\n",__func__,current->pid,retn,uaddr);
+			//		dump_regs(task_pt_regs(current));
+			}*/
 			return retn;
 	}
 
