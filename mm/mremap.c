@@ -432,6 +432,10 @@ unsigned long do_mremap(unsigned long addr,
 	struct vm_area_struct *vma;
 	unsigned long ret = -EINVAL;
 	unsigned long charged = 0;
+    up_write(&mm->mmap_sem);
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+    process_server_acquire_distributed_mm_lock();
+    down_write(&mm->mmap_sem);
 
 	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
 		goto out;
@@ -539,6 +543,8 @@ unsigned long do_mremap(unsigned long addr,
 out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+    process_server_release_distributed_mm_lock();
 	return ret;
 }
 

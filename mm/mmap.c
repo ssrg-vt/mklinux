@@ -948,7 +948,10 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	struct inode *inode;
 	vm_flags_t vm_flags;
 	int error;
+    unsigned long ret,a;
 	unsigned long reqprot = prot;
+    int original_enable_distributed_munmap = current->enable_distributed_munmap;
+    int range_locked = 0;
 
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC?
@@ -982,9 +985,79 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	/* Obtain the address to map to. we verify (or select) it and ensure
 	 * that it represents a valid section of the address space.
 	 */
-	addr = get_unmapped_area(file, addr, len, pgoff, flags);
-	if (addr & ~PAGE_MASK)
+    if(addr || !current->enable_do_mmap_pgoff_hook) {
+        addr = get_unmapped_area(file, addr, len, pgoff, flags);
+    } else {
+        int pserv_conflict = 0;
+        do {
+            int fault_ret;
+            struct vm_area_struct* vma_out = NULL;
+            addr = get_unmapped_area(file, NULL, len, pgoff, flags);
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+            up_write(&mm->mmap_sem);
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+            process_server_acquire_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+            process_server_acquire_distributed_mm_lock();
+#else
+            process_server_acquire_page_lock_range(addr,len);
+#endif
+            down_write(&mm->mmap_sem);
+#endif
+            fault_ret = process_server_pull_remote_mappings(mm,
+                                                            NULL,
+                                                            addr,
+                                                            0,
+                                                            &vma_out,
+                                                            0);
+            if(fault_ret) {
+                pserv_conflict = 1;
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+                process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+                process_server_release_distributed_mm_lock();
+#else
+                process_server_release_page_lock_range(addr,len);
+#endif
+#endif
+          
+            }
+            else {
+                pserv_conflict = 0;    
+                range_locked = 1;
+            }
+        } while(pserv_conflict);
+    }
+	if (addr & ~PAGE_MASK) {
+        if(range_locked && current->enable_do_mmap_pgoff_hook) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+            process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+            process_server_release_distributed_mm_lock();
+#else  
+            process_server_release_page_lock_range(addr,len);
+#endif
+
+        }
 		return addr;
+    }
+
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+    if(current->enable_do_mmap_pgoff_hook && !range_locked) {
+        up_write(&mm->mmap_sem);
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_acquire_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_acquire_distributed_mm_lock();
+#else
+        process_server_acquire_page_lock_range(addr,len);
+#endif
+        down_write(&mm->mmap_sem);
+    }
+#endif
+
+    current->enable_distributed_munmap = 0;
 
 	/* Do simple checking here so the lower-level routines won't have
 	 * to. we assume access permissions have been handled by the open
@@ -994,8 +1067,10 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 			mm->def_flags | VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC;
 
 	if (flags & MAP_LOCKED)
-		if (!can_do_mlock())
-			return -EPERM;
+		if (!can_do_mlock()) {
+			error = -EPERM;
+            goto err;
+        }
 
 	/* mlock MCL_FUTURE? */
 	if (vm_flags & VM_LOCKED) {
@@ -1004,8 +1079,10 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 		locked += mm->locked_vm;
 		lock_limit = rlimit(RLIMIT_MEMLOCK);
 		lock_limit >>= PAGE_SHIFT;
-		if (locked > lock_limit && !capable(CAP_IPC_LOCK))
-			return -EAGAIN;
+		if (locked > lock_limit && !capable(CAP_IPC_LOCK)) {
+			error = -EAGAIN;
+            goto err;
+        }
 	}
 
 	inode = file ? file->f_path.dentry->d_inode : NULL;
@@ -1013,21 +1090,27 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	if (file) {
 		switch (flags & MAP_TYPE) {
 		case MAP_SHARED:
-			if ((prot&PROT_WRITE) && !(file->f_mode&FMODE_WRITE))
-				return -EACCES;
+			if ((prot&PROT_WRITE) && !(file->f_mode&FMODE_WRITE)) {
+				error = -EACCES;
+                goto err;
+            }
 
 			/*
 			 * Make sure we don't allow writing to an append-only
 			 * file..
 			 */
-			if (IS_APPEND(inode) && (file->f_mode & FMODE_WRITE))
-				return -EACCES;
+			if (IS_APPEND(inode) && (file->f_mode & FMODE_WRITE)) {
+				error = -EACCES;
+                goto err;
+            }
 
 			/*
 			 * Make sure there are no mandatory locks on the file.
 			 */
-			if (locks_verify_locked(inode))
-				return -EAGAIN;
+			if (locks_verify_locked(inode)) {
+				error = -EAGAIN;
+                goto err;
+            }
 
 			vm_flags |= VM_SHARED | VM_MAYSHARE;
 			if (!(file->f_mode & FMODE_WRITE))
@@ -1035,20 +1118,27 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 
 			/* fall through */
 		case MAP_PRIVATE:
-			if (!(file->f_mode & FMODE_READ))
-				return -EACCES;
+			if (!(file->f_mode & FMODE_READ)) {
+				error = -EACCES;
+                goto err;
+            }
 			if (file->f_path.mnt->mnt_flags & MNT_NOEXEC) {
-				if (vm_flags & VM_EXEC)
-					return -EPERM;
+				if (vm_flags & VM_EXEC) {
+					error = -EPERM;
+                    goto err;
+                }
 				vm_flags &= ~VM_MAYEXEC;
 			}
 
-			if (!file->f_op || !file->f_op->mmap)
-				return -ENODEV;
+			if (!file->f_op || !file->f_op->mmap) {
+				error = -ENODEV;
+                goto err;
+            }
 			break;
 
 		default:
-			return -EINVAL;
+			error = -EINVAL;
+            goto err;
 		}
 	} else {
 		switch (flags & MAP_TYPE) {
@@ -1066,20 +1156,57 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 			pgoff = addr >> PAGE_SHIFT;
 			break;
 		default:
-			return -EINVAL;
+            error = -EINVAL;
+			goto err;
 		}
 	}
 
 	error = security_file_mmap(file, reqprot, prot, flags, addr, 0);
-	if (error)
-		return error;
+	if (error) {
+		goto err;
+    }
 
     /*
      * Multikernel do_mmap_pgoff hook
      */
+    current->enable_distributed_munmap = original_enable_distributed_munmap;
     process_server_do_mmap_pgoff(file, addr, len, flags, vm_flags, pgoff);
+    current->enable_distributed_munmap = 0;
 
-	return mmap_region(file, addr, len, flags, vm_flags, pgoff);
+    ret = mmap_region(file, addr, len, flags, vm_flags, pgoff);
+
+    current->enable_distributed_munmap = original_enable_distributed_munmap;
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+    if(current->enable_do_mmap_pgoff_hook) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_release_distributed_mm_lock();
+#else
+        process_server_release_page_lock_range(addr,len);
+#endif
+    }
+#endif
+
+	return ret;
+
+err:
+
+    current->enable_distributed_munmap = original_enable_distributed_munmap;
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+    if(current->enable_do_mmap_pgoff_hook) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_release_distributed_mm_lock();
+#else
+        process_server_release_page_lock_range(addr,len);
+#endif
+    }
+#endif
+
+    return error;
+
 }
 EXPORT_SYMBOL(do_mmap_pgoff);
 
@@ -2031,6 +2158,8 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 {
 	unsigned long end;
 	struct vm_area_struct *vma, *prev, *last;
+    unsigned long a;
+	int error;
 
 	if ((start & ~PAGE_MASK) || start > TASK_SIZE || len > TASK_SIZE-start)
 		return -EINVAL;
@@ -2038,19 +2167,37 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	if ((len = PAGE_ALIGN(len)) == 0)
 		return -EINVAL;
 
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+    if(current->enable_distributed_munmap) {
+        up_write(&mm->mmap_sem);
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_acquire_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_acquire_distributed_mm_lock();
+#else
+        process_server_acquire_page_lock_range(start,len);
+#endif
+        down_write(&mm->mmap_sem);
+    }
+#endif
+
 	/* Find the first overlapping VMA */
 	vma = find_vma(mm, start);
-	if (!vma)
-		return 0;
+	if (!vma) {
+        error = 0;
+        goto err;
+    }
 	prev = vma->vm_prev;
 	/* we have  start < vma->vm_end  */
 
 	/* if it doesn't overlap, we have nothing.. */
 	end = start + len;
-	if (vma->vm_start >= end)
-		return 0;
-
-	/*
+	if (vma->vm_start >= end) {
+		error = 0;
+        goto err;
+    }
+	
+    /*
 	 * If we need to split any vma, do it now to save pain later.
 	 *
 	 * Note: mremap's move_vma VM_ACCOUNT handling assumes a partially
@@ -2058,19 +2205,20 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	 * places tmp vma above, and higher split_vma places tmp vma below.
 	 */
 	if (start > vma->vm_start) {
-		int error;
 
 		/*
 		 * Make sure that map_count on return from munmap() will
 		 * not exceed its limit; but let map_count go just above
 		 * its limit temporarily, to help free resources as expected.
 		 */
-		if (end < vma->vm_end && mm->map_count >= sysctl_max_map_count)
-			return -ENOMEM;
+		if (end < vma->vm_end && mm->map_count >= sysctl_max_map_count) {
+            error = -ENOMEM;
+			goto err;
+        }
 
 		error = __split_vma(mm, vma, start, 0);
 		if (error)
-			return error;
+			goto err;
 		prev = vma;
 	}
 
@@ -2079,7 +2227,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	if (last && end > last->vm_start) {
 		int error = __split_vma(mm, last, end, 1);
 		if (error)
-			return error;
+			goto err;
 	}
 	vma = prev? prev->vm_next: mm->mmap;
 
@@ -2097,11 +2245,6 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 		}
 	}
 
-    /*
-     * Memory is now almost munmapped locally, so before exiting this syscall, synchronize
-     * the removal of this memory from all other thread members.
-     */
-    process_server_do_munmap(mm, vma, start, len);
 
     /*
 	 * Remove the vma's, and unmap the actual pages
@@ -2112,7 +2255,29 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	/* Fix up all other VM information */
 	remove_vma_list(mm, vma);
 
-	return 0;
+    /*
+     * Memory is now munmapped locally, so before exiting this syscall, synchronize
+     * the removal of this memory from all other thread members.
+     */
+    process_server_do_munmap(mm, start, len);
+
+    //return 0;
+    error = 0;
+
+err:
+#ifdef PROCESS_SERVER_ENFORCE_VMA_MOD_ATOMICITY
+    if(current->enable_distributed_munmap) {
+#ifdef PROCESS_SERVER_USE_HEAVY_LOCK
+        process_server_release_heavy_lock();
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_release_distributed_mm_lock();
+#else
+        process_server_release_page_lock_range(start,len);
+#endif
+    }
+#endif
+
+    return error;
 }
 
 EXPORT_SYMBOL(do_munmap);
@@ -2127,6 +2292,9 @@ SYSCALL_DEFINE2(munmap, unsigned long, addr, size_t, len)
 	down_write(&mm->mmap_sem);
 	ret = do_munmap(mm, addr, len);
 	up_write(&mm->mmap_sem);
+
+    //process_server_do_munmap(mm, addr, len);
+
 	return ret;
 }
 

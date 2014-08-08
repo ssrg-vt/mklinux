@@ -258,6 +258,9 @@ int do_mprotect(struct task_struct* task, unsigned long start, size_t len, unsig
 	if (!arch_validate_prot(prot))
 		return -EINVAL;
 
+        //printk("%s: doing lock\n",__func__);
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_acquire_distributed_mm_lock();
 	reqprot = prot;
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC:
@@ -340,6 +343,8 @@ out:
         process_server_do_mprotect(task,start,len,prot);
     }
 
+#elif defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
+        process_server_release_distributed_mm_lock();
 	return error;
 
 }
