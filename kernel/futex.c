@@ -1332,7 +1332,7 @@ cont:
 							if(_tsk){  
 								l= find_request_by_ops(0, uaddr, this->task->pid, &value->_lrq_head);
 								//printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->wake_st);
-								l->wake_st = 1;
+								if(l) l->wake_st = 1;
 							}
 
 							wake_futex(this);
@@ -1670,7 +1670,7 @@ retry_private:
 						if(or_task){
 							l= find_request_by_ops(0, uaddr1, this->task->pid, &value1->_lrq_head);
 							//printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->wake_st);
-							l->wake_st = 1;
+							if(l) l->wake_st = 1;
 						}
 
 						wake_futex(this);
@@ -1707,7 +1707,7 @@ retry_private:
 							if(or_task){
 								l= find_request_by_ops(0, uaddr2, this->task->pid, &value2->_lrq_head);
 								//printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->wake_st);
-								l->wake_st = 1;
+								if(l)  l->wake_st = 1;
 							}
 
 							wake_futex(this);
@@ -2121,7 +2121,7 @@ retry_private:
 						if(re_task){
 							l= find_request_by_ops(0, uaddr1, this->task->pid, &value1->_lrq_head);
 							//printk(KERN_ALERT"%s: l ptr{%p} _st{%d} ",__func__,l,l->wake_st);
-							l->wake_st = 1;
+							if(l) l->wake_st = 1;
 						}
 
 						wake_futex(this);
@@ -2557,6 +2557,8 @@ out:
 			spin_unlock(&hb->lock);
 		}
 		else{
+		
+
 			set_current_state(TASK_INTERRUPTIBLE);
 			//server queued it for me if i am the main
 			if(ops != WAIT_MAIN)
@@ -2587,8 +2589,9 @@ out:
 						//printk(KERN_ALERT" NO need to schedule wait 2\n");
 						ret = 1;
 					}
-					else
+					else{
 						schedule();
+					}
 				}
 				/*	if(current->tgroup_distributed == 1 && l){
 					while(l->_st != 1){
@@ -3751,7 +3754,6 @@ retry:
 		u32 val2 = 0;
 		int cmd = op & FUTEX_CMD_MASK;
 		int retn=0;
-
 		/*	if(current->tgroup_distributed ==1 || (strcmp(current->comm,"cond")==0)){
 			printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id());
 			}

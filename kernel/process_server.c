@@ -2339,7 +2339,8 @@ if(mm_data->kernel_set[i]==1){
 			return 0;
 		}
 
-		if (mm_data->alive == 0 && atomic_read(&(mm_data->pending_migration))==0 ) {
+		if (mm_data->alive == 0  && atomic_read(&(mm_data->pending_migration))==0) {
+			
 
 			if (status == EXIT_THREAD) {
 				printk("ERROR: alive is 0 but status is exit thread\n");
@@ -2377,7 +2378,7 @@ if(mm_data->kernel_set[i]==1){
 					}
 #endif
 #endif
-
+					printk("flush set to 1 here");
 					return 1;
 				}
 
@@ -2539,9 +2540,9 @@ if(mm_data->kernel_set[i]==1){
 								INIT_WORK( (struct work_struct*)work, process_vma_op);
 								queue_work(vma_op_wq, (struct work_struct*) work);
 							}
-#endif
-#endif
-
+#endif											
+#endif												
+							printk("flush set to 1 there\n");
 							return 1;
 
 						} else {
@@ -2813,7 +2814,7 @@ if(mm_data->kernel_set[i]==1){
 							CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | CLONE_UNTRACED, 0,
 							&regs, 0, NULL, NULL);
 					if (!IS_ERR(shadow->thread)) {
-						printk("%s new shadow created\n",__func__);
+						//printk("%s new shadow created\n",__func__);
 						push_data((data_header_t**)&(my_thread_pull->threads), &(my_thread_pull->spinlock),
 								(data_header_t*)shadow);
 					} else {
@@ -5740,17 +5741,17 @@ return 1;
 					task->prev_pid = request->placeholder_pid;
 					task->personality = request->personality;
 
-					task->origin_pid = request->origin_pid;
-					sigorsets(&task->blocked,&task->blocked,&request->remote_blocked) ;
-					sigorsets(&task->real_blocked,&task->real_blocked,&request->remote_real_blocked);
-					sigorsets(&task->saved_sigmask,&task->saved_sigmask,&request->remote_saved_sigmask);
-					task->pending = request->remote_pending;
-					task->sas_ss_sp = request->sas_ss_sp;
-					task->sas_ss_size = request->sas_ss_size;
+				//	task->origin_pid = request->origin_pid;
+				//	sigorsets(&task->blocked,&task->blocked,&request->remote_blocked) ;
+				///	sigorsets(&task->real_blocked,&task->real_blocked,&request->remote_real_blocked);
+				//	sigorsets(&task->saved_sigmask,&task->saved_sigmask,&request->remote_saved_sigmask);
+				//	task->pending = request->remote_pending;
+				///	task->sas_ss_sp = request->sas_ss_sp;
+				//	task->sas_ss_size = request->sas_ss_size;
 
 					int cnt = 0;
-					for (cnt = 0; cnt < _NSIG; cnt++)
-						task->sighand->action[cnt] = request->action[cnt];
+				//	for (cnt = 0; cnt < _NSIG; cnt++)
+				//		task->sighand->action[cnt] = request->action[cnt];
 
 #if MIGRATE_FPU
 					//FPU migration code --- server
@@ -9456,6 +9457,10 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 	task->tgroup_home_id = -1;
 	task->main = 0;
 	task->group_exit = -1;
+	task->surrogate = -1;
+        task->group_exit= -1;
+        task->uaddr = 0;
+        task->origin_pid = -1;
 	// If the new task is not in the same thread group as the parent,
 	// then we do not need to propagate the old thread info.
 	if (orig->tgid != task->tgid) {
@@ -9830,7 +9835,7 @@ static int do_migration(struct task_struct* task, int dst_cpu,
 		entry->prev = NULL;
 		entry->alive = 1;
 		entry->main = NULL;
-
+		atomic_set(&(entry->pending_migration),0);
 		entry->operation = VMA_OP_NOP;
 		entry->waiting_for_main = NULL;
 		entry->waiting_for_op = NULL;
@@ -11602,7 +11607,7 @@ long process_server_do_mremap_end(unsigned long addr, unsigned long old_len,
 void sleep_shadow() {
 
 	memory_t* memory = NULL;
-	printk("%s called\n", __func__);
+//	printk("%s called\n", __func__);
 
 	while (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE) {
 		set_task_state(current, TASK_UNINTERRUPTIBLE);
@@ -11630,9 +11635,11 @@ void sleep_shadow() {
 
 	//this force the task to wait that the main correctly set up the memory
 	while (current->tgroup_distributed != 1) {
-		printk("%s waiting for main to set up me\n",__func__);
+		//printk("%s waiting for main to set up me\n",__func__);
 		msleep(1);
 	}
+
+	printk("%s main set up me\n",__func__);
 
 	memory = find_memory_entry(current->tgroup_home_cpu,
 			current->tgroup_home_id);
@@ -11717,7 +11724,6 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 			printk(KERN_ERR "%s: associate_to_popcorn_ns returned: %d\n", __func__,ret);
 		}
 
-	//task->thread.usersp = clone_data->thread_usersp;
 		task->thread.usersp = clone_data->old_rsp;
 		memcpy(task_pt_regs(task), &clone_data->regs, sizeof(struct pt_regs));
 		task_pt_regs(task)->ax = 0;
@@ -11741,7 +11747,7 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 		sigorsets(&task->blocked,&task->blocked,&clone_data->remote_blocked) ;
 		sigorsets(&task->real_blocked,&task->real_blocked,&clone_data->remote_real_blocked);
 		sigorsets(&task->saved_sigmask,&task->saved_sigmask,&clone_data->remote_saved_sigmask);
-		task->pending = clone_data->remote_pending;
+	//	task->pending = clone_data->remote_pending;
 		task->sas_ss_sp = clone_data->sas_ss_sp;
 		task->sas_ss_size = clone_data->sas_ss_size;
 
@@ -11806,7 +11812,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	unsigned long flags;
 	int i;
 
-	printk("%s entered \n", __func__);
+	//printk("%s entered \n", __func__);
 
 	spin_lock_irq(&current->sighand->siglock);
 	flush_signal_handlers(current, 1);
@@ -11898,7 +11904,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 					CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | CLONE_UNTRACED, 0,
 					&regs, 0, NULL, NULL);
 			if (!IS_ERR(shadow->thread)) {
-				printk("%s new shadow created\n",__func__);
+			//	printk("%s new shadow created\n",__func__);
 				push_data((data_header_t**)&(my_thread_pull->threads), &(my_thread_pull->spinlock),
 						(data_header_t *)shadow);
 			} else {
@@ -11993,9 +11999,10 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 		tgroup_iterator->tgroup_home_cpu = current->tgroup_home_cpu;
 		tgroup_iterator->tgroup_distributed = 1;
 	};
-
+	
 	unlock_task_sighand(current, &flags);
-
+	
+	printk("woke up everybody\n");
 	entry->alive = 1;
 	entry->setting_up = 0;
 
