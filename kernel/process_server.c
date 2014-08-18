@@ -2378,7 +2378,7 @@ if(mm_data->kernel_set[i]==1){
 					}
 #endif
 #endif
-					printk("flush set to 1 here");
+					//printk("flush set to 1 here");
 					return 1;
 				}
 
@@ -2542,7 +2542,7 @@ if(mm_data->kernel_set[i]==1){
 							}
 #endif											
 #endif												
-							printk("flush set to 1 there\n");
+							//printk("flush set to 1 there\n");
 							return 1;
 
 						} else {
@@ -2780,8 +2780,8 @@ if(mm_data->kernel_set[i]==1){
 
 			entry->thread_pull= my_thread_pull;
 
-			int count= count_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock);
-			printk("WARNING count is %d in %s\n",count,__func__);
+			//int count= count_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock);
+			//printk("WARNING count is %d in %s\n",count,__func__);
 			for (i = 0; i < NR_CPUS; i++) {
 				shadow_thread_t* shadow = (shadow_thread_t*) kmalloc(
 						sizeof(shadow_thread_t), GFP_ATOMIC);
@@ -5749,7 +5749,7 @@ return 1;
 				///	task->sas_ss_sp = request->sas_ss_sp;
 				//	task->sas_ss_size = request->sas_ss_size;
 
-					int cnt = 0;
+			//		int cnt = 0;
 				//	for (cnt = 0; cnt < _NSIG; cnt++)
 				//		task->sighand->action[cnt] = request->action[cnt];
 
@@ -9499,7 +9499,7 @@ static int do_back_migration(struct task_struct* task, int dst_cpu,
 	if(request==NULL)
 		return -1;
 
-printk("%s entered dst{%d} \n",__func__,dst_cpu);
+//printk("%s entered dst{%d} \n",__func__,dst_cpu);
 	request->header.type = PCN_KMSG_TYPE_PROC_SRV_BACK_MIG_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
 
@@ -9974,7 +9974,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 #endif
 
 if (ret != -1) {
-		printk(KERN_ALERT"%s clone request sent ret{%d} \n", __func__,ret);
+	//	printk(KERN_ALERT"%s clone request sent ret{%d} \n", __func__,ret);
 
 	__set_task_state(task, TASK_UNINTERRUPTIBLE);
 
@@ -11624,7 +11624,7 @@ void sleep_shadow() {
 		do_exit(0);
 	}
 
-	printk("%s shadow activated\n", __func__);
+//	printk("%s shadow activated\n", __func__);
 
 	current->distributed_exit= EXIT_ALIVE;
 	current->represents_remote = 0;
@@ -11639,7 +11639,7 @@ void sleep_shadow() {
 		msleep(1);
 	}
 
-	printk("%s main set up me\n",__func__);
+//	printk("%s main set up me\n",__func__);
 
 	memory = find_memory_entry(current->tgroup_home_cpu,
 			current->tgroup_home_id);
@@ -11675,7 +11675,7 @@ void sleep_shadow() {
 	__math_state_restore(current);
 #endif
 
-	printk("%s ending...\n",__func__);
+//	printk("%s ending...\n",__func__);
 /*#if TIMING
 	unsigned long long stop = native_read_tsc();
 	unsigned long long elapsed_time = stop - clone_data->start;
@@ -11697,7 +11697,7 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 
 	if (my_shadow) {
 
-		printk("%s found a shadow\n", __func__);
+	//	printk("%s found a shadow\n", __func__);
 
 		task = my_shadow->thread;
 		if (task == NULL) {
@@ -11743,17 +11743,17 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 
 		task->personality = clone_data->personality;
 
-		task->origin_pid = clone_data->origin_pid;
-		sigorsets(&task->blocked,&task->blocked,&clone_data->remote_blocked) ;
-		sigorsets(&task->real_blocked,&task->real_blocked,&clone_data->remote_real_blocked);
-		sigorsets(&task->saved_sigmask,&task->saved_sigmask,&clone_data->remote_saved_sigmask);
+	//	task->origin_pid = clone_data->origin_pid;
+	//	sigorsets(&task->blocked,&task->blocked,&clone_data->remote_blocked) ;
+	//	sigorsets(&task->real_blocked,&task->real_blocked,&clone_data->remote_real_blocked);
+	//	sigorsets(&task->saved_sigmask,&task->saved_sigmask,&clone_data->remote_saved_sigmask);
 	//	task->pending = clone_data->remote_pending;
-		task->sas_ss_sp = clone_data->sas_ss_sp;
-		task->sas_ss_size = clone_data->sas_ss_size;
+	//	task->sas_ss_sp = clone_data->sas_ss_sp;
+	//	task->sas_ss_size = clone_data->sas_ss_size;
 
-		int cnt = 0;
-		for (cnt = 0; cnt < _NSIG; cnt++)
-			task->sighand->action[cnt] = clone_data->action[cnt];
+	//	int cnt = 0;
+	//	for (cnt = 0; cnt < _NSIG; cnt++)
+	//		task->sighand->action[cnt] = clone_data->action[cnt];
 
 #if MIGRATE_FPU
 //FPU migration code --- server
@@ -11796,7 +11796,7 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 		return 0;
 
 	} else {
-		printk("%s no shadows found!!\n", __func__);
+		//printk("%s no shadows found!!\n", __func__);
 		wake_up_process(my_thread_pull->main);
 		return -1;
 	}
@@ -12002,7 +12002,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	
 	unlock_task_sighand(current, &flags);
 	
-	printk("woke up everybody\n");
+	//printk("woke up everybody\n");
 	entry->alive = 1;
 	entry->setting_up = 0;
 
@@ -12032,7 +12032,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 
 	if (memory) {
 
-		printk("%s memory_t found\n", __func__);
+	//	printk("%s memory_t found\n", __func__);
 		if(inc)
 			atomic_inc(&(memory->pending_migration));
 
@@ -12040,13 +12040,13 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 			return create_user_thread_for_distributed_process(clone,
 					memory->thread_pull);
 		} else {
-			printk("%s thread pull not ready yet\n", __func__);
+			//printk("%s thread pull not ready yet\n", __func__);
 			return -1;
 		}
 
 	} else {
 
-		printk("%s trying to add a new memory_t\n", __func__);
+		//printk("%s trying to add a new memory_t\n", __func__);
 
 		memory_t* entry = (memory_t*) kmalloc(sizeof(memory_t), GFP_ATOMIC);
 		if (!entry) {
@@ -12061,20 +12061,20 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 		ret = add_memory_entry_with_check(entry);
 
 		if (ret == 0) {
-			printk("%s fetching a thread pull \n", __func__);
+			//printk("%s fetching a thread pull \n", __func__);
 
 			thread_pull_t* my_thread_pull = (thread_pull_t*) pop_data(
 					(data_header_t**)&(thread_pull_head), &thread_pull_head_lock);
 			if (my_thread_pull) {
 
-				printk("%s found a thread pull \n", __func__);
+				//printk("%s found a thread pull \n", __func__);
 
 				entry->thread_pull = my_thread_pull;
 				entry->main = my_thread_pull->main;
 				entry->mm = my_thread_pull->main->mm;
-				printk("%s main kernel thread is %p\n",__func__,my_thread_pull->main);
+				//printk("%s main kernel thread is %p\n",__func__,my_thread_pull->main);
 				atomic_inc(&entry->mm->mm_users);
-				printk("%s exe file is %s \n",__func__,clone->exe_path);
+				//printk("%s exe file is %s \n",__func__,clone->exe_path);
 				f = filp_open(clone->exe_path, O_RDONLY | O_LARGEFILE | O_EXCL,
 						0);
 				if (IS_ERR(f)) {
@@ -12110,22 +12110,22 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 				}
 				tcomm[i] = '\0';
 				set_task_comm(my_thread_pull->main, tcomm);
-				printk("%s just before locking sighand\n",__func__);
+				//printk("%s just before locking sighand\n",__func__);
 				lock_task_sighand(my_thread_pull->main, &flags);
 				my_thread_pull->main->tgroup_home_cpu = clone->tgroup_home_cpu;
 				my_thread_pull->main->tgroup_home_id = clone->tgroup_home_id;
 				my_thread_pull->main->tgroup_distributed = 1;
 				unlock_task_sighand(my_thread_pull->main, &flags);
-				printk("%s after sighand\n",__func__);
+				//printk("%s after sighand\n",__func__);
 				//the main will be activated only when my_thread_pull->memory !=NULL
 				my_thread_pull->memory = entry;
 				wake_up_process(my_thread_pull->main);
-				printk("%s before calling create user thread\n",__func__);
+				//printk("%s before calling create user thread\n",__func__);
 				return create_user_thread_for_distributed_process(clone,
 						my_thread_pull);
 
 			} else {
-				printk("%s asking to create more thread pull \n", __func__);
+				//printk("%s asking to create more thread pull \n", __func__);
 
 				struct work_struct* work = kmalloc(sizeof(struct work_struct),
 						GFP_ATOMIC);
@@ -12137,7 +12137,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 				return -1;
 			}
 		} else {
-			printk("%s thread pull already fetched \n", __func__);
+			//printk("%s thread pull already fetched \n", __func__);
 			kfree(entry);
 			goto retry;
 		}

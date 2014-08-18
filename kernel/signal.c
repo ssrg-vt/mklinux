@@ -361,8 +361,8 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	response.errno = ret;
 	response.request_id = msg->request_id;
 
-	printk("%s: request --remote:errno: %d \n", "handle_remote_kill_request",
-			ret);
+	//printk("%s: request --remote:errno: %d \n", "handle_remote_kill_request",
+			//ret);
 
 	// Send response
 	pcn_kmsg_send(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response));
