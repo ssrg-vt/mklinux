@@ -5811,7 +5811,9 @@ return 1;
 			static int handle_back_migration(struct pcn_kmsg_message* inc_msg){
 
 				back_migration_request_t* request= (back_migration_request_t*) inc_msg;
-				back_mig_work_t* work;
+
+
+/*				back_mig_work_t* work;
 #if TIMING
 				unsigned long long start= native_read_tsc();
 #endif
@@ -5825,6 +5827,50 @@ return 1;
 #endif
 					queue_work(clone_wq, (struct work_struct*) work);
 				}
+*/
+
+
+
+
+
+//temporary code to check if the back migration can be faster
+//
+				struct task_struct * task = pid_task(find_get_pid(request->prev_pid), PIDTYPE_PID);
+
+                                if (task!=NULL && (task->next_pid == request->placeholder_pid) && (task->next_cpu == request->header.from_cpu)
+                                                && (task->represents_remote == 1)) {
+
+                                        memcpy(task_pt_regs(task), &request->regs, sizeof(struct pt_regs));
+                                        task_pt_regs(task)->ax = 0;
+                                        task->thread.fs = request->thread_fs;
+                                        task->thread.gs = request->thread_gs;
+                                        task->thread.usersp = request->old_rsp;
+                                        task->thread.es = request->thread_es;
+                                        task->thread.ds = request->thread_ds;
+                                        task->thread.fsindex = request->thread_fsindex;
+                                        task->thread.gsindex = request->thread_gsindex;
+                                        task->prev_cpu = request->header.from_cpu;
+                                        task->prev_pid = request->placeholder_pid;
+                                        task->personality = request->personality;
+					
+					task->executing_for_remote = 1;
+                                        task->represents_remote = 0;
+
+                                        wake_up_process(task);
+
+#if TIMING
+                                        unsigned long long stop= native_read_tsc();
+                                        unsigned long long elapsed_time =stop-info_work->start;
+                                        update_time_migration(elapsed_time,BACK_MIG_R);
+#endif
+
+                                } else{
+
+                                        printk("ERROR: task not found. Impossible to re-run shadow.");
+
+                                }
+
+                                pcn_kmsg_free_msg(request);
 
 				return 0;
 
