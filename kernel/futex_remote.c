@@ -932,8 +932,8 @@ int futex_global_worker_cleanup(struct task_struct *tsk){
    if(tsk->tgroup_distributed && tsk->pid == tsk->tgroup_home_id){
 
     if(tsk->distributed_exit == EXIT_ALIVE){
-	dump_stack();
-	printk(KERN_ALERT"remote zoombie kill needed\n");
+	//dump_stack();
+	//printk(KERN_ALERT"remote zoombie kill needed\n");
 	zap_remote_threads(tsk); 
     }
    _global_value * gvp = hashgroup(tsk);

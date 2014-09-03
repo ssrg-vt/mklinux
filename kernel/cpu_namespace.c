@@ -253,8 +253,8 @@ int build_popcorn_ns( int force)
 	     __func__, summary, tmp);
       return -ENOMEM;
     }
-printk(KERN_ERR"%s: cnr_cpu_ids: %d size:%d summary %p tmp %p\n",
-	__func__, cnr_cpu_ids, size, summary, tmp);
+//printk(KERN_ERR"%s: cnr_cpu_ids: %d size:%d summary %p tmp %p\n",
+//	__func__, cnr_cpu_ids, size, summary, tmp);
     // current kernel
     bitmap_zero(summary, size * BITS_PER_BYTE);
     bitmap_copy(summary, cpumask_bits(cpu_online_mask), nr_cpu_ids); // NOTE that the current cpumask is not included in the remote list
@@ -267,7 +267,7 @@ printk(KERN_ERR"%s: cnr_cpu_ids: %d size:%d summary %p tmp %p\n",
         pcpum = &(objPtr->_data.cpumask);//&(objPtr->_data._cpumask);
 	offset = objPtr->_data.cpumask_offset;
 
-	printk("%s, cpumask_offset %d\n",__func__,offset);
+//	printk("%s, cpumask_offset %d\n",__func__,offset);
 	//TODO we should update kinit.c in order to support variable length cpumask
 	
 	bitmap_zero(tmp, size * BITS_PER_BYTE);

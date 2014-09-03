@@ -7914,6 +7914,15 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 		if (fetching_page->vma_present == 1) {
 
 			if (fetching_page->path[0] == '\0') {
+			
+			        vma = find_vma(mm, address);
+                                if (!vma || address >= vma->vm_end || address < vma->vm_start) {
+                                        vma = NULL;
+                                }
+
+                                if (!vma || (vma->vm_start != fetching_page->vaddr_start)
+                                                || (vma->vm_end != (fetching_page->vaddr_start + fetching_page->vaddr_size))) {
+				
 
 				spin_unlock(ptl);
 				/*PTE UNLOCKED*/
@@ -7999,9 +8008,18 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 				down_read(&mm->mmap_sem);
 				spin_lock(ptl);
 				/*PTE LOCKED*/
+				}
 
 			} else {
 
+				vma = find_vma(mm, address);
+                                if (!vma || address >= vma->vm_end || address < vma->vm_start) {
+                                        vma = NULL;
+                                }
+
+                                 if (!vma || (vma->vm_start != fetching_page->vaddr_start)
+                                                || (vma->vm_end != (fetching_page->vaddr_start + fetching_page->vaddr_size))) {
+ 
 				spin_unlock(ptl);
 				/*PTE UNLOCKED*/
 
@@ -8108,6 +8126,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 				down_read(&mm->mmap_sem);
 				spin_lock(ptl);
 				/*PTE LOCKED*/
+				}
 
 			}
 

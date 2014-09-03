@@ -3665,11 +3665,11 @@ int error = -ESRCH;
 
 rcu_read_lock();
 p = find_task_by_vpid(pid);
-printk(KERN_ALERT"%s: pid{%d} tgid{%d} p{%d} \n",__func__,pid,tgid,(!p)?0:1);
+//printk(KERN_ALERT"%s: pid{%d} tgid{%d} p{%d} \n",__func__,pid,tgid,(!p)?0:1);
 
 if(p && p->tgroup_distributed &&  p->represents_remote){
 	{
-		printk(KERN_ALERT"%s: ret disp pid{%d} next{%d} tg {%d} \n",__func__,pid,p->next_pid,p->group_exit);
+		//printk(KERN_ALERT"%s: ret disp pid{%d} next{%d} tg {%d} \n",__func__,pid,p->next_pid,p->group_exit);
 		rcu_read_unlock();
 		return remote_do_send_specific(ORIG_NODE(p->next_pid),tgid,p->next_pid,sig,info);
 	}
