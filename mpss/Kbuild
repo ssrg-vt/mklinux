@@ -107,7 +107,7 @@ obj-y	 += micscif/micscif_va_node.o
 obj-y	 += vnet/micveth_dma.o
 obj-y	 += vnet/micveth_param.o
 endif
-obj-y	+= pcn_scif.o
+obj-y	+= pcn_scif_parallel.o
 version-le = $(shell printf '%s\n' $(1) | sort -t. -k 1,1n -k 2,2n -k 3,3n -k 4,4n -c >/dev/null 2>&1 && echo t)
 ifeq ($(call version-le, 2.6.23 $(KERNELRELEASE)),t)
 ccflags-y += $(mic-cflags)

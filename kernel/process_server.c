@@ -1122,7 +1122,7 @@ DEFINE_RAW_SPINLOCK(_data_head_lock);
 DEFINE_RAW_SPINLOCK(_fetching_head_lock);
 DEFINE_RAW_SPINLOCK(_mapping_head_lock);
 DEFINE_RAW_SPINLOCK(_ack_head_lock);
-DEFINE_SPINLOCK(_memory_head_lock);
+DEFINE_RAW_SPINLOCK(_memory_head_lock);
 DEFINE_RAW_SPINLOCK(_count_head_lock);
 DEFINE_RAW_SPINLOCK(_vma_ack_head_lock);
 DEFINE_RAW_SPINLOCK(thread_pull_head_lock);
@@ -1270,15 +1270,16 @@ static void print_migration_time(){
 void push_data(data_header_t** phead, raw_spinlock_t* spinlock,
 		data_header_t* entry) {
 	unsigned long flags;
-	data_header_t* head= *phead;
+	data_header_t* head;
 
 	if (!entry) {
 		return;
 	}
+	entry->prev = NULL;
 
 	raw_spin_lock_irqsave(spinlock, flags);
-
-	entry->prev = NULL;
+	
+	head= *phead;
 
 	if (!head) {
 		entry->next = NULL;
@@ -1294,15 +1295,17 @@ void push_data(data_header_t** phead, raw_spinlock_t* spinlock,
 
 data_header_t* pop_data(data_header_t** phead, raw_spinlock_t* spinlock) {
 	data_header_t* ret = NULL;
-	data_header_t* head= *phead;
+	data_header_t* head;
 	unsigned long flags;
-
+	
 	raw_spin_lock_irqsave(spinlock, flags);
 
+ 	head= *phead;
 	if (head) {
 		ret = head;
-		if (head->next)
+		if (head->next){
 			head->next->prev = NULL;
+		}
 		*phead = head->next;
 		ret->next = NULL;
 		ret->prev = NULL;
@@ -1316,10 +1319,12 @@ data_header_t* pop_data(data_header_t** phead, raw_spinlock_t* spinlock) {
 int count_data(data_header_t** phead, raw_spinlock_t* spinlock) {
 	int ret = 0;
 	unsigned long flags;
-	data_header_t* head= *phead;
+	data_header_t* head;
 	data_header_t* curr;
 
 	raw_spin_lock_irqsave(spinlock, flags);
+
+	head= *phead;
 
 	curr = head;
 	while (curr) {
@@ -1458,11 +1463,6 @@ void add_mapping_entry(mapping_answers_t* entry) {
 		} else {
 			curr = _mapping_head;
 			while (curr->next != NULL) {
-				if (curr == entry) {
-					// It's already in the list!
-					raw_spin_unlock_irqrestore(&_mapping_head_lock, flags);
-					return;
-				}
 				curr = curr->next;
 			}
 			// Now curr should be the last entry.
@@ -1570,11 +1570,6 @@ void remove_mapping_entry(mapping_answers_for_2_kernels_t* entry) {
 					} else {
 						curr = _ack_head;
 						while (curr->next != NULL) {
-							if (curr == entry) {
-								// It's already in the list!
-								raw_spin_unlock_irqrestore(&_ack_head_lock, flags);
-								return;
-							}
 							curr = curr->next;
 						}
 						// Now curr should be the last entry.
@@ -1661,12 +1656,13 @@ void remove_ack_entry(ack_answers_t* entry) {
 
 void add_memory_entry(memory_t* entry) {
 	memory_t* curr;
+	unsigned long flags;
 
 	if (!entry) {
 		return;
 	}
 
-	spin_lock(&_memory_head_lock);
+	raw_spin_lock_irqsave(&_memory_head_lock,flags);
 
 	if (!_memory_head) {
 		_memory_head = entry;
@@ -1675,11 +1671,6 @@ void add_memory_entry(memory_t* entry) {
 	} else {
 		curr = _memory_head;
 		while (curr->next != NULL) {
-			if (curr == entry) {
-				// It's already in the list!
-				spin_unlock(&_memory_head_lock);
-				return;
-			}
 			curr = curr->next;
 		}
 		// Now curr should be the last entry.
@@ -1689,34 +1680,40 @@ void add_memory_entry(memory_t* entry) {
 		entry->prev = curr;
 	}
 
-	spin_unlock(&_memory_head_lock);
+	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 }
 
 int add_memory_entry_with_check(memory_t* entry) {
 	memory_t* curr;
+	memory_t* prev;
+	unsigned long flags;
 
 	if (!entry) {
 		return -1;
 	}
 
-	spin_lock(&_memory_head_lock);
-
+	raw_spin_lock_irqsave(&_memory_head_lock,flags);
+	
 	if (!_memory_head) {
 		_memory_head = entry;
 		entry->next = NULL;
 		entry->prev = NULL;
 	} else {
 		curr = _memory_head;
-		while (curr->next != NULL) {
-			if (curr == entry
-					|| (curr->tgroup_home_cpu == entry->tgroup_home_cpu
-							&& curr->tgroup_home_id == entry->tgroup_home_id)) {
-				// It's already in the list!
-				spin_unlock(&_memory_head_lock);
-				return -1;
-			}
-			curr = curr->next;
+		prev= NULL;
+		do{
+			if ( (curr->tgroup_home_cpu == entry->tgroup_home_cpu
+                       		&& curr->tgroup_home_id == entry->tgroup_home_id)) {
+
+                        	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
+                        	return -1;
+
+                	} 
+			prev=curr;
+			curr= curr->next; 
 		}
+		while (curr->next != NULL) ;
+
 		// Now curr should be the last entry.
 		// Append the new entry to curr.
 		curr->next = entry;
@@ -1724,17 +1721,16 @@ int add_memory_entry_with_check(memory_t* entry) {
 		entry->prev = curr;
 	}
 
-	spin_unlock(&_memory_head_lock);
-
+	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 	return 0;
 }
 
 memory_t* find_memory_entry(int cpu, int id) {
 	memory_t* curr = NULL;
 	memory_t* ret = NULL;
+	unsigned long flags;
 
-	spin_lock(&_memory_head_lock);
-
+	raw_spin_lock_irqsave(&_memory_head_lock,flags);
 	curr = _memory_head;
 	while (curr) {
 		if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id) {
@@ -1744,17 +1740,16 @@ memory_t* find_memory_entry(int cpu, int id) {
 		curr = curr->next;
 	}
 
-	spin_unlock(&_memory_head_lock);
-
+	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 	return ret;
 }
 
 struct mm_struct* find_dead_mapping(int cpu, int id) {
 	memory_t* curr = NULL;
 	struct mm_struct* ret = NULL;
+	unsigned long flags;
 
-	spin_lock(&_memory_head_lock);
-
+	raw_spin_lock_irqsave(&_memory_head_lock,flags);
 	curr = _memory_head;
 	while (curr) {
 		if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id) {
@@ -1764,7 +1759,8 @@ struct mm_struct* find_dead_mapping(int cpu, int id) {
 		curr = curr->next;
 	}
 
-	spin_unlock(&_memory_head_lock);
+
+	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 
 	return ret;
 }
@@ -1772,9 +1768,10 @@ struct mm_struct* find_dead_mapping(int cpu, int id) {
 memory_t* find_and_remove_memory_entry(int cpu, int id) {
 	memory_t* curr = NULL;
 	memory_t* ret = NULL;
+	unsigned long flags;
 
-	spin_lock(&_memory_head_lock);
-
+	raw_spin_lock_irqsave(&_memory_head_lock,flags);
+	
 	curr = _memory_head;
 	while (curr) {
 		if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id) {
@@ -1801,18 +1798,19 @@ memory_t* find_and_remove_memory_entry(int cpu, int id) {
 		ret->next = NULL;
 	}
 
-	spin_unlock(&_memory_head_lock);
-
+	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
+	
 	return ret;
 }
 
 void remove_memory_entry(memory_t* entry) {
+	unsigned long flags;
 
 	if (!entry) {
 		return;
 	}
 
-	spin_lock(&_memory_head_lock);
+	raw_spin_lock_irqsave(&_memory_head_lock,flags);
 
 	if (_memory_head == entry) {
 		_memory_head = entry->next;
@@ -1829,8 +1827,7 @@ void remove_memory_entry(memory_t* entry) {
 	entry->prev = NULL;
 	entry->next = NULL;
 
-	spin_unlock(&_memory_head_lock);
-
+	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 }
 
 /* Functions to add,find and remove an entry from the count list (head:_count_head , lock:_count_head_lock)
@@ -1853,11 +1850,6 @@ void remove_memory_entry(memory_t* entry) {
 	} else {
 		curr = _count_head;
 		while (curr->next != NULL) {
-			if (curr == entry) {
-				// It's already in the list!
-				raw_spin_unlock_irqrestore(&_count_head_lock, flags);
-				return;
-			}
 			curr = curr->next;
 		}
 		// Now curr should be the last entry.
@@ -1936,11 +1928,6 @@ void remove_memory_entry(memory_t* entry) {
 	 } else {
 		 curr = _vma_ack_head;
 		 while (curr->next != NULL) {
-			 if (curr == entry) {
-				 // It's already in the list!
-				 raw_spin_unlock_irqrestore(&_vma_ack_head_lock, flags);
-				 return;
-			 }
 			 curr = curr->next;
 		 }
 		 // Now curr should be the last entry.
@@ -2235,7 +2222,7 @@ if(mm_data->kernel_set[i]==1){
 
 		for (i = 0; i < NR_THREAD_PULL - count; i++) {
 
-			printk("%s creating thread pull %d \n", __func__, i);
+		//	printk("%s creating thread pull %d \n", __func__, i);
 
 			kernel_thread(create_kernel_thread_for_distributed_process, NULL, SIGCHLD);
 
@@ -2251,7 +2238,7 @@ if(mm_data->kernel_set[i]==1){
 
 	        for(i=0;i<NR_THREAD_PULL;i++){
 
-		        printk("%s creating thread pull %d \n",__func__,i);
+		     //   printk("%s creating thread pull %d \n",__func__,i);
 
 	        	kernel_thread(create_kernel_thread_for_distributed_process, NULL, SIGCHLD);
 
@@ -2618,7 +2605,7 @@ if(mm_data->kernel_set[i]==1){
 												| CLONE_UNTRACED, 0, &regs, 0, NULL,
 										NULL);
 						if (!IS_ERR(shadow->thread)) {
-							printk("%s new shadow created\n",__func__);
+							//printk("%s new shadow created\n",__func__);
 							push_data((data_header_t**)&(my_thread_pull->threads),
 									&(my_thread_pull->spinlock), (data_header_t*) shadow);
 						} else {
@@ -11759,14 +11746,12 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 
 	my_shadow = (shadow_thread_t*) pop_data((data_header_t**)&(my_thread_pull->threads),
 			&(my_thread_pull->spinlock));
-
 	if (my_shadow) {
 
-	//	printk("%s found a shadow\n", __func__);
-
+		//printk("%s found a shadow  %p \n",__func__,my_shadow);
 		task = my_shadow->thread;
 		if (task == NULL) {
-			printk("%s, ERROR task is NULL", __func__);
+			printk("%s, ERROR task is NULL\n", __func__);
 			return -1;
 		}
 
@@ -11935,7 +11920,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	push_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock, (data_header_t *)my_thread_pull);
 
 	int count= count_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock);
-	printk("WARNING count is %d \n",count);
+	//printk("WARNING count is %d \n",count);
 
 	for (i = 0; i < NR_CPUS; i++) {
 		shadow_thread_t* shadow = (shadow_thread_t*) kmalloc(
@@ -11969,7 +11954,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 					CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | CLONE_UNTRACED, 0,
 					&regs, 0, NULL, NULL);
 			if (!IS_ERR(shadow->thread)) {
-			//	printk("%s new shadow created\n",__func__);
+			//	printk("new shadow created %p\n",shadow);
 				push_data((data_header_t**)&(my_thread_pull->threads), &(my_thread_pull->spinlock),
 						(data_header_t *)shadow);
 			} else {
@@ -12097,7 +12082,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 
 	if (memory) {
 
-	//	printk("%s memory_t found\n", __func__);
+		//printk("%s memory_t found\n", __func__);
 		if(inc)
 			atomic_inc(&(memory->pending_migration));
 
@@ -12105,7 +12090,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 			return create_user_thread_for_distributed_process(clone,
 					memory->thread_pull);
 		} else {
-			//printk("%s thread pull not ready yet\n", __func__);
+		//	printk("%s thread pull not ready yet\n", __func__);
 			return -1;
 		}
 
@@ -12122,11 +12107,12 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 		entry->tgroup_home_cpu = clone->tgroup_home_cpu;
 		entry->tgroup_home_id = clone->tgroup_home_id;
 		entry->setting_up = 1;
+		entry->thread_pull = NULL;
 		atomic_set(&(entry->pending_migration),1);
 		ret = add_memory_entry_with_check(entry);
 
 		if (ret == 0) {
-			//printk("%s fetching a thread pull \n", __func__);
+			//printk("%s fetching a thread pull tcpu %d tid %d \n", __func__,clone->tgroup_home_cpu, clone->tgroup_home_id);
 
 			thread_pull_t* my_thread_pull = (thread_pull_t*) pop_data(
 					(data_header_t**)&(thread_pull_head), &thread_pull_head_lock);
@@ -12217,7 +12203,7 @@ void try_create_remote_thread(struct work_struct* work) {
 	ret = clone_remote_thread(clone, 0);
 
 	if (ret != 0) {
-		printk("%s retry after\n", __func__);
+		//printk("%s retry after\n", __func__);
 		clone_work_t* delay = (clone_work_t*) kmalloc(sizeof(clone_work_t),
 				GFP_ATOMIC);
 
@@ -12229,7 +12215,7 @@ void try_create_remote_thread(struct work_struct* work) {
 		}
 
 	} else {
-		printk("%s success\n", __func__);
+		//printk("%s success\n", __func__);
 	}
 
 	kfree(work);
@@ -12242,8 +12228,8 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 	ret = clone_remote_thread(clone, 1);
 
 	if (ret != 0) {
-		printk("%s clone_work activated with try_create_remote_thread \n",
-				__func__);
+		//printk("%s clone_work activated with try_create_remote_thread \n",
+		//		__func__);
 
 		clone_work_t* request_work = kmalloc(sizeof(clone_work_t), GFP_ATOMIC);
 
