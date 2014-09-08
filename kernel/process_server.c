@@ -255,6 +255,7 @@ typedef struct _memory_struct {
 	vma_operation_t* message_push_operation;
 	thread_pull_t* thread_pull;
 	atomic_t pending_migration;
+	atomic_t pending_back_migration;
 
 } memory_t;
 
@@ -1991,6 +1992,13 @@ void remove_memory_entry(memory_t* entry) {
 
  }
 
+asmlinkage long sys_take_time(int start){
+        if (start==1)
+                trace_printk("s\n");
+        else
+                trace_printk("e\n");
+}
+
 #if STATISTICS
 unsigned long long perf_aa, perf_bb, perf_cc, perf_dd, perf_ee;
 static int page_fault_mio,fetch,local_fetch,write,concurrent_write,most_long_write,most_written_page,read,most_long_read,invalid,ack,answer_request,answer_request_void,request_data,pages_allocated,compressed_page_sent,not_compressed_page,not_compressed_diff_page;
@@ -2825,7 +2833,7 @@ if(mm_data->kernel_set[i]==1){
 			static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg) {
 
 #if FOR_2_KERNELS
-
+				//trace_printk("s\n");
 				data_void_response_for_2_kernels_t* response;
 				mapping_answers_for_2_kernels_t* fetched_data;
 
@@ -2881,11 +2889,13 @@ if(mm_data->kernel_set[i]==1){
 
 				fetched_data->arrived_response++;
 
-	fetched_data->futex_owner = response->futex_owner;
+				fetched_data->futex_owner = response->futex_owner;
 
 				wake_up_process(fetched_data->waiting);
 
 				pcn_kmsg_free_msg(inc_msg);
+
+				//trace_printk("e\n");
 
 				return 1;
 
@@ -2975,6 +2985,7 @@ if(mm_data->kernel_set[i]==1){
 			static int handle_mapping_response(struct pcn_kmsg_message* inc_msg) {
 
 #if FOR_2_KERNELS
+				//trace_printk("s\n");
 				data_response_for_2_kernels_t* response;
 				mapping_answers_for_2_kernels_t* fetched_data;
 				int set = 0;
@@ -3053,13 +3064,14 @@ response->vma_present, response->vaddr_start , response->vaddr_size,response->pr
 
 				fetched_data->arrived_response++;
 
-		fetched_data->futex_owner = response->futex_owner;
+				fetched_data->futex_owner = response->futex_owner;
 
 				wake_up_process(fetched_data->waiting);
 
 				if (set == 0)
 					pcn_kmsg_free_msg(inc_msg);
-
+				
+				//trace_printk("e\n");
 #else
 				data_response_t* response;
 				mapping_answers_t* fetched_data;
@@ -3164,6 +3176,7 @@ return 1;
 			static int handle_ack(struct pcn_kmsg_message* inc_msg) {
 
 #if FOR_2_KERNELS
+				//trace_printk("s\n");
 				ack_t* response;
 				ack_answers_for_2_kernels_t* fetched_data;
 
@@ -3189,6 +3202,7 @@ return 1;
 				wake_up_process(fetched_data->waiting);
 
 				out: pcn_kmsg_free_msg(inc_msg);
+				//trace_printk("e\n");
 #else
 
 				ack_t* response;
@@ -3264,6 +3278,7 @@ return 0;
 				int lock = 0;
 
 				//unsigned long long start,end;
+				//trace_printk("s\n");
 
 				invalid_work_t *delay;
 
@@ -3313,6 +3328,7 @@ if(mm->vma_operation_index < data->vma_operation_index){
 
 	up_read(&mm->mmap_sem);
 	kfree(work);
+	//trace_printk("e\n");
 	return;
 }
 
@@ -3384,6 +3400,7 @@ if (pte == NULL || pte_none(pte_clear_flags(*pte,_PAGE_UNUSED1)) ) {
 		spin_unlock(ptl);
 		up_read(&mm->mmap_sem);
 		kfree(work);
+		//trace_printk("e\n");
 		return;
 	}
 	else
@@ -3416,6 +3433,7 @@ if (pte == NULL || pte_none(pte_clear_flags(*pte,_PAGE_UNUSED1)) ) {
 			spin_unlock(ptl);
 			up_read(&mm->mmap_sem);
 			kfree(work);
+			//trace_printk("e\n");
 			return;
 		}
 	}
@@ -3457,6 +3475,7 @@ if (pte == NULL || pte_none(pte_clear_flags(*pte,_PAGE_UNUSED1)) ) {
 		spin_unlock(ptl);
 		up_read(&mm->mmap_sem);
 		kfree(work);
+		//trace_printk("e\n");
 		return;
 	}
 
@@ -3508,11 +3527,13 @@ response->tgroup_home_id = data->tgroup_home_id;
 response->address = data->address;
 response->ack = 1;
 //pcn_kmsg_send(from_cpu, (struct pcn_kmsg_message*) (response));
+//trace_printk("m\n");
 pcn_kmsg_send_long(from_cpu,(struct pcn_kmsg_long_message*) (response),sizeof(ack_t)-sizeof(struct pcn_kmsg_hdr));
+//trace_printk("a\n");
 kfree(response);
 pcn_kmsg_free_msg(data);
 kfree(work);
-
+//trace_printk("e\n");
 			}
 
 #else
@@ -3768,6 +3789,7 @@ kfree(work);
 			static int handle_invalid_request(struct pcn_kmsg_message* inc_msg) {
 
 #if FOR_2_KERNELS
+				//trace_printk("s\n");
 				invalid_work_t* request_work;
 				invalid_data_for_2_kernels_t* data = (invalid_data_for_2_kernels_t*) inc_msg;
 
@@ -3778,6 +3800,7 @@ kfree(work);
 					INIT_WORK( (struct work_struct*)request_work, process_invalid_request_for_2_kernels);
 					queue_work(invalid_message_wq, (struct work_struct*) request_work);
 				}
+				//trace_printk("e\n");
 #else
 	invalid_work_t* request_work;
 	invalid_data_t* data = (invalid_data_t*) inc_msg;
@@ -3829,7 +3852,7 @@ extern int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *v
 				int lock =0;
 				void *vfrom;
 
-
+ trace_printk("s\n");
 #if STATISTICS
 request_data++;
 #endif
@@ -3867,6 +3890,7 @@ if(mm->vma_operation_index < request->vma_operation_index){
 
 	up_read(&mm->mmap_sem);
 	kfree(work);
+	trace_printk("e\n");
 	return;
 }
 
@@ -4000,6 +4024,7 @@ if (pte == NULL || pte_none(pte_clear_flags(entry, _PAGE_UNUSED1))) {
 			spin_unlock(ptl);
 			up_read(&mm->mmap_sem);
 			kfree(work);
+			trace_printk("e\n");
 			return;
 
 		}
@@ -4192,6 +4217,7 @@ else{
 		spin_unlock(ptl);
 		up_read(&mm->mmap_sem);
 		kfree(work);
+		trace_printk("e\n");
 		return;
 
 	}
@@ -4473,17 +4499,18 @@ response->checksum= csum_partial(&response->data, PAGE_SIZE, 0);
 
 //printk("sizeof(data_response_for_2_kernels_t) %d PAGE_SIZE %d response->data_size %d \n",sizeof(data_response_for_2_kernels_t),PAGE_SIZE,response->data_size);
 
-
+trace_printk("m\n");
 // Send response
 pcn_kmsg_send_long(from_cpu, (struct pcn_kmsg_long_message*) (response),
 		sizeof(data_response_for_2_kernels_t) - sizeof(struct pcn_kmsg_hdr) + response->data_size);
-
+ trace_printk("a\n");
 // Clean up incoming messages
 pcn_kmsg_free_msg(request);
 kfree(work);
 kfree(response);
 //end= native_read_tsc();
 PSPRINTK("Handle request end\n");
+ trace_printk("e\n");
 return;
 
 #if	DIFF_PAGE
@@ -4609,16 +4636,18 @@ if (_cpu == request->tgroup_home_cpu && vma != NULL)
 spin_unlock(ptl);
 up_read(&mm->mmap_sem);
 
+trace_printk("m\n");
 // Send response
 pcn_kmsg_send_long(from_cpu, (struct pcn_kmsg_long_message*) (response),
 		sizeof(data_response_for_2_kernels_t) - sizeof(struct pcn_kmsg_hdr) + response->data_size);
-
+trace_printk("a\n");
 // Clean up incoming messages
 pcn_kmsg_free_msg(request);
 kfree(work);
 kfree(response);
 //end= native_read_tsc();
 PSPRINTK("Handle request end\n");
+ trace_printk("e\n");
 return;
 #endif
 
@@ -4676,17 +4705,20 @@ if(lock){
 	spin_unlock(ptl);
 	up_read(&mm->mmap_sem);
 }
+
+trace_printk("m\n");
 // Send response
 pcn_kmsg_send_long(from_cpu,
 		(struct pcn_kmsg_long_message*) (void_response),
 		sizeof(data_void_response_for_2_kernels_t) - sizeof(struct pcn_kmsg_hdr));
-
+ trace_printk("a\n");
 // Clean up incoming messages
 pcn_kmsg_free_msg(request);
 kfree(void_response);
 kfree(work);
 //end= native_read_tsc();
 PSPRINTK("Handle request end\n");
+ trace_printk("e\n");
 			}
 
 #else
@@ -5309,6 +5341,7 @@ PSPRINTK("Handle request end\n");
 				request_work_t* request_work;
 
 #if FOR_2_KERNELS
+				//trace_printk("s\n");
 				data_request_for_2_kernels_t* request = (data_request_for_2_kernels_t*) inc_msg;
 
 
@@ -5319,7 +5352,7 @@ PSPRINTK("Handle request end\n");
 					INIT_WORK( (struct work_struct*)request_work, process_mapping_request_for_2_kernels);
 					queue_work(message_request_wq, (struct work_struct*) request_work);
 				}
-
+				//trace_printk("e\n");
 #else
 	data_request_t* request = (data_request_t*) inc_msg;
 
@@ -5705,6 +5738,29 @@ return 1;
 				return 1;
 
 			}
+			
+			void synchronize_migrations(int tgroup_home_cpu,int tgroup_home_id ){
+				memory_t* memory = NULL;
+
+                                 memory = find_memory_entry(tgroup_home_cpu,tgroup_home_id);
+					if(!memory)
+						printk("ERROR: %s no memory_t found\n",__func__);
+			 	
+				while (atomic_read(&(memory->pending_back_migration))<57) {
+             				msleep(1);
+         			}
+
+
+				 int app= atomic_add_return(-1,&(memory->pending_back_migration));
+                                 if(app==57)
+                                 	atomic_set(&(memory->pending_back_migration),0);
+
+				//atomic_dec(&(memory->pending_back_migration));
+                             //    while (atomic_read(&(memory->pending_back_migration))!=0) {
+                               //    msleep(1);
+                                // }
+                                
+			}
 
 			void process_back_migration(struct work_struct* work) {
 				back_mig_work_t* info_work = (back_mig_work_t*) work;
@@ -5799,7 +5855,19 @@ return 1;
 
 				back_migration_request_t* request= (back_migration_request_t*) inc_msg;
 
+				//for synchronizing migratin threads
+				 memory_t* memory = NULL;
 
+ 				 memory = find_memory_entry(request->tgroup_home_cpu,
+                        					request->tgroup_home_id);
+				 if(memory){
+					//atomic_inc(&(memory->pending_back_migration));	
+					int app= atomic_add_return(1,&(memory->pending_back_migration));
+					if(app==57)
+						atomic_set(&(memory->pending_back_migration),114);
+				 }else{
+					printk("ERROR: back migration did not find a memory_t struct!!\n");
+				 }
 /*				back_mig_work_t* work;
 #if TIMING
 				unsigned long long start= native_read_tsc();
@@ -6028,6 +6096,10 @@ return 1;
 				spinlock_t* ptl = NULL;
 				struct page* page, *old_page;
 				int ret = 0;
+
+				if(strcmp(current->comm,"IS") == 0){
+                			trace_printk("s\n");
+        			}
 
 #if FOR_2_KERNELS
 				mapping_answers_for_2_kernels_t* fetched_data;
@@ -6364,6 +6436,11 @@ retry_cow:
 				out_not_data:
 
 				wake_up(&read_write_wait);
+
+				if(strcmp(current->comm,"IS") == 0){
+                			trace_printk("e\n");
+        			}
+	
 				return ret;
 			}
 
@@ -6395,14 +6472,18 @@ page->old_page_version= NULL;
 			}
 
 #if FOR_2_KERNELS
-
-			static int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
+			//static
+			 int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 					struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
 					unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, spinlock_t* ptl,
 					struct page* page) {
 
 				pte_t value_pte;
 				int ret=0,i;
+				
+				if(strcmp(current->comm,"IS") == 0){
+                			trace_printk("s\n");
+        			}
 
 #if STATISTICS
 				read++;
@@ -6484,6 +6565,9 @@ page->old_page_version= NULL;
 						i = objPtr->_data._processor;
 #endif
 						if (page->other_owners[i] == 1) {
+							if(strcmp(current->comm,"IS") == 0){
+                                                                trace_printk("se\n");
+                                                        }
 
 							if (!(pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (read_message), sizeof(data_request_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr))
 									== -1)) {
@@ -6504,6 +6588,10 @@ page->old_page_version= NULL;
 								schedule();
 							set_task_state(current, TASK_RUNNING);
 						}
+						
+						if(strcmp(current->comm,"IS") == 0){
+                                                        trace_printk("r\n");
+                                                }
 
 
 					}
@@ -6515,9 +6603,16 @@ page->old_page_version= NULL;
 						goto exit_reading_page;
 					}
 
+					if(strcmp(current->comm,"IS") == 0){
+                                        	trace_printk("ls\n");
+                                	}
+					
 					down_read(&mm->mmap_sem);
 					spin_lock(ptl);
 					/*PTE LOCKED*/
+					if(strcmp(current->comm,"IS") == 0){
+        	                                trace_printk("l\n");
+	                                }
 
 					vma = find_vma(mm, address);
 					if (unlikely(
@@ -6663,7 +6758,10 @@ page->old_page_version= NULL;
 					exit:
 
 					page->reading = 0;
-
+					
+					if(strcmp(current->comm,"IS") == 0){
+         				       trace_printk("e\n");
+        				}
 					return ret;
 				}
 
@@ -6977,7 +7075,8 @@ return ret;
 #endif
 
 #if FOR_2_KERNELS
-static int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
+//static
+ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
 		unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, spinlock_t* ptl,
 		struct page* page,int invalid) {
@@ -6985,6 +7084,10 @@ static int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id
 	int  i;
 	int ret= 0;
 	pte_t value_pte;
+
+	if(strcmp(current->comm,"IS") == 0){
+                trace_printk("s\n");
+        }
 
 	page->writing = 1;
 
@@ -7055,7 +7158,10 @@ if(page->owner==1){
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
 #endif
-if (page->other_owners[i] == 1) {
+	if (page->other_owners[i] == 1) {
+		 if(strcmp(current->comm,"IS") == 0){
+                                trace_printk("se\n");
+                        }
 
 	if (!(pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (invalid_message),sizeof(invalid_data_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr))
 			== -1)) {
@@ -7076,12 +7182,23 @@ if (page->other_owners[i] == 1) {
 
 				set_task_state(current, TASK_RUNNING);
 			}
+			if(strcmp(current->comm,"IS") == 0){
+                                trace_printk("r\n");
+                        }
 		}
 		else
 			printk("Impossible to send invalid, no destination kernel\n");
+		
+		if(strcmp(current->comm,"IS") == 0){
+                	trace_printk("ls\n");
+                }
 
 		down_read(&mm->mmap_sem);
 		spin_lock(ptl);
+
+		if(strcmp(current->comm,"IS") == 0){
+                	trace_printk("l\n");
+                }
 		/*PTE LOCKED*/
 
 		vma = find_vma(mm, address);
@@ -7177,7 +7294,11 @@ if (page->other_owners[i] == 1) {
 				objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 				i = objPtr->_data._processor;
 #endif
+		
 if (page->other_owners[i] == 1) {
+	if(strcmp(current->comm,"IS") == 0){
+	        trace_printk("se\n");
+        }
 
 	if (!(pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (write_message),sizeof(data_request_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr))
 			== -1)) {
@@ -7198,8 +7319,12 @@ if (page->other_owners[i] == 1) {
 						schedule();
 					set_task_state(current, TASK_RUNNING);
 				}
+				
+				if(strcmp(current->comm,"IS") == 0){
+                                	trace_printk("r\n");
+                                }
 
-
+			
 			}
 			else{
 				printk("ERROR: impossible to send write message, no destination kernel\n");
@@ -7208,10 +7333,17 @@ if (page->other_owners[i] == 1) {
 				spin_lock(ptl);
 				goto exit_writing_page;
 			}
+			if(strcmp(current->comm,"IS") == 0){
+	                        trace_printk("ls\n");
+                        }
 
 			down_read(&mm->mmap_sem);
 			spin_lock(ptl);
 			/*PTE LOCKED*/
+
+			if(strcmp(current->comm,"IS") == 0){
+	                        trace_printk("l\n");
+                        }
 
 			vma = find_vma(mm, address);
 			if (unlikely(
@@ -7381,6 +7513,10 @@ PSPRINTK("Out write %i address %lu last write is %lu \n ", write, address,page->
 exit:
 
 page->writing = 0;
+
+if(strcmp(current->comm,"IS") == 0){
+	trace_printk("e\n");
+}
 
 return ret;
 
@@ -8123,8 +8259,8 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 	}
 
 #if FOR_2_KERNELS
-
-	static int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
+	//static
+	int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
 			unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, pte_t value_pte,
 			spinlock_t* ptl) {
@@ -8133,8 +8269,11 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 		data_request_for_2_kernels_t* fetch_message;
 		int ret= 0,i,reachable,other_cpu=-1;
 
-		PSMINPRINTK("Fetch for address %lu write %i pid %d is local?%d\n", address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),current->pid,pte_none(value_pte));
+		if(strcmp(current->comm,"IS") == 0){
+        	        trace_printk("s\n");
+	        }
 
+		PSMINPRINTK("Fetch for address %lu write %i pid %d is local?%d\n", address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),current->pid,pte_none(value_pte));
 #if STATISTICS
 		fetch++;
 #endif
@@ -8231,7 +8370,11 @@ goto exit;
 				i = objPtr->_data._processor;
 
 #endif
-if(memory->kernel_set[i]==1)
+			if(memory->kernel_set[i]==1)
+				if(strcmp(current->comm,"IS") == 0){
+                                	trace_printk("se\n");
+                                }
+
 	if ((ret=pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (fetch_message),sizeof(data_request_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr)))
 			!= -1) {
 		// Message delivered
@@ -8255,12 +8398,23 @@ if(memory->kernel_set[i]==1)
 
 					set_task_state(current, TASK_RUNNING);
 				}
+				if(strcmp(current->comm,"IS") == 0){
+                                        trace_printk("r\n");
+                                }
+
 			}else
 				printk("OCCHIO... qui c'e'roba non richiesta.... ret is %i",ret);
+
+			if(strcmp(current->comm,"IS") == 0){
+	                        trace_printk("ls\n");
+                        }
 
 			down_read(&mm->mmap_sem);
 			spin_lock(ptl);
 			/*PTE LOCKED*/
+			if(strcmp(current->comm,"IS") == 0){
+	                        trace_printk("l\n");
+                        }
 
 			PSPRINTK("Out wait fetch %i address %lu \n", fetch, address);
 
@@ -8551,6 +8705,10 @@ if (status == REPLICATION_STATUS_VALID) {
 			kfree(fetching_page);
 
 			exit:
+			if(strcmp(current->comm,"IS") == 0){
+               	 		trace_printk("e\n");
+        		}
+
 			return ret;
 		}
 
@@ -9024,6 +9182,10 @@ start: if (pte == NULL || pte_none(pte_clear_flags(value_pte, _PAGE_UNUSED1))) {
 		 */
 		if (find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address) != NULL) {
 
+			if(strcmp(current->comm,"IS") == 0){
+                                trace_printk("s\n");
+                         }
+
 			//wait while the fetch is ended
 			spin_unlock(ptl);
 			up_read(&mm->mmap_sem);
@@ -9056,6 +9218,10 @@ start: if (pte == NULL || pte_none(pte_clear_flags(value_pte, _PAGE_UNUSED1))) {
 				spin_unlock(ptl);
 				return VM_FAULT_VMA;
 			}
+
+			if(strcmp(current->comm,"IS") == 0){
+                                trace_printk("w\n");
+                        }
 
 			goto start;
 		}
@@ -9150,6 +9316,9 @@ start: if (pte == NULL || pte_none(pte_clear_flags(value_pte, _PAGE_UNUSED1))) {
 		 */
 		mapping_answers_for_2_kernels_t* fetch= find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address);
 		if (fetch != NULL && fetch->is_fetch==1) {
+			if(strcmp(current->comm,"IS") == 0){
+                                trace_printk("s\n");
+                         }
 
 			//wait while the fetch is ended
 			spin_unlock(ptl);
@@ -9185,6 +9354,9 @@ start: if (pte == NULL || pte_none(pte_clear_flags(value_pte, _PAGE_UNUSED1))) {
 				spin_unlock(ptl);
 				return VM_FAULT_VMA;
 			}
+			if(strcmp(current->comm,"IS") == 0){
+                                trace_printk("w\n");
+                         }
 
 			goto start;
 		}
@@ -9325,6 +9497,9 @@ retry_cow:
 				 */
 
 				if (page->writing == 1 || page->reading == 1) {
+					if(strcmp(current->comm,"IS") == 0){
+                                                trace_printk("s\n");
+                                        }
 
 					spin_unlock(ptl);
 					up_read(&mm->mmap_sem);
@@ -9353,6 +9528,9 @@ retry_cow:
 						spin_unlock(ptl);
 						return VM_FAULT_VMA;
 					}
+					if(strcmp(current->comm,"IS") == 0){
+                                                trace_printk("w\n");
+                                        }
 
 					goto check;
 
@@ -9415,6 +9593,9 @@ return 0;
 				 * they will eventually read a valid copy
 				 */
 				if (page->writing == 1 || page->reading == 1) {
+					if(strcmp(current->comm,"IS") == 0){
+                                                trace_printk("s\n");
+                                        }
 
 					spin_unlock(ptl);
 					up_read(&mm->mmap_sem);
@@ -9442,6 +9623,9 @@ return 0;
 						spin_unlock(ptl);
 						return VM_FAULT_VMA;
 					}
+					if(strcmp(current->comm,"IS") == 0){
+                                                trace_printk("w\n");
+                                        }
 
 					goto check;
 
@@ -9540,7 +9724,8 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
  * This is a back migration => <task> must already been migrated at least once in <dst_cpu>.
  * It returns -1 in error case.
  */
-static int do_back_migration(struct task_struct* task, int dst_cpu,
+//static
+ int do_back_migration(struct task_struct* task, int dst_cpu,
 		struct pt_regs * regs){
 
 	unsigned long flags;
@@ -9672,8 +9857,15 @@ static int do_back_migration(struct task_struct* task, int dst_cpu,
 	task->executing_for_remote= 0;
 
 	unlock_task_sighand(task, &flags);
+	if(strcmp(current->comm,"IS") == 0){
+        	trace_printk("s\n");
+        }
 
 	ret = pcn_kmsg_send_long(dst_cpu,(struct pcn_kmsg_long_message*) request,sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
+
+	if(strcmp(current->comm,"IS") == 0){
+        	trace_printk("e\n");
+        }
 
 	kfree(request);
 
@@ -9716,7 +9908,8 @@ static void dump_regs(struct pt_regs* regs) {
  * This function will ask the remote cpu to create a thread to host task.
  * It returns -1 in error case.
  */
-static int do_migration(struct task_struct* task, int dst_cpu,
+//static
+ int do_migration(struct task_struct* task, int dst_cpu,
 		struct pt_regs * regs, int* is_first){
 
 	clone_request_t* request;
@@ -9888,6 +10081,7 @@ static int do_migration(struct task_struct* task, int dst_cpu,
 		entry->alive = 1;
 		entry->main = NULL;
 		atomic_set(&(entry->pending_migration),0);
+		atomic_set(&(entry->pending_back_migration),0);
 		entry->operation = VMA_OP_NOP;
 		entry->waiting_for_main = NULL;
 		entry->waiting_for_op = NULL;
@@ -9926,10 +10120,16 @@ static int do_migration(struct task_struct* task, int dst_cpu,
 	request->tgroup_home_cpu = task->tgroup_home_cpu;
 	request->tgroup_home_id = task->tgroup_home_id;
 
+	if(strcmp(current->comm,"IS") == 0){
+        	trace_printk("s\n");
+        }
 	//dump_regs(&request->regs);
 	tx_ret = pcn_kmsg_send_long(dst_cpu,
 			(struct pcn_kmsg_long_message*) request,
 			sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
+	if(strcmp(current->comm,"IS") == 0){
+	        trace_printk("e\n");
+        }
 
 	if (first)
 		kernel_thread(
@@ -9959,6 +10159,9 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	int ret= 0;
 
 	//printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
+	if(strcmp(current->comm,"IS") == 0){
+        	trace_printk("s\n");
+        }
 
 #if TIMING
 	unsigned long long start= native_read_tsc();
@@ -10024,6 +10227,9 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 		printk("WARNING in timing for migration ret is %d\n",ret);
 
 #endif
+if(strcmp(current->comm,"IS") == 0){
+	trace_printk("e\n");
+}
 
 if (ret != -1) {
 	//	printk(KERN_ALERT"%s clone request sent ret{%d} \n", __func__,ret);
@@ -10707,6 +10913,10 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 		}
 
 	PSVMAPRINTK("operation index is %d\n", current->mm->vma_operation_index);
+	if(strcmp(current->comm,"IS") == 0){
+	        trace_printk("e\n");
+        }
+
 }
 
 	/*I assume that down_write(&mm->mmap_sem) is held
@@ -10757,6 +10967,9 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 		if (current->mm->distribute_unmap == 0) {
 			return ret;
 		}
+		if(strcmp(current->comm,"IS") == 0){
+                        trace_printk("s\n");
+                }
 
 		PSVMAPRINTK("%s, Starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lu len %lu end %lu\n",
 				__func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
@@ -11720,7 +11933,24 @@ void sleep_shadow() {
 
 	} // FS/GS update --- end
 
-	atomic_dec(&(memory->pending_migration));
+	 //to synchronize migrations...
+	  while (atomic_read(&(memory->pending_migration))<57) {
+          	msleep(1);
+          }
+
+
+         int app= atomic_add_return(-1,&(memory->pending_migration));
+         if(app==57)
+         	atomic_set(&(memory->pending_migration),0);
+
+
+	//atomic_dec(&(memory->pending_migration));
+
+	//to synchronize migrations...
+//	while (atomic_read(&(memory->pending_migration))!=0) {
+  //          msleep(1);
+    //    }
+                
 
 #if MIGRATE_FPU
 	if (tsk_used_math(current) && current->fpu_counter >5) //fpu.preload
@@ -11773,6 +12003,21 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 		if (ret) {
 			printk(KERN_ERR "%s: associate_to_popcorn_ns returned: %d\n", __func__,ret);
 		}
+
+		int i, ch;
+                const char *name;
+                char tcomm[sizeof(task->comm)];
+
+                name = clone_data->exe_path;
+
+                for (i = 0; (ch = *(name++)) != '\0';) {
+                	if (ch == '/')
+                        	i = 0;
+                        else if (i < (sizeof(tcomm) - 1))
+                        	tcomm[i++] = ch;
+                }
+                tcomm[i] = '\0';
+                set_task_comm(task, tcomm);
 
 		task->thread.usersp = clone_data->old_rsp;
 		memcpy(task_pt_regs(task), &clone_data->regs, sizeof(struct pt_regs));
@@ -11978,7 +12223,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	entry->waiting_for_op = NULL;
 	entry->arrived_op = 0;
 	entry->my_lock = 0;
-
+	atomic_set(&(entry->pending_back_migration),0);
 	memset(entry->kernel_set, 0, MAX_KERNEL_IDS * sizeof(int));
 	entry->kernel_set[_cpu] = 1;
 	init_rwsem(&entry->kernel_set_sem);
@@ -12083,9 +12328,13 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 	if (memory) {
 
 		//printk("%s memory_t found\n", __func__);
-		if(inc)
-			atomic_inc(&(memory->pending_migration));
+		if(inc){
+			//atomic_inc(&(memory->pending_migration));
+                        int app= atomic_add_return(1,&(memory->pending_migration));
+                        if(app==57)
+                        	atomic_set(&(memory->pending_migration),114);
 
+		}
 		if (memory->thread_pull) {
 			return create_user_thread_for_distributed_process(clone,
 					memory->thread_pull);
@@ -12146,7 +12395,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 				entry->mm->start_data = clone->start_data;
 				entry->mm->end_data = clone->end_data;
 				entry->mm->def_flags = clone->def_flags;
-
+				
 				int i, ch;
 				const char *name;
 				char tcomm[sizeof(my_thread_pull->main->comm)];

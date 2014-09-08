@@ -884,4 +884,6 @@ asmlinkage long sys_process_vm_writev(pid_t pid,
 
 asmlinkage long sys_cacheflush(void *__addr, __const int __nbytes, __const int __op);
 
+asmlinkage long sys_take_time(int start);
+
 #endif

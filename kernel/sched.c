@@ -5813,6 +5813,8 @@ sleep_again:
 						goto sleep_again;					
 					}
 			
+       				synchronize_migrations(current->tgroup_home_cpu,current->tgroup_home_id );
+ 
                                 return task_pt_regs(current)->orig_ax;
 
                         }

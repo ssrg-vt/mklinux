@@ -10,7 +10,7 @@ extern 	int __scif_flush(ep);
 #define min_val(x,y) ((x)<=(y)?(x):(y))
 #define FALSE 0
 #define TRUE 1
-#define MAX_CONNEC 10
+#define MAX_CONNEC 8
 #define PORT_BASE    20
 #define PORT_DATA_IN PORT_BASE
 #define PORT_DATA_OUT PORT_BASE + MAX_CONNEC

@@ -711,7 +711,8 @@ __SYSCALL(__NR_process_vm_readv, sys_process_vm_readv)
 __SYSCALL(__NR_process_vm_writev, sys_process_vm_writev)
 #define __NR_cacheflush				312
 __SYSCALL(__NR_cacheflush, sys_cacheflush)
- 
+#define __NR_take_time                          313
+__SYSCALL(__NR_take_time,sys_take_time)
 
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR

@@ -14,6 +14,7 @@
  * Migration hook.
  */
 int process_server_do_migration(struct task_struct* task, int cpu, struct pt_regs* regs);
+void synchronize_migrations(int tgroup_home_cpu,int tgroup_home_id );
 void sleep_shadow(void);
 void create_thread_pull(void);
 int process_server_update_page(struct task_struct * tsk,struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address, unsigned long page_fault_flags);
