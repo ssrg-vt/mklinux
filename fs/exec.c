@@ -813,7 +813,7 @@ int kernel_read(struct file *file, loff_t offset,
 
 EXPORT_SYMBOL(kernel_read);
 
-static int exec_mmap(struct mm_struct *mm)
+int exec_mmap(struct mm_struct *mm)
 {
 	struct task_struct *tsk;
 	struct mm_struct * old_mm, *active_mm;
@@ -1011,7 +1011,7 @@ no_thread_group:
  * These functions flushes out all traces of the currently running executable
  * so that a new one can be started
  */
-static void flush_old_files(struct files_struct * files)
+/*static*/ void flush_old_files(struct files_struct * files)
 {
 	long j = -1;
 	struct fdtable *fdt;

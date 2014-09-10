@@ -991,16 +991,16 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
     /*
      * Multikernel
      */
+#ifdef PROCESS_SERVER_USE_KMOD
     if(current->executing_for_remote) {
         process_server_import_address_space(&mk_ip, &mk_sp, regs);
-        /*printk("stack pointer = %lx\n",mk_sp);
-        for(i = 0; i <= 16; i++) {
-            printk("stack peak %lx at %lx\n",*(unsigned long*)(mk_sp + i*8), mk_sp + i*8);
-        }*/
 	    start_thread(regs, mk_ip, mk_sp);
     } else {
         start_thread(regs, elf_entry, bprm->p);
     }
+#else
+    start_thread(regs, elf_entry, bprm->p);
+#endif
 	retval = 0;
 out:
 	kfree(loc);
@@ -1969,7 +1969,7 @@ static int elf_core_dump(struct coredump_params *cprm)
 		size_t sz = get_note_info_size(&info);
 
 		sz += elf_coredump_extra_notes_size();
-		printk(KERN_ALERT " phdr4note \n");
+
 		phdr4note = kmalloc(sizeof(*phdr4note), GFP_KERNEL);
 		if (!phdr4note)
 			goto end_coredump;
@@ -1986,7 +1986,6 @@ static int elf_core_dump(struct coredump_params *cprm)
 
 	if (e_phnum == PN_XNUM) {
 		shdr4extnum = kmalloc(sizeof(*shdr4extnum), GFP_KERNEL);
-		printk(KERN_ALERT " shdr4extnum \n");
 		if (!shdr4extnum)
 			goto end_coredump;
 		fill_extnum_info(elf, shdr4extnum, e_shoff, segs);
@@ -1995,12 +1994,10 @@ static int elf_core_dump(struct coredump_params *cprm)
 	offset = dataoff;
 
 	size += sizeof(*elf);
-	printk(KERN_ALERT " binfmt elf size{%d} \n",size);
 	if (size > cprm->limit || !dump_write(cprm->file, elf, sizeof(*elf)))
 		goto end_coredump;
 
 	size += sizeof(*phdr4note);
-	printk(KERN_ALERT " phdr4note elf size{%d} \n",size);
 	if (size > cprm->limit
 	    || !dump_write(cprm->file, phdr4note, sizeof(*phdr4note)))
 		goto end_coredump;
@@ -2029,17 +2026,17 @@ static int elf_core_dump(struct coredump_params *cprm)
 		    || !dump_write(cprm->file, &phdr, sizeof(phdr)))
 			goto end_coredump;
 	}
-	printk(KERN_ALERT " after vma size{%d} \n",size);
+
 	if (!elf_core_write_extra_phdrs(cprm->file, offset, &size, cprm->limit))
 		goto end_coredump;
-	printk(KERN_ALERT " write_note_info\n");
+
  	/* write out the notes section */
 	if (!write_note_info(&info, cprm->file, &foffset))
 		goto end_coredump;
-	printk(KERN_ALERT " elf_coredump_extra_notes_write\n");
+
 	if (elf_coredump_extra_notes_write(cprm->file, &foffset))
 		goto end_coredump;
-	printk(KERN_ALERT " dump_seek\n");
+
 	/* Align to page */
 	if (!dump_seek(cprm->file, dataoff - foffset))
 		goto end_coredump;
@@ -2069,10 +2066,10 @@ static int elf_core_dump(struct coredump_params *cprm)
 				goto end_coredump;
 		}
 	}
-	printk(KERN_ALERT " elf_core_write_extra_data\n");
+
 	if (!elf_core_write_extra_data(cprm->file, &size, cprm->limit))
 		goto end_coredump;
-	printk(KERN_ALERT " PN_XNUM\n");
+
 	if (e_phnum == PN_XNUM) {
 		size += sizeof(*shdr4extnum);
 		if (size > cprm->limit

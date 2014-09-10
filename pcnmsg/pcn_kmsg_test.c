@@ -267,7 +267,7 @@ SYSCALL_DEFINE2(popcorn_test_kmsg, enum pcn_kmsg_test_op, op,
 			rc = pcn_kmsg_test_mcast_close(args);
 			break;
 #endif /* PCN_SUPPORT_MULTICAST */
-
+			
 		default:
 			TEST_ERR("invalid option %d\n", op);
 			return -1;
@@ -456,3 +456,4 @@ static int __init pcn_kmsg_test_init(void)
 }
 
 late_initcall(pcn_kmsg_test_init);
+

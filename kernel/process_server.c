@@ -31,7 +31,6 @@
 #include <linux/popcorn_cpuinfo.h>
 #include <linux/unistd.h>
 #include <linux/tsacct_kern.h>
-#include <linux/popcorn.h>
 #include <linux/syscalls.h>
 #include <linux/kernel.h>
 #include <linux/proc_fs.h>
@@ -57,8 +56,8 @@ unsigned long get_percpu_old_rsp(void);
 #include <linux/fcntl.h>
 #include "futex_remote.h"
 
-#define FPU_ 1
-//#undef FPU_
+//#define FPU_ 1
+#undef FPU_
 /**
  * General purpose configuration
  */
@@ -79,12 +78,13 @@ unsigned long get_percpu_old_rsp(void);
 
 // Whether or not to expose a proc entry that we can publish
 // information to.
-//#undef PROCESS_SERVER_HOST_PROC_ENTRY
-#define PROCESS_SERVER_HOST_PROC_ENTRY
+#undef PROCESS_SERVER_HOST_PROC_ENTRY
+//#define PROCESS_SERVER_HOST_PROC_ENTRY
 
 /**
  * Use the preprocessor to turn off printk.
  */
+#define POPCORN_MAX_PATH 512 
 #define PROCESS_SERVER_VERBOSE 0
 #if PROCESS_SERVER_VERBOSE
 #define PSPRINTK(...) printk(__VA_ARGS__)
@@ -282,7 +282,6 @@ typedef enum _lamport_barrier_state {
 /**
  * Library
  */
-#define POPCORN_MAX_PATH 512
 /**
  * Some piping for linking data entries
  * and identifying data entry types.
@@ -1141,6 +1140,7 @@ typedef struct {
    unsigned char task_fpu_counter;
    unsigned char thread_has_fpu;
    union thread_xstate fpu_state; // FPU migration support
+#endif
 } back_migration_work_t;
 
 /**
@@ -1288,6 +1288,7 @@ get_counter_phys_data_t* get_counter_phys_data = NULL;
 
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
 struct proc_dir_entry *_proc_entry = NULL;
+struct proc_dir_entry *_lamport_proc_entry = NULL;
 static void proc_track_data(int entry, unsigned long long time);//proto
 static void proc_data_init();
 typedef struct _proc_data {
@@ -3297,12 +3298,66 @@ static void dump_lamport_queue(lamport_barrier_queue_t* queue) {
     }
 }
 
+static void dump_lamport_queue_alwaysprint(lamport_barrier_queue_t* queue) {
+     lamport_barrier_entry_t* curr = queue->queue;
+     int queue_pos = 0;
+     printk("Queue %p:\n",__func__,queue);
+     printk("  tgroup_home_cpu: %d\n",queue->tgroup_home_cpu);
+     printk("  tgroup_home_id: %d\n",queue->tgroup_home_id);
+     printk("  Addr: %lx\n",queue->address);
+     printk("  is_heavy: %d\n",queue->is_heavy);
+     printk("  active_timestamp: %llx\n",queue->active_timestamp);
+     printk("  Entries:\n");
+     while(curr) {
+         printk("    Entry, Queue position %d\n",queue_pos++);
+         printk("\t   timestamp: %llx\n",curr->timestamp);
+         printk("\t   is_heavy: %d\n",curr->is_heavy);
+         printk("\t   cpu: %d\n",curr->cpu);
+         curr = (lamport_barrier_entry_t*)curr->header.next;
+     }
+}
+
+static void dump_lamport_queue_alert(lamport_barrier_queue_t* queue) {
+     lamport_barrier_entry_t* curr = queue->queue;
+     int queue_pos = 0;
+     printk(KERN_ALERT"Queue %p:\n",__func__,queue);
+     printk(KERN_ALERT"  tgroup_home_cpu: %d\n",queue->tgroup_home_cpu);
+     printk(KERN_ALERT"  tgroup_home_id: %d\n",queue->tgroup_home_id);
+     printk(KERN_ALERT"  Addr: %lx\n",queue->address);
+     printk(KERN_ALERT"  is_heavy: %d\n",queue->is_heavy);
+     printk(KERN_ALERT"  active_timestamp: %llx\n",queue->active_timestamp);
+     printk(KERN_ALERT"  Entries:\n");
+     while(curr) {
+         printk(KERN_ALERT"    Entry, Queue position %d\n",queue_pos++);
+         printk(KERN_ALERT"\t   timestamp: %llx\n",curr->timestamp);
+         printk(KERN_ALERT"\t   is_heavy: %d\n",curr->is_heavy);
+         printk(KERN_ALERT"\t   cpu: %d\n",curr->cpu);
+         curr = (lamport_barrier_entry_t*)curr->header.next;
+     }
+}
+
 static void dump_all_lamport_queues() {
     lamport_barrier_queue_t* curr = _lamport_barrier_queue_head;
     while(curr) {
         dump_lamport_queue(curr);
         curr = (lamport_barrier_queue_t*)curr->header.next;
     }
+}
+
+static void dump_all_lamport_queues_alert() {
+     lamport_barrier_queue_t* curr = _lamport_barrier_queue_head;
+     while(curr) {
+         dump_lamport_queue_alert(curr);
+         curr = (lamport_barrier_queue_t*)curr->header.next;
+     }
+}
+
+static void dump_all_lamport_queues_alwaysprint() {
+     lamport_barrier_queue_t* curr = _lamport_barrier_queue_head;
+     while(curr) {
+        dump_lamport_queue_alwaysprint(curr);
+         curr = (lamport_barrier_queue_t*)curr->header.next;
+     }
 }
 
 /**
@@ -3622,14 +3677,8 @@ void process_mapping_request(struct work_struct* work) {
     };
     char *plpath = NULL, *lpath = NULL;
     int used_saved_mm = 0, found_vma = 1, found_pte = 1; 
-    char* plpath = NULL;
-    char lpath[512];
     int i;
     
-    // for perf
-    int used_saved_mm = 0;
-    int found_vma = 1;
-    int found_pte = 1;
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
     unsigned long long mapping_response_send_time_start = 0;
     unsigned long long mapping_response_send_time_end = 0;
@@ -3742,21 +3791,11 @@ changed_can_be_cow:
              * if possible.
              */
             {
-            // Break all cows in this vma
-            if(can_be_cow) {
-                unsigned long cow_addr;
-                for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
-                    break_cow(mm, vma, cow_addr);
-                }
-                // We no longer need a write lock after the break_cow process
-                // is complete, so downgrade the lock to a read lock.
-                downgrade_write(&mm->mmap_sem);
-            }
 
             // Now grab all the mappings that we can stuff into the response.
          if (0 != fill_physical_mapping_array(mm, vma, address,
                                                 &(response->mappings[0]),
-						MAX_MAPPINGS)) {
+						MAX_MAPPINGS,can_be_cow)) {
                 // If the fill process fails, clear out all
                 // results.  Otherwise, we might trick the
                 // receiving cpu into thinking the target
@@ -3767,6 +3806,10 @@ changed_can_be_cow:
                     response->mappings[i].paddr = 0;
                     response->mappings[i].sz = 0;
                 }                    
+            }
+
+            if(can_be_cow) {
+                downgrade_write(&mm->mmap_sem);
             }
 
             }
@@ -3782,7 +3825,7 @@ changed_can_be_cow:
             response->vaddr_size = vma->vm_end - vma->vm_start;
             response->prot = vma->vm_page_prot;
             response->vm_flags = vma->vm_flags;
-            if(vma->vm_file == NULL) {
+            if(vma->vm_file == NULL || !w->need_vma) {
                  response->path[0] = '\0';
             } else {    
                 plpath = d_path(&vma->vm_file->f_path,lpath,512);
@@ -3851,10 +3894,10 @@ changed_can_be_cow:
     }
 
     // Send response
-    if(response.present) {
+    if(response->present) {
 #ifdef PROCESS_SERVER_HOST_PROC_ENTRY
         mapping_response_send_time_start = native_read_tsc();
-        response.send_time = mapping_response_send_time_start;
+        response->send_time = mapping_response_send_time_start;
 #endif
         DO_UNTIL_SUCCESS(pcn_kmsg_send_long(w->from_cpu,
                             (struct pcn_kmsg_long_message*)(response),
@@ -4128,14 +4171,13 @@ done:
 
       if(mm_to_munmap) {
 	 PS_DOWN_WRITE(&mm_to_munmap->mmap_sem);
-	 current->enable_distributed_munmap = 0;
 	 do_munmap(mm_to_munmap, w->vaddr_start, w->vaddr_size);
-	 current->enable_distributed_munmap = 1;
 	 PS_UP_WRITE(&mm_to_munmap->mmap_sem);
 	 }
-	else
+	else{
 	printk("%s: unexpected error task %p pid %d comm %s task->mm %p\n", 
         	 __func__, task,task->pid,task->comm, (task ? task->mm : 0) );
+	}
     // munmap the specified region in any saved mm's as well.
     // This keeps old mappings saved in the mm of dead thread
     // group members from being resolved accidentally after
@@ -4159,17 +4201,15 @@ found:
 
     if (to_munmap && to_munmap->mm) {
         PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
-        current->enable_distributed_munmap = 0;
         do_munmap(to_munmap->mm, w->vaddr_start, w->vaddr_size);
-        current->enable_distributed_munmap = 1;
         if (to_munmap && to_munmap->mm)
             PS_UP_WRITE(&to_munmap->mm->mmap_sem);
-        else
+        else{
             printk(KERN_ALERT"%s: ERROR2: to_munmap %p mm %p\n", __func__, to_munmap, to_munmap?to_munmap->mm:0);
-    }
-    else if (to_munmap) // It is OK for to_munmap to be null, but not to_munmap->mm
+    }}
+    else if (to_munmap){ // It is OK for to_munmap to be null, but not to_munmap->mm
         printk(KERN_ALERT"%s: ERROR1: to_munmap %p mm %p\n", __func__, to_munmap, to_munmap?to_munmap->mm:0);
-
+	}
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MUNMAP_RESPONSE;
     response.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -4255,12 +4295,9 @@ done:
     read_unlock(&tasklist_lock);
 
       if(mm_to_munmap) {
-        PS_DOWN_WRITE(&mm_to_munmap->mmap_sem);
-        current->enable_distributed_munmap = 0;
-        do_munmap(mm_to_munmap, start, len);
-        current->enable_distributed_munmap = 1;
-        PS_UP_WRITE(&mm_to_munmap->mmap_sem);
-        }
+        do_mprotect(task,mm_to_munmap,start,len,prot,0);
+        goto early_exit;
+	}
 
 
     // munmap the specified region in any saved mm's as well.
@@ -4285,14 +4322,10 @@ found:
     PS_SPIN_UNLOCK(&_saved_mm_head_lock);
 
     if(to_munmap != NULL) {
-        PS_DOWN_WRITE(&to_munmap->mm->mmap_sem);
-        current->enable_distributed_munmap = 0;
-        do_munmap(to_munmap->mm, start, len);
-        current->enable_distributed_munmap = 1;
-        PS_UP_WRITE(&to_munmap->mm->mmap_sem);
+      do_mprotect(NULL,to_munmap->mm,start,len,prot,0);
     }
 
-    
+early_exit:
     // Construct response
     response.header.type = PCN_KMSG_TYPE_PROC_SRV_MPROTECT_RESPONSE;
     response.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -4394,6 +4427,7 @@ search_exit:
 
     // Now, transplant the state into the shadow process
     memcpy(regs, &w->regs, sizeof(struct pt_regs));
+
     task->previous_cpus = w->previous_cpus;
     task->thread.fs = w->thread_fs;
     task->thread.gs = w->thread_gs;
@@ -4402,6 +4436,7 @@ search_exit:
     task->thread.ds = w->thread_ds;
     task->thread.fsindex = w->thread_fsindex;
     task->thread.gsindex = w->thread_gsindex;
+
 
 #ifdef FPU_   
       //FPU migration --- server (back migration)
@@ -5835,7 +5870,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 
     perf_cc = native_read_tsc();
 
-    PSPRINTK("%s: entered\n",__func__);
+    printk("%s: entered\n",__func__);
     
     /*
      * Remember this request
@@ -5899,7 +5934,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     clone_data->remote_blocked = request->remote_blocked ;
     clone_data->remote_real_blocked = request->remote_real_blocked;
     clone_data->remote_saved_sigmask = request->remote_saved_sigmask ;
-    clone_data->remote_pending = request->remote_pending;
+    //clone_data->remote_pending = request->remote_pending;
 
     clone_data->sas_ss_sp = request->sas_ss_sp;
     clone_data->sas_ss_size = request->sas_ss_size;
@@ -5940,8 +5975,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     }
 
     spin_unlock_irqrestore(&_data_head_lock,lockflags);
-
-    add_data_entry(clone_data);
+#endif
 
 perf_dd = native_read_tsc();
 
@@ -6241,7 +6275,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     perf_a = native_read_tsc();
     
-    PSPRINTK("import address space\n");
+    printk("import address space\n");
     
     // Verify that we're a delegated task // deadlock.
 #ifdef PROCESS_SERVER_USE_KMOD
@@ -6340,7 +6374,6 @@ int process_server_import_address_space(unsigned long* ip,
             get_file(f);
             current->mm->exe_file = f;
             filp_close(f,NULL);
-        }
         } else {
             printk("%s: Error opening file %s\n",__func__,clone_data->exe_path);
         }
@@ -6378,7 +6411,7 @@ int process_server_import_address_space(unsigned long* ip,
         {
         struct vm_area_struct* vma_out = NULL;
         // fetch stack
-        process_server_try_handle_mm_fault(current->mm,
+        process_server_pull_remote_mappings(current->mm,
                                            NULL,
                                            clone_data->stack_start,
                                            NULL,
@@ -6619,11 +6652,11 @@ int process_server_import_address_space(unsigned long* ip,
     sigorsets(&current->blocked,&current->blocked,&clone_data->remote_blocked) ;
     sigorsets(&current->real_blocked,&current->real_blocked,&clone_data->remote_real_blocked);
     sigorsets(&current->saved_sigmask,&current->saved_sigmask,&clone_data->remote_saved_sigmask);
-    current->pending = clone_data->remote_pending;
+    ///current->pending = clone_data->remote_pending;
     current->sas_ss_sp = clone_data->sas_ss_sp;
     current->sas_ss_size = clone_data->sas_ss_size;
 
-    printk(KERN_ALERT "origin pid {%d}-{%d} \n",current->origin_pid,clone_data->origin_pid);
+    ///printk(KERN_ALERT "origin pid {%d}-{%d} \n",current->origin_pid,clone_data->origin_pid);
 
     int cnt=0;
      for(cnt=0;cnt<_NSIG;cnt++)
@@ -6657,8 +6690,6 @@ int process_server_import_address_space(unsigned long* ip,
     if ( !(clone_data->thread_fs) || !(__user_addr(clone_data->thread_fs)) ) {
       printk(KERN_ERR "%s: ERROR corrupted fs base address %p\n", __func__, clone_data->thread_fs);
     }    
-    current->thread.fsindex = clone_data->thread_fsindex;
-    current->thread.fs = clone_data->thread_fs;
     if (unlikely(fsindex | current->thread.fsindex))
       loadsegment(fs, current->thread.fsindex);
     else
@@ -6670,8 +6701,6 @@ int process_server_import_address_space(unsigned long* ip,
     if ( !(clone_data->thread_gs) && !(__user_addr(clone_data->thread_gs)) ) {
       printk(KERN_ERR "%s: ERROR corrupted gs base address %p\n", __func__, clone_data->thread_gs);      
     }
-    current->thread.gs = clone_data->thread_gs;    
-    current->thread.gsindex = clone_data->thread_gsindex;
     if (unlikely(gsindex | current->thread.gsindex))
       load_gs_index(current->thread.gsindex);
     else
@@ -6795,7 +6824,7 @@ long sys_process_server_import_task(void *info /*name*/,
     clone_data_t* clone_data = (clone_data_t*)info;
     unsigned long ip, sp;
     current->clone_data = clone_data;
-    printk("in sys_process_server_import_task pid{%d}, clone_data{%lx}\n",current->pid,(unsigned long)clone_data);
+    //printk("in sys_process_server_import_task pid{%d}, clone_data{%lx}\n",current->pid,(unsigned long)clone_data);
     process_server_import_address_space(&ip,&sp,regs);
     return 0;
 }
@@ -7525,17 +7554,6 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
     }
 #endif
     
-    if(vma) {
-        if(vma->vm_file) {
-            ppath = d_path(&vma->vm_file->f_path,
-                        path,512);
-        } else {
-            path[0] = '\0';
-        }
-
-        //PSPRINTK("working with provided vma: start{%lx}, end{%lx}, path{%s}\n",vma->vm_start,vma->vm_end,path);
-    }
-
     // The vma that's passed in might not always be correct.  find_vma fails by returning the wrong
     // vma when the vma is not present.  How ugly...
     if(vma && (vma->vm_start > address || vma->vm_end <= address)) {
@@ -7693,8 +7711,6 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
             if(data->path[0] == '\0') {       
                 PSPRINTK("mapping anonymous\n");
                 is_anonymous = 1;
-                current->enable_distributed_munmap = 0;
-                current->enable_do_mmap_pgoff_hook = 0;
                 // mmap parts that are missing, while leaving the existing
                 // parts untouched.
                 PS_DOWN_WRITE(&current->mm->mmap_sem);
@@ -7712,9 +7728,7 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
 		if ( data->vm_flags & VM_NORESERVE )
 			printk(KERN_ALERT"MAPPING ANONYMOUS %p %p data: %lx vma: %lx {%lx-%lx} ret%lx\n",
 				__func__, data->mappings[i].vaddr, data->mappings[i].paddr, 
-				data->vm_flags, vma?vma->vm_flags:0, vma?vma->vm_start:0, vma?vma->vm_end:0, err);
-*/                current->enable_distributed_munmap = 1;
-                current->enable_do_mmap_pgoff_hook = 1;
+				data->vm_flags, vma?vma->vm_flags:0, vma?vma->vm_start:0, vma?vma->vm_end:0, err);*/
             } else {
                 //unsigned char used_existing;
                 PSPRINTK("opening file to map\n");
@@ -7743,8 +7757,6 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
                             data->vaddr_start, 
                             data->vaddr_size,
                             (unsigned long)f);
-                    current->enable_distributed_munmap = 0;
-                    current->enable_do_mmap_pgoff_hook = 0;
                     // mmap parts that are missing, while leaving the existing
                     // parts untouched.
                     PS_DOWN_WRITE(&current->mm->mmap_sem);
@@ -7801,14 +7813,6 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
             pte_provided = 1;
             unsigned long cow_addr;
 
-            // Break cow in this entire VMA
-            if(is_maybe_cow(vma)) {
-                PS_DOWN_WRITE(&current->mm->mmap_sem);
-                for(cow_addr = vma->vm_start; cow_addr < vma->vm_end; cow_addr += PAGE_SIZE) {
-                    break_cow(mm, vma, cow_addr);
-                }
-                PS_UP_WRITE(&current->mm->mmap_sem);
-            }
 
             for(i = 0; i < MAX_MAPPINGS; i++) {
                 if(data->mappings[i].present) {
@@ -7821,11 +7825,6 @@ int process_server_pull_remote_mappings(struct mm_struct *mm,
                                                        data->mappings[i].sz,
                                                        vm_get_page_prot(vma->vm_flags),
                                                        1);
-/*		if ( data->vm_flags & VM_NORESERVE )
-			printk(KERN_ALERT"%s: NORESERVE %p %p data: %lx vma: %lx {%lx-%lx} ret%d\n",
-				__func__,  data->mappings[i].vaddr, data->mappings[i].paddr,
-				data->vm_flags, vma->vm_flags, vma->vm_start, vma->vm_end, tmp_err);
-*/
                     PS_UP_WRITE(&current->mm->mmap_sem);
                     if(tmp_err) remap_pfn_range_err = tmp_err;
                 }
@@ -7999,7 +7998,11 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
     task->previous_cpus = 0;
     task->known_cpu_with_tgroup_mm = 0;
     task->return_disposition = RETURN_DISPOSITION_NONE;
-
+    task->surrogate = -1;
+    task->uaddr = 0;
+    task->futex_state = 0;
+    task->migration_state = 0;
+    spin_lock_init(&(task->mig_lock));
     // If this is pid 1 or 2, the parent cannot have been migrated
     // so it is safe to take on all local thread info.
     if(unlikely(orig->pid == 1 || orig->pid == 2)) {
@@ -8048,7 +8051,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
  *
  * <MEASURE perf_process_server_do_migration>
  */
-static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
+int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     struct pt_regs *regs = task_pt_regs(task);
     // TODO: THIS IS WRONG, task flags is not what I want here.
     unsigned long clone_flags = task->clone_flags;
@@ -8062,7 +8065,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     int lclone_request_id;
     int perf = -1;
 
-    PSPRINTK("process_server_do_migration\n");
+    printk("process_server_do_migration pid{%d} cpu {%d}\n",task->pid,cpu);
 
     // Nothing to do if we're migrating to the current cpu
     if(dst_cpu == _cpu) {
@@ -8076,29 +8079,19 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     // Block its execution.
     __set_task_state(task,TASK_UNINTERRUPTIBLE);
 
-   // set_task_state(task,TASK_UNINTERRUPTIBLE); //mklinux_akshay modified to interruptible state
-
 
     int sig;
     struct task_struct *t=current;
     // Book keeping for previous cpu bitmask.
     set_bit(smp_processor_id(),&task->previous_cpus);
 
-    printk("Procee---Futex: blocked signals\n");
-    for (sig = 1; sig < NSIG; sig++) {
-    	if (sigismember(&t->blocked, sig)) {
-    		printk("POP: %d \n", sig);
-    	}
-    }
-    printk("Procee---futex: pending signals\n");
-    for (sig = 1; sig < NSIG; sig++) {
-    	if (sigismember(&t->pending.signal, sig)) {
-    		printk("POP: %d \n", sig);
-    	}
-    }
     // Book keeping for placeholder process.
+    spin_lock_irq(&(task->mig_lock));
     task->represents_remote = 1;
+    task->tgroup_distributed = 1;
     task->t_distributed = 1;
+    spin_unlock_irq(&(task->mig_lock));
+
 
     /*mklinux_akshay*/
     if(task->prev_pid==-1)
@@ -8110,7 +8103,6 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
 
 
     // Book keeping for distributed threads.
-    task->tgroup_distributed = 1;
 
     read_lock(&tasklist_lock);
     do_each_thread(g,tgroup_iterator) {
@@ -8222,7 +8214,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     request->remote_blocked = task->blocked;
     request->remote_real_blocked = task->real_blocked;
     request->remote_saved_sigmask = task->saved_sigmask;
-    request->remote_pending = task->pending;
+   // request->remote_pending = task->pending;
     request->sas_ss_sp = task->sas_ss_sp;
     request->sas_ss_size = task->sas_ss_size;
     int cnt = 0;
@@ -8243,12 +8235,12 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
 
     request->thread_sp0 = task->thread.sp0;
     request->thread_sp = task->thread.sp;
-    //printk("%s: usersp percpu %lx thread %lx\n", __func__, percpu_read(old_rsp), task->thread.usersp);
+    //printk("%s: usersp percpu %lx thread %lx fs where it migrated {%lx}\n", __func__, get_percpu_old_rsp(), task->thread.usersp,task->thread.fs);
     // if (percpu_read(old_rsp), task->thread.usersp) set to 0 otherwise copy
     _usersp = get_percpu_old_rsp();
     if (task->thread.usersp != _usersp) {
-        printk("%s: USERSP %lx %lx\n",
-                __func__, task->thread.usersp, _usersp);
+       // printk("%s: USERSP %lx %lx\n",
+         //       __func__, task->thread.usersp, _usersp);
         request->thread_usersp = _usersp;
     } else {
         request->thread_usersp = task->thread.usersp;
@@ -8267,7 +8259,7 @@ static int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     request->thread_fsindex = task->thread.fsindex;
     savesegment(fs, fsindex);
     if (fsindex != request->thread_fsindex)
-        printk(KERN_ALERT"%s: fsindex %x (TLS_SEL:%x) thread %x\n", __func__, fsindex, FS_TLS_SEL, request->thread_fsindex);
+        //printk(KERN_ALERT"%s: fsindex %x (TLS_SEL:%x) thread %x\n", __func__, fsindex, FS_TLS_SEL, request->thread_fsindex);
     request->thread_fs = task->thread.fs;
     rdmsrl(MSR_FS_BASE, fs);
     if (fs != request->thread_fs) {
@@ -8327,10 +8319,13 @@ PSPRINTK(KERN_ERR"%s: task flags %x fpu_counter %x has_fpu %x [%d:%d] %d:%d %x\n
 
     kfree(request);
 
+    printk(KERN_ALERT"Migration done\n");
     //dump_task(task,regs,request->stack_ptr);
     
     PERF_MEASURE_STOP(&perf_process_server_do_migration,"migration to new cpu",perf);
 
+    
+    __set_task_state(task,TASK_UNINTERRUPTIBLE);
     return PROCESS_SERVER_CLONE_SUCCESS;
 
 }
@@ -8341,7 +8336,7 @@ PSPRINTK(KERN_ERR"%s: task flags %x fpu_counter %x has_fpu %x [%d:%d] %d:%d %x\n
  *
  * <MEASURE perf_process_server_do_migration>
  */
-static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) {
+int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) {
     back_migration_t *mig =NULL;
     struct pt_regs* regs = task_pt_regs(task);
 
@@ -8380,7 +8375,7 @@ static int do_migration_back_to_previous_cpu(struct task_struct* task, int cpu) 
     mig->thread_fs       = task->thread.fs;
     mig->thread_gs       = task->thread.gs;
 
-unsigned long _usersp = get_percpu_old_rsp();
+    _usersp = get_percpu_old_rsp();
 if (task->thread.usersp != _usersp) { 
   printk("%s: USERSP %lx %lx\n",
     __func__, task->thread.usersp, _usersp);
@@ -8388,11 +8383,14 @@ if (task->thread.usersp != _usersp) {
 }else
   mig->thread_usersp = task->thread.usersp;
 
+
     mig->thread_es       = task->thread.es;
     mig->thread_ds       = task->thread.ds;
     mig->thread_fsindex  = task->thread.fsindex;
     mig->thread_gsindex  = task->thread.gsindex;
-      //FPU support --- initiator (back migration?)
+
+    //FPU support --- initiator (back migration?)
+
 #ifdef FPU_   
   mig->task_flags      = task->flags;
        mig->task_fpu_counter = task->fpu_counter;
@@ -8422,6 +8420,7 @@ if (task->thread.usersp != _usersp) {
 
     pcn_kmsg_free_msg(mig);
     PERF_MEASURE_STOP(&perf_process_server_do_migration,"back migration",perf);
+ 
 
     return PROCESS_SERVER_CLONE_SUCCESS;
 }
@@ -8447,7 +8446,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
     int ret = 0;
 
 #ifndef SUPPORT_FOR_CLUSTERING
-    printk(KERN_ALERT"%s: normal migration\n",__func__);
+    printk(KERN_ALERT"%s: normal migration {%d}\n",__func__,cpu);
     if(test_bit(cpu,&task->previous_cpus)) {
         ret = do_migration_back_to_previous_cpu(task,cpu);
     } else {
@@ -8459,7 +8458,7 @@ int process_server_do_migration(struct task_struct* task, int cpu) {
 		       "(cpu: %d present_mask)\n", __func__, task, cpu);
         return -EBUSY;
     }
-    printk(KERN_ALERT"%s: clustering activated\n",__func__);
+    //printk(KERN_ALERT"%s: clustering activated\n",__func__);
     // TODO seems like that David is using previous_cpus as a bitmask.. 
     // TODO well this must be upgraded to a cpumask, declared as usigned long in task_struct
     struct list_head *iter;
@@ -8472,7 +8471,6 @@ extern struct list_head rlist_head;
         cpuid = objPtr->_data._processor;
         pcpum = &(objPtr->_data._cpumask);
 	if (cpumask_test_cpu(cpu, pcpum)) {
-	printk(KERN_ALERT"%s: cpuid {%d} \n",cpuid);
 		if ( bitmap_intersects(cpumask_bits(pcpum),
 				       &(task->previous_cpus),
 				       (sizeof(unsigned long)*8)) )
@@ -8493,14 +8491,16 @@ extern struct list_head rlist_head;
  */
 void process_server_do_return_disposition(void) {
 
-    PSPRINTK("%s\n",__func__);
     int return_disposition = current->return_disposition;
+
+    //printk("%s disp{%d} \n",__func__,return_disposition);
     // Reset the return disposition
     current->return_disposition = RETURN_DISPOSITION_NONE;
-    switch(current->return_disposition) {
+
+    switch(return_disposition) {
     case RETURN_DISPOSITION_NONE:
         printk("%s: ERROR, return disposition is none!\n",__func__);
-        break;    
+        break;   
     case RETURN_DISPOSITION_MIGRATE:
         // Nothing to do, already back-imported the
         // state in process_back_migration.  This will

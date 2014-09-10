@@ -19,9 +19,9 @@ extern int _init_RemoteCPUMask(void);
 
 extern struct list_head rlist_head;
 
-//extern struct list_head pfn_list_head;
+extern struct list_head pfn_list_head;
 
-//extern int _init_RemotePFN(void);
+extern int _init_RemotePFN(void);
 
 
 #endif /* __POPCORN_INIT_H */

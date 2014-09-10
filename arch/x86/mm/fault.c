@@ -709,7 +709,7 @@ static void
 __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
 		       unsigned long address, int si_code)
 {
-	struct task_struct *tsk = current;
+	struct task_struct *tsk =(current->surrogate == -1) ? current : pid_task(find_get_pid(current->surrogate),PIDTYPE_PID);
 
 	/* User mode accesses just cause a SIGSEGV */
 	if (error_code & PF_USER) {
@@ -770,14 +770,24 @@ static void
 __bad_area(struct pt_regs *regs, unsigned long error_code,
 	   unsigned long address, int si_code)
 {
-	struct mm_struct *mm = current->mm;
+	struct task_struct *tsk =(current->surrogate == -1) ? current : pid_task(find_get_pid(current->surrogate),PIDTYPE_PID);
+	struct mm_struct *mm = tsk->mm;
 
 	/*
 	 * Something tried to access memory that isn't in our memory map..
 	 * Fix it, but check if it's kernel or user first..
 	 */
+	if(1) //tsk->tgroup_distributed)
+	{	
+		if(mm->mmap_sem.count == 0){
+                   printk(KERN_ALERT"%s: no count\n",__func__); 
+		   goto p;
+		}
+		else
+		 printk(KERN_ALERT"%s: count{%d} \n",__func__,mm->mmap_sem.count);
+	}
 	up_read(&mm->mmap_sem);
-
+p:
 	__bad_area_nosemaphore(regs, error_code, address, si_code);
 }
 
@@ -1005,7 +1015,7 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
     int original_enable_do_mmap_pgoff_hook = current->enable_do_mmap_pgoff_hook;
     int original_enable_distributed_munmap = current->enable_distributed_munmap;
 
-	tsk = current;
+	tsk =(current->surrogate == -1) ? current : pid_task(find_get_pid(current->surrogate),PIDTYPE_PID);
 	mm = tsk->mm;
 
 	/* Get the faulting address: */

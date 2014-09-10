@@ -1205,6 +1205,21 @@ ENTRY(kernel_execve)
 	CFI_ENDPROC
 END(kernel_execve)
 
+ENTRY(kernel_import_task)
+        CFI_STARTPROC
+        FAKE_STACK_FRAME $0
+        SAVE_ALL
+        movq %rsp,%rcx
+        call sys_process_server_import_task
+        movq %rax, RAX(%rsp)
+        RESTORE_REST
+        testq %rax,%rax
+        je int_ret_from_sys_call
+        RESTORE_ARGS
+        UNFAKE_STACK_FRAME
+        ret
+        CFI_ENDPROC
+END(kernel_import_task)
 /* Call softirq on interrupt stack. Interrupts are off. */
 ENTRY(call_softirq)
 	CFI_STARTPROC

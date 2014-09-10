@@ -358,7 +358,7 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	return 0;
 }
 
-static int remote_kill_pid_info(int kernel, int sig, pid_t pid,
+int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 		struct siginfo *info) {
 
 	int res = 0;
@@ -2120,6 +2120,8 @@ pid_t next_pid = -1;
 pid_t prev_pid = -1;
 pid_t origin_pid = -1;
 
+if(current->tgroup_distributed == 1)
+  printk(KERN_ALERT"signal {%d} for pid {%d} \n",sig,pid);
 
 if (pid > 0) {
 	struct task_struct *p = pid_task(find_vpid(pid), PIDTYPE_PID);
@@ -2127,17 +2129,20 @@ if (pid > 0) {
 		next_pid = p->next_pid;
 		prev_pid = p->prev_pid;
 		origin_pid = p->origin_pid;
+		if(p->tgroup_distributed == 1)
+		  printk(KERN_ALERT"signal {%d} for pid {%d} \n",sig,pid);
 		}
 
 	if(origin_pid!=-1 && next_pid != -1){
-			/* struct task_struct *task = pid_task(find_vpid(pid), PIDTYPE_PID);
-			 if(task){
-			 __set_task_state(task,TASK_INTERRUPTIBLE);}*/
-			 ret=0;
+			 ret=0;	
+		if(p->tgroup_distributed == 1 && p->state == TASK_UNINTERRUPTIBLE){
+			printk(KERN_ALERT"%s:remote_kill pid{%d} c(%d} cpu{%d}\n",__func__,pid,ORIG_NODE(pid),_cpu);
+			return remote_kill_pid_info( ORIG_NODE(next_pid),sig,next_pid,info);
+}	
 	}
 	else{
 	rcu_read_lock();
-	ret = kill_pid_info(sig, info, find_vpid(pid));
+		ret = kill_pid_info(sig, info, find_vpid(pid));
 	rcu_read_unlock();
 	}
 	/*mklinux_akshay*/
@@ -2905,6 +2910,37 @@ if (sigismember(&current->blocked, signr)) {
 return signr;
 }
 
+
+
+static void dump_regs(struct pt_regs* regs) {
+	unsigned long fs, gs;
+	printk(KERN_ALERT"DUMP REGS\n");
+	if(NULL != regs) {
+		printk(KERN_ALERT"r15{%lx}\n",regs->r15);
+		printk(KERN_ALERT"r14{%lx}\n",regs->r14);
+		printk(KERN_ALERT"r13{%lx}\n",regs->r13);
+		printk(KERN_ALERT"r12{%lx}\n",regs->r12);
+		printk(KERN_ALERT"r11{%lx}\n",regs->r11);
+		printk(KERN_ALERT"r10{%lx}\n",regs->r10);
+		printk(KERN_ALERT"r9{%lx}\n",regs->r9);
+		printk(KERN_ALERT"r8{%lx}\n",regs->r8);
+		printk(KERN_ALERT"bp{%lx}\n",regs->bp);
+		printk(KERN_ALERT"bx{%lx}\n",regs->bx);
+		printk(KERN_ALERT"ax{%lx}\n",regs->ax);
+		printk(KERN_ALERT"cx{%lx}\n",regs->cx);
+		printk(KERN_ALERT"dx{%lx}\n",regs->dx);
+		printk(KERN_ALERT"di{%lx}\n",regs->di);
+		printk(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
+		printk(KERN_ALERT"ip{%lx}\n",regs->ip);
+		printk(KERN_ALERT"cs{%lx}\n",regs->cs);
+		printk(KERN_ALERT"flags{%lx}\n",regs->flags);
+		printk(KERN_ALERT"sp{%lx}\n",regs->sp);
+		printk(KERN_ALERT"ss{%lx}\n",regs->ss);
+	}
+	rdmsrl(MSR_FS_BASE, fs);
+	rdmsrl(MSR_GS_BASE, gs);
+	printk(KERN_ALERT"fs{%lx}\n",fs);
+}
 int get_signal_to_deliver(siginfo_t *info, struct k_sigaction *return_ka,
 	struct pt_regs *regs, void *cookie) {
 struct sighand_struct *sighand = current->sighand;
@@ -3080,6 +3116,8 @@ for (;;) {
 		 * first and our do_group_exit call below will use
 		 * that value and ignore the one we pass it.
 		 */
+		dump_stack();
+		dump_regs(task_pt_regs(current));
 		do_coredump(info->si_signo, info->si_signo, regs);
 	}
 
@@ -3604,7 +3642,7 @@ if(!p){
 }
 
 get_task_struct(p);
-printk(KERN_ALERT"%s: cpu {%d} pid{%d} tgid{%d} p{%d} \n",__func__,_cpu,pid,tgid,(!p)?0:1);
+printk(KERN_ALERT"%s:sent by{%s} pid{%d} from cpu {%d} for pid{%d} tgid{%d} p{%d} \n",__func__,current->comm,current->pid,_cpu,pid,tgid,(!p)?0:1);
 
 if(p && p->tgroup_distributed && !p->executing_for_remote){
 	if(p->return_disposition == RETURN_DISPOSITION_NONE) {
@@ -3612,6 +3650,12 @@ if(p && p->tgroup_distributed && !p->executing_for_remote){
 	        put_task_struct(p);	
 		rcu_read_unlock();
 		return remote_do_send_specific(ORIG_NODE(p->next_pid),tgid,p->next_pid,sig,info);
+	}
+	else if(p->state == TASK_UNINTERRUPTIBLE){
+	printk(KERN_ALERT"main scheduled to other kernel\n");
+	        put_task_struct(p);	
+		rcu_read_unlock();
+	return remote_do_send_specific(ORIG_NODE(p->next_pid),tgid,p->next_pid,sig,info);
 	}
 }
 if (p && (tgid <= 0 || task_tgid_vnr(p) == tgid) || p->executing_for_remote) {

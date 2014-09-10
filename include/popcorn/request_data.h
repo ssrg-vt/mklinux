@@ -17,7 +17,7 @@ struct _remote_wakeup_request {
 	unsigned int ticket;	// 4
 	unsigned long uaddr;	// 8
 	unsigned long uaddr2;	// 8
-	unsigned int ops :1;	// 1
+	unsigned int ops:1;	// 1
 	char pad[3];
 }__attribute__((packed)) __attribute__((aligned(64)));
 
@@ -50,7 +50,7 @@ struct _remote_key_request {
 	int val;				// 4
 	int tghid;				// 4
 	unsigned int ticket;	// 4
-	unsigned int ops :1;	// 1
+	unsigned int ops :1;	// 4
 	char pad_string[19];
 }__attribute__((packed)) __attribute__((aligned(64)));
 

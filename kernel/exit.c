@@ -62,7 +62,7 @@
 #include "futex_remote.h"
 #include <popcorn/global_spinlock.h>
 
-static void exit_mm(struct task_struct * tsk);
+static void exit_mm(struct task_struct * tsk,long code);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
 {
@@ -426,7 +426,7 @@ void daemonize(const char *name, ...)
 	 * user space pages.  We don't need them, and if we didn't close them
 	 * they would be locked into memory.
 	 */
-	exit_mm(current);
+	exit_mm(current,0);
 	/*
 	 * We don't want to have TIF_FREEZE set if the system-wide hibernation
 	 * or suspend transition begins right now.
@@ -638,7 +638,7 @@ assign_new_owner:
  * Turn us into a lazy TLB process if we
  * aren't already..
  */
-static void exit_mm(struct task_struct * tsk)
+static void exit_mm(struct task_struct * tsk,long code)
 {
 	struct mm_struct *mm = tsk->mm;
 	struct core_state *core_state;
@@ -991,6 +991,7 @@ NORET_TYPE void do_exit(long code)
     /*
      * Multikernel
      */
+	
     process_server_do_exit();
 #ifdef FUTEX_STAT
     if(current->tgroup_distributed && current->pid == current->tgroup_home_id){
@@ -1035,8 +1036,7 @@ NORET_TYPE void do_exit(long code)
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
 	
-	if(tsk->mm!=NULL)
-	     exit_mm(tsk);
+	exit_mm(tsk,code);
 
 	if (group_dead)
 		acct_process();

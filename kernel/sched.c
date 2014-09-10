@@ -73,9 +73,9 @@
 #include <linux/slab.h>
 #include <linux/init_task.h>
 #include <linux/process_server.h>
-#ifdef SUPPORT_FOR_CLUSTERING
+//#ifdef SUPPORT_FOR_CLUSTERING
 #include <linux/popcorn_cpuinfo.h>
-#endif
+//#endif
 
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>
@@ -3289,9 +3289,11 @@ asmlinkage void schedule_tail(struct task_struct *prev)
 
 	// Multikernel
     if(current->represents_remote) {
-        printk("Sleeping %d\n",current->pid);
+	dump_stack();
+        printk("Sleeping %d comm{%s} \n",current->pid,current->comm);
         set_current_state( TASK_INTERRUPTIBLE);
         schedule();
+        printk("after sleep in schdeule tail\n");
     }
 }
 
@@ -5564,6 +5566,30 @@ out_unlock:
 	return retval;
 }
 
+int shadow_return_check(struct task_struct *tsk)
+{
+int spin =0;
+ if(current->pid == tsk->pid && (tsk->migration_state == 1 || tsk->represents_remote==1)){
+                do {
+                     spin = 0;
+                     schedule(); // this will save us from death
+                     if(current->return_disposition == RETURN_DISPOSITION_NONE) {
+                          __set_task_state(current,TASK_UNINTERRUPTIBLE);
+                           spin = 1;
+                       }
+                  } while (spin);
+            // We are here because of either the task is exiting,
+            // or because the task is migrating back.  Let's handle
+            // that now.  If we're migrating back, this function
+            // will return.  If we're exiting, we now die an honorable
+            // death and this function will not return.
+            process_server_do_return_disposition();
+
+            return 0;
+ }
+ else
+   return -1;
+}
 long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 {
 	cpumask_var_t cpus_allowed, new_mask;
@@ -5581,10 +5607,16 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 		put_online_cpus();
 		return -ESRCH;
 	}
+	spin_lock_irq(&(p->mig_lock));
+	p->migration_state=1;
+        spin_unlock_irq(&(p->mig_lock));
+	smp_mb();
 	pid = current->pid;
-	printk("POP: current pid 2 \n",pid);
+if(current->tgroup_distributed == 1 || strcmp(current->comm,"is-gomp") == 0)
+   {	dump_stack();
+printk(KERN_ALERT"inside sched affinity pid{%d} c{%s} p{%d} state{%d}\n",current->pid,current->comm,p->pid,p->futex_state);
 
-// TODO migration must be removed from here
+}// TODO migration must be removed from here
     /*
      * Multikernel
      */
@@ -5622,27 +5654,25 @@ extern struct list_head rlist_head;
 	// do the migration
             get_task_struct(p);
             rcu_read_unlock();
+printk(KERN_ALERT"before proce server {%d} i{%d} cpu{%d}\n",p->pid,i,current_cpu);
             ret =process_server_do_migration(p,i);
             put_task_struct(p);
             put_online_cpus();
             printk(KERN_ALERT"sched_setaffinity tsk{%d} state{%d} on run q{%d} RET{%d} current{%s} \n",p->pid,p->state,p->on_rq,ret,current->comm);
-            schedule(); // this will save us from death
- 	/*	do {
-	             spin = 0;
-	             schedule(); // this will save us from death
-	             if(current->return_disposition == RETURN_DISPOSITION_NONE) {
-	                  __set_task_state(current,TASK_UNINTERRUPTIBLE);
-	                   spin = 1;
-	               }
-	          } while (spin);*/
-            // We are here because of either the task is exiting,
-            // or because the task is migrating back.  Let's handle
-            // that now.  If we're migrating back, this function
-            // will return.  If we're exiting, we now die an honorable
-            // death and this function will not return.
-            process_server_do_return_disposition();
-	   
-            return 0;
+	    spin_lock_irq(&(p->mig_lock));
+	        p->migration_state=0;
+            spin_unlock_irq(&(p->mig_lock));
+ 
+	   if(ret != PROCESS_SERVER_CLONE_FAIL)
+		return 0;
+	    	
+	    if(shadow_return_check(p) == -1){
+		retval = 0;
+	      }
+	    else
+		return 0;
+	    
+	  
         }
     }
 }
@@ -5689,8 +5719,13 @@ out_unlock:
 out_free_cpus_allowed:
 	free_cpumask_var(cpus_allowed);
 out_put_task:
+	spin_lock_irq(&(p->mig_lock));
+               p->migration_state=0;
+        spin_unlock_irq(&(p->mig_lock));
+
 	put_task_struct(p);
 	put_online_cpus();
+norm:
 	return retval;
 }
 
@@ -5707,6 +5742,7 @@ static int get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
 
 /**
  * sys_sched_setaffinity - set the cpu affinity of a process
+
  * @pid: pid of the process
  * @len: length in bytes of the bitmask pointed to by user_mask_ptr
  * @user_mask_ptr: user-space pointer to the new cpu mask
@@ -5731,8 +5767,13 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 {
 	struct task_struct *p;
 	unsigned long flags;
-	int retval;
+	int retval,i;
 
+	struct list_head *iter;
+    	_remote_cpu_info_list_t *objPtr;
+    	struct cpumask *pcpum;
+	extern struct list_head rlist_head;
+	
 	get_online_cpus();
 	rcu_read_lock();
 
@@ -5744,10 +5785,25 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 	retval = security_task_getscheduler(p);
 	if (retval)
 		goto out_unlock;
+    
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
 	cpumask_and(mask, &p->cpus_allowed, cpu_online_mask);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+    	
+    	list_for_each(iter, &rlist_head) {
+        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+        i = objPtr->_data._processor;
+        pcpum = &(objPtr->_data._cpumask);
+	cpumask_or(mask, pcpum, mask);
+	}
+
+	char buf_in[64];
+  	memset(buf_in, 0, 64);
+   	cpumask_scnprintf(buf_in, 63, mask);
+   	printk("%s: in_mask %s \n",
+                __func__, buf_in);
+
 
 out_unlock:
 	rcu_read_unlock();

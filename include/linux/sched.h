@@ -445,6 +445,7 @@ struct sighand_struct {
 	wait_queue_head_t	signalfd_wqh;
 };
 
+
 struct pacct_struct {
 	int			ac_flag;
 	long			ac_exitcode;
@@ -1575,7 +1576,9 @@ struct task_struct {
     /*
      * Multikernel
      */
-    int represents_remote;      /* Is this a placeholder process? */
+    spinlock_t mig_lock;
+    volatile int migration_state;
+    volatile int represents_remote;      /* Is this a placeholder process? */
     int executing_for_remote;   /* Is this executing on behalf of another cpu? */
     int next_pid;             /* What is the pid on the remote cpu? */
     int prev_pid;
@@ -1602,8 +1605,9 @@ struct task_struct {
     unsigned long known_cpu_with_tgroup_mm; /* List of remote cpus that already have a mm for this tgroup  */
 
     int origin_pid;/*first thread id created in the originating kernel*/
-    //struct kernel_robust_list_head  *kernel_robust_list;
-   // int in_distributed_lock_state;
+    pid_t surrogate;
+    unsigned long uaddr;
+    int futex_state;
 
 };
 
@@ -2647,7 +2651,7 @@ static inline void set_task_cpu(struct task_struct *p, unsigned int cpu)
 
 extern long sched_setaffinity(pid_t pid, const struct cpumask *new_mask);
 extern long sched_getaffinity(pid_t pid, struct cpumask *mask);
-
+extern int shadow_return_check(struct task_struct *tsk);
 extern void normalize_rt_tasks(void);
 
 #ifdef CONFIG_CGROUP_SCHED

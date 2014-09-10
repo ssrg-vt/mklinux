@@ -3,6 +3,7 @@
 #include <linux/string.h>
 #include <linux/seq_file.h>
 #include <linux/cpufreq.h>
+#include <linux/multikernel.h>
 
 /*mklinux_akshay*/
 extern int remote_proc_cpu_info(struct seq_file *m);
@@ -145,7 +146,8 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 	//append remote cpu info
 	/*mklinux_akshay*/
-	remote_proc_cpu_info(m);
+	if(popcorn_boot == 1)
+		remote_proc_cpu_info(m);
 	/*mklinux_akshay*/
 	return 0;
 }

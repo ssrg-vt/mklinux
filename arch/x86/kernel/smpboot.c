@@ -1266,9 +1266,13 @@ early_param("possible_cpus", _setup_possible_cpus);
 static DECLARE_BITMAP(setup_present_bits, CONFIG_NR_CPUS) __read_mostly;
 const struct cpumask *const setup_present_mask = to_cpumask(setup_present_bits);
 
+int popcorn_boot = 0;
+EXPORT_SYMBOL(popcorn_boot);
+
 static int __init _setup_present_mask(char *str)
 {
 	cpulist_parse(str, (struct cpumask *)setup_present_mask);
+	popcorn_boot = 1;
 	return 0;
 }
 early_param("present_mask", _setup_present_mask);
