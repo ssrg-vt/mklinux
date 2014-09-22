@@ -9486,7 +9486,10 @@ static int __init process_server_init(void) {
      * Cache some local information.
      */
 //#ifndef SUPPORT_FOR_CLUSTERING
-           _cpu= smp_processor_id();
+	if(popcorn_boot == 1)
+           _cpu = cpumask_first(cpu_present_mask);
+	else
+		   _cpu = 0;
 //#else
 //	   _cpu = cpumask_first(cpu_present_mask);
 //#endif

@@ -4090,7 +4090,12 @@ sigqueue_cachep = KMEM_CACHE(sigqueue, SLAB_PANIC);
 static int __init kill_handler_init(void) {
 /*mklinux_akshay*/
 
- _cpu= cpumask_first(cpu_present_mask);
+if(popcorn_boot == 1 ){
+  _cpu = cpumask_first(cpu_present_mask);
+}
+else {
+  _cpu = 0;
+}
 
 printk(KERN_ALERT"%s: cpu{%d}\n",__func__,_cpu);
 INIT_LIST_HEAD(&out_head);
