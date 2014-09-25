@@ -177,6 +177,10 @@ rwsem_down_failed_common(struct rw_semaphore *sem,
 	struct task_struct *tsk = current;
 	signed long count;
 
+	/*if(tsk->tgroup_distributed == 1){
+		dump_stack();	
+	}*/
+
 	set_task_state(tsk, TASK_UNINTERRUPTIBLE);
 
 	/* set up my own style of waitqueue */

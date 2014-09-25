@@ -2558,7 +2558,9 @@ out:
 		}
 		else{
 			if(strcmp(current->comm,"IS") == 0){
+				#ifdef _TRACE
                         	trace_printk("s\n");
+                 #endif       	
                         }		
 
 			set_current_state(TASK_INTERRUPTIBLE);
@@ -2608,7 +2610,9 @@ out:
 					} */
 			}
 			if(strcmp(current->comm,"IS") == 0){
+				#ifdef _TRACE
                         	trace_printk("w\n");
+                        #endif	
                         }
 		}
 		if(current->tgroup_distributed == 1 && l)
@@ -3761,8 +3765,13 @@ retry:
 		int retn=0;
 
 		if(strcmp(current->comm,"IS") == 0){
+			#ifdef _TRACE
                         trace_printk("s %d\n",op);
+            #endif            
                 }
+		/*if(current->tgroup_distributed==1){
+			printk("%s start pid %d cmd %d (WAIT is %d WAKE is %d)\n",__func__,current->pid,cmd,FUTEX_WAIT,FUTEX_WAKE);
+		}*/
 		/*	if(current->tgroup_distributed ==1 || (strcmp(current->comm,"cond")==0)){
 			printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id());
 			}
@@ -3796,8 +3805,15 @@ retry:
 			//		dump_regs(task_pt_regs(current));
 			}*/
 			if(strcmp(current->comm,"IS") == 0){
+				#ifdef _TRACE
                         	trace_printk("e %d\n",op);
+                  #endif      	
                 	}
+		
+			/*if(current->tgroup_distributed==1){
+                        	printk("%s end pid %d\n",__func__,current->pid);
+                	}*/
+
 			return retn;
 	}
 

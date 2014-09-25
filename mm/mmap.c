@@ -127,7 +127,7 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 	if (sysctl_overcommit_memory == OVERCOMMIT_GUESS) {
 		free = global_page_state(NR_FREE_PAGES);
 		free += global_page_state(NR_FILE_PAGES);
-
+	
 		/*
 		 * shmem pages shouldn't be counted as free in this
 		 * case, they can't be purged, only swapped out, and
@@ -137,7 +137,7 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 		free -= global_page_state(NR_SHMEM);
 
 		free += nr_swap_pages;
-
+ 		
 		/*
 		 * Any slabs which are created with the
 		 * SLAB_RECLAIM_ACCOUNT flag claim to have contents
@@ -145,12 +145,13 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 		 * cache and most inode caches should fall into this
 		 */
 		free += global_page_state(NR_SLAB_RECLAIMABLE);
-
+		
 		/*
 		 * Leave reserved pages. The pages are not for anonymous pages.
 		 */
-		if (free <= totalreserve_pages)
+		if (free <= totalreserve_pages){
 			goto error;
+		}
 		else
 			free -= totalreserve_pages;
 
@@ -162,7 +163,6 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 
 		if (free > pages)
 			return 0;
-
 		goto error;
 	}
 
@@ -2239,17 +2239,17 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
 		}
 
 	}
-
+	
 	error = security_file_mmap(NULL, 0, 0, 0, addr, 1);
-	if (error)
+	if (error){
 		goto exit;
-
+	}
 	flags = VM_DATA_DEFAULT_FLAGS | VM_ACCOUNT | mm->def_flags;
 
 	error = get_unmapped_area(NULL, addr, len, 0, MAP_FIXED);
-	if (error & ~PAGE_MASK)
+	if (error & ~PAGE_MASK){
 		goto exit;
-
+	}
 	/*
 	 * mlock MCL_FUTURE?
 	 */

@@ -2268,7 +2268,7 @@ if(mm_data->kernel_set[i]==1){
 
 	        for(i=0;i<NR_THREAD_PULL;i++){
 
-		        //printk("%s creating thread pull %d \n",__func__,i);
+		        printk("%s creating thread pull %d \n",__func__,i);
 
 	        	kernel_thread(create_kernel_thread_for_distributed_process, NULL, SIGCHLD);
 
@@ -2923,8 +2923,7 @@ if(mm_data->kernel_set[i]==1){
 						printk("ERROR: received more than one mapping\n");
 #endif
 				}
- PSPRINTK("void: response->vma_present %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->owner %d response->fowner %d\n",response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->owner,response->futex_owner);
-
+ printk("void: response->vma_present %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->owner %d response->fowner %d\n",response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->owner,response->futex_owner);
 
 				if(fetched_data->arrived_response!=0)
 					printk("ERROR: received more than one answer, arrived_response is %d \n",fetched_data->arrived_response);
@@ -3064,7 +3063,7 @@ if(mm_data->kernel_set[i]==1){
 					if (response->header.from_cpu != response->tgroup_home_cpu)
 						printk(	"ERROR: a kernel that is not the server is sending the mapping\n");
 #endif
- 				PSPRINTK("response->vma_present %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->owner %d response->fowner %d\n",response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->owner,response->futex_owner);
+ 				printk("response->vma_present %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->owner %d response->fowner %d\n",response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->owner,response->futex_owner);
 
 					if (fetched_data->vma_present == 0) {
 						fetched_data->vma_present = 1;
@@ -4529,7 +4528,7 @@ resolved:
 						strcpy(response->path, plpath);
 					}
 			 
-					PSPRINTK("copy: response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->futex_owner %d\n",response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
+					printk("copy: response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->futex_owner %d\n",response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
 				}	
 
 				else
@@ -4752,7 +4751,7 @@ out:
 					}
 				} else
 					void_response->vma_present = 0;
-PSPRINTK("void: response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->futex_owner %d\n",void_response->vma_present, void_response->vaddr_start , void_response->vaddr_size,void_response->prot, void_response->vm_flags , void_response->pgoff, void_response->path,void_response->futex_owner);
+printk("void: response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->futex_owner %d\n",void_response->vma_present, void_response->vaddr_start , void_response->vaddr_size,void_response->prot, void_response->vm_flags , void_response->pgoff, void_response->path,void_response->futex_owner);
 
 				if(lock){
 					spin_unlock(ptl);
@@ -5693,7 +5692,7 @@ PSPRINTK("Handle request end\n");
 				task->next_cpu = source_cpu;
 				task->next_pid = msg->my_pid;
 				task->executing_for_remote = 0;
-				//printk("assotiated pid %d with pid %d\n",msg->your_pid,msg->my_pid);	
+				printk("assotiated pid %d with pid %d\n",msg->your_pid,msg->my_pid);	
 				pcn_kmsg_free_msg(inc_msg);
 
 				return 1;
@@ -8190,7 +8189,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						|| (vma->vm_end
 								!= (fetching_page->vaddr_start
 										+ fetching_page->vaddr_size))) {
-					PSPRINTK("Mapping anonimous vma start %lu end %lu \n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
+					printk("Mapping anonimous vma start %lu end %lu \n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
 #if NOT_REPLICATED_VMA_MANAGEMENT
 
 					/*Note:
@@ -8284,7 +8283,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 									!= (fetching_page->vaddr_start
 											+ fetching_page->vaddr_size))) {
 
-						PSPRINTK("Mapping file vma start %lu end %lu\n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
+						printk("Mapping file vma start %lu end %lu\n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
 
 #if NOT_REPLICATED_VMA_MANAGEMENT
 						/*Note:
@@ -10096,7 +10095,7 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
 		return -1;
 	}
 
-//	printk("%s pid %d\n",__func__,current->pid);
+	printk("%s pid %d\n",__func__,current->pid);
 
 	*is_first=0;
 	// Build request
@@ -11714,13 +11713,13 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		int error;
 	
-	//	printk("before sending the message\n");
+		printk("before sending the message\n");
 		//send the operation to the server
 		error = pcn_kmsg_send_long(current->tgroup_home_cpu,
 				(struct pcn_kmsg_long_message*) (operation_to_send),
 				sizeof(vma_operation_t) - sizeof(struct pcn_kmsg_hdr));
 		
-	//	printk("message sent before check\n");
+		printk("message sent before check\n");
 
 		if (error == -1) {
 			printk("Impossible to contact the server");
@@ -11730,7 +11729,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 			goto out;
 		}
 		
-	//	printk("message sent after check\n");
+		printk("message sent after check\n");
 		/*Second: the server will send me a LOCK message... another thread will handle it...*/
 
 		/*Third: wait that the server push me the operation*/
@@ -12097,7 +12096,7 @@ void sleep_shadow() {
 		do_exit(0);
 	}
 
-	//printk("%s shadow activated old pid %d new pid %d\n", __func__,current->prev_pid,current->pid);
+	printk("%s shadow activated old pid %d new pid %d\n", __func__,current->prev_pid,current->pid);
 
 	current->distributed_exit= EXIT_ALIVE;
 	current->represents_remote = 0;
@@ -12112,7 +12111,7 @@ void sleep_shadow() {
 		msleep(1);
 	}
 
-	//printk("%s main set up me\n",__func__);
+	printk("%s main set up me\n",__func__);
 
 	memory = find_memory_entry(current->tgroup_home_cpu,
 			current->tgroup_home_id);
@@ -12311,7 +12310,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	unsigned long flags;
 	int i;
 
-	//printk("%s entered \n", __func__);
+	printk("%s entered \n", __func__);
 
 	spin_lock_irq(&current->sighand->siglock);
 	flush_signal_handlers(current, 1);
@@ -12403,7 +12402,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 					CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | CLONE_UNTRACED, 0,
 					&regs, 0, NULL, NULL);
 			if (!IS_ERR(shadow->thread)) {
-				//printk("new shadow created %p pid{%d}\n",shadow,shadow->thread->pid);
+				printk("new shadow created %p pid{%d}\n",shadow,shadow->thread->pid);
 				push_data((data_header_t**)&(my_thread_pull->threads), &(my_thread_pull->spinlock),
 						(data_header_t *)shadow);
 			} else {
@@ -12504,7 +12503,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	
 	unlock_task_sighand(current, &flags);
 	
-	//printk("woke up everybody\n");
+	printk("woke up everybody\n");
 	entry->alive = 1;
 	entry->setting_up = 0;
 
@@ -12569,7 +12568,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 					(data_header_t**)&(thread_pull_head), &thread_pull_head_lock);
 			if (my_thread_pull) {
 
-				//printk("%s found a thread pull \n", __func__);
+				printk("%s found a thread pull \n", __func__);
 
 				entry->thread_pull = my_thread_pull;
 				entry->main = my_thread_pull->main;

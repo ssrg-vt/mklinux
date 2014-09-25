@@ -125,6 +125,7 @@ static int process_measurement(struct file *file, const unsigned char *filename,
 	struct integrity_iint_cache *iint;
 	int rc = 0;
 
+
 	if (!ima_initialized || !S_ISREG(inode->i_mode))
 		return 0;
 
@@ -168,12 +169,16 @@ out:
 int ima_file_mmap(struct file *file, unsigned long prot)
 {
 	int rc;
+	
 
-	if (!file)
+	if (!file){
 		return 0;
-	if (prot & PROT_EXEC)
+	}
+	if (prot & PROT_EXEC){
 		rc = process_measurement(file, file->f_dentry->d_name.name,
 					 MAY_EXEC, FILE_MMAP);
+	}
+
 	return 0;
 }
 

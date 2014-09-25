@@ -1042,7 +1042,6 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 */
 	/* Get the faulting address: */
 	address = read_cr2();
-
 	/*
 	 * Detect and handle instructions that would cause a page fault for
 	 * both a tracked kernel page and a userspace page.

@@ -131,13 +131,19 @@ static inline int buffer_full(struct buffer_desc * desc)
 static int buffer_get(struct buffer_desc * desc, long * value) 
 {
 	
-  // printk("%s: desc->elements %d\n ",__func__,desc->elements); 	
-  if (!value || !desc)
-    return -1;
-  if (buffer_empty(desc))
+ // printk("%s: desc->elements %d \n ",__func__,desc->elements); 	
+  if (!value || !desc){
+    printk("returning -1\n");
+	return -1;
+	}
+  if (buffer_empty(desc)){
+//	printk("buffer empty: head %d tail %d returning 0\n",*desc->phead,*desc->ptail);
     return 0;
+	}
   *value = desc->buffer[*desc->ptail];
+ // printk("%s: buffer_no %d\n",*value);
   *desc->ptail = (*desc->ptail +1) % desc->elements;
+ //  printk("%s: newTail %d\n",*desc->ptail);
   return 1;
 }
 
@@ -153,6 +159,7 @@ static int buffer_put(struct buffer_desc * desc, long value)
   //  return 0;
   desc->buffer[local_head] = value;
   *desc->phead = (local_head +1) % desc->elements;
+ // printk("%s: newHead %d\n",*desc->phead);
   return 1;
 }
 
@@ -556,7 +563,7 @@ while(TRUE){
 		}
 	
 		msg = (struct pcn_kmsg_message*)vmalloc(2*PAGE_SIZE);
-		dflt_size = sizeof(struct pcn_kmsg_message);
+		dflt_size = sizeof(struct pcn_kmsg_hdr);
 		curr_addr = (char*) msg;
 		
 		if((no_bytes = scif_recv(newepd, curr_addr, dflt_size, SCIF_RECV_BLOCK)))
@@ -576,18 +583,20 @@ while(TRUE){
 			msg_size=tmp->hdr.size;
 			
 			//printk("Size %d NoRcv %d\n",tmp->hdr.size,no_bytes);
-			if(msg_size<=sizeof(struct pcn_kmsg_message))
+			/*if(msg_size<=sizeof(struct pcn_kmsg_message))
 			{
 				//printk("Must be NoNDMA Small\n");
 			}
-			else if(msg_size>dma_rcv_thresh)
+			*/
+			if(msg_size>dma_rcv_thresh)
 			{
 				dma_rcv_index=tmp->hdr.slot;
 			//	printk("Must be DMA \n");
 			
-				vfree(msg);
+//				vfree(msg);
 				//printk("Offset %d + index %d message address %x \n",DMA_MSG_OFFSET,dma_rcv_index,dma_rcv_buffer+DMA_MSG_OFFSET*dma_rcv_index);
-				msg=dma_rcv_buffer+DMA_MSG_OFFSET*dma_rcv_index;
+				memcpy(msg,dma_rcv_buffer+DMA_MSG_OFFSET*dma_rcv_index,msg_size);		
+				buffer_put(&conn_descriptors[msg->hdr.conn_no].remote_buffer_desc,msg->hdr.slot);
 			}
 			else
 			{
@@ -656,7 +665,10 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	char * curr_addr;
 	int my_ticket;
 	my_ticket=fetch_and_add(&ticket, 1);
-	int conn_no=my_ticket%MAX_CONNEC;
+	int conn_no=my_ticket%(MAX_CONNEC);
+	
+//	if((my_cpu!=0))
+//		conn_no=conn_no+MAX_CONNEC/2;
 	
 	int curr_size;
 	lmsg->hdr.size = payload_size+sizeof(struct pcn_kmsg_hdr);	
@@ -670,7 +682,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	int i;
 	
 
-	//printk("%s:My Channel is %d current ticket %d conn_ticket %d\n",__func__,conn_no,my_ticket,conn_descriptors[conn_no].ticket);
+//	printk("%s:My Channel is %d current ticket %d conn_ticket %d pid %d\n",__func__,conn_no,my_ticket,conn_descriptors[conn_no].ticket,current->pid);
 	
 	
 	//printk("%s: is called\n",__func__);
@@ -709,10 +721,21 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	curr_size = lmsg->hdr.size;
 	if(lmsg->hdr.size>dma_send_thresh)
 	{
-		spin_lock(&conn_descriptors[conn_no].send_lock);		
+		spin_lock(&conn_descriptors[conn_no].send_lock);
+		unsigned long bla=0;		
 		while(buffer_get(&conn_descriptors[conn_no].dma_buffer_decs,&free_index)!=1)
 		{
-		
+//			printk("%s:My Channel is %d current ticket %d conn_ticket %d\n",__func__,conn_no,my_ticket,conn_descriptors[conn_no].ticket);
+//		 	printk("%s in while loop pid %d\n",__func__,current->pid);
+/*			spin_unlock(&conn_descriptors[conn_no].send_lock); 
+		 	if(bla%100==0){
+				printk("%s:My Channel is %d current ticket %d conn_ticket %d\n",__func__,conn_no,my_ticket,conn_descriptors[conn_no].ticket);
+		 		printk("%s in while loop pid %d\n",__func__,current->pid);
+			}
+			bla++;
+			msleep(10);	
+			spin_lock(&conn_descriptors[conn_no].send_lock);	
+*/ 
 		}
 		spin_unlock(&conn_descriptors[conn_no].send_lock);	
 found:
@@ -731,7 +754,7 @@ found:
 				spin_unlock(&conn_descriptors[conn_no].send_lock);
 				goto _out;
 			}
-			if((no_bytes = scif_send(conn_descriptors[conn_no].send_epd, curr_addr, sizeof(struct pcn_kmsg_message), SCIF_SEND_BLOCK)<0))
+			if((no_bytes = scif_send(conn_descriptors[conn_no].send_epd, curr_addr, sizeof(struct pcn_kmsg_hdr), SCIF_SEND_BLOCK)<0))
 			{
 				//printk("%s:Through NON-DMA\n",__func__);
 				if(no_bytes==-ENODEV)
@@ -745,7 +768,7 @@ found:
 				}
 				printk("Some thing went wrong Send Failed");
 				data_send=no_bytes;
-				//spin_unlock(&conn_descriptors[conn_no].send_lock);
+				spin_unlock(&conn_descriptors[conn_no].send_lock);
 				goto _out;
 			}
 	/*		scif_recv(send_epd,&sts_from_peer,sizeof(int),SCIF_RECV_BLOCK);
@@ -757,11 +780,11 @@ found:
 	*/ 
 			data_send=lmsg->hdr.size;
 	//		goto _out;
-		
+	//		spin_unlock(&conn_descriptors[conn_no].send_lock);	
 	}
 	else
 	{
-		spin_lock(&conn_descriptors[conn_no].send_lock);
+		//spin_lock(&conn_descriptors[conn_no].send_lock);
 		//printk("Non_dma Send\n");
 		curr_addr = (char*) lmsg;
 		curr_size = lmsg->hdr.size;
@@ -788,7 +811,7 @@ found:
 						break;
 					//printk("%s: total %d nobytes %d\n",__func__,lmsg->hdr.size,no_bytes);
 		}	
-		spin_unlock(&conn_descriptors[conn_no].send_lock);
+	//	spin_unlock(&conn_descriptors[conn_no].send_lock);
 		
 	}
 _out:
@@ -803,16 +826,21 @@ return (data_send<0?-1:data_send);
 void pcn_kmsg_free_msg(void *msg){
 	
 	struct pcn_kmsg_message *msgPtr = (struct pcn_kmsg_message*)msg;
-	if(msgPtr->hdr.size>dma_rcv_thresh)
+	
+/*	if(msgPtr->hdr.size>dma_rcv_thresh)
 	{
-	//	spin_lock(&conn_descriptors[msgPtr->hdr.conn_no].dma_q_free);
-	//	printk("%s: conn_no %d slot %d\n",__func__,msgPtr->hdr.conn_no,msgPtr->hdr.slot);
+		 printk("%s before spinlock: conn_no %d slot %d\n",__func__,msgPtr->hdr.conn_no,msgPtr->hdr.slot);
+		spin_lock(&conn_descriptors[msgPtr->hdr.conn_no].dma_q_free);
+		printk("%s: conn_no %d slot %d\n",__func__,msgPtr->hdr.conn_no,msgPtr->hdr.slot);
 		buffer_put(&conn_descriptors[msgPtr->hdr.conn_no].remote_buffer_desc,msgPtr->hdr.slot);
 		//freeList[msgPtr->hdr.slot]=BUFFER_FREE;
-	//	spin_unlock(&conn_descriptors[msgPtr->hdr.conn_no].dma_q_free);
+		spin_unlock(&conn_descriptors[msgPtr->hdr.conn_no].dma_q_free);
 	}
-	else
+	else{
+		printk("%s: small free\n",__func__);
 		vfree(msg);
+	}*/
+	vfree(msg);
 }
 
 

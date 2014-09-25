@@ -209,6 +209,7 @@ int security_settime(const struct timespec *ts, const struct timezone *tz)
 int security_vm_enough_memory(long pages)
 {
 	WARN_ON(current->mm == NULL);
+
 	return security_ops->vm_enough_memory(current->mm, pages);
 }
 
@@ -696,8 +697,10 @@ int security_file_mmap(struct file *file, unsigned long reqprot,
 	int ret;
 
 	ret = security_ops->file_mmap(file, reqprot, prot, flags, addr, addr_only);
-	if (ret)
+	if (ret){
 		return ret;
+	}
+
 	return ima_file_mmap(file, prot);
 }
 
