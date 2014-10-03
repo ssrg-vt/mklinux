@@ -640,7 +640,7 @@ int _init_RemoteCPUMask(void)
 
 
 	unsigned int i;
-	printk("%s : cpus online in kernel %d!!!", "_init_RemoteCPUMask",_cpu);
+	PRINTK("%s : cpus online in kernel %d!!!", "_init_RemoteCPUMask",_cpu);
 
 
 	flush_cpu_info_var();
@@ -654,10 +654,10 @@ int _init_RemoteCPUMask(void)
 		// Skip the current cpu
 		//if (i == _cpu)
 		if (cpumask_test_cpu(i, cpu_present_mask)) {
-			printk("%s: cpu already known %i continue.\n", __func__,  i);
+			PRINTK("%s: cpu already known %i continue.\n", __func__,  i);
 			continue;
 		}
-		printk("%s: checking cpu %d.\n", __func__, i);
+		PRINTK("%s: checking cpu %d.\n", __func__, i);
 		result = send_cpu_info_request(i);
 		if (!result) {
 			PRINTK("%s : go to sleep!!!!", __func__);
@@ -672,7 +672,7 @@ int _init_RemoteCPUMask(void)
 		}
 	}
 
-	printk("%s : global cpus online in kernel %d!!!", "_init_RemoteCPUMask",_cpu);
+	PRINTK("%s : global cpus online in kernel %d!!!", "_init_RemoteCPUMask",_cpu);
 
 	return 0;
 }
