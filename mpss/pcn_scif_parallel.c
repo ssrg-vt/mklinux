@@ -751,7 +751,6 @@ found:
 			if(err<0)
 			{
 				printk("error in DMA Transfer %d",err);
-				spin_unlock(&conn_descriptors[conn_no].send_lock);
 				goto _out;
 			}
 			if((no_bytes = scif_send(conn_descriptors[conn_no].send_epd, curr_addr, sizeof(struct pcn_kmsg_hdr), SCIF_SEND_BLOCK)<0))
@@ -763,12 +762,10 @@ found:
 					//up(&wait_data->_sem);
 					data_send=no_bytes;
 					is_connection_done = PCN_CONN_WATING;
-					spin_unlock(&conn_descriptors[conn_no].send_lock);
 					return;
 				}
 				printk("Some thing went wrong Send Failed");
 				data_send=no_bytes;
-				spin_unlock(&conn_descriptors[conn_no].send_lock);
 				goto _out;
 			}
 	/*		scif_recv(send_epd,&sts_from_peer,sizeof(int),SCIF_RECV_BLOCK);
