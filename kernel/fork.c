@@ -71,6 +71,7 @@
 #include <linux/signalfd.h>
 #include <linux/uprobes.h>
 #include <linux/aio.h>
+#include <linux/process_server.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -145,10 +146,10 @@ void __weak arch_release_thread_info(struct thread_info *ti)
  */
 # if THREAD_SIZE >= PAGE_SIZE
 static struct thread_info *alloc_thread_info_node(struct task_struct *tsk,
-						  int node)
+		int node)
 {
 	struct page *page = alloc_pages_node(node, THREADINFO_GFP_ACCOUNTED,
-					     THREAD_SIZE_ORDER);
+			THREAD_SIZE_ORDER);
 
 	return page ? page_address(page) : NULL;
 }
@@ -161,7 +162,7 @@ static inline void free_thread_info(struct thread_info *ti)
 static struct kmem_cache *thread_info_cache;
 
 static struct thread_info *alloc_thread_info_node(struct task_struct *tsk,
-						  int node)
+		int node)
 {
 	return kmem_cache_alloc_node(thread_info_cache, THREADINFO_GFP, node);
 }
@@ -174,7 +175,7 @@ static void free_thread_info(struct thread_info *ti)
 void thread_info_cache_init(void)
 {
 	thread_info_cache = kmem_cache_create("thread_info", THREAD_SIZE,
-					      THREAD_SIZE, 0, NULL);
+			THREAD_SIZE, 0, NULL);
 	BUG_ON(thread_info_cache == NULL);
 }
 # endif
@@ -258,7 +259,7 @@ void __init fork_init(unsigned long mempages)
 	/* create a slab on which task_structs can be allocated */
 	task_struct_cachep =
 		kmem_cache_create("task_struct", sizeof(struct task_struct),
-			ARCH_MIN_TASKALIGN, SLAB_PANIC | SLAB_NOTRACK, NULL);
+				ARCH_MIN_TASKALIGN, SLAB_PANIC | SLAB_NOTRACK, NULL);
 #endif
 
 	/* do the arch specific task caches init */
@@ -284,7 +285,7 @@ void __init fork_init(unsigned long mempages)
 }
 
 int __attribute__((weak)) arch_dup_task_struct(struct task_struct *dst,
-					       struct task_struct *src)
+		struct task_struct *src)
 {
 	*dst = *src;
 	return 0;
@@ -383,7 +384,7 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 
 		if (mpnt->vm_flags & VM_DONTCOPY) {
 			vm_stat_account(mm, mpnt->vm_flags, mpnt->vm_file,
-							-vma_pages(mpnt));
+					-vma_pages(mpnt));
 			continue;
 		}
 		charge = 0;
@@ -425,7 +426,7 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 						&mapping->i_mmap_nonlinear);
 			else
 				vma_interval_tree_insert_after(tmp, mpnt,
-							&mapping->i_mmap);
+						&mapping->i_mmap);
 			flush_dcache_mmap_unlock(mapping);
 			mutex_unlock(&mapping->i_mmap_mutex);
 		}
@@ -557,7 +558,7 @@ static void check_mm(struct mm_struct *mm)
 
 		if (unlikely(x))
 			printk(KERN_ALERT "BUG: Bad rss-counter state "
-					  "mm:%p idx:%d val:%ld\n", mm, i, x);
+					"mm:%p idx:%d val:%ld\n", mm, i, x);
 	}
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
@@ -712,7 +713,7 @@ static void complete_vfork_done(struct task_struct *tsk)
 }
 
 static int wait_for_vfork_done(struct task_struct *child,
-				struct completion *vfork)
+		struct completion *vfork)
 {
 	int killed;
 
@@ -748,12 +749,14 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 	/* Get rid of any futexes when releasing the mm */
 #ifdef CONFIG_FUTEX
 	if (unlikely(tsk->robust_list)) {
-		exit_robust_list(tsk);
+		if(!tsk->main)
+			exit_robust_list(tsk);
 		tsk->robust_list = NULL;
 	}
 #ifdef CONFIG_COMPAT
 	if (unlikely(tsk->compat_robust_list)) {
-		compat_exit_robust_list(tsk);
+		if(!tsk->main)
+			compat_exit_robust_list(tsk);
 		tsk->compat_robust_list = NULL;
 	}
 #endif
@@ -775,11 +778,13 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 	 */
 	if (tsk->clear_child_tid) {
 		if (!(tsk->flags & PF_SIGNALED) &&
-		    atomic_read(&mm->mm_users) > 1) {
+				(atomic_read(&mm->mm_users) > 1) && !tsk->main) {
 			/*
 			 * We don't check the error code - if userspace has
 			 * not set up a proper pointer then tough luck.
 			 */
+			/*	if(tsk->tgroup_distributed==1)
+				printk(KERN_ALERT"%s: sys futex wake\n",__func__);*/	
 			put_user(0, tsk->clear_child_tid);
 			sys_futex(tsk->clear_child_tid, FUTEX_WAKE,
 					1, NULL, NULL, 0);
@@ -1062,7 +1067,7 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	sig->oom_score_adj_min = current->signal->oom_score_adj_min;
 
 	sig->has_child_subreaper = current->signal->has_child_subreaper ||
-				   current->signal->is_child_subreaper;
+		current->signal->is_child_subreaper;
 
 	mutex_init(&sig->cred_guard_mutex);
 
@@ -1114,10 +1119,10 @@ static void posix_cpu_timers_init(struct task_struct *tsk)
 	INIT_LIST_HEAD(&tsk->cpu_timers[2]);
 }
 
-static inline void
+	static inline void
 init_task_pid(struct task_struct *task, enum pid_type type, struct pid *pid)
 {
-	 task->pids[type].pid = pid;
+	task->pids[type].pid = pid;
 }
 
 /*
@@ -1129,11 +1134,11 @@ init_task_pid(struct task_struct *task, enum pid_type type, struct pid *pid)
  * flags). The actual kick-off is left to the caller.
  */
 static struct task_struct *copy_process(unsigned long clone_flags,
-					unsigned long stack_start,
-					unsigned long stack_size,
-					int __user *child_tidptr,
-					struct pid *pid,
-					int trace)
+		unsigned long stack_start,
+		unsigned long stack_size,
+		int __user *child_tidptr,
+		struct pid *pid,
+		int trace)
 {
 	int retval;
 	struct task_struct *p;
@@ -1166,7 +1171,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	 * from creating siblings.
 	 */
 	if ((clone_flags & CLONE_PARENT) &&
-				current->signal->flags & SIGNAL_UNKILLABLE)
+			current->signal->flags & SIGNAL_UNKILLABLE)
 		return ERR_PTR(-EINVAL);
 
 	/*
@@ -1176,8 +1181,8 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	 */
 	if (clone_flags & (CLONE_SIGHAND | CLONE_PARENT)) {
 		if ((clone_flags & (CLONE_NEWUSER | CLONE_NEWPID)) ||
-		    (task_active_pid_ns(current) !=
-				current->nsproxy->pid_ns_for_children))
+				(task_active_pid_ns(current) !=
+				 current->nsproxy->pid_ns_for_children))
 			return ERR_PTR(-EINVAL);
 	}
 
@@ -1203,7 +1208,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	if (atomic_read(&p->real_cred->user->processes) >=
 			task_rlimit(p, RLIMIT_NPROC)) {
 		if (p->real_cred->user != INIT_USER &&
-		    !capable(CAP_SYS_RESOURCE) && !capable(CAP_SYS_ADMIN))
+				!capable(CAP_SYS_RESOURCE) && !capable(CAP_SYS_ADMIN))
 			goto bad_fork_free;
 	}
 	current->flags &= ~PF_NPROC_EXCEEDED;
@@ -1440,7 +1445,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	 * it's process group.
 	 * A fatal signal pending means that current will exit, so the new
 	 * thread can't slip out of an OOM kill (or normal SIGKILL).
-	*/
+	 */
 	recalc_sigpending();
 	if (signal_pending(current)) {
 		spin_unlock(&current->sighand->siglock);
@@ -1474,7 +1479,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 			atomic_inc(&current->signal->live);
 			atomic_inc(&current->signal->sigcnt);
 			list_add_tail_rcu(&p->thread_group,
-					  &p->group_leader->thread_group);
+					&p->group_leader->thread_group);
 		}
 		attach_pid(p, PIDTYPE_PID);
 		nr_threads++;
@@ -1559,6 +1564,105 @@ struct task_struct *fork_idle(int cpu)
 	return task;
 }
 
+struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
+		unsigned long stack_start,
+		struct pt_regs *regs,
+		unsigned long stack_size,
+		int __user *parent_tidptr,
+		int __user *child_tidptr){
+
+	struct task_struct *p;
+	int trace = 0;
+	long nr;
+
+	/*
+	 * Do some preliminary argument and permissions checking before we
+	 * actually start allocating stuff
+	 */
+	if (clone_flags & CLONE_NEWUSER) {
+		if (clone_flags & CLONE_THREAD)
+			return -EINVAL;
+		/* hopefully this check will go away when userns support is
+		 * complete
+		 */
+		if (!capable(CAP_SYS_ADMIN) || !capable(CAP_SETUID) ||
+				!capable(CAP_SETGID))
+			return -EPERM;
+	}
+
+	/*
+	 * Determine whether and which event to report to ptracer.  When
+	 * called from kernel_thread or CLONE_UNTRACED is explicitly
+	 * requested, no event is reported; otherwise, report if the event
+	 * for the type of forking is enabled.
+	 */
+	if (likely(user_mode(regs)) && !(clone_flags & CLONE_UNTRACED)) {
+		if (clone_flags & CLONE_VFORK)
+			trace = PTRACE_EVENT_VFORK;
+		else if ((clone_flags & CSIGNAL) != SIGCHLD)
+			trace = PTRACE_EVENT_CLONE;
+		else
+			trace = PTRACE_EVENT_FORK;
+
+		if (likely(!ptrace_event_enabled(current, trace)))
+			trace = 0;
+	}
+
+	p = copy_process(clone_flags, stack_start, stack_size,
+			child_tidptr, NULL, trace);
+	/*
+	 * Do this prior waking up the new thread - the thread pointer
+	 * might get invalid after that point, if the thread exits quickly.
+	 */
+	if (!IS_ERR(p)) {
+		struct completion vfork;
+
+		trace_sched_process_fork(current, p);
+
+		nr = task_pid_vnr(p);
+
+		if (clone_flags & CLONE_PARENT_SETTID)
+			put_user(nr, parent_tidptr);
+
+		if (clone_flags & CLONE_VFORK) {
+			p->vfork_done = &vfork;
+			init_completion(&vfork);
+		}
+
+		//audit_finish_fork(p);
+
+		/*
+		 * We set PF_STARTING at creation in case tracing wants to
+		 * use this to distinguish a fully live task from one that
+		 * hasn't finished SIGSTOP raising yet.  Now we clear it
+		 * and set the child going.
+		 */
+		//p->flags &= ~PF_STARTING;
+
+		//Multikernel
+		process_server_dup_task(current, p);
+
+		p->represents_remote= 1;
+		p->distributed_exit= EXIT_NOT_ACTIVE;
+
+		wake_up_new_task(p);
+
+		/* forking complete and child started to run, tell ptracer */
+		if (unlikely(trace))
+			ptrace_event(trace, nr);
+
+		if (clone_flags & CLONE_VFORK) {
+			freezer_do_not_count();
+			wait_for_completion(&vfork);
+			freezer_count();
+			ptrace_event(PTRACE_EVENT_VFORK_DONE, nr);
+		}
+	}
+
+	return p;
+
+}
+
 /*
  *  Ok, this is the main fork-routine.
  *
@@ -1566,10 +1670,10 @@ struct task_struct *fork_idle(int cpu)
  * it and waits for it to finish using the VM if required.
  */
 long do_fork(unsigned long clone_flags,
-	      unsigned long stack_start,
-	      unsigned long stack_size,
-	      int __user *parent_tidptr,
-	      int __user *child_tidptr)
+		unsigned long stack_start,
+		unsigned long stack_size,
+		int __user *parent_tidptr,
+		int __user *child_tidptr)
 {
 	struct task_struct *p;
 	int trace = 0;
@@ -1594,7 +1698,7 @@ long do_fork(unsigned long clone_flags,
 	}
 
 	p = copy_process(clone_flags, stack_start, stack_size,
-			 child_tidptr, NULL, trace);
+			child_tidptr, NULL, trace);
 	/*
 	 * Do this prior waking up the new thread - the thread pointer
 	 * might get invalid after that point, if the thread exits quickly.
@@ -1614,6 +1718,9 @@ long do_fork(unsigned long clone_flags,
 			init_completion(&vfork);
 			get_task_struct(p);
 		}
+
+		//Multikernel
+		process_server_dup_task(current, p);
 
 		wake_up_new_task(p);
 
@@ -1637,7 +1744,7 @@ long do_fork(unsigned long clone_flags,
 pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
 {
 	return do_fork(flags|CLONE_VM|CLONE_UNTRACED, (unsigned long)fn,
-		(unsigned long)arg, NULL, NULL);
+			(unsigned long)arg, NULL, NULL);
 }
 
 #ifdef __ARCH_WANT_SYS_FORK
@@ -1663,14 +1770,14 @@ SYSCALL_DEFINE0(vfork)
 #ifdef __ARCH_WANT_SYS_CLONE
 #ifdef CONFIG_CLONE_BACKWARDS
 SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
-		 int __user *, parent_tidptr,
-		 int, tls_val,
-		 int __user *, child_tidptr)
+		int __user *, parent_tidptr,
+		int, tls_val,
+		int __user *, child_tidptr)
 #elif defined(CONFIG_CLONE_BACKWARDS2)
 SYSCALL_DEFINE5(clone, unsigned long, newsp, unsigned long, clone_flags,
-		 int __user *, parent_tidptr,
-		 int __user *, child_tidptr,
-		 int, tls_val)
+		int __user *, parent_tidptr,
+		int __user *, child_tidptr,
+		int, tls_val)
 #elif defined(CONFIG_CLONE_BACKWARDS3)
 SYSCALL_DEFINE6(clone, unsigned long, clone_flags, unsigned long, newsp,
 		int, stack_size,
@@ -1679,9 +1786,9 @@ SYSCALL_DEFINE6(clone, unsigned long, clone_flags, unsigned long, newsp,
 		int, tls_val)
 #else
 SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
-		 int __user *, parent_tidptr,
-		 int __user *, child_tidptr,
-		 int, tls_val)
+		int __user *, parent_tidptr,
+		int __user *, child_tidptr,
+		int, tls_val)
 #endif
 {
 	return do_fork(clone_flags, newsp, 0, parent_tidptr, child_tidptr);
@@ -1784,7 +1891,7 @@ static int unshare_fd(unsigned long unshare_flags, struct files_struct **new_fdp
 	int error = 0;
 
 	if ((unshare_flags & CLONE_FILES) &&
-	    (fd && atomic_read(&fd->count) > 1)) {
+			(fd && atomic_read(&fd->count) > 1)) {
 		*new_fdp = dup_fd(fd, &error);
 		if (!*new_fdp)
 			return error;
@@ -1851,7 +1958,7 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
 	if (err)
 		goto bad_unshare_cleanup_fd;
 	err = unshare_nsproxy_namespaces(unshare_flags, &new_nsproxy,
-					 new_cred, new_fs);
+			new_cred, new_fs);
 	if (err)
 		goto bad_unshare_cleanup_cred;
 

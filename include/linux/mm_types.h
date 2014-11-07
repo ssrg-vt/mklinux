@@ -15,6 +15,7 @@
 #include <linux/page-flags-layout.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
+#include <linux/process_server_macro.h>
 
 #ifndef AT_VECTOR_SIZE_ARCH
 #define AT_VECTOR_SIZE_ARCH 0
@@ -67,7 +68,7 @@ struct page {
 
 		union {
 #if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
-	defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
+			defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
 			/* Used for cmpxchg_double in slub */
 			unsigned long counters;
 #else
@@ -135,7 +136,7 @@ struct page {
 	/* Remainder is not double word aligned */
 	union {
 		unsigned long private;		/* Mapping-private opaque data:
-					 	 * usually used for buffer_heads
+						 * usually used for buffer_heads
 						 * if PagePrivate set; used for
 						 * swp_entry_t if PageSwapCache;
 						 * indicates order in the buddy
@@ -166,6 +167,12 @@ struct page {
 	unsigned long debug_flags;	/* Use atomic bitops on this */
 #endif
 
+#ifdef CONFIG_PRECOMPUTE_WAITQ_HEAD
+	wait_queue_head_t *wq;		/* Points to the wait queue list head
+					 * that stores the list of waiters for
+					 * this page. */
+#endif
+
 #ifdef CONFIG_KMEMCHECK
 	/*
 	 * kmemcheck wants to track the status of each byte in a page; this
@@ -177,26 +184,47 @@ struct page {
 #ifdef LAST_NID_NOT_IN_PAGE_FLAGS
 	int _last_nid;
 #endif
+	//Multikernel
+	int replicated;
+	int status;
+	int owner;
+	long last_write;
+	int other_owners[MAX_KERNEL_IDS];
+	int writing;
+	int reading;
+	//Futex
+	int futex_owner;
+
+#if FOR_2_KERNELS
+#if DIFF_PAGE
+	char* old_page_version;
+#endif
+#else
+	unsigned long long time_stamp;
+	int concurrent_writers;
+	int concurrent_fetch;
+	int need_fetch[MAX_KERNEL_IDS];
+#endif
 }
 /*
  * The struct page can be forced to be double word aligned so that atomic ops
  * on double words work. The SLUB allocator can make use of such a feature.
  */
 #ifdef CONFIG_HAVE_ALIGNED_STRUCT_PAGE
-	__aligned(2 * sizeof(unsigned long))
+__aligned(2 * sizeof(unsigned long))
 #endif
-;
+	;
 
-struct page_frag {
-	struct page *page;
+	struct page_frag {
+		struct page *page;
 #if (BITS_PER_LONG > 32) || (PAGE_SIZE >= 65536)
-	__u32 offset;
-	__u32 size;
+		__u32 offset;
+		__u32 size;
 #else
-	__u16 offset;
-	__u16 size;
+		__u16 offset;
+		__u16 size;
 #endif
-};
+	};
 
 typedef unsigned long __nocast vm_flags_t;
 
@@ -329,8 +357,8 @@ struct mm_struct {
 	struct vm_area_struct * mmap_cache;	/* last find_vma result */
 #ifdef CONFIG_MMU
 	unsigned long (*get_unmapped_area) (struct file *filp,
-				unsigned long addr, unsigned long len,
-				unsigned long pgoff, unsigned long flags);
+			unsigned long addr, unsigned long len,
+			unsigned long pgoff, unsigned long flags);
 #endif
 	unsigned long mmap_base;		/* base of mmap area */
 	unsigned long mmap_legacy_base;         /* base of mmap area in bottom-up allocations */
@@ -436,6 +464,14 @@ struct mm_struct {
 	int first_nid;
 #endif
 	struct uprobes_state uprobes_state;
+
+	//Multikernel
+	struct rw_semaphore distribute_sem;
+	int distr_vma_op_counter;
+	int was_not_pushed;
+	struct task_struct* thread_op;
+	int vma_operation_index;
+	int distribute_unmap;
 };
 
 /* first nid will either be a valid NID or one of these values */

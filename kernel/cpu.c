@@ -19,6 +19,7 @@
 #include <linux/mutex.h>
 #include <linux/gfp.h>
 #include <linux/suspend.h>
+#include <linux/cpu_namespace.h>
 
 #include "smpboot.h"
 
@@ -167,12 +168,12 @@ int __ref register_cpu_notifier(struct notifier_block *nb)
 }
 
 static int __cpu_notify(unsigned long val, void *v, int nr_to_call,
-			int *nr_calls)
+		int *nr_calls)
 {
 	int ret;
 
 	ret = __raw_notifier_call_chain(&cpu_chain, val, v, nr_to_call,
-					nr_calls);
+			nr_calls);
 
 	return notifier_to_errno(ret);
 }
@@ -248,11 +249,11 @@ static inline void check_for_tasks(int cpu)
 	for_each_process(p) {
 		task_cputime(p, &utime, &stime);
 		if (task_cpu(p) == cpu && p->state == TASK_RUNNING &&
-		    (utime || stime))
+				(utime || stime))
 			printk(KERN_WARNING "Task %s (pid = %d) is on cpu %d "
-				"(state = %ld, flags = %x)\n",
-				p->comm, task_pid_nr(p), cpu,
-				p->state, p->flags);
+					"(state = %ld, flags = %x)\n",
+					p->comm, task_pid_nr(p), cpu,
+					p->state, p->flags);
 	}
 	write_unlock_irq(&tasklist_lock);
 }
@@ -427,7 +428,7 @@ int cpu_up(unsigned int cpu)
 
 	if (!cpu_possible(cpu)) {
 		printk(KERN_ERR "can't online cpu %d because it is not "
-			"configured as may-hotadd at boot time\n", cpu);
+				"configured as may-hotadd at boot time\n", cpu);
 #if defined(CONFIG_IA64)
 		printk(KERN_ERR "please check additional_cpus= boot "
 				"parameter\n");
@@ -446,7 +447,7 @@ int cpu_up(unsigned int cpu)
 	pgdat = NODE_DATA(nid);
 	if (!pgdat) {
 		printk(KERN_ERR
-			"Can't online cpu %d due to NULL pgdat\n", cpu);
+				"Can't online cpu %d due to NULL pgdat\n", cpu);
 		return -ENOMEM;
 	}
 
@@ -496,7 +497,7 @@ int disable_nonboot_cpus(void)
 			cpumask_set_cpu(cpu, frozen_cpus);
 		else {
 			printk(KERN_ERR "Error taking CPU%d down: %d\n",
-				cpu, error);
+					cpu, error);
 			break;
 		}
 	}
@@ -569,24 +570,24 @@ core_initcall(alloc_frozen_cpus);
  * hotplug and Suspend/Hibernate call paths by hooking onto the Suspend/
  * Hibernate notifications.
  */
-static int
+	static int
 cpu_hotplug_pm_callback(struct notifier_block *nb,
-			unsigned long action, void *ptr)
+		unsigned long action, void *ptr)
 {
 	switch (action) {
 
-	case PM_SUSPEND_PREPARE:
-	case PM_HIBERNATION_PREPARE:
-		cpu_hotplug_disable();
-		break;
+		case PM_SUSPEND_PREPARE:
+		case PM_HIBERNATION_PREPARE:
+			cpu_hotplug_disable();
+			break;
 
-	case PM_POST_SUSPEND:
-	case PM_POST_HIBERNATION:
-		cpu_hotplug_enable();
-		break;
+		case PM_POST_SUSPEND:
+		case PM_POST_HIBERNATION:
+			cpu_hotplug_enable();
+			break;
 
-	default:
-		return NOTIFY_DONE;
+		default:
+			return NOTIFY_DONE;
 	}
 
 	return NOTIFY_OK;
@@ -658,7 +659,7 @@ EXPORT_SYMBOL(cpu_all_bits);
 
 #ifdef CONFIG_INIT_ALL_POSSIBLE
 static DECLARE_BITMAP(cpu_possible_bits, CONFIG_NR_CPUS) __read_mostly
-	= CPU_BITS_ALL;
+= CPU_BITS_ALL;
 #else
 static DECLARE_BITMAP(cpu_possible_bits, CONFIG_NR_CPUS) __read_mostly;
 #endif
@@ -668,6 +669,12 @@ EXPORT_SYMBOL(cpu_possible_mask);
 static DECLARE_BITMAP(cpu_online_bits, CONFIG_NR_CPUS) __read_mostly;
 const struct cpumask *const cpu_online_mask = to_cpumask(cpu_online_bits);
 EXPORT_SYMBOL(cpu_online_mask);
+
+/*mklinux_akshay*/
+static DECLARE_BITMAP(cpu_global_online_bits, CONFIG_NR_CPUS) __read_mostly;
+const struct cpumask *const cpu_global_online_mask = to_cpumask(cpu_global_online_bits);
+EXPORT_SYMBOL(cpu_global_online_mask);
+/*mklinux_akshay*/
 
 static DECLARE_BITMAP(cpu_present_bits, CONFIG_NR_CPUS) __read_mostly;
 const struct cpumask *const cpu_present_mask = to_cpumask(cpu_present_bits);
@@ -723,3 +730,17 @@ void init_cpu_online(const struct cpumask *src)
 {
 	cpumask_copy(to_cpumask(cpu_online_bits), src);
 }
+
+struct cpu_namespace init_cpu_ns = {
+	.kref = {
+		.refcount = ATOMIC_INIT(2),
+	},
+	.nr_cpus = NR_CPUS,
+	.cpumask_size = (BITS_TO_LONGS(NR_CPUS) * sizeof(long)),
+	.cpu_online_mask = to_cpumask(cpu_online_bits),
+	//.get_online_cpus = get_online_cpus;
+	//.get_offline_cpus = get_offline_cpus,
+	.parent = NULL,
+	.level = 0,
+};
+EXPORT_SYMBOL_GPL(init_cpu_ns);

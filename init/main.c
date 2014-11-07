@@ -103,6 +103,9 @@ static inline void mark_rodata_ro(void) { }
 extern void tc_init(void);
 #endif
 
+extern void popcorn_init(void);
+extern int _init_RemoteCPUMask(void);
+
 /*
  * Debug helper: via this flag we know that we are in 'early bootup code'
  * where only the boot processor is running with IRQ disabled.  This means
@@ -180,7 +183,7 @@ static int __init obsolete_checksetup(char *line)
 					had_early_param = 1;
 			} else if (!p->setup_func) {
 				pr_warn("Parameter %s is obsolete, ignored\n",
-					p->str);
+						p->str);
 				return 1;
 			} else if (p->setup_func(line + n))
 				return 1;
@@ -399,9 +402,9 @@ static int __init do_early_param(char *param, char *val, const char *unused)
 
 	for (p = __setup_start; p < __setup_end; p++) {
 		if ((p->early && parameq(param, p->str)) ||
-		    (strcmp(param, "console") == 0 &&
-		     strcmp(p->str, "earlycon") == 0)
-		) {
+				(strcmp(param, "console") == 0 &&
+				 strcmp(p->str, "earlycon") == 0)
+		   ) {
 			if (p->setup_func(val) != 0)
 				pr_warn("Malformed early option '%s'\n", param);
 		}
@@ -494,10 +497,10 @@ asmlinkage void __init start_kernel(void)
 	local_irq_disable();
 	early_boot_irqs_disabled = true;
 
-/*
- * Interrupts are still disabled. Do necessary setups, then
- * enable them
- */
+	/*
+	 * Interrupts are still disabled. Do necessary setups, then
+	 * enable them
+	 */
 	boot_cpu_init();
 	page_address_init();
 	pr_notice("%s", linux_banner);
@@ -515,8 +518,8 @@ asmlinkage void __init start_kernel(void)
 	pr_notice("Kernel command line: %s\n", boot_command_line);
 	parse_early_param();
 	parse_args("Booting kernel", static_command_line, __start___param,
-		   __stop___param - __start___param,
-		   -1, -1, &unknown_bootoption);
+			__stop___param - __start___param,
+			-1, -1, &unknown_bootoption);
 
 	jump_label_init();
 
@@ -588,10 +591,10 @@ asmlinkage void __init start_kernel(void)
 
 #ifdef CONFIG_BLK_DEV_INITRD
 	if (initrd_start && !initrd_below_start_ok &&
-	    page_to_pfn(virt_to_page((void *)initrd_start)) < min_low_pfn) {
+			page_to_pfn(virt_to_page((void *)initrd_start)) < min_low_pfn) {
 		pr_crit("initrd overwritten (0x%08lx < 0x%08lx) - disabling it.\n",
-		    page_to_pfn(virt_to_page((void *)initrd_start)),
-		    min_low_pfn);
+				page_to_pfn(virt_to_page((void *)initrd_start)),
+				min_low_pfn);
 		initrd_start = 0;
 	}
 #endif
@@ -642,6 +645,8 @@ asmlinkage void __init start_kernel(void)
 
 	ftrace_init();
 
+	popcorn_init();
+
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
 }
@@ -673,7 +678,7 @@ static int __init_or_module do_one_initcall_debug(initcall_t fn)
 	delta = ktime_sub(rettime, calltime);
 	duration = (unsigned long long) ktime_to_ns(delta) >> 10;
 	pr_debug("initcall %pF returned %d after %lld usecs\n",
-		 fn, ret, duration);
+			fn, ret, duration);
 
 	return ret;
 }
@@ -747,10 +752,10 @@ static void __init do_initcall_level(int level)
 
 	strcpy(static_command_line, saved_command_line);
 	parse_args(initcall_level_names[level],
-		   static_command_line, __start___param,
-		   __stop___param - __start___param,
-		   level, level,
-		   &repair_env_string);
+			static_command_line, __start___param,
+			__stop___param - __start___param,
+			level, level,
+			&repair_env_string);
 
 	for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++)
 		do_one_initcall(*fn);
@@ -807,15 +812,19 @@ static int run_init_process(const char *init_filename)
 {
 	argv_init[0] = init_filename;
 	return do_execve(init_filename,
-		(const char __user *const __user *)argv_init,
-		(const char __user *const __user *)envp_init);
+			(const char __user *const __user *)argv_init,
+			(const char __user *const __user *)envp_init);
 }
 
 static noinline void __init kernel_init_freeable(void);
 
+
 static int __ref kernel_init(void *unused)
 {
 	kernel_init_freeable();
+
+	_init_RemoteCPUMask();
+
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
 	free_initmem();
@@ -841,16 +850,16 @@ static int __ref kernel_init(void *unused)
 		if (!run_init_process(execute_command))
 			return 0;
 		pr_err("Failed to execute %s.  Attempting defaults...\n",
-			execute_command);
+				execute_command);
 	}
 	if (!run_init_process("/sbin/init") ||
-	    !run_init_process("/etc/init") ||
-	    !run_init_process("/bin/init") ||
-	    !run_init_process("/bin/sh"))
+			!run_init_process("/etc/init") ||
+			!run_init_process("/bin/init") ||
+			!run_init_process("/bin/sh"))
 		return 0;
 
 	panic("No init found.  Try passing init= option to kernel. "
-	      "See Linux Documentation/init.txt for guidance.");
+			"See Linux Documentation/init.txt for guidance.");
 }
 
 static noinline void __init kernel_init_freeable(void)

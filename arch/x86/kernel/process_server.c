@@ -1,0 +1,514 @@
+/*
+ * File:
+ * 	process_server.c
+ *
+ * Description:
+ * 	this file implements the x86 architecture specific
+ *  helper functionality of the process server
+ *
+ * Created on:
+ * 	Sep 19, 2014
+ *
+ * Author:
+ * 	Sharath Kumar Bhat, SSRG, VirginiaTech
+ *
+ */
+
+/* File includes */
+#include <linux/sched.h>
+#include <linux/cpu_namespace.h>
+#include <linux/popcorn_cpuinfo.h>
+#include <linux/process_server.h>
+#include <asm/i387.h>
+#include <process_server_arch.h>
+
+/* External function declarations */
+extern unsigned long read_old_rsp(void);
+extern struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
+		unsigned long stack_start, struct pt_regs *regs, unsigned long stack_size,
+		int __user *parent_tidptr, int __user *child_tidptr);
+
+/*
+ * Function:
+ *		save_thread_info
+ *
+ * Description:
+ *		this function saves the architecture specific info of the task
+ *		to the field_arch structure passed
+ *
+ * Input:
+ *	task,	pointer to the task structure of the task of which the
+ *			architecture specific info needs to be saved
+ *
+ *	regs,	pointer to the pt_regs field of the task
+ *
+ * Output:
+ *	arch,	pointer to the field_arch structure type where the
+ *			architecture specific information of the task has to be
+ *			saved
+ *
+ * Return value:
+ *	on success, returns 0
+ * 	on failure, returns negative integer
+ */
+int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch *arch)
+{
+	int ret = -1;
+	unsigned short fsindex, gsindex;
+	unsigned short es, ds;
+	unsigned long fs, gs;
+
+	if((task == NULL)  || (arch == NULL)){
+		printk(KERN_ERR"process_server: invalid params to restore_thread_info()");
+		goto exit;
+	}
+
+	// have a look at: copy_thread() arch/x86/kernel/process_64.c
+	// have a look at: struct thread_struct arch/x86/include/asm/processor.h
+	//printk("size of struct pt_regs id %d \n",sizeof(struct pt_regs));
+	memcpy(&arch->regs, regs, sizeof(struct pt_regs));
+	arch->thread_usersp = task->thread.usersp;
+
+	arch->old_rsp = read_old_rsp();
+	arch->thread_es = task->thread.es;
+	savesegment(es, es);
+
+	if ((current == task) && (es != arch->thread_es)) {
+		PSPRINTK("%s: es %x thread %x\n", __func__, es, request->thread_es);
+	}
+	arch->thread_ds = task->thread.ds;
+	savesegment(ds, ds);
+	if (ds != arch->thread_ds) {
+		PSPRINTK("%s: ds %x thread %x\n", __func__, ds, request->thread_ds);
+	}
+
+
+	arch->thread_fsindex = task->thread.fsindex;
+	savesegment(fs, fsindex);
+	if (fsindex != arch->thread_fsindex) {
+		PSPRINTK(
+				"%s: fsindex %x thread %x\n", __func__, fsindex, request->thread_fsindex);
+	}
+	arch->thread_gsindex = task->thread.gsindex;
+	savesegment(gs, gsindex);
+	if (gsindex != arch->thread_gsindex) {
+		PSPRINTK(
+				"%s: gsindex %x thread %x\n", __func__, gsindex, request->thread_gsindex);
+	}
+	arch->thread_fs = task->thread.fs;
+	rdmsrl(MSR_FS_BASE, fs);
+	if (fs != arch->thread_fs) {
+		PSPRINTK(
+				"%s: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
+		arch->thread_fs = fs;
+	}
+
+	arch->thread_gs = task->thread.gs;
+	rdmsrl(MSR_KERNEL_GS_BASE, gs);
+
+	if (gs != arch->thread_gs) {
+		PSPRINTK("%s: gs %lx thread %lx\n", __func__, gs, request->thread_gs);
+				arch->thread_gs = gs;
+	}
+	ret = 0;
+
+exit:
+	return ret;
+}
+
+/*
+ * Function:
+ *		restore_thread_info
+ *
+ * Description:
+ *		this function restores the architecture specific info of the
+ *		task from the field_arch structure passed
+ *
+ * Input:
+ * 	task,	pointer to the task structure of the task of which the
+ * 			architecture specific info needs to be restored
+ *
+ * 	arch,	pointer to the field_arch structure type from which the
+ *			architecture specific information of the task has to be
+ *			restored
+ *
+ * Output:
+ *	none
+ *
+ * Return value:
+ *	on success, returns 0
+ * 	on failure, returns negative integer
+ */
+int restore_thread_info(struct task_struct *task, field_arch *arch)
+{
+	int ret = -1;
+
+	if((task == NULL)  || (arch == NULL)){
+		printk(KERN_ERR"process_server: invalid params to restore_thread_info()");
+		goto exit;
+	}
+
+	memcpy(task_pt_regs(task), &arch->regs, sizeof(struct pt_regs));
+	task_pt_regs(task)->sp = arch->old_rsp; // ?
+
+	task->thread.usersp = arch->old_rsp;
+	task->thread.es = arch->thread_es;
+	task->thread.ds = arch->thread_ds;
+	task->thread.fs = arch->thread_fs;
+	task->thread.gs = arch->thread_gs;
+	task->thread.fsindex = arch->thread_fsindex;
+	task->thread.gsindex = arch->thread_gsindex;
+	ret = 0;
+
+exit:
+	return ret;
+}
+
+/*
+ * Function:
+ *		update_thread_info
+ *
+ * Description:
+ *		this function updates the task's thread structure to
+ *		the latest register values.
+ *
+ * Input:
+ * 	task,	pointer to the task structure of the task of which the
+ * 			thread structure needs to be updated
+ *
+ * Output:
+ * 	none
+ *
+ * Return value:
+ *	on success, returns 0
+ * 	on failure, returns negative integer
+ */
+int update_thread_info(struct task_struct *task)
+{
+		int ret = -1;
+		unsigned int fsindex, gsindex;
+
+		if(task == NULL){
+			printk(KERN_ERR"process_server: invalid params to update_thread_info()");
+			goto exit;
+		}
+
+		savesegment(fs, fsindex);
+		if (unlikely(fsindex | task->thread.fsindex))
+			loadsegment(fs, task->thread.fsindex);
+		else
+			loadsegment(fs, 0);
+
+		if (task->thread.fs)
+			wrmsrl_safe(MSR_FS_BASE, task->thread.fs);
+
+		savesegment(gs, gsindex); //read the gs register in gsindex variable
+		if (unlikely(gsindex | task->thread.gsindex))
+			load_gs_index(task->thread.gsindex);
+		else
+			load_gs_index(0);
+
+		if (task->thread.gs)
+			wrmsrl_safe(MSR_KERNEL_GS_BASE, task->thread.gs);
+		ret = 0;
+exit:
+		return ret;
+}
+
+/*
+ * Function:
+ *		initialize_thread_retval
+ *
+ * Description:
+ *		this function sets the return value of the task
+ *		to the value specified in the argument val
+ *
+ * Input:
+ * 	task,	pointer to the task structure of the task of which the
+ * 			return value needs to be set
+ * 	val,	the return value to be set
+ *
+ * Output:
+ * 	none
+ *
+ * Return value:
+ *	on success, returns 0
+ * 	on failure, returns negative integer
+ */
+int initialize_thread_retval(struct task_struct *task, int val)
+{
+	int ret = -1;
+
+	if(task == NULL){
+		printk(KERN_ERR"process_server: invalid params to initialize_thread_retval()");
+		goto exit;
+	}
+	task_pt_regs(task)->ax = val;
+	ret = 0;
+
+exit:
+	return ret;
+}
+
+/*
+ * Function:
+ *		create_thread
+ *
+ * Description:
+ *		this function creates an empty thread and returns its task
+ *		structure
+ *
+ * Input:
+ * 	flags,	the clone flags to be used to create the new thread
+ *
+ * Output:
+ * 	none
+ *
+ * Return value:
+ * 	on success,	returns pointer to newly created task's structure,
+ *	on failure, returns NULL
+ */
+struct task_struct* create_thread(int flags)
+{
+	struct task_struct *task = NULL;
+	struct pt_regs regs;
+
+	memset(&regs, 0, sizeof(struct pt_regs));
+
+#ifdef CONFIG_X86_32
+	regs.ds = __USER_DS;
+	regs.es = __USER_DS;
+	regs.fs = __KERNEL_PERCPU;
+	regs.gs = __KERNEL_STACK_CANARY;
+#else
+	regs.ss = __KERNEL_DS;
+#endif
+
+	regs.orig_ax = -1;
+	regs.cs = __KERNEL_CS | get_kernel_rpl();
+	regs.flags = X86_EFLAGS_IF | 0x2;
+
+	task = do_fork_for_main_kernel_thread(flags, 0, &regs, 0, NULL, NULL);
+
+exit:
+	return task;
+}
+
+#if MIGRATE_FPU
+
+/*
+ * Function:
+ *		save_fpu_info
+ *
+ * Description:
+ *		this function saves the FPU info of the task specified
+ *		to the arch structure specified in the argument
+ *
+ * Input:
+ * 	task,	pointer to the task structure of the task of which the
+ * 			FPU info needs to be saved
+ *
+ * Output:
+ * 	arch,	pointer to the field_arch structure where the FPU info
+ * 			needs to be saved
+ *
+ * Return value:
+ *	on success, returns 0
+ * 	on failure, returns negative integer
+ */
+int save_fpu_info(struct task_struct *task, field_arch *arch)
+{
+	int ret = -1;
+
+	if((task == NULL)  || (arch == NULL)){
+		printk(KERN_ERR"process_server: invalid params to save_fpu_info()");
+		goto exit;
+	}
+
+	//FPU migration code --- initiator
+	PSPRINTK(KERN_ERR "%s: task flags %x fpu_counter %x has_fpu %x [%d:%d] %d:%d %x\n",
+			__func__, task->flags, (int)task->fpu_counter, (int)task->thread.has_fpu,
+			(int)__thread_has_fpu(task), (int)fpu_allocated(&task->thread.fpu),
+			(int)use_xsave(), (int)use_fxsr(), (int) PF_USED_MATH);
+
+	arch->task_flags = task->flags;
+	arch->task_fpu_counter = task->fpu_counter;
+	arch->thread_has_fpu = task->thread.has_fpu;
+
+	//    if (__thread_has_fpu(task)) {
+	if (!fpu_allocated(&task->thread.fpu)){
+		fpu_alloc(&task->thread.fpu);
+		fpu_finit(&task->thread.fpu);
+	}
+
+	fpu_save_init(&task->thread.fpu);
+
+	struct fpu temp; temp.state = &request->fpu_state;
+	fpu_copy(&temp,&task->thread.fpu);
+	ret = 0;
+
+exit:
+	return ret;
+}
+
+/*
+ * Function:
+ *		restore_fpu_info
+ *
+ * Description:
+ *		this function restores the FPU info of the task specified
+ *		from the arch structure specified in the argument
+ *
+ * Input:
+ * 	task,	pointer to the task structure of the task of which the
+ * 			FPU info needs to be restored
+ *
+ * 	arch,	pointer to the field_arch struture from where the fpu info
+ * 			needs to be restored
+ *
+ * Output:
+ * 	none
+ *
+ * Return value:
+ *	on success, returns 0
+ * 	on failure, returns negative integer
+ */
+int restore_fpu_info(struct task_struct *task, field_arch *arch)
+{
+	int ret = -1;
+
+	if((task == NULL)  || (arch == NULL)){
+		printk(KERN_ERR"process_server: invalid params to restore_fpu_info()");
+		goto exit;
+	}
+
+	//FPU migration code --- server
+	/* PF_USED_MATH is set if the task used the FPU before
+	 * fpu_counter is incremented every time you go in __switch_to while owning the FPU
+	 * has_fpu is true if the task is the owner of the FPU, thus the FPU contains its data
+	 * fpu.preload (see arch/x86/include/asm.i387.h:switch_fpu_prepare()) is a heuristic
+	 */
+	if (arch->task_flags & PF_USED_MATH)
+	//set_used_math();
+	set_stopped_child_used_math(task);
+
+	task->fpu_counter = arch->task_fpu_counter;
+
+	if (!fpu_allocated(&task->thread.fpu)) {
+		fpu_alloc(&task->thread.fpu);
+		fpu_finit(&task->thread.fpu);
+	}
+
+	struct fpu temp; temp.state = &arch->fpu_state;
+	fpu_copy(&task->thread.fpu, &temp);
+
+	PSPRINTK(KERN_ERR "%s: task flags %x fpu_counter %x has_fpu %x [%d:%d]\n",
+			__func__, task->flags, (int)task->fpu_counter, (int)task->thread.has_fpu,
+			(int)__thread_has_fpu(task), (int)fpu_allocated(&task->thread.fpu));
+
+	//FPU migration code --- is the following optional?
+	if (tsk_used_math(task) && task->fpu_counter >5)//fpu.preload
+	__math_state_restore(task);
+	ret = 0;
+
+exit:
+	return ret;
+}
+
+/*
+ * Function:
+ *		update_fpu_info
+ *
+ * Description:
+ *		this function updates the FPU info of the task specified
+ *
+ * Input:
+ * 	task,	pointer to the task structure of the task of which the
+ * 			FPU info needs to be updated
+ *
+ * Output:
+ * 	none
+ *
+ * Return value:
+ *	on success, returns 0
+ * 	on failure, returns negative integer
+ */
+int update_fpu_info(struct task_struct *task)
+{
+	ret = -1;
+
+	if(task == NULL){
+		printk(KERN_ERR"process_server: invalid params to update_fpu_info()");
+		goto exit;
+	}
+
+	if (tsk_used_math(task) && task->fpu_counter >5) //fpu.preload
+		__math_state_restore(task);
+	ret = 0;
+
+exit:
+	return ret;
+}
+
+#endif
+
+/*
+ * Function:
+ *		dump_processor_regs
+ *
+ * Description:
+ *		this function prints the architecture specific registers specified
+ *		in the input argument
+ *
+ * Input:
+ * 	task,	pointer to the architecture specific registers
+ *
+ * Output:
+ * 	none
+ *
+ * Return value:
+ *	on success, returns 0
+ * 	on failure, returns negative integer
+ */
+int dump_processor_regs(struct pt_regs* regs) {
+	int ret = -1;
+	unsigned long fs, gs;
+
+	if(regs == NULL){
+		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
+		goto exit;
+	}
+	printk(KERN_ALERT"DUMP REGS\n");
+
+	if(NULL != regs) {
+		printk(KERN_ALERT"r15{%lx}\n",regs->r15);
+		printk(KERN_ALERT"r14{%lx}\n",regs->r14);
+		printk(KERN_ALERT"r13{%lx}\n",regs->r13);
+		printk(KERN_ALERT"r12{%lx}\n",regs->r12);
+		printk(KERN_ALERT"r11{%lx}\n",regs->r11);
+		printk(KERN_ALERT"r10{%lx}\n",regs->r10);
+		printk(KERN_ALERT"r9{%lx}\n",regs->r9);
+		printk(KERN_ALERT"r8{%lx}\n",regs->r8);
+		printk(KERN_ALERT"bp{%lx}\n",regs->bp);
+		printk(KERN_ALERT"bx{%lx}\n",regs->bx);
+		printk(KERN_ALERT"ax{%lx}\n",regs->ax);
+		printk(KERN_ALERT"cx{%lx}\n",regs->cx);
+		printk(KERN_ALERT"dx{%lx}\n",regs->dx);
+		printk(KERN_ALERT"di{%lx}\n",regs->di);
+		printk(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
+		printk(KERN_ALERT"ip{%lx}\n",regs->ip);
+		printk(KERN_ALERT"cs{%lx}\n",regs->cs);
+		printk(KERN_ALERT"flags{%lx}\n",regs->flags);
+		printk(KERN_ALERT"sp{%lx}\n",regs->sp);
+		printk(KERN_ALERT"ss{%lx}\n",regs->ss);
+	}
+	rdmsrl(MSR_FS_BASE, fs);
+	rdmsrl(MSR_GS_BASE, gs);
+	printk(KERN_ALERT"fs{%lx}\n",fs);
+	printk(KERN_ALERT"gs{%lx}\n",gs);
+	printk(KERN_ALERT"REGS DUMP COMPLETE\n");
+	ret = 0;
+
+exit:
+	return ret;
+}

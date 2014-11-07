@@ -20,6 +20,7 @@
 #include <linux/mnt_namespace.h>
 #include <linux/utsname.h>
 #include <linux/pid_namespace.h>
+#include <linux/cpu_namespace.h>
 #include <net/net_namespace.h>
 #include <linux/ipc_namespace.h>
 #include <linux/proc_ns.h>
@@ -30,6 +31,7 @@ static struct kmem_cache *nsproxy_cachep;
 
 struct nsproxy init_nsproxy = {
 	.count			= ATOMIC_INIT(1),
+	.cpu_ns = &init_cpu_ns,
 	.uts_ns			= &init_uts_ns,
 #if defined(CONFIG_POSIX_MQUEUE) || defined(CONFIG_SYSVIPC)
 	.ipc_ns			= &init_ipc_ns,
@@ -57,8 +59,8 @@ static inline struct nsproxy *create_nsproxy(void)
  * leave it to the caller to do proper locking and attach it to task.
  */
 static struct nsproxy *create_new_namespaces(unsigned long flags,
-	struct task_struct *tsk, struct user_namespace *user_ns,
-	struct fs_struct *new_fs)
+		struct task_struct *tsk, struct user_namespace *user_ns,
+		struct fs_struct *new_fs)
 {
 	struct nsproxy *new_nsp;
 	int err;
@@ -98,8 +100,17 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 		goto out_net;
 	}
 
+	new_nsp->cpu_ns = copy_cpu_ns(flags, tsk->nsproxy->cpu_ns);
+	if (IS_ERR(new_nsp->cpu_ns)) {
+		err = PTR_ERR(new_nsp->cpu_ns);
+		goto out_cpu;
+	}
+
 	return new_nsp;
 
+out_cpu:
+	if (new_nsp->cpu_ns)
+		put_net(new_nsp->net_ns);
 out_net:
 	if (new_nsp->pid_ns_for_children)
 		put_pid_ns(new_nsp->pid_ns_for_children);
@@ -128,7 +139,7 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk)
 	struct nsproxy *new_ns;
 
 	if (likely(!(flags & (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
-			      CLONE_NEWPID | CLONE_NEWNET)))) {
+						CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWCPU)))) {
 		get_nsproxy(old_ns);
 		return 0;
 	}
@@ -144,7 +155,7 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk)
 	 * it along with CLONE_NEWIPC.
 	 */
 	if ((flags & (CLONE_NEWIPC | CLONE_SYSVSEM)) ==
-		(CLONE_NEWIPC | CLONE_SYSVSEM)) 
+			(CLONE_NEWIPC | CLONE_SYSVSEM)) 
 		return -EINVAL;
 
 	new_ns = create_new_namespaces(flags, tsk, user_ns, tsk->fs);
@@ -165,6 +176,9 @@ void free_nsproxy(struct nsproxy *ns)
 		put_ipc_ns(ns->ipc_ns);
 	if (ns->pid_ns_for_children)
 		put_pid_ns(ns->pid_ns_for_children);
+	if (ns->cpu_ns)
+		put_cpu_ns(ns->cpu_ns);
+
 	put_net(ns->net_ns);
 	kmem_cache_free(nsproxy_cachep, ns);
 }
@@ -174,13 +188,13 @@ void free_nsproxy(struct nsproxy *ns)
  * On success, returns the new nsproxy.
  */
 int unshare_nsproxy_namespaces(unsigned long unshare_flags,
-	struct nsproxy **new_nsp, struct cred *new_cred, struct fs_struct *new_fs)
+		struct nsproxy **new_nsp, struct cred *new_cred, struct fs_struct *new_fs)
 {
 	struct user_namespace *user_ns;
 	int err = 0;
 
 	if (!(unshare_flags & (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
-			       CLONE_NEWNET | CLONE_NEWPID)))
+					CLONE_NEWNET | CLONE_NEWPID | CLONE_NEWCPU)))
 		return 0;
 
 	user_ns = new_cred ? new_cred->user_ns : current_user_ns();
@@ -188,7 +202,7 @@ int unshare_nsproxy_namespaces(unsigned long unshare_flags,
 		return -EPERM;
 
 	*new_nsp = create_new_namespaces(unshare_flags, current, user_ns,
-					 new_fs ? new_fs : current->fs);
+			new_fs ? new_fs : current->fs);
 	if (IS_ERR(*new_nsp)) {
 		err = PTR_ERR(*new_nsp);
 		goto out;

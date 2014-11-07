@@ -4,6 +4,10 @@
 #include <linux/seq_file.h>
 #include <linux/cpufreq.h>
 
+/*mklinux_akshay*/
+extern int remote_proc_cpu_info(struct seq_file *m);
+
+
 /*
  *	Get CPU information for use by the procfs.
  */
@@ -61,6 +65,9 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	int i;
 
 	cpu = c->cpu_index;
+	/*mklinux_akshay*/
+	seq_printf(m, " Current CPU \n");
+	/*mklinux_akshay*/
 	seq_printf(m, "processor\t: %u\n"
 		   "vendor_id\t: %s\n"
 		   "cpu family\t: %d\n"
@@ -127,6 +134,11 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	}
 
 	seq_printf(m, "\n\n");
+
+	//append remote cpu info
+	/*mklinux_akshay*/
+	remote_proc_cpu_info(m);
+	/*mklinux_akshay*/
 
 	return 0;
 }

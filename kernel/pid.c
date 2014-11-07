@@ -38,6 +38,9 @@
 #include <linux/syscalls.h>
 #include <linux/proc_ns.h>
 #include <linux/proc_fs.h>
+/*mklinux_akshay*/
+#include <popcorn/pid.h>
+//#include <popcorn/init.h>
 
 #define pid_hashfn(nr, ns)	\
 	hash_long((unsigned long)nr + (unsigned long)ns, pidhash_shift)
@@ -46,6 +49,7 @@ static unsigned int pidhash_shift = 4;
 struct pid init_struct_pid = INIT_STRUCT_PID;
 
 int pid_max = PID_MAX_DEFAULT;
+int conf_id =CONFIG_BASE_SMALL;
 
 #define RESERVED_PIDS		300
 
@@ -102,9 +106,16 @@ static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(pidmap_lock);
 static void free_pidmap(struct upid *upid)
 {
 	int nr = upid->nr;
+
+	/*mklinux_akshay*/
+	int nr_t= ORIG_PID(upid->nr);
+	//printk(KERN_ERR "Free GLobal PID %d:--: %d",nr_t,nr);
+	nr=nr_t;/*mklinux_akshay*/
+
 	struct pidmap *map = upid->ns->pidmap + nr / BITS_PER_PAGE;
 	int offset = nr & BITS_PER_PAGE_MASK;
 
+	//printk(KERN_ERR "Free offset %d:\n",offset);
 	clear_bit(offset, map->page);
 	atomic_inc(&map->nr_free);
 }
@@ -295,7 +306,7 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 {
 	struct pid *pid;
 	enum pid_type type;
-	int i, nr;
+	int i, nr,nr_t=0;/*mklinux_akshay*/
 	struct pid_namespace *tmp;
 	struct upid *upid;
 
@@ -309,7 +320,13 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 		nr = alloc_pidmap(tmp);
 		if (nr < 0)
 			goto out_free;
+		if (nr != 1)
+		{
+			nr_t = GLOBAL_PID(nr);
+			nr=nr_t;
+		}
 
+		//printk(KERN_ERR "Create GLobal PID %d:--:%d",nr_t,nr);/*mklinux_akshay*/
 		pid->numbers[i].nr = nr;
 		pid->numbers[i].ns = tmp;
 		tmp = tmp->parent;
@@ -551,11 +568,20 @@ EXPORT_SYMBOL_GPL(task_active_pid_ns);
 struct pid *find_ge_pid(int nr, struct pid_namespace *ns)
 {
 	struct pid *pid;
+	int global = (nr & GLOBAL_PID_MASK);
+	int nr_t=0;
+	do {/*mklinux_akshay*/
+		if (global && !(nr & GLOBAL_PID_MASK))
+					{nr_t = GLOBAL_PID(nr);nr=nr_t;}
 
-	do {
-		pid = find_pid_ns(nr, ns);
+		//printk(KERN_ERR "Find GLobal PID %d:--:%d",nr_t,nr);
+		pid = find_pid_ns(GLOBAL_PID(nr), ns);/*mklinux_akshay*/
+
 		if (pid)
 			break;
+		if (global) {
+			nr_t = ORIG_PID(nr);nr=nr_t;
+		}/*mklinux_akshay*/
 		nr = next_pidmap(ns, nr);
 	} while (nr > 0);
 
@@ -592,7 +618,7 @@ void __init pidmap_init(void)
 	pid_max_min = max_t(int, pid_max_min,
 				PIDS_PER_CPU_MIN * num_possible_cpus());
 	pr_info("pid_max: default: %u minimum: %u\n", pid_max, pid_max_min);
-
+	printk(KERN_ERR "Max--limit %d:--:%d",PID_MAX_DEFAULT ,PID_MAX_LIMIT);
 	init_pid_ns.pidmap[0].page = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	/* Reserve PID 0. We never call free_pidmap(0) */
 	set_bit(0, init_pid_ns.pidmap[0].page);

@@ -438,6 +438,35 @@ struct proc_dir_entry *proc_mkdir(const char *name,
 }
 EXPORT_SYMBOL(proc_mkdir);
 
+struct proc_dir_entry *create_proc_entry(const char *name, mode_t mode,
+                                          struct proc_dir_entry *parent)
+ {
+         struct proc_dir_entry *ent;
+         nlink_t nlink;
+ 
+         if (S_ISDIR(mode)) {
+                 if ((mode & S_IALLUGO) == 0)
+                         mode |= S_IRUGO | S_IXUGO;
+                 nlink = 2;
+         } else {
+                 if ((mode & S_IFMT) == 0)
+                         mode |= S_IFREG;
+                 if ((mode & S_IALLUGO) == 0)
+                         mode |= S_IRUGO;
+                 nlink = 1;
+         }
+ 
+         ent = __proc_create(&parent, name, mode, nlink);
+         if (ent) {
+                 if (proc_register(parent, ent) < 0) {
+                         kfree(ent);
+                         ent = NULL;
+                 }
+         }
+         return ent;
+}
+EXPORT_SYMBOL(create_proc_entry);
+
 struct proc_dir_entry *proc_create_data(const char *name, umode_t mode,
 					struct proc_dir_entry *parent,
 					const struct file_operations *proc_fops,

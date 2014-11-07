@@ -27,6 +27,7 @@ extern const struct proc_ns_operations ipcns_operations;
 extern const struct proc_ns_operations pidns_operations;
 extern const struct proc_ns_operations userns_operations;
 extern const struct proc_ns_operations mntns_operations;
+extern const struct proc_ns_operations cpuns_operations;
 
 /*
  * We always define these enumerators
@@ -66,9 +67,37 @@ static inline int proc_alloc_inum(unsigned int *inum)
 	*inum = 1;
 	return 0;
 }
+
 static inline void proc_free_inum(unsigned int inum) {}
 static inline bool proc_ns_inode(struct inode *inode) { return false; }
 
 #endif /* CONFIG_PROC_FS */
+
+/*mklinux_akshay*/
+
+struct proc_remote_pid_info;
+
+union proc_remote_op {
+        int (*proc_get_link)(struct inode *, struct path *);
+        int (*proc_read)(struct proc_remote_pid_info *task, char *page);
+        int (*proc_show)(struct file *file, struct proc_remote_pid_info *task,
+                        char *buf, size_t count);
+};
+
+
+struct proc_remote_pid_info {
+        pid_t pid;
+        int Kernel_Num;
+        uid_t euid;
+        gid_t egid;
+        union proc_remote_op op;
+};
+
+struct tgid_iter {
+        unsigned int tgid;
+        struct task_struct *task;
+};
+
+/*mklinux_akshay*/
 
 #endif /* _LINUX_PROC_NS_H */

@@ -59,6 +59,7 @@
 #include <linux/gfp.h>
 #include <linux/migrate.h>
 #include <linux/string.h>
+#include <linux/process_server.h>
 
 #include <asm/io.h>
 #include <asm/pgalloc.h>
@@ -66,7 +67,6 @@
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
-
 #include "internal.h"
 
 #ifdef LAST_NID_NOT_IN_PAGE_FLAGS
@@ -693,6 +693,11 @@ static inline bool is_cow_mapping(vm_flags_t flags)
 	return (flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE;
 }
 
+int is_zero_page(unsigned long pfn)
+{
+	return is_zero_pfn(pfn);
+}
+
 /*
  * vm_normal_page -- This function gets the "struct page" associated with a pte.
  *
@@ -1115,6 +1120,18 @@ again:
 			tlb_remove_tlb_entry(tlb, pte, addr);
 			if (unlikely(!page))
 				continue;
+
+			//Multikernel
+			if(page->replicated==1){
+#if DIFF_PAGE
+				if(page->old_page_version!=NULL){
+					kfree(page->old_page_version);
+					page->old_page_version= NULL;
+				}
+#endif
+				process_server_clean_page(page);
+			}
+
 			if (unlikely(details) && details->nonlinear_vma
 			    && linear_page_index(details->nonlinear_vma,
 						addr) != page->index) {
@@ -1141,6 +1158,68 @@ again:
 				break;
 			continue;
 		}
+		//Multikernel
+		else{
+
+			if(pte_none(pte_clear_flags(ptent, _PAGE_UNUSED1))){
+				ptent= pte_clear_flags(ptent, _PAGE_UNUSED1);
+				set_pte_at_notify(mm, addr, pte, ptent);
+				continue;
+			}
+
+			struct page *page;
+			page= pte_page(ptent);
+
+			if(page!=vm_normal_page(vma, addr, ptent))
+				printk("page!=vm_normal_page in zap pte invalid\n");
+
+			if (unlikely(!page))
+				continue;
+
+			if(page->replicated==1){
+
+				if(page->status==REPLICATION_STATUS_INVALID){
+					if (unlikely(details) && page) {
+						printk("----------------details-----------\n");
+					}
+					ptent = ptep_get_and_clear_full(mm, addr, pte,
+							tlb->fullmm);
+					tlb_remove_tlb_entry(tlb, pte, addr);
+					if (unlikely(!page))
+						continue;
+
+					if (PageAnon(page))
+						rss[MM_ANONPAGES]--;
+					else {
+						rss[MM_FILEPAGES]--;
+					}
+					page_remove_rmap(page);
+					if (unlikely(page_mapcount(page) < 0)){
+						printk("%s B\n",__func__);
+						print_bad_pte(vma, addr, ptent, page);
+					}
+					force_flush = !__tlb_remove_page(tlb, page);
+#if DIFF_PAGE
+					if(page->old_page_version!=NULL){
+						kfree(page->old_page_version);
+						page->old_page_version= NULL;
+					}
+#endif
+					process_server_clean_page(page);
+					if (force_flush)
+						break;
+					continue;
+				}
+#if DIFF_PAGE
+				if(page->old_page_version!=NULL){
+					kfree(page->old_page_version);
+					page->old_page_version= NULL;
+				}
+#endif
+				process_server_clean_page(page);
+			}
+		}
+
 		/*
 		 * If details->check_mapping, we leave swap entries;
 		 * if details->nonlinear_vma, we leave file entries.
@@ -1821,7 +1900,13 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 				if (foll_flags & FOLL_NOWAIT)
 					fault_flags |= (FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_RETRY_NOWAIT);
 
-				ret = handle_mm_fault(mm, vma, start,
+				if(current->tgroup_distributed==1)
+					ret= process_server_try_handle_mm_fault(current,
+							mm, vma,
+							start, fault_flags,
+							0);
+				else
+					ret = handle_mm_fault(mm, vma, start,
 							fault_flags);
 
 				if (ret & VM_FAULT_ERROR) {
@@ -1836,8 +1921,14 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 						else
 							return -EFAULT;
 					}
-					if (ret & VM_FAULT_SIGBUS)
-						return i ? i : -EFAULT;
+					if(current->tgroup_distributed==1){
+						if (ret & VM_FAULT_SIGBUS || ret & VM_FAULT_REPLICATION_PROTOCOL)
+							return i ? i : -EFAULT;
+					}
+					else{
+						if (ret & VM_FAULT_SIGBUS)
+							return i ? i : -EFAULT;
+					}	
 					BUG();
 				}
 
@@ -1932,6 +2023,27 @@ int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
 	int ret;
 
 	vma = find_extend_vma(mm, address);
+
+        if(tsk->tgroup_distributed==1){
+
+                if (!vma || address < vma->vm_start)
+                        vma=NULL;
+                ret= process_server_try_handle_mm_fault(tsk,
+                                mm, vma,
+                                address, fault_flags,
+                                0);
+
+                if (ret & VM_FAULT_ERROR) {
+                        if (ret & VM_FAULT_OOM)
+                                return -ENOMEM;
+                        if (ret & (VM_FAULT_HWPOISON | VM_FAULT_HWPOISON_LARGE))
+                                return -EHWPOISON;
+                        if (ret & VM_FAULT_SIGBUS|| ret & VM_FAULT_REPLICATION_PROTOCOL)
+                                return -EFAULT;
+                        BUG();
+                }
+
+        }else{
 	if (!vma || address < vma->vm_start)
 		return -EFAULT;
 
@@ -1944,6 +2056,7 @@ int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
 		if (ret & VM_FAULT_SIGBUS)
 			return -EFAULT;
 		BUG();
+		}
 	}
 	if (tsk) {
 		if (ret & VM_FAULT_MAJOR)
@@ -2582,6 +2695,217 @@ static inline void cow_user_page(struct page *dst, struct page *src, unsigned lo
 		flush_dcache_page(dst);
 	} else
 		copy_user_highpage(dst, src, va, vma);
+}
+
+//do cow page for Multikernel
+int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *vma,
+		unsigned long address, pte_t *page_table, pmd_t *pmd,
+		spinlock_t *ptl, pte_t orig_pte)
+	__releases(ptl)
+{
+	struct page *old_page, *new_page;
+	pte_t entry;
+	int ret = 0;
+	int page_mkwrite = 0;
+	struct page *dirty_page = NULL;
+
+	old_page = vm_normal_page(vma, address, orig_pte);
+	if (!old_page) {
+		if ((vma->vm_flags & (VM_WRITE|VM_SHARED)) ==
+				     (VM_WRITE|VM_SHARED))
+			goto reuse;
+		goto gotten;
+	}
+
+  	 	 	 
+	if (PageAnon(old_page) && !PageKsm(old_page)) {
+		if (!trylock_page(old_page)) {
+			page_cache_get(old_page);
+			pte_unmap_unlock(page_table, ptl);
+			lock_page(old_page);
+			page_table = pte_offset_map_lock(mm, pmd, address,
+							 &ptl);
+			if (!pte_same(*page_table, orig_pte)) {
+				unlock_page(old_page);
+				goto unlock;
+			}
+			page_cache_release(old_page);
+		}
+		unlock_page(old_page);
+	} else if (unlikely((vma->vm_flags & (VM_WRITE|VM_SHARED)) ==
+					(VM_WRITE|VM_SHARED))) {
+		
+		if (vma->vm_ops && vma->vm_ops->page_mkwrite) {
+			struct vm_fault vmf;
+			int tmp;
+
+			vmf.virtual_address = (void __user *)(address &
+								PAGE_MASK);
+			vmf.pgoff = old_page->index;
+			vmf.flags = FAULT_FLAG_WRITE|FAULT_FLAG_MKWRITE;
+			vmf.page = old_page;
+
+			page_cache_get(old_page);
+			pte_unmap_unlock(page_table, ptl);
+
+			tmp = vma->vm_ops->page_mkwrite(vma, &vmf);
+			if (unlikely(tmp &
+					(VM_FAULT_ERROR | VM_FAULT_NOPAGE))) {
+				ret = tmp;
+				goto unwritable_page;
+			}
+			if (unlikely(!(tmp & VM_FAULT_LOCKED))) {
+				lock_page(old_page);
+				if (!old_page->mapping) {
+					ret = 0; /* retry the fault */
+					unlock_page(old_page);
+					goto unwritable_page;
+				}
+			} else
+				VM_BUG_ON(!PageLocked(old_page));
+
+			page_table = pte_offset_map_lock(mm, pmd, address,
+							 &ptl);
+			if (!pte_same(*page_table, orig_pte)) {
+				unlock_page(old_page);
+				goto unlock;
+			}
+
+			page_mkwrite = 1;
+		}
+		dirty_page = old_page;
+		get_page(dirty_page);
+
+reuse:
+		flush_cache_page(vma, address, pte_pfn(orig_pte));
+		entry = pte_mkyoung(orig_pte);
+		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+		if (ptep_set_access_flags(vma, address, page_table, entry,1))
+			update_mmu_cache(vma, address, page_table);
+		pte_unmap_unlock(page_table, ptl);
+		ret |= VM_FAULT_WRITE;
+
+		if (!dirty_page)
+			return ret;
+
+ 
+		if (!page_mkwrite) {
+			wait_on_page_locked(dirty_page);
+			set_page_dirty_balance(dirty_page, page_mkwrite);
+		}
+		put_page(dirty_page);
+		if (page_mkwrite) {
+			struct address_space *mapping = dirty_page->mapping;
+
+			set_page_dirty(dirty_page);
+			unlock_page(dirty_page);
+			page_cache_release(dirty_page);
+			if (mapping)	{
+
+
+				balance_dirty_pages_ratelimited(mapping);
+			}
+		}
+
+		/* file_update_time outside page_lock */
+		if (vma->vm_file)
+			file_update_time(vma->vm_file);
+
+		return ret;
+	}
+
+	/*
+ *	 * Ok, we need to copy. Oh, well..
+ * 	 	 */
+	page_cache_get(old_page);
+gotten:
+	pte_unmap_unlock(page_table, ptl);
+
+	if (unlikely(anon_vma_prepare(vma)))
+		goto oom;
+
+	if (is_zero_pfn(pte_pfn(orig_pte))) {
+		new_page = alloc_zeroed_user_highpage_movable(vma, address);
+		if (!new_page)
+			goto oom;
+	} else {
+		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
+		if (!new_page)
+			goto oom;
+		cow_user_page(new_page, old_page, address, vma);
+	}
+	__SetPageUptodate(new_page);
+
+	if (mem_cgroup_newpage_charge(new_page, mm, GFP_KERNEL))
+		goto oom_free_new;
+
+	/*
+ * 	 * Re-check the pte - we dropped the lock
+ *	 	 */
+	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+	if (likely(pte_same(*page_table, orig_pte))) {
+		if (old_page) {
+			if (!PageAnon(old_page)) {
+				dec_mm_counter_fast(mm, MM_FILEPAGES);
+				inc_mm_counter_fast(mm, MM_ANONPAGES);
+			}
+		} else
+			inc_mm_counter_fast(mm, MM_ANONPAGES);
+		flush_cache_page(vma, address, pte_pfn(orig_pte));
+		entry = mk_pte(new_page, vma->vm_page_prot);
+		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+		 	
+		ptep_clear_flush(vma, address, page_table);
+		page_add_new_anon_rmap(new_page, vma, address);
+		/*
+ * 		 * We call the notify macro here because, when using secondary
+ * 		 		 * mmu page tables (such as kvm shadow page tables), we want the
+ * 		 		 		 * new page to be mapped directly into the secondary page table.
+* 		 		 		 		 */
+		set_pte_at_notify(mm, address, page_table, entry);
+		update_mmu_cache(vma, address, page_table);
+		if (old_page) {
+			page_remove_rmap(old_page);
+		}
+
+		/* Free the old page.. */
+		new_page = old_page;
+		ret |= VM_FAULT_WRITE;
+	} else
+		mem_cgroup_uncharge_page(new_page);
+
+	if (new_page)
+		page_cache_release(new_page);
+unlock:
+	pte_unmap_unlock(page_table, ptl);
+	if (old_page) {
+		/*
+ * 		 * Don't let another task, with possibly unlocked vma,
+ * 		 		 * keep the mlocked page.
+ * 		 		 		 */
+		if ((ret & VM_FAULT_WRITE) && (vma->vm_flags & VM_LOCKED)) {
+			lock_page(old_page);	/* LRU manipulation */
+			munlock_vma_page(old_page);
+			unlock_page(old_page);
+		}
+		page_cache_release(old_page);
+	}
+	return ret;
+oom_free_new:
+	page_cache_release(new_page);
+oom:
+	if (old_page) {
+		if (page_mkwrite) {
+			unlock_page(old_page);
+			page_cache_release(old_page);
+		}
+		page_cache_release(old_page);
+	}
+	return VM_FAULT_OOM;
+
+unwritable_page:
+	page_cache_release(old_page);
+	return ret;
 }
 
 /*

@@ -50,6 +50,10 @@ typedef struct siginfo {
 	int si_errno;
 	int si_code;
 
+	/*mklinux_akshay*/
+	bool si_remote;
+	/*mklinux_akshay*/
+
 	union {
 		int _pad[SI_PAD_SIZE];
 

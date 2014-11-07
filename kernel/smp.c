@@ -12,6 +12,7 @@
 #include <linux/gfp.h>
 #include <linux/smp.h>
 #include <linux/cpu.h>
+#include <linux/cpu_namespace.h>
 
 #include "smpboot.h"
 
@@ -35,41 +36,41 @@ struct call_single_queue {
 
 static DEFINE_PER_CPU_SHARED_ALIGNED(struct call_single_queue, call_single_queue);
 
-static int
+	static int
 hotplug_cfd(struct notifier_block *nfb, unsigned long action, void *hcpu)
 {
 	long cpu = (long)hcpu;
 	struct call_function_data *cfd = &per_cpu(cfd_data, cpu);
 
 	switch (action) {
-	case CPU_UP_PREPARE:
-	case CPU_UP_PREPARE_FROZEN:
-		if (!zalloc_cpumask_var_node(&cfd->cpumask, GFP_KERNEL,
-				cpu_to_node(cpu)))
-			return notifier_from_errno(-ENOMEM);
-		if (!zalloc_cpumask_var_node(&cfd->cpumask_ipi, GFP_KERNEL,
-				cpu_to_node(cpu))) {
-			free_cpumask_var(cfd->cpumask);
-			return notifier_from_errno(-ENOMEM);
-		}
-		cfd->csd = alloc_percpu(struct call_single_data);
-		if (!cfd->csd) {
-			free_cpumask_var(cfd->cpumask_ipi);
-			free_cpumask_var(cfd->cpumask);
-			return notifier_from_errno(-ENOMEM);
-		}
-		break;
+		case CPU_UP_PREPARE:
+		case CPU_UP_PREPARE_FROZEN:
+			if (!zalloc_cpumask_var_node(&cfd->cpumask, GFP_KERNEL,
+						cpu_to_node(cpu)))
+				return notifier_from_errno(-ENOMEM);
+			if (!zalloc_cpumask_var_node(&cfd->cpumask_ipi, GFP_KERNEL,
+						cpu_to_node(cpu))) {
+				free_cpumask_var(cfd->cpumask);
+				return notifier_from_errno(-ENOMEM);
+			}
+			cfd->csd = alloc_percpu(struct call_single_data);
+			if (!cfd->csd) {
+				free_cpumask_var(cfd->cpumask_ipi);
+				free_cpumask_var(cfd->cpumask);
+				return notifier_from_errno(-ENOMEM);
+			}
+			break;
 
 #ifdef CONFIG_HOTPLUG_CPU
-	case CPU_UP_CANCELED:
-	case CPU_UP_CANCELED_FROZEN:
+		case CPU_UP_CANCELED:
+		case CPU_UP_CANCELED_FROZEN:
 
-	case CPU_DEAD:
-	case CPU_DEAD_FROZEN:
-		free_cpumask_var(cfd->cpumask);
-		free_cpumask_var(cfd->cpumask_ipi);
-		free_percpu(cfd->csd);
-		break;
+		case CPU_DEAD:
+		case CPU_DEAD_FROZEN:
+			free_cpumask_var(cfd->cpumask);
+			free_cpumask_var(cfd->cpumask_ipi);
+			free_percpu(cfd->csd);
+			break;
 #endif
 	};
 
@@ -139,7 +140,7 @@ static void csd_unlock(struct call_single_data *csd)
  * for execution on the given CPU. data must already have
  * ->func, ->info, and ->flags set.
  */
-static
+	static
 void generic_exec_single(int cpu, struct call_single_data *csd, int wait)
 {
 	struct call_single_queue *dst = &per_cpu(call_single_queue, cpu);
@@ -210,7 +211,7 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(struct call_single_data, csd_data);
  * Returns 0 on success, else a negative status code.
  */
 int smp_call_function_single(int cpu, smp_call_func_t func, void *info,
-			     int wait)
+		int wait)
 {
 	struct call_single_data d = {
 		.flags = 0,
@@ -232,7 +233,7 @@ int smp_call_function_single(int cpu, smp_call_func_t func, void *info,
 	 * can't happen.
 	 */
 	WARN_ON_ONCE(cpu_online(this_cpu) && irqs_disabled()
-		     && !oops_in_progress);
+			&& !oops_in_progress);
 
 	if (cpu == this_cpu) {
 		local_irq_save(flags);
@@ -276,7 +277,7 @@ EXPORT_SYMBOL(smp_call_function_single);
  *	3) any other online cpu in @mask
  */
 int smp_call_function_any(const struct cpumask *mask,
-			  smp_call_func_t func, void *info, int wait)
+		smp_call_func_t func, void *info, int wait)
 {
 	unsigned int cpu;
 	const struct cpumask *nodemask;
@@ -290,7 +291,7 @@ int smp_call_function_any(const struct cpumask *mask,
 	/* Try for same node. */
 	nodemask = cpumask_of_node(cpu_to_node(cpu));
 	for (cpu = cpumask_first_and(nodemask, mask); cpu < nr_cpu_ids;
-	     cpu = cpumask_next_and(cpu, nodemask, mask)) {
+			cpu = cpumask_next_and(cpu, nodemask, mask)) {
 		if (cpu_online(cpu))
 			goto call;
 	}
@@ -315,7 +316,7 @@ EXPORT_SYMBOL_GPL(smp_call_function_any);
  * other structures, for instance.
  */
 void __smp_call_function_single(int cpu, struct call_single_data *csd,
-				int wait)
+		int wait)
 {
 	unsigned int this_cpu;
 	unsigned long flags;
@@ -328,7 +329,7 @@ void __smp_call_function_single(int cpu, struct call_single_data *csd,
 	 * can't happen.
 	 */
 	WARN_ON_ONCE(cpu_online(smp_processor_id()) && wait && irqs_disabled()
-		     && !oops_in_progress);
+			&& !oops_in_progress);
 
 	if (cpu == this_cpu) {
 		local_irq_save(flags);
@@ -356,7 +357,7 @@ void __smp_call_function_single(int cpu, struct call_single_data *csd,
  * must be disabled when calling this function.
  */
 void smp_call_function_many(const struct cpumask *mask,
-			    smp_call_func_t func, void *info, bool wait)
+		smp_call_func_t func, void *info, bool wait)
 {
 	struct call_function_data *cfd;
 	int cpu, next_cpu, this_cpu = smp_processor_id();
@@ -368,7 +369,7 @@ void smp_call_function_many(const struct cpumask *mask,
 	 * can't happen.
 	 */
 	WARN_ON_ONCE(cpu_online(this_cpu) && irqs_disabled()
-		     && !oops_in_progress && !early_boot_irqs_disabled);
+			&& !oops_in_progress && !early_boot_irqs_disabled);
 
 	/* Try to fastpath.  So, what's a CPU they want? Ignoring this one. */
 	cpu = cpumask_first_and(mask, cpu_online_mask);
@@ -409,7 +410,7 @@ void smp_call_function_many(const struct cpumask *mask,
 	for_each_cpu(cpu, cfd->cpumask) {
 		struct call_single_data *csd = per_cpu_ptr(cfd->csd, cpu);
 		struct call_single_queue *dst =
-					&per_cpu(call_single_queue, cpu);
+			&per_cpu(call_single_queue, cpu);
 		unsigned long flags;
 
 		csd_lock(csd);
@@ -498,6 +499,14 @@ static int __init nrcpus(char *str)
 	if (nr_cpus > 0 && nr_cpus < nr_cpu_ids)
 		nr_cpu_ids = nr_cpus;
 
+	//#ifdef CONFIG_CPU_NAMESPACE
+	init_cpu_ns.nr_cpu_ids = nr_cpu_ids;
+	init_cpu_ns._nr_cpumask_bits = nr_cpumask_bits;
+	//	printk(KERN_INFO"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
+	printk(KERN_ERR"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
+			__func__, nr_cpu_ids, nr_cpumask_bits);
+	//#endif
+
 	return 0;
 }
 
@@ -513,6 +522,22 @@ static int __init maxcpus(char *str)
 }
 
 early_param("maxcpus", maxcpus);
+
+/* this is only valid in Popcorn */
+unsigned int offset_cpus =0;
+EXPORT_SYMBOL(offset_cpus);
+
+static int __init offsetcpus(char *str)
+{
+#ifdef CONFIG_X86_EARLYMIC
+	offset_cpus=4;
+#else
+	get_option(&str, &offset_cpus);
+#endif
+	return 0;
+}
+
+early_param("offsetcpus", offsetcpus);
 
 /* Setup number of possible processor ids */
 int nr_cpu_ids __read_mostly = NR_CPUS;
@@ -581,7 +606,7 @@ EXPORT_SYMBOL(on_each_cpu);
  * early_boot_irqs_disabled is set.
  */
 void on_each_cpu_mask(const struct cpumask *mask, smp_call_func_t func,
-			void *info, bool wait)
+		void *info, bool wait)
 {
 	int cpu = get_cpu();
 
@@ -624,8 +649,8 @@ EXPORT_SYMBOL(on_each_cpu_mask);
  * from a hardware interrupt handler or from a bottom half handler.
  */
 void on_each_cpu_cond(bool (*cond_func)(int cpu, void *info),
-			smp_call_func_t func, void *info, bool wait,
-			gfp_t gfp_flags)
+		smp_call_func_t func, void *info, bool wait,
+		gfp_t gfp_flags)
 {
 	cpumask_var_t cpus;
 	int cpu, ret;
@@ -649,7 +674,7 @@ void on_each_cpu_cond(bool (*cond_func)(int cpu, void *info),
 		for_each_online_cpu(cpu)
 			if (cond_func(cpu, info)) {
 				ret = smp_call_function_single(cpu, func,
-								info, wait);
+						info, wait);
 				WARN_ON_ONCE(!ret);
 			}
 		preempt_enable();

@@ -245,6 +245,9 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 	regs->cs		= _cs;
 	regs->ss		= _ss;
 	regs->flags		= X86_EFLAGS_IF;
+
+	if (!current->executing_for_remote)
+		free_thread_xstate(current);
 }
 
 void
@@ -254,6 +257,10 @@ start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 			    __USER_CS, __USER_DS, 0);
 }
 
+unsigned long read_old_rsp(){
+	//return percpu_read(old_rsp);
+	return this_cpu_read_1(old_rsp);
+}
 #ifdef CONFIG_IA32_EMULATION
 void start_thread_ia32(struct pt_regs *regs, u32 new_ip, u32 new_sp)
 {

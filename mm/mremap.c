@@ -21,6 +21,8 @@
 #include <linux/syscalls.h>
 #include <linux/mmu_notifier.h>
 #include <linux/sched/sysctl.h>
+//Multikernel
+#include <linux/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -50,7 +52,7 @@ static pmd_t *get_old_pmd(struct mm_struct *mm, unsigned long addr)
 }
 
 static pmd_t *alloc_new_pmd(struct mm_struct *mm, struct vm_area_struct *vma,
-			    unsigned long addr)
+		unsigned long addr)
 {
 	pgd_t *pgd;
 	pud_t *pud;
@@ -139,7 +141,7 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 	arch_enter_lazy_mmu_mode();
 
 	for (; old_addr < old_end; old_pte++, old_addr += PAGE_SIZE,
-				   new_pte++, new_addr += PAGE_SIZE) {
+			new_pte++, new_addr += PAGE_SIZE) {
 		if (pte_none(*old_pte))
 			continue;
 		pte = ptep_get_and_clear(mm, old_addr, old_pte);
@@ -196,8 +198,8 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 			int err = 0;
 			if (extent == HPAGE_PMD_SIZE)
 				err = move_huge_pmd(vma, new_vma, old_addr,
-						    new_addr, old_end,
-						    old_pmd, new_pmd);
+						new_addr, old_end,
+						old_pmd, new_pmd);
 			if (err > 0) {
 				need_flush = true;
 				continue;
@@ -207,7 +209,7 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 			VM_BUG_ON(pmd_trans_huge(*old_pmd));
 		}
 		if (pmd_none(*new_pmd) && __pte_alloc(new_vma->vm_mm, new_vma,
-						      new_pmd, new_addr))
+					new_pmd, new_addr))
 			break;
 		next = (new_addr + PMD_SIZE) & PMD_MASK;
 		if (extent > next - new_addr)
@@ -215,7 +217,7 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 		if (extent > LATENCY_LIMIT)
 			extent = LATENCY_LIMIT;
 		move_ptes(vma, old_pmd, old_addr, old_addr + extent,
-			  new_vma, new_pmd, new_addr, need_rmap_locks);
+				new_vma, new_pmd, new_addr, need_rmap_locks);
 		need_flush = true;
 	}
 	if (likely(need_flush))
@@ -256,18 +258,18 @@ static unsigned long move_vma(struct vm_area_struct *vma,
 	 * so KSM can come around to merge on vma and new_vma afterwards.
 	 */
 	err = ksm_madvise(vma, old_addr, old_addr + old_len,
-						MADV_UNMERGEABLE, &vm_flags);
+			MADV_UNMERGEABLE, &vm_flags);
 	if (err)
 		return err;
 
 	new_pgoff = vma->vm_pgoff + ((old_addr - vma->vm_start) >> PAGE_SHIFT);
 	new_vma = copy_vma(&vma, new_addr, new_len, new_pgoff,
-			   &need_rmap_locks);
+			&need_rmap_locks);
 	if (!new_vma)
 		return -ENOMEM;
 
 	moved_len = move_page_tables(vma, old_addr, new_vma, new_addr, old_len,
-				     need_rmap_locks);
+			need_rmap_locks);
 	if (moved_len < old_len) {
 		/*
 		 * On error, move entries back from new area to old,
@@ -275,7 +277,7 @@ static unsigned long move_vma(struct vm_area_struct *vma,
 		 * and then proceed to unmap new area instead of old.
 		 */
 		move_page_tables(new_vma, new_addr, vma, old_addr, moved_len,
-				 true);
+				true);
 		vma = new_vma;
 		old_len = new_len;
 		old_addr = new_addr;
@@ -287,7 +289,7 @@ static unsigned long move_vma(struct vm_area_struct *vma,
 		vma->vm_flags &= ~VM_ACCOUNT;
 		excess = vma->vm_end - vma->vm_start - old_len;
 		if (old_addr > vma->vm_start &&
-		    old_addr + old_len < vma->vm_end)
+				old_addr + old_len < vma->vm_end)
 			split = 1;
 	}
 
@@ -326,7 +328,7 @@ static unsigned long move_vma(struct vm_area_struct *vma,
 }
 
 static struct vm_area_struct *vma_to_resize(unsigned long addr,
-	unsigned long old_len, unsigned long new_len, unsigned long *p)
+		unsigned long old_len, unsigned long new_len, unsigned long *p)
 {
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma = find_vma(mm, addr);
@@ -384,7 +386,7 @@ Eagain:
 	return ERR_PTR(-EAGAIN);
 }
 
-static unsigned long mremap_to(unsigned long addr, unsigned long old_len,
+unsigned long mremap_to(unsigned long addr, unsigned long old_len,
 		unsigned long new_addr, unsigned long new_len, bool *locked)
 {
 	struct mm_struct *mm = current->mm;
@@ -430,8 +432,8 @@ static unsigned long mremap_to(unsigned long addr, unsigned long old_len,
 		map_flags |= MAP_SHARED;
 
 	ret = get_unmapped_area(vma->vm_file, new_addr, new_len, vma->vm_pgoff +
-				((addr - vma->vm_start) >> PAGE_SHIFT),
-				map_flags);
+			((addr - vma->vm_start) >> PAGE_SHIFT),
+			map_flags);
 	if (ret & ~PAGE_MASK)
 		goto out1;
 
@@ -453,7 +455,7 @@ static int vma_expandable(struct vm_area_struct *vma, unsigned long delta)
 	if (vma->vm_next && vma->vm_next->vm_start < end) /* intersection */
 		return 0;
 	if (get_unmapped_area(NULL, vma->vm_start, end - vma->vm_start,
-			      0, MAP_FIXED) & ~PAGE_MASK)
+				0, MAP_FIXED) & ~PAGE_MASK)
 		return 0;
 	return 1;
 }
@@ -472,8 +474,10 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
 	unsigned long ret = -EINVAL;
+	long distr_ret = -EINVAL;
 	unsigned long charged = 0;
 	bool locked = false;
+	int distributed= 0;
 
 	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
 		return ret;
@@ -496,6 +500,28 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 		return ret;
 
 	down_write(&current->mm->mmap_sem);
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
+		distributed =1;
+		printk("WARNING: remap called\n");
+		distr_ret= process_server_do_mremap_start(addr,
+				old_len,  new_len,
+				flags, new_addr);
+
+		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE)
+			return distr_ret;
+
+		/* Only the server can have as output VMA_OP_SAVE and VMA_OP_NOT_SAVE.
+		 * the only output of server are VMA_OP_SAVE and VMA_OP_NOT_SAVE.
+		 * the client should always overwrite new_addr, the server never.
+		 * */
+		if(distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
+			new_addr= ret;
+			flags|= MREMAP_FIXED;
+		}
+
+	}
 
 	if (flags & MREMAP_FIXED) {
 		ret = mremap_to(addr, old_len, new_addr, new_len,
@@ -533,7 +559,7 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 			int pages = (new_len - old_len) >> PAGE_SHIFT;
 
 			if (vma_adjust(vma, vma->vm_start, addr + new_len,
-				       vma->vm_pgoff, NULL)) {
+						vma->vm_pgoff, NULL)) {
 				ret = -ENOMEM;
 				goto out;
 			}
@@ -560,9 +586,9 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 			map_flags |= MAP_SHARED;
 
 		new_addr = get_unmapped_area(vma->vm_file, 0, new_len,
-					vma->vm_pgoff +
-					((addr - vma->vm_start) >> PAGE_SHIFT),
-					map_flags);
+				vma->vm_pgoff +
+				((addr - vma->vm_start) >> PAGE_SHIFT),
+				map_flags);
 		if (new_addr & ~PAGE_MASK) {
 			ret = new_addr;
 			goto out;
@@ -573,6 +599,15 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && distributed == 1){
+		process_server_do_mremap_end( addr,
+				old_len,new_len,
+				flags,  new_addr, distr_ret);
+
+	}
+
 	up_write(&current->mm->mmap_sem);
 	if (locked && new_len > old_len)
 		mm_populate(new_addr + old_len, new_len - old_len);

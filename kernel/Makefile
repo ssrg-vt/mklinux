@@ -10,7 +10,7 @@ obj-y     = fork.o exec_domain.o panic.o \
 	    kthread.o wait.o sys_ni.o posix-cpu-timers.o mutex.o \
 	    hrtimer.o rwsem.o nsproxy.o srcu.o semaphore.o \
 	    notifier.o ksysfs.o cred.o reboot.o \
-	    async.o range.o groups.o lglock.o smpboot.o
+	    async.o range.o groups.o lglock.o smpboot.o 
 
 ifdef CONFIG_FUNCTION_TRACER
 # Do not trace debug files and internal ftrace files
@@ -28,6 +28,9 @@ obj-y += printk/
 obj-y += cpu/
 obj-y += irq/
 
+obj-$(CONFIG_POPCORN) += kinit.o cpu_namespace.o \
+			 WKdmCompress.o WKdmDecompress.o futex_remote.o \
+			 process_server.o global_spinlock.o proc_remote.o
 obj-$(CONFIG_CHECKPOINT_RESTORE) += kcmp.o
 obj-$(CONFIG_FREEZER) += freezer.o
 obj-$(CONFIG_PROFILING) += profile.o

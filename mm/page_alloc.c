@@ -61,6 +61,7 @@
 #include <linux/page-debug-flags.h>
 #include <linux/hugetlb.h>
 #include <linux/sched/rt.h>
+#include <linux/process_server.h>
 
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
@@ -2026,6 +2027,9 @@ zonelist_scan:
 try_this_zone:
 		page = buffered_rmqueue(preferred_zone, zone, order,
 						gfp_mask, migratetype);
+		//Multikernel
+		process_server_clean_page(page);
+
 		if (page)
 			break;
 this_zone_full:

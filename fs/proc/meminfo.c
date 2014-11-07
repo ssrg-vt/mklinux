@@ -15,6 +15,12 @@
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include "internal.h"
+/*mklinux_akshay*/
+#include <popcorn/init.h>
+#include <linux/string.h>
+
+extern int remote_proc_meminfo_info(struct seq_file *m);
+/*mklinux_akshay*/
 
 void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
 {
@@ -30,18 +36,18 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	unsigned long pages[NR_LRU_LISTS];
 	int lru;
 
-/*
- * display in kilobytes.
- */
+	/*
+	 * display in kilobytes.
+	 */
 #define K(x) ((x) << (PAGE_SHIFT - 10))
 	si_meminfo(&i);
 	si_swapinfo(&i);
 	committed = percpu_counter_read_positive(&vm_committed_as);
 	allowed = ((totalram_pages - hugetlb_total_pages())
-		* sysctl_overcommit_ratio / 100) + total_swap_pages;
+			* sysctl_overcommit_ratio / 100) + total_swap_pages;
 
 	cached = global_page_state(NR_FILE_PAGES) -
-			total_swapcache_pages() - i.bufferram;
+		total_swapcache_pages() - i.bufferram;
 	if (cached < 0)
 		cached = 0;
 
@@ -54,58 +60,58 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	 * Tagged format, for easy grepping and expansion.
 	 */
 	seq_printf(m,
-		"MemTotal:       %8lu kB\n"
-		"MemFree:        %8lu kB\n"
-		"Buffers:        %8lu kB\n"
-		"Cached:         %8lu kB\n"
-		"SwapCached:     %8lu kB\n"
-		"Active:         %8lu kB\n"
-		"Inactive:       %8lu kB\n"
-		"Active(anon):   %8lu kB\n"
-		"Inactive(anon): %8lu kB\n"
-		"Active(file):   %8lu kB\n"
-		"Inactive(file): %8lu kB\n"
-		"Unevictable:    %8lu kB\n"
-		"Mlocked:        %8lu kB\n"
+			"MemTotal:       %8lu kB\n"
+			"MemFree:        %8lu kB\n"
+			"Buffers:        %8lu kB\n"
+			"Cached:         %8lu kB\n"
+			"SwapCached:     %8lu kB\n"
+			"Active:         %8lu kB\n"
+			"Inactive:       %8lu kB\n"
+			"Active(anon):   %8lu kB\n"
+			"Inactive(anon): %8lu kB\n"
+			"Active(file):   %8lu kB\n"
+			"Inactive(file): %8lu kB\n"
+			"Unevictable:    %8lu kB\n"
+			"Mlocked:        %8lu kB\n"
 #ifdef CONFIG_HIGHMEM
-		"HighTotal:      %8lu kB\n"
-		"HighFree:       %8lu kB\n"
-		"LowTotal:       %8lu kB\n"
-		"LowFree:        %8lu kB\n"
+			"HighTotal:      %8lu kB\n"
+			"HighFree:       %8lu kB\n"
+			"LowTotal:       %8lu kB\n"
+			"LowFree:        %8lu kB\n"
 #endif
 #ifndef CONFIG_MMU
-		"MmapCopy:       %8lu kB\n"
+			"MmapCopy:       %8lu kB\n"
 #endif
-		"SwapTotal:      %8lu kB\n"
-		"SwapFree:       %8lu kB\n"
-		"Dirty:          %8lu kB\n"
-		"Writeback:      %8lu kB\n"
-		"AnonPages:      %8lu kB\n"
-		"Mapped:         %8lu kB\n"
-		"Shmem:          %8lu kB\n"
-		"Slab:           %8lu kB\n"
-		"SReclaimable:   %8lu kB\n"
-		"SUnreclaim:     %8lu kB\n"
-		"KernelStack:    %8lu kB\n"
-		"PageTables:     %8lu kB\n"
+			"SwapTotal:      %8lu kB\n"
+			"SwapFree:       %8lu kB\n"
+			"Dirty:          %8lu kB\n"
+			"Writeback:      %8lu kB\n"
+			"AnonPages:      %8lu kB\n"
+			"Mapped:         %8lu kB\n"
+			"Shmem:          %8lu kB\n"
+			"Slab:           %8lu kB\n"
+			"SReclaimable:   %8lu kB\n"
+			"SUnreclaim:     %8lu kB\n"
+			"KernelStack:    %8lu kB\n"
+			"PageTables:     %8lu kB\n"
 #ifdef CONFIG_QUICKLIST
-		"Quicklists:     %8lu kB\n"
+			"Quicklists:     %8lu kB\n"
 #endif
-		"NFS_Unstable:   %8lu kB\n"
-		"Bounce:         %8lu kB\n"
-		"WritebackTmp:   %8lu kB\n"
-		"CommitLimit:    %8lu kB\n"
-		"Committed_AS:   %8lu kB\n"
-		"VmallocTotal:   %8lu kB\n"
-		"VmallocUsed:    %8lu kB\n"
-		"VmallocChunk:   %8lu kB\n"
+			"NFS_Unstable:   %8lu kB\n"
+			"Bounce:         %8lu kB\n"
+			"WritebackTmp:   %8lu kB\n"
+			"CommitLimit:    %8lu kB\n"
+			"Committed_AS:   %8lu kB\n"
+			"VmallocTotal:   %8lu kB\n"
+			"VmallocUsed:    %8lu kB\n"
+			"VmallocChunk:   %8lu kB\n"
 #ifdef CONFIG_MEMORY_FAILURE
-		"HardwareCorrupted: %5lu kB\n"
+			"HardwareCorrupted: %5lu kB\n"
 #endif
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
-		"AnonHugePages:  %8lu kB\n"
+			"AnonHugePages:  %8lu kB\n"
 #endif
-		,
+			,
 		K(i.totalram),
 		K(i.freeram),
 		K(i.bufferram),
@@ -153,18 +159,26 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 		vmi.used >> 10,
 		vmi.largest_chunk >> 10
 #ifdef CONFIG_MEMORY_FAILURE
-		,atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10)
+			,atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10)
 #endif
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
-		,K(global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
-		   HPAGE_PMD_NR)
+			,K(global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
+					HPAGE_PMD_NR)
 #endif
-		);
+			);
 
 	hugetlb_report_meminfo(m);
 
 	arch_report_meminfo(m);
 
+	/*mklinux_akshay*/
+	struct task_struct *t;
+	int o;
+	t = current;
+	//printk("show: current comm: %s   pid:%d-%d",t->comm,strlen(t->comm),strlen("cat"));
+	if(!(o = strcmp (t->comm,"cat")))
+		remote_proc_meminfo_info(m);
+	//printk("show: O: %d",o);/*mklinux_akshay*/
 	return 0;
 #undef K
 }

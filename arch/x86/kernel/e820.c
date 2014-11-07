@@ -48,6 +48,9 @@ unsigned long pci_mem_start = 0xaeedbabe;
 EXPORT_SYMBOL(pci_mem_start);
 #endif
 
+unsigned long kernel_start_addr=0;
+EXPORT_SYMBOL(kernel_start_addr);
+
 /*
  * This function checks if any part of the range <start,end> is mapped
  * with type.
@@ -868,6 +871,7 @@ static int __init parse_memmap_one(char *p)
 	userdef = 1;
 	if (*p == '@') {
 		start_at = memparse(p+1, &p);
+		kernel_start_addr = start_at;
 		e820_add_region(start_at, mem_size, E820_RAM);
 	} else if (*p == '#') {
 		start_at = memparse(p+1, &p);

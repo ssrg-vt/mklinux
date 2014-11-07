@@ -80,6 +80,8 @@ gate_desc idt_table[NR_VECTORS] __page_aligned_bss;
 DECLARE_BITMAP(used_vectors, NR_VECTORS);
 EXPORT_SYMBOL_GPL(used_vectors);
 
+extern unsigned long read_old_rsp(void);
+
 static inline void conditional_sti(struct pt_regs *regs)
 {
 	if (regs->flags & X86_EFLAGS_IF)
@@ -160,6 +162,15 @@ do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
 #ifdef CONFIG_X86_64
 	if (show_unhandled_signals && unhandled_signal(tsk, signr) &&
 	    printk_ratelimit()) {
+		dump_stack();
+		unsigned long *_base= read_old_rsp();
+		int ret =0,cnt=0;
+		printk(KERN_ALERT"last 16 sp add\n");
+		for(cnt=0 ;cnt< 16;cnt++){
+			unsigned long ptr;
+			ret =  get_user(ptr,((_base)+cnt));
+			printk(KERN_ALERT" {%lx} ret{%d}\t",ptr,ret);
+		}
 		pr_info("%s[%d] trap %s ip:%lx sp:%lx error:%lx",
 			tsk->comm, tsk->pid, str,
 			regs->ip, regs->sp, error_code);

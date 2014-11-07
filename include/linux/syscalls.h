@@ -283,7 +283,7 @@ asmlinkage long sys_sched_getscheduler(pid_t pid);
 asmlinkage long sys_sched_getparam(pid_t pid,
 					struct sched_param __user *param);
 asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,
-					unsigned long __user *user_mask_ptr);
+					unsigned long __user *user_mask_ptr, struct pt_regs* regs);
 asmlinkage long sys_sched_getaffinity(pid_t pid, unsigned int len,
 					unsigned long __user *user_mask_ptr);
 asmlinkage long sys_sched_yield(void);
@@ -424,6 +424,8 @@ asmlinkage long sys_fremovexattr(int fd, const char __user *name);
 
 asmlinkage long sys_brk(unsigned long brk);
 asmlinkage long sys_mprotect(unsigned long start, size_t len,
+				unsigned long prot);
+asmlinkage int  kernel_mprotect(unsigned long start, size_t len,
 				unsigned long prot);
 asmlinkage long sys_mremap(unsigned long addr,
 			   unsigned long old_len, unsigned long new_len,
@@ -847,4 +849,5 @@ asmlinkage long sys_process_vm_writev(pid_t pid,
 asmlinkage long sys_kcmp(pid_t pid1, pid_t pid2, int type,
 			 unsigned long idx1, unsigned long idx2);
 asmlinkage long sys_finit_module(int fd, const char __user *uargs, int flags);
+asmlinkage long sys_take_time(int start);
 #endif

@@ -30,3 +30,8 @@ proc-$(CONFIG_PROC_VMCORE)	+= vmcore.o
 proc-$(CONFIG_PROC_DEVICETREE)	+= proc_devtree.o
 proc-$(CONFIG_PRINTK)	+= kmsg.o
 proc-$(CONFIG_PROC_PAGE_MONITOR)	+= page.o
+proc-y  += meminfo_remote.o
+proc-y  += remote_proc_pid.o
+proc-y  += remote_proc_pid_files.o
+proc-y  += krninfo.o
+

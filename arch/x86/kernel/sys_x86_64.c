@@ -190,3 +190,8 @@ bottomup:
 	 */
 	return arch_get_unmapped_area(filp, addr0, len, pgoff, flags);
 }
+
+SYSCALL_DEFINE3(cacheflush, void*, addr, __const int, nbytes, __const int, op)
+{
+	return 0;
+}

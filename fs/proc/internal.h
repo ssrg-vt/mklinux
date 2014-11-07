@@ -67,6 +67,7 @@ struct proc_inode {
 	struct ctl_table *sysctl_entry;
 	struct proc_ns ns;
 	struct inode vfs_inode;
+	struct proc_remote_pid_info remote_proc;
 };
 
 /*

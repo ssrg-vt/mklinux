@@ -65,6 +65,7 @@
 #include "coredump.h"
 
 #include <trace/events/sched.h>
+#include <linux/process_server.h>
 
 int suid_dumpable = 0;
 
@@ -815,7 +816,7 @@ ssize_t read_code(struct file *file, unsigned long addr, loff_t pos, size_t len)
 }
 EXPORT_SYMBOL(read_code);
 
-static int exec_mmap(struct mm_struct *mm)
+int exec_mmap(struct mm_struct *mm)
 {
 	struct task_struct *tsk;
 	struct mm_struct * old_mm, *active_mm;

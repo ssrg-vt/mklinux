@@ -16,7 +16,7 @@
 #include <asm/vdso.h>
 #include <asm/page.h>
 
-unsigned int __read_mostly vdso_enabled = 1;
+unsigned int __read_mostly vdso_enabled = 0;
 
 extern char vdso_start[], vdso_end[];
 extern unsigned short vdso_sync_cpuid;
