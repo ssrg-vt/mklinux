@@ -11093,10 +11093,9 @@ _cpu= cpumask_first(cpu_present_mask);
 							       uint16_t copy_cpu;
 							       if(pcn_kmsg_get_node_ids(NULL, 0, &copy_cpu)==-1)
 								       printk("ERROR process_server cannot initialize _cpu\n");
-
 							       else{
 								       _cpu= copy_cpu;
-								       printk("I am cpu %d\n",_cpu);
+								       printk("process_server: I am cpu %d\n",_cpu);
 							       }
 
 							       /*

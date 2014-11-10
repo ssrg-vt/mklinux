@@ -3,6 +3,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -25,6 +26,7 @@
 #include <linux/delay.h>
 #include <linux/time.h>
 
+extern int _init_RemoteCPUMask(void);
 static int connection_handler(void *arg0);
 static int send_thread(void);
 static int executer_thread(void* arg0);
@@ -43,10 +45,12 @@ struct sockaddr_in dest_addr;
 struct socket *sock_send = NULL;
 struct socket *sock_recv, *conn_sock = NULL;
 struct sockaddr_in serv_addr;
+unsigned int my_ipaddr = INADDR_LOOPBACK;
+module_param(my_ipaddr, uint, 0);
 
-#define PORT 2000
+#define PORT 1234
 //#define INADDR_SEND INADDR_LOOPBACK
-#define INADDR_SEND (10<<24 | 0<<16 | 2<<8 | 15)
+//#define INADDR_SEND (10<<24 | 0<<16 | 2<<8 | 15)
 
 inline int pcn_connection_status(void)
 {
@@ -126,6 +130,12 @@ int __init initialize()
 
 	sema_init(&send_connDone,0);
 	sema_init(&rcv_connDone,0);
+
+	// Sharath: 
+	if(my_ipaddr == 0x0A0101B4)
+                my_cpu = 0;
+        else
+                my_cpu = 1;
 
 	//TODO - check all nodes are available - cant be done on sockets ??
 
@@ -296,7 +306,7 @@ int send_thread(void)
 
 	dest_addr.sin_family = AF_INET;
 	dest_addr.sin_port = htons(PORT);
-	dest_addr.sin_addr.s_addr = htonl(INADDR_SEND); //TODO - hardcoding
+	dest_addr.sin_addr.s_addr = htonl(my_ipaddr); //TODO - hardcoding
 
 	do
 	{
@@ -312,7 +322,10 @@ int send_thread(void)
 
 	is_connection_done=PCN_CONN_CONNECTED;
 	up(&send_connDone);
-	printk("Connection Done...PCN_SEND Thread\n");
+	printk("############## Connection Done...PCN_SEND Thread: my_ipaddr: 0x%x\n", my_ipaddr);
+
+	// Sharath: For socket based messaging layer
+	_init_RemoteCPUMask();
 
 #if TEST_MSG_LAYER
 	while(1)
@@ -605,6 +618,12 @@ inline void pcn_kmsg_free_msg(void *msg){
 
 //TODO
 inline int pcn_kmsg_get_node_ids(uint16_t *nodes, int len, uint16_t *self){
+	//*self = cpumask_first(cpu_present_mask);
+
+	if(my_ipaddr == 0x0A0101B4)
+		*self = 0;
+	else 
+		*self = 1;
 	return 0;
 }
 

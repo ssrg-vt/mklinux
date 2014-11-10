@@ -111,6 +111,7 @@
 #include <asm/alternative.h>
 #include <asm/prom.h>
 
+extern void prefill_present_map(void);
 /*
  * max_low_pfn_mapped: highest direct mapped pfn under 4GB
  * max_pfn_mapped:     highest direct mapped pfn over 4GB
@@ -1180,6 +1181,7 @@ void __init setup_arch(char **cmdline_p)
 		get_smp_config();
 
 	prefill_possible_map();
+	prefill_present_map(); // POPCORN -- reset_present_map(); TODO HERE or before prefile_possible in order to set max_cpus from the present_map
 
 	init_cpu_to_node();
 

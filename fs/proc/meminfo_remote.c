@@ -441,7 +441,7 @@ static int __init proc_mem_handler_init(void)
 		printk("ERROR process_server cannot initialize _cpu\n");
 	else{
 		_cpu= copy_cpu;
-		printk("I am cpu %d\n",_cpu);	
+		printk("meminfo: I am cpu %d\n",_cpu);	
 	}
 
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_MEMINFO_REQUEST,

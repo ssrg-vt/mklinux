@@ -127,7 +127,7 @@ static void display(struct list_head *head)
 static int handle_remote_proc_cpu_info_response(struct pcn_kmsg_message* inc_msg)
 {
   _remote_cpu_info_response_t* msg = (_remote_cpu_info_response_t*) inc_msg;
-  //printk("%s: OCCHIO answer cpu request received\n", __func__);
+  printk("%s: OCCHIO answer cpu request received\n", __func__);
 
   wait_cpu_list = 1;
   if (msg != NULL)
@@ -169,6 +169,7 @@ static int handle_remote_proc_cpu_info_request(struct pcn_kmsg_message* inc_msg)
   display(&rlist_head);
 
   // Send response
+  printk("Kerenel %d: handle_remote_proc_cpu_info_request\n", Kernel_Id);
   pcn_kmsg_send_long(msg->header.from_cpu,
 		(struct pcn_kmsg_long_message*) (&response),
 		sizeof(_remote_cpu_info_response_t) - sizeof(struct pcn_kmsg_hdr));
@@ -201,6 +202,7 @@ int send_cpu_info_request(int KernelId)
   request->_data._processor = my_cpu;
 
   // Send response
+  printk("Kerenel %d: send_cpu_info_request\n", Kernel_Id);
   res = pcn_kmsg_send_long(KernelId, (struct pcn_kmsg_long_message*) (request),
 			sizeof(_remote_cpu_info_request_t) - sizeof(struct pcn_kmsg_hdr));
   return res;
@@ -226,13 +228,17 @@ int _init_RemoteCPUMask(void)
 		  continue;
 		}
 	}
-	if(my_cpu != 0)
+	printk("%s: Kernel_Id %d\n", __func__, Kernel_Id);
+	//if(my_cpu != 0)
+	if(Kernel_Id != 0)
 	{
-		//printk("%s: OCCHIO checking other kernel\n", __func__);
-		result = send_cpu_info_request(i);
-		if (result!=-1)
+		printk("%s: OCCHIO checking other kernel\n", __func__);
+		//result = send_cpu_info_request(i);
+		// Sharath: 
+		result = send_cpu_info_request(0);
+		if (result != -1)
 		{
-			//printk("OCCHIO waiting for answer proc cpu\n");
+			printk("OCCHIO waiting for answer proc cpu\n");
 			PRINTK("%s : go to sleep!!!!", __func__);
 			wait_event_interruptible(wq_cpu, wait_cpu_list != -1);
 			wait_cpu_list = -1;
@@ -251,10 +257,15 @@ void popcorn_init(void)
 {
 	int cnt=0;
 	int vendor_id=0;
+	uint16_t self = 0;
+
 	printk("POP_INIT:first_online_node{%d} cpumask_first{%d} \n",first_online_node,cpumask_first(cpu_present_mask));
 
 	//Kernel_Id = get_proccessor_id();//cpumask_first(cpu_present_mask);
-	Kernel_Id = 0;//get_proccessor_id();//cpumask_first(cpu_present_mask);
+	//Sharath: Below modifications to test using msg layer with socket
+	self = cpumask_first(cpu_present_mask);
+	pcn_kmsg_get_node_ids(NULL, 0, &self);
+	Kernel_Id = self;
 
     printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
     printk("POP_INIT:max_low_pfn id is 0x%lx\n",PFN_PHYS(max_low_pfn));
@@ -270,12 +281,7 @@ static int __init cpu_info_handler_init(void)
   _cpu = my_cpu;
 #endif
   INIT_LIST_HEAD(&rlist_head);
-
-#ifdef CONFIG_X86_EARLYMIC
-offset_cpus= 4;
-#else
-offset_cpus=0;
-#endif
+  offset_cpus=0;
   printk("%s: inside , offsetcpus %d \n",__func__,offset_cpus);
   pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
 		handle_remote_proc_cpu_info_request);

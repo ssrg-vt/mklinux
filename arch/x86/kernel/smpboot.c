@@ -1192,6 +1192,68 @@ static int __init _setup_possible_cpus(char *str)
 }
 early_param("possible_cpus", _setup_possible_cpus);
 
+static DECLARE_BITMAP(setup_present_bits, CONFIG_NR_CPUS) __read_mostly;
+const struct cpumask *const setup_present_mask = to_cpumask(setup_present_bits);
+
+int popcorn_boot = 0;
+EXPORT_SYMBOL(popcorn_boot);
+
+static int __init _setup_present_mask(char *str)
+{
+	printk("\n\n################### SETTING the present mask ######### %s\n\n", str);
+	cpulist_parse(str, (struct cpumask *)setup_present_mask);
+	popcorn_boot = 1;
+	return 0;
+}
+early_param("present_mask", _setup_present_mask);
+
+__init void prefill_present_map(void)
+{
+	int present;
+	int first;
+	char buffer[96];
+	memset(buffer, 0, 96);
+
+	//check present with possible
+	present = cpumask_weight(setup_present_mask);
+	first = cpumask_first(setup_present_mask);
+	// print present mask
+	cpumask_scnprintf(buffer, 96, setup_present_mask);
+	printk(KERN_INFO "########## %s: present_cpus %d %s, first %d, max_cpus %d\n",
+			__func__, present, buffer, first, setup_max_cpus);
+
+	//we assume that present was never settedif it is 0, prefill it with setup_max_cpus (if setted)
+	if (!present) {
+		int i;
+		for (i=0; i<setup_max_cpus; i++)
+			cpumask_set_cpu(i, (struct cpumask *) setup_present_mask);
+		present = cpumask_weight(setup_present_mask);
+		goto _finalize;
+	}
+
+	// present and setup_max_cpus must be synchronized, setup_max_cpus is imposed by the user
+	// does it affects hot plug? hopefully no
+	if (present != setup_max_cpus)
+		setup_max_cpus = present;
+
+	//figure out which is the current processor and change the present subset accordingly
+	cpumask_copy((struct cpumask *)cpu_present_mask, (struct cpumask *)setup_present_mask);
+
+	//adjust online and active cpu masks
+	cpumask_clear((struct cpumask *)cpu_online_mask);
+	cpumask_set_cpu(first_cpu(cpu_present_map), (struct cpumask *)cpu_online_mask);
+	cpumask_copy((struct cpumask *)cpu_active_mask, (struct cpumask *)cpu_online_mask);
+
+_finalize:
+// TODO basically a check about the previous setting of cpu_online_mask and cpu_active_mask must be done
+	cpumask_scnprintf(buffer, 96, cpu_present_mask);
+        printk(KERN_INFO "%s: cpu_present_mask %s\n",__func__, buffer);
+        cpumask_scnprintf(buffer, 96, cpu_online_mask);
+        printk(KERN_INFO "%s: cpu_online_mask %s\n",__func__, buffer);
+        cpumask_scnprintf(buffer, 96, cpu_active_mask);
+        printk(KERN_INFO "%s: cpu_active_mask %s\n ",__func__, buffer);
+	return;
+}
 
 /*
  * cpu_possible_mask should be static, it cannot change as cpu's

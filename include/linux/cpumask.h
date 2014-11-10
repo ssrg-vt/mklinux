@@ -81,6 +81,11 @@ extern const struct cpumask *const cpu_online_mask;
 extern const struct cpumask *const cpu_present_mask;
 extern const struct cpumask *const cpu_active_mask;
 
+#define cpu_possible_map        (*(cpumask_t *)cpu_possible_mask)
+#define cpu_online_map          (*(cpumask_t *)cpu_online_mask)
+#define cpu_present_map         (*(cpumask_t *)cpu_present_mask)
+#define cpu_active_map          (*(cpumask_t *)cpu_active_mask)
+
 /*mklinux_akshay*/
 extern const struct cpumask *const cpu_global_online_mask;
 /*mklinux_akshay*/
