@@ -281,7 +281,7 @@ static int __init cpu_info_handler_init(void)
   _cpu = my_cpu;
 #endif
   INIT_LIST_HEAD(&rlist_head);
-  offset_cpus=0;
+  offset_cpus=1;
   printk("%s: inside , offsetcpus %d \n",__func__,offset_cpus);
   pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
 		handle_remote_proc_cpu_info_request);

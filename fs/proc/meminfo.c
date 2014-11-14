@@ -18,8 +18,7 @@
 /*mklinux_akshay*/
 #include <popcorn/init.h>
 #include <linux/string.h>
-
-extern int remote_proc_meminfo_info(struct seq_file *m);
+#include "meminfo_remote.h"
 /*mklinux_akshay*/
 
 void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
@@ -35,6 +34,11 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	long cached;
 	unsigned long pages[NR_LRU_LISTS];
 	int lru;
+	/*mklinux_akshay*/
+	struct task_struct *t;
+	int o;
+	_remote_mem_info_response_t rem_mem;
+	/*mklinux_akshay*/
 
 	/*
 	 * display in kilobytes.
@@ -55,6 +59,14 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 
 	for (lru = LRU_BASE; lru < NR_LRU_LISTS; lru++)
 		pages[lru] = global_page_state(NR_LRU_BASE + lru);
+
+	/* Read the remote meminfo */
+	/*mklinux_akshay*/
+	t = current;
+
+	memset(&rem_mem, 0, sizeof(_remote_mem_info_response_t));
+	remote_proc_meminfo_info(&rem_mem);
+	/*mklinux_akshay*/
 
 	/*
 	 * Tagged format, for easy grepping and expansion.
@@ -112,73 +124,64 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 			"AnonHugePages:  %8lu kB\n"
 #endif
 			,
-		K(i.totalram),
-		K(i.freeram),
-		K(i.bufferram),
-		K(cached),
-		K(total_swapcache_pages()),
-		K(pages[LRU_ACTIVE_ANON]   + pages[LRU_ACTIVE_FILE]),
-		K(pages[LRU_INACTIVE_ANON] + pages[LRU_INACTIVE_FILE]),
-		K(pages[LRU_ACTIVE_ANON]),
-		K(pages[LRU_INACTIVE_ANON]),
-		K(pages[LRU_ACTIVE_FILE]),
-		K(pages[LRU_INACTIVE_FILE]),
-		K(pages[LRU_UNEVICTABLE]),
-		K(global_page_state(NR_MLOCK)),
+		K(i.totalram) + rem_mem._MemTotal,
+		K(i.freeram) + rem_mem._MemFree,
+		K(i.bufferram) + rem_mem._Buffers,
+		K(cached) + rem_mem._Cached,
+		K(total_swapcache_pages()) + rem_mem._SwapCached,
+		K(pages[LRU_ACTIVE_ANON]   + pages[LRU_ACTIVE_FILE]) + rem_mem._Active,
+		K(pages[LRU_INACTIVE_ANON] + pages[LRU_INACTIVE_FILE]) + rem_mem._Inactive,
+		K(pages[LRU_ACTIVE_ANON]) + rem_mem._Active_anon,
+		K(pages[LRU_INACTIVE_ANON]) + rem_mem._Inactive_anon,
+		K(pages[LRU_ACTIVE_FILE]) + rem_mem._Active_file,
+		K(pages[LRU_INACTIVE_FILE]) + rem_mem._Inactive_file,
+		K(pages[LRU_UNEVICTABLE]) + rem_mem._Unevictable,
+		K(global_page_state(NR_MLOCK)) + rem_mem._Mlocked,
 #ifdef CONFIG_HIGHMEM
-		K(i.totalhigh),
-		K(i.freehigh),
-		K(i.totalram-i.totalhigh),
-		K(i.freeram-i.freehigh),
+		K(i.totalhigh) + rem_mem._HighTotal,
+		K(i.freehigh) + rem_mem._HighFre,
+		K(i.totalram-i.totalhigh) + rem_mem._LowTotal,
+		K(i.freeram-i.freehigh) + rem_mem._LowFree,
 #endif
 #ifndef CONFIG_MMU
-		K((unsigned long) atomic_long_read(&mmap_pages_allocated)),
+		K((unsigned long) atomic_long_read(&mmap_pages_allocated)) + rem_mem._MmapCopy,
 #endif
-		K(i.totalswap),
-		K(i.freeswap),
-		K(global_page_state(NR_FILE_DIRTY)),
-		K(global_page_state(NR_WRITEBACK)),
-		K(global_page_state(NR_ANON_PAGES)),
-		K(global_page_state(NR_FILE_MAPPED)),
-		K(global_page_state(NR_SHMEM)),
+		K(i.totalswap) + rem_mem._SwapTotal,
+		K(i.freeswap) + rem_mem._SwapFree,
+		K(global_page_state(NR_FILE_DIRTY)) + rem_mem._Dirty,
+		K(global_page_state(NR_WRITEBACK)) + rem_mem._Writeback,
+		K(global_page_state(NR_ANON_PAGES)) + rem_mem._AnonPages,
+		K(global_page_state(NR_FILE_MAPPED)) + rem_mem._Mapped,
+		K(global_page_state(NR_SHMEM)) + rem_mem._Shmem,
 		K(global_page_state(NR_SLAB_RECLAIMABLE) +
-				global_page_state(NR_SLAB_UNRECLAIMABLE)),
-		K(global_page_state(NR_SLAB_RECLAIMABLE)),
-		K(global_page_state(NR_SLAB_UNRECLAIMABLE)),
-		global_page_state(NR_KERNEL_STACK) * THREAD_SIZE / 1024,
-		K(global_page_state(NR_PAGETABLE)),
+				global_page_state(NR_SLAB_UNRECLAIMABLE)) + rem_mem._Slab,
+		K(global_page_state(NR_SLAB_RECLAIMABLE)) + rem_mem._SReclaimable,
+		K(global_page_state(NR_SLAB_UNRECLAIMABLE)) + rem_mem._SUnreclaim,
+		(global_page_state(NR_KERNEL_STACK) * THREAD_SIZE / 1024) + rem_mem._KernelStack,
+		K(global_page_state(NR_PAGETABLE)) + rem_mem._PageTables,
 #ifdef CONFIG_QUICKLIST
-		K(quicklist_total_size()),
+		K(quicklist_total_size()) + rem_mem._Quicklists,
 #endif
-		K(global_page_state(NR_UNSTABLE_NFS)),
-		K(global_page_state(NR_BOUNCE)),
-		K(global_page_state(NR_WRITEBACK_TEMP)),
-		K(allowed),
-		K(committed),
-		(unsigned long)VMALLOC_TOTAL >> 10,
-		vmi.used >> 10,
-		vmi.largest_chunk >> 10
+		K(global_page_state(NR_UNSTABLE_NFS)) + rem_mem._NFS_Unstable,
+		K(global_page_state(NR_BOUNCE)) + rem_mem._Bounce,
+		K(global_page_state(NR_WRITEBACK_TEMP)) + rem_mem._WritebackTmp,
+		K(allowed) + rem_mem._CommitLimit,
+		K(committed) + rem_mem._Committed_AS,
+		((unsigned long)VMALLOC_TOTAL >> 10)  + rem_mem._VmallocTotal,
+		(vmi.used >> 10) + rem_mem._VmallocUsed,
+		(vmi.largest_chunk >> 10) + rem_mem._VmallocChunk,
 #ifdef CONFIG_MEMORY_FAILURE
-			,atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10)
+		(atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10)) + rem_mem._HardwareCorrupted,
 #endif
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
-			,K(global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
-					HPAGE_PMD_NR)
+		K((global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
+					HPAGE_PMD_NR)) + rem_mem._AnonHugePages
 #endif
-			);
+		);
 
 	hugetlb_report_meminfo(m);
 
-	arch_report_meminfo(m);
-
-	/*mklinux_akshay*/
-	struct task_struct *t;
-	int o;
-	t = current;
-	//printk("show: current comm: %s   pid:%d-%d",t->comm,strlen(t->comm),strlen("cat"));
-	if(!(o = strcmp (t->comm,"cat")))
-		remote_proc_meminfo_info(m);
-	//printk("show: O: %d",o);/*mklinux_akshay*/
+	arch_report_meminfo(m);	
 	return 0;
 #undef K
 }

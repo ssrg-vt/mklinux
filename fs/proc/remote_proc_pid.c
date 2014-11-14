@@ -103,13 +103,17 @@ typedef struct _remote_pid_response _remote_pid_response_t;
 /*
  * ************************************ Define variables holding result **************************
  */
-static _remote_pid_response_t *pid_result;
+static _remote_pid_response_t result;
+static _remote_pid_response_t *pid_result = &result;
 
 /*
  * **************************************common functions*************************************
  */
 
 int flush_variables() {
+	if(pid_result != NULL) {
+		memset(pid_result, 0, sizeof(_remote_pid_response_t));
+	}
 	pid_result = NULL;
 	wait = -1;
 	return 0;
@@ -141,8 +145,12 @@ static int handle_remote_pid_response(struct pcn_kmsg_message* inc_msg) {
 	PRINTK("%s: Entered remote pid response : pid count :{%d} \n", __func__,
 			msg->count);
 
-	if (msg != NULL)
-		pid_result = msg;
+	if (msg != NULL){
+		memcpy(&result, msg, sizeof(_remote_pid_response_t));
+		pid_result = &result;
+	} else {
+		pid_result = NULL;
+	}
 
 	wait++;
 	wake_up_interruptible(&wq);
@@ -616,7 +624,11 @@ int fill_next_remote_tgids(int Kernel_id, struct file *filp, struct dir_context 
 		PRINTK("%s fill_next_remote_tgids: go to sleep!!!!", __func__);
 		wait_event_interruptible(wq, wait != -1);
 		wait = -1;
-
+		
+		if(pid_result == NULL) {
+			printk("%s received an empty response!!!\n", __func__);
+			return -1;
+		}
 		for (i = 0; i < pid_result->count; i++) {
 			iter.tgid = pid_result->remote_pid[i];
 			filp->f_pos = iter.tgid + ctx->pos;

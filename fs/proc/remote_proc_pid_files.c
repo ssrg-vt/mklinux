@@ -107,7 +107,8 @@ typedef struct _remote_pid_stat_response _remote_pid_stat_response_t;
 /*
  * ******************************* Define variables holding Result *******************************************
  */
-static _remote_pid_stat_response_t *stat_result;
+static _remote_pid_stat_response_t result;
+static _remote_pid_stat_response_t *stat_result = &result;
 
 /*
  * ******************************* Common Functions **********************************************************
@@ -131,6 +132,9 @@ struct task_struct * get_process(pid_t pid) {
 
 int flush_stat_var()
 {
+	if(stat_result != NULL) {
+		memset(stat_result, 0, sizeof(_remote_pid_stat_response_t));
+	}
 	stat_result=NULL;
 	statwait=-1;
 	return 0;
@@ -278,8 +282,13 @@ static int handle_remote_pid_stat_response(struct pcn_kmsg_message* inc_msg) {
 	PRINTK("%s: Entered remote pid stat response \n",__func__);
 
 	statwait = 1;
-	if(msg !=NULL)
-	 stat_result=msg;
+	if(msg !=NULL){
+		memcpy(&result, msg, sizeof(_remote_pid_stat_response_t));
+		stat_result = &result;
+	} else {
+		stat_result = NULL;
+	}
+
 	wake_up_interruptible(&wq);
 	PRINTK("%s: response ---- wait{%d} \n",
 			__func__, statwait);

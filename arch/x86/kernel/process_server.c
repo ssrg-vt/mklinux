@@ -58,6 +58,7 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	unsigned short es, ds;
 	unsigned long fs, gs;
 
+	printk("%s [+] TID: %d\n", __func__, task->pid);
 	if((task == NULL)  || (arch == NULL)){
 		printk(KERN_ERR"process_server: invalid params to restore_thread_info()");
 		goto exit;
@@ -112,6 +113,7 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	}
 	ret = 0;
 
+	printk("%s [-] TID: %d\n", __func__, task->pid);
 exit:
 	return ret;
 }
@@ -143,6 +145,7 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 {
 	int ret = -1;
 
+	printk("%s [+] TID: %d\n", __func__, task->pid);
 	if((task == NULL)  || (arch == NULL)){
 		printk(KERN_ERR"process_server: invalid params to restore_thread_info()");
 		goto exit;
@@ -160,6 +163,7 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	task->thread.gsindex = arch->thread_gsindex;
 	ret = 0;
 
+	printk("%s [-] TID: %d\n", __func__, task->pid);
 exit:
 	return ret;
 }
@@ -188,31 +192,32 @@ int update_thread_info(struct task_struct *task)
 		int ret = -1;
 		unsigned int fsindex, gsindex;
 
-		if(task == NULL){
-			printk(KERN_ERR"process_server: invalid params to update_thread_info()");
-			goto exit;
-		}
+	printk("%s [+] TID: %d\n", __func__, task->pid);
+	if(task == NULL){
+		printk(KERN_ERR"process_server: invalid params to update_thread_info()");
+		goto exit;
+	}
 
-		savesegment(fs, fsindex);
-		if (unlikely(fsindex | task->thread.fsindex))
-			loadsegment(fs, task->thread.fsindex);
-		else
-			loadsegment(fs, 0);
+	savesegment(fs, fsindex);
+	if (unlikely(fsindex | task->thread.fsindex))
+		loadsegment(fs, task->thread.fsindex);
+	else
+		loadsegment(fs, 0);
+	if (task->thread.fs)
+		wrmsrl_safe(MSR_FS_BASE, task->thread.fs);
 
-		if (task->thread.fs)
-			wrmsrl_safe(MSR_FS_BASE, task->thread.fs);
+	savesegment(gs, gsindex); //read the gs register in gsindex variable
+	if (unlikely(gsindex | task->thread.gsindex))
+		load_gs_index(task->thread.gsindex);
+	else
+		load_gs_index(0);
 
-		savesegment(gs, gsindex); //read the gs register in gsindex variable
-		if (unlikely(gsindex | task->thread.gsindex))
-			load_gs_index(task->thread.gsindex);
-		else
-			load_gs_index(0);
-
-		if (task->thread.gs)
-			wrmsrl_safe(MSR_KERNEL_GS_BASE, task->thread.gs);
-		ret = 0;
+	if (task->thread.gs)
+		wrmsrl_safe(MSR_KERNEL_GS_BASE, task->thread.gs);
+	ret = 0;
+	printk("%s [-] TID: %d\n", __func__, task->pid);
 exit:
-		return ret;
+	return ret;
 }
 
 /*
@@ -239,12 +244,14 @@ int initialize_thread_retval(struct task_struct *task, int val)
 {
 	int ret = -1;
 
+	printk("%s [+] TID: %d\n", __func__, task->pid);
 	if(task == NULL){
 		printk(KERN_ERR"process_server: invalid params to initialize_thread_retval()");
 		goto exit;
 	}
 	task_pt_regs(task)->ax = val;
 	ret = 0;
+	printk("%s [-] TID: %d\n", __func__, task->pid);
 
 exit:
 	return ret;
@@ -273,6 +280,7 @@ struct task_struct* create_thread(int flags)
 	struct task_struct *task = NULL;
 	struct pt_regs regs;
 
+	printk("%s [+]: flags = 0x%x\n", __func__, flags);
 	memset(&regs, 0, sizeof(struct pt_regs));
 
 #ifdef CONFIG_X86_32
@@ -290,6 +298,7 @@ struct task_struct* create_thread(int flags)
 
 	task = do_fork_for_main_kernel_thread(flags, 0, &regs, 0, NULL, NULL);
 
+	printk("%s [-]: TID = 0x%x\n", __func__, task->pid);
 exit:
 	return task;
 }
@@ -320,6 +329,7 @@ int save_fpu_info(struct task_struct *task, field_arch *arch)
 {
 	int ret = -1;
 
+	printk("%s [+] TID: %d\n", __func__, task->pid);
 	if((task == NULL)  || (arch == NULL)){
 		printk(KERN_ERR"process_server: invalid params to save_fpu_info()");
 		goto exit;
@@ -346,6 +356,7 @@ int save_fpu_info(struct task_struct *task, field_arch *arch)
 	struct fpu temp; temp.state = &request->fpu_state;
 	fpu_copy(&temp,&task->thread.fpu);
 	ret = 0;
+	printk("%s [-] TID: %d\n", __func__, task->pid);
 
 exit:
 	return ret;
@@ -377,6 +388,7 @@ int restore_fpu_info(struct task_struct *task, field_arch *arch)
 {
 	int ret = -1;
 
+	printk("%s [+] TID: %d\n", __func__, task->pid);
 	if((task == NULL)  || (arch == NULL)){
 		printk(KERN_ERR"process_server: invalid params to restore_fpu_info()");
 		goto exit;
@@ -411,6 +423,7 @@ int restore_fpu_info(struct task_struct *task, field_arch *arch)
 	__math_state_restore(task);
 	ret = 0;
 
+	printk("%s [-] TID: %d\n", __func__, task->pid);
 exit:
 	return ret;
 }
@@ -437,6 +450,7 @@ int update_fpu_info(struct task_struct *task)
 {
 	ret = -1;
 
+	printk("%s [+] TID: %d\n", __func__, task->pid);
 	if(task == NULL){
 		printk(KERN_ERR"process_server: invalid params to update_fpu_info()");
 		goto exit;
@@ -445,6 +459,7 @@ int update_fpu_info(struct task_struct *task)
 	if (tsk_used_math(task) && task->fpu_counter >5) //fpu.preload
 		__math_state_restore(task);
 	ret = 0;
+	printk("%s [-] TID: %d\n", __func__, task->pid);
 
 exit:
 	return ret;

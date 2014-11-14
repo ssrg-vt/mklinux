@@ -37,7 +37,7 @@ struct task_struct *sender_handler;
 struct task_struct *exect_handler;
 struct task_struct *test_handler;
 
-int is_connection_done=PCN_CONN_WATING;
+enum pcn_connection_status is_connection_done = PCN_CONN_WATING;
 
 int interrupted = 0;
 
@@ -158,7 +158,6 @@ int __init initialize()
 	}
 
         //down_interruptible(&send_connDone);
-        //down_interruptible(&rcv_connDone);
 
 #if TEST_MSG_LAYER
 	test_handler = kthread_run(test_thread, (void *)NULL, "pcn_test");
@@ -315,12 +314,12 @@ int send_thread(void)
 		if(err < 0)
 		{	
 			printk("Failed to connect to socket..!! Messaging layer init failed with err %d\n", err);
+			msleep(5000);
 		}
-		msleep(5000);
-	}
-	while(err<0);
+	}while(err < 0);
 
-	is_connection_done=PCN_CONN_CONNECTED;
+        down_interruptible(&rcv_connDone);
+	is_connection_done = PCN_CONN_CONNECTED;
 	up(&send_connDone);
 	printk("############## Connection Done...PCN_SEND Thread: my_ipaddr: 0x%x\n", my_ipaddr);
 
@@ -550,8 +549,10 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 {
 
-	if( pcn_connection_status() != PCN_CONN_CONNECTED)
+	if( pcn_connection_status() != PCN_CONN_CONNECTED) {
+		printk("PCN_CONNECTION is not yet established\n");
 		return -1;
+	}
 
 	return pcn_kmsg_send_long(dest_cpu, (struct pcn_kmsg_long_message *)msg,
 				sizeof(struct pcn_kmsg_message)-sizeof(struct pcn_kmsg_hdr));
@@ -559,12 +560,15 @@ int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)
 
 int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size)
 {
-	if( pcn_connection_status() != PCN_CONN_CONNECTED)
-		return -1;
         struct msghdr msg;
         struct iovec iov;
         mm_segment_t oldfs;
         int size = 0, curr_size = 0;
+
+	if( pcn_connection_status() != PCN_CONN_CONNECTED) {
+		printk("PCN_CONNECTION is not yet established\n");
+		return -1;
+	}
 
 	lmsg->hdr.size = payload_size+sizeof(struct pcn_kmsg_hdr);
 	lmsg->hdr.from_cpu = my_cpu;
@@ -607,7 +611,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
         size = sock_sendmsg(sock_send,&msg,curr_size);
         set_fs(oldfs);
 
-	//printk("%s: %d",__func__,size);
+	printk("%s: %d",__func__,size);
 	return (size<0?-1:size);
 
 }
