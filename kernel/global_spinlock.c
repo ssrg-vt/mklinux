@@ -246,10 +246,8 @@ __releases(&value->_sp)
 	int res = 0;
 	unsigned int flgs;
 
-	 _remote_key_request_t* wait_req= (_remote_key_request_t*) kmalloc(sizeof(_remote_key_request_t),
-				GFP_ATOMIC);
-	 _remote_wakeup_request_t *wake_req = (_remote_wakeup_request_t*) kmalloc(sizeof(_remote_wakeup_request_t),
-				GFP_ATOMIC);
+	 _remote_key_request_t* wait_req= (_remote_key_request_t*) pcn_kmsg_alloc_msg(sizeof(_remote_key_request_t));
+	 _remote_wakeup_request_t *wake_req = (_remote_wakeup_request_t*) pcn_kmsg_alloc_msg(sizeof(_remote_wakeup_request_t));
 
 	//Prepare request
 	if(_data->ops==WAIT_OPS){
@@ -363,8 +361,8 @@ __releases(&value->_sp)
     		GSPRINTK(KERN_ALERT"%s:after wake up process: task woken{%d}\n",__func__,current->pid);
 
 out:
-   kfree(wake_req);
-   kfree(wait_req);
+   pcn_kmsg_free_msg(wake_req);
+   pcn_kmsg_free_msg(wait_req);
    return 0;
 
 }

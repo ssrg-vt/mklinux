@@ -66,6 +66,12 @@ typedef struct _conn_thread_data
 	dq_info q_info;			
 }conn_thread_data;
 
+typedef struct _send_thread_data
+{
+	int portID;
+	int conn_no;
+	struct pcn_kmsg_buf *buf;
+}send_thread_data;
 
 struct personal_desc {
   struct buffer_desc mybuf;
@@ -80,12 +86,25 @@ typedef struct _send_wait{
 	int dst_cpu;
 }send_wait;
 
+struct pcn_kmsg_buf_item {
+	struct pcn_kmsg_long_message *msg;
+	unsigned int dest_cpu;
+	unsigned int payload_size;
+};
 
-
-
+struct pcn_kmsg_buf {
+	struct pcn_kmsg_buf_item *rbuf;
+	unsigned long head;
+	unsigned long tail;
+	spinlock_t enq_buf_mutex;
+	spinlock_t deq_buf_mutex;
+	struct semaphore snd_q_empty;
+	struct semaphore snd_q_full;
+};
 
 
 //function prototypes
+static int __pcn_do_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size, int conn_no);
 static int connection_handler(void *arg0);
 static int send_thread(void* arg0);
 static int executer_thread(void* arg0);

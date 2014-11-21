@@ -246,22 +246,24 @@ static int handle_remote_proc_mem_info_response(struct pcn_kmsg_message* inc_msg
 static int handle_remote_proc_mem_info_request(struct pcn_kmsg_message* inc_msg) {
 
 	_remote_mem_info_request_t* msg = (_remote_mem_info_request_t*) inc_msg;
-	_remote_mem_info_response_t response;
+	_remote_mem_info_response_t* response = (_remote_mem_info_response_t *) pcn_kmsg_alloc_msg(sizeof(_remote_mem_info_response_t));
 
 
 	PRINTK("%s: Entered remote  cpu info request \n", __func__);
 
 	// Finish constructing response
-	response.header.type = PCN_KMSG_TYPE_REMOTE_PROC_MEMINFO_RESPONSE;
-	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.type = PCN_KMSG_TYPE_REMOTE_PROC_MEMINFO_RESPONSE;
+	response->header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.flag = PCN_KMSG_SYNC;
 
 	fill_meminfo_response(&response);
 
 	// Send response
-	pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response),
+	pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_message*) (response),
 			sizeof(_remote_mem_info_response_t) - sizeof(struct pcn_kmsg_hdr));
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
+	pcn_kmsg_free_msg(response);
 
 	return 0;
 }
@@ -270,13 +272,14 @@ int send_meminfo_request(int KernelId)
 {
 
 		int res=0;
-		_remote_mem_info_request_t* request = kmalloc(sizeof(_remote_mem_info_request_t),
-		GFP_KERNEL);
+		_remote_mem_info_request_t* request = pcn_kmsg_alloc_msg(sizeof(_remote_mem_info_request_t));
 		// Build request
 		request->header.type = PCN_KMSG_TYPE_REMOTE_PROC_MEMINFO_REQUEST;
 		request->header.prio = PCN_KMSG_PRIO_NORMAL;
+		request->header.flag = PCN_KMSG_SYNC;
 		// Send response
 		res=pcn_kmsg_send(KernelId, (struct pcn_kmsg_message*) (request));
+		pcn_kmsg_free_msg(request);
 		return res;
 }
 

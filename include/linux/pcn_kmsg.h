@@ -94,6 +94,11 @@ enum pcn_kmsg_prio {
 	PCN_KMSG_PRIO_NORMAL
 };
 
+#define PCN_KMSG_ASYNC 0
+#define PCN_KMSG_SYNC 1
+#define PCN_KMSG_SENDING 1<<2
+#define PCN_KMSG_DELETE  1<<3
+
 #define __READY_SIZE 1
 #define LG_SEQNUM_SIZE  (8 - __READY_SIZE)
 
@@ -115,6 +120,7 @@ struct pcn_kmsg_hdr {
 	unsigned int size;
 	unsigned int slot;
 	unsigned int conn_no;
+	unsigned int flag;
 }__attribute__((packed));
 
 #define CACHE_LINE_SIZE 64
@@ -178,8 +184,14 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 		struct pcn_kmsg_long_message *lmsg,
 		unsigned int payload_size);
 
+/* Allocate a message structure */
+inline void *pcn_kmsg_alloc_msg(size_t size);
+
 /* Free a received message (called at the end of the callback function) */
 inline void pcn_kmsg_free_msg(void *msg);
+
+/* Free a received message right now (called at the end of the callback function) */
+inline void pcn_kmsg_free_msg_now(void *msg);
 
 /* MULTICAST GROUPS */
 

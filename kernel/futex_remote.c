@@ -572,16 +572,17 @@ void global_worher_fn(struct work_struct* work) {
 				FRPRINTK(KERN_ALERT "%s:after setting mm to NULL\n",__func__);
 
 					//send ticket
-					_remote_wakeup_response_t send_tkt;
-					send_tkt.header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_RESPONSE;
-					send_tkt.header.prio = PCN_KMSG_PRIO_NORMAL;
-					send_tkt.errno =ret ;
-					send_tkt.request_id=msg->ticket;
-					send_tkt.uaddr = msg->uaddr;
-					send_tkt.rem_pid = msg->pid;
-					FRPRINTK(KERN_ALERT "send ticket to wake request {%d} msg->pid{%d} msg->uaddr{%lx} RET{%d} \n",send_tkt.rem_pid,msg->pid,msg->uaddr,ret);
-					_return = pcn_kmsg_send_long(ORIG_NODE(send_tkt.rem_pid), (struct pcn_kmsg_long_message*) (&send_tkt),
+					_remote_wakeup_response_t *send_tkt = (_remote_wakeup_response_t *) pcn_kmsg_alloc_msg(sizeof(_remote_wakeup_response_t));
+					send_tkt->header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_RESPONSE;
+					send_tkt->header.prio = PCN_KMSG_PRIO_NORMAL;
+					send_tkt->errno =ret ;
+					send_tkt->request_id=msg->ticket;
+					send_tkt->uaddr = msg->uaddr;
+					send_tkt->rem_pid = msg->pid;
+					FRPRINTK(KERN_ALERT "send ticket to wake request {%d} msg->pid{%d} msg->uaddr{%lx} RET{%d} \n",send_tkt->rem_pid,msg->pid,msg->uaddr,ret);
+					_return = pcn_kmsg_send_long(ORIG_NODE(send_tkt->rem_pid), (struct pcn_kmsg_long_message*) (send_tkt),
 						sizeof(_remote_wakeup_response_t) - sizeof(struct pcn_kmsg_hdr));
+					pcn_kmsg_free_msg(send_tkt);
 					if(_return == -1)
  						printk(KERN_ALERT"%s:wake resp message not sent could DEADLOCK\n",__func__);
 
@@ -610,16 +611,17 @@ void global_worher_fn(struct work_struct* work) {
 
 
 					//send response
-					_remote_key_response_t send_tkt;
-					send_tkt.header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE;
-					send_tkt.header.prio = PCN_KMSG_PRIO_NORMAL;
-					send_tkt.errno =ret ;
-					send_tkt.request_id=msg->ticket;
-					send_tkt.uaddr = msg->uaddr;
-					send_tkt.rem_pid = msg->pid;
-					FRPRINTK(KERN_ALERT "send ticket to wait request {%d} msg->pid{%d} msg->uaddr{%lx} RET{%d} \n",send_tkt.rem_pid,msg->pid,msg->uaddr,ret);
-					_return = pcn_kmsg_send_long(ORIG_NODE(send_tkt.rem_pid), (struct pcn_kmsg_long_message*) (&send_tkt),
+					_remote_wakeup_response_t *send_tkt = (_remote_wakeup_response_t *) pcn_kmsg_alloc_msg(sizeof(_remote_wakeup_response_t));
+					send_tkt->header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE;
+					send_tkt->header.prio = PCN_KMSG_PRIO_NORMAL;
+					send_tkt->errno =ret ;
+					send_tkt->request_id=msg->ticket;
+					send_tkt->uaddr = msg->uaddr;
+					send_tkt->rem_pid = msg->pid;
+					FRPRINTK(KERN_ALERT "send ticket to wait request {%d} msg->pid{%d} msg->uaddr{%lx} RET{%d} \n",send_tkt->rem_pid,msg->pid,msg->uaddr,ret);
+					_return = pcn_kmsg_send_long(ORIG_NODE(send_tkt->rem_pid), (struct pcn_kmsg_long_message*) (send_tkt),
 				sizeof(_remote_key_response_t) - sizeof(struct pcn_kmsg_hdr));
+					pcn_kmsg_free_msg(send_tkt);
 
 					if(_return == -1)
  						printk(KERN_ALERT"%s:wait resp message not sent could DEADLOCK\n",__func__);
@@ -760,8 +762,7 @@ int remote_futex_wakeup(u32 __user *uaddr, unsigned int flags, int nr_wake,
 		unsigned long uaddr2, int nr_requeue, int cmpval) {
 
 	int res = 0;
-	_remote_wakeup_request_t *request = kmalloc(sizeof(_remote_wakeup_request_t),
-			GFP_ATOMIC);
+	_remote_wakeup_request_t *request = pcn_kmsg_alloc_msg(sizeof(_remote_wakeup_request_t));
 	FRPRINTK(KERN_ALERT"%s: -- entered whos calling{%s} \n", __func__,current->comm);
 	// Build request
 
@@ -798,7 +799,7 @@ int remote_futex_wakeup(u32 __user *uaddr, unsigned int flags, int nr_wake,
 			,sizeof(_remote_wakeup_request_t) - sizeof(struct pcn_kmsg_hdr));
 	}
 out:
-	kfree(request);
+	pcn_kmsg_free_msg(request);
 	return res;
 
 }

@@ -2048,7 +2048,7 @@ int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t
 
 	add_count_entry(data);
 
-	request= (remote_thread_count_request_t*) kmalloc(sizeof(remote_thread_count_request_t),GFP_ATOMIC);
+	request= (remote_thread_count_request_t*) pcn_kmsg_alloc_msg(sizeof(remote_thread_count_request_t));
 	if(request==NULL){
 		printk("Impossible to kmalloc in %s\n",__func__);
 		return -1;
@@ -2108,7 +2108,7 @@ if(mm_data->kernel_set[i]==1){
 		ret = data->count;
 		remove_count_entry(data);
 		kfree(data);
-		kfree(request);
+		pcn_kmsg_free_msg(request);
 		return ret;
 	}
 
@@ -2140,7 +2140,7 @@ if(mm_data->kernel_set[i]==1){
 
 		up_write(&memory->kernel_set_sem);
 
-		pcn_kmsg_free_msg(answer);
+		pcn_kmsg_free_msg_now(answer);
 		kfree(work);
 
 	}
@@ -2162,12 +2162,12 @@ if(mm_data->kernel_set[i]==1){
 			}
 			else{
 				printk("Impossible to kmalloc in %s\n",__func__);
-				pcn_kmsg_free_msg(inc_msg);
+				pcn_kmsg_free_msg_now(inc_msg);
 			}
 		}
 		else{
 			printk("ERROR: received an answer new kernel but memory not present\n");
-			pcn_kmsg_free_msg(inc_msg);
+			pcn_kmsg_free_msg_now(inc_msg);
 		}
 
 		return 1;
@@ -2179,7 +2179,7 @@ if(mm_data->kernel_set[i]==1){
 
 		PSNEWTHREADPRINTK("received new kernel request\n");
 
-		new_kernel_answer_t* answer= (new_kernel_answer_t*) kmalloc(sizeof(new_kernel_answer_t), GFP_ATOMIC);
+		new_kernel_answer_t* answer= (new_kernel_answer_t*) pcn_kmsg_alloc_msg(sizeof(new_kernel_answer_t));
 
 		if(answer!=NULL){
 			memory = find_memory_entry(new_kernel_work->request->tgroup_home_cpu,
@@ -2213,13 +2213,13 @@ if(mm_data->kernel_set[i]==1){
 					sizeof(new_kernel_answer_t) - sizeof(struct pcn_kmsg_hdr));
 			//int ret=pcn_kmsg_send(new_kernel_work->request->header.from_cpu, (struct pcn_kmsg_long_message*) answer);
 			//printk("%s send long ret is %d sizeof new_kernel_answer_t is %d size of header is %d\n",__func__,ret,sizeof(new_kernel_answer_t),sizeof(struct pcn_kmsg_hdr));
-			kfree(answer);
+			pcn_kmsg_free_msg(answer);
 
 		}
 		else
 			printk("Impossible to kmalloc in %s\n",__func__);
 
-		pcn_kmsg_free_msg(new_kernel_work->request);
+		pcn_kmsg_free_msg_now(new_kernel_work->request);
 		kfree(work);
 
 	}
@@ -2274,7 +2274,7 @@ if(mm_data->kernel_set[i]==1){
 
 	        }
 
-		create_thread_pull_t* msg= (create_thread_pull_t*) kmalloc(sizeof(create_thread_pull_t),GFP_ATOMIC);
+		create_thread_pull_t* msg = (create_thread_pull_t*) pcn_kmsg_alloc_msg(sizeof(create_thread_pull_t));
 		if(!msg){
 			printk("%s Impossible to kmalloc",__func__);
 			return;
@@ -2298,7 +2298,7 @@ if(mm_data->kernel_set[i]==1){
 
 		}
 
-		kfree(msg);
+		pcn_kmsg_free_msg(msg);
 		kfree(work);
 
 	}
@@ -2325,7 +2325,7 @@ if(mm_data->kernel_set[i]==1){
 	static int handle_thread_pull_creation(struct pcn_kmsg_message* inc_msg){
 
 		create_thread_pull();
-	        pcn_kmsg_free_msg(inc_msg);
+	        pcn_kmsg_free_msg_now(inc_msg);
 	        return 0;
 	}
 
@@ -2505,7 +2505,7 @@ if(mm_data->kernel_set[i]==1){
 						//printk(		"%s: This is the last thread of process (id %d, cpu %d) in the system, "
 						//		"sending an erase mapping message!\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 
-						exit_notification= (thread_group_exited_notification_t*) kmalloc(sizeof(thread_group_exited_notification_t),GFP_ATOMIC);
+						exit_notification= (thread_group_exited_notification_t*) pcn_kmsg_alloc_msg(sizeof(thread_group_exited_notification_t));
 						if(exit_notification==NULL){
 							printk("Impossible to kmalloc in %s\n",__func__);
 							return -1;
@@ -2537,7 +2537,7 @@ if(mm_data->kernel_set[i]==1){
 
 							}
 
-							kfree(exit_notification);
+							pcn_kmsg_free_msg(exit_notification);
 
 						}
 
@@ -2894,7 +2894,7 @@ if(mm_data->kernel_set[i]==1){
 
 				if (fetched_data == NULL) {
 					printk("data not found in local list\n");
-					pcn_kmsg_free_msg(inc_msg);
+					pcn_kmsg_free_msg_now(inc_msg);
 					return -1;
 
 				}
@@ -2936,7 +2936,7 @@ if(mm_data->kernel_set[i]==1){
 
 				wake_up_process(fetched_data->waiting);
 
-				pcn_kmsg_free_msg(inc_msg);
+				pcn_kmsg_free_msg_now(inc_msg);
 
 				//p_trace_printk("e\n");
 
@@ -2965,7 +2965,7 @@ if(mm_data->kernel_set[i]==1){
 
 				if (fetched_data == NULL) {
 					PSPRINTK("data not found in local list\n");
-					pcn_kmsg_free_msg(inc_msg);
+					pcn_kmsg_free_msg_now(inc_msg);
 					return -1;
 
 				}
@@ -3017,7 +3017,7 @@ if(mm_data->kernel_set[i]==1){
 				if (to_wake != NULL)
 					wake_up_process(to_wake);
 
-				pcn_kmsg_free_msg(inc_msg);
+				pcn_kmsg_free_msg_now(inc_msg);
 
 				return 1;
 
@@ -3108,7 +3108,7 @@ if(mm_data->kernel_set[i]==1){
 				wake_up_process(fetched_data->waiting);
 
 				if (set == 0)
-					pcn_kmsg_free_msg(inc_msg);
+					pcn_kmsg_free_msg_now(inc_msg);
 				
 				//p_trace_printk("e\n");
 #else
@@ -3132,7 +3132,7 @@ PSPRINTK(
 
 if (fetched_data == NULL) {
 	PSPRINTK("data not found in local list\n");
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
 	return -1;
 
 }
@@ -3185,7 +3185,7 @@ if (response->address_present == REPLICATION_STATUS_VALID
 	} else if (response->last_write > fetched_data->last_write) {
 		PSPRINTK(
 				"Substituting copy page, last write on this copy is: %lu\n", fetched_data->last_write);
-		pcn_kmsg_free_msg(fetched_data->data);
+		pcn_kmsg_free_msg_now(fetched_data->data);
 		fetched_data->data = response;
 		fetched_data->last_write = response->last_write;
 		set = 1;
@@ -3207,7 +3207,7 @@ if (to_wake != NULL)
 	wake_up_process(to_wake);
 
 if (set == 0)
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
 #endif
 return 1;
 			}
@@ -3240,7 +3240,7 @@ return 1;
 
 				wake_up_process(fetched_data->waiting);
 
-				out: pcn_kmsg_free_msg(inc_msg);
+				out: pcn_kmsg_free_msg_now(inc_msg);
 				//p_trace_printk("e\n");
 #else
 
@@ -3292,7 +3292,7 @@ raw_spin_unlock_irqrestore(&(fetched_data->lock), flags);
 if (to_wake != NULL)
 	wake_up_process(to_wake);
 
-out: pcn_kmsg_free_msg(inc_msg);
+out: pcn_kmsg_free_msg_now(inc_msg);
 #endif
 return 0;
 			}
@@ -3331,10 +3331,10 @@ PSMINPRINTK("Invalid for address %lu from cpu %i\n",data->address, from_cpu);
 
 //start= native_read_tsc();
 
-response= (ack_t*) kmalloc(sizeof(ack_t), GFP_ATOMIC);
+response= (ack_t*) pcn_kmsg_alloc_msg(sizeof(ack_t));
 if(response==NULL){
 	printk("Impossible to kmalloc in %s\n",__func__);
-	pcn_kmsg_free_msg(data);
+	pcn_kmsg_free_msg_now(data);
 	kfree(work);
 	return;
 }
@@ -3578,8 +3578,8 @@ response->ack = 1;
 //p_trace_printk("m\n");
 pcn_kmsg_send_long(from_cpu,(struct pcn_kmsg_long_message*) (response),sizeof(ack_t)-sizeof(struct pcn_kmsg_hdr));
 //p_trace_printk("a\n");
-kfree(response);
-pcn_kmsg_free_msg(data);
+pcn_kmsg_free_msg(response);
+pcn_kmsg_free_msg_now(data);
 kfree(work);
 //p_trace_printk("e\n");
 			}
@@ -3617,7 +3617,7 @@ PSPRINTK("Invalid %i address %lu from cpu %i\n", invalid, data->address, from_cp
 
 PSMINPRINTK("Invalid %i address %lu from cpu %i\n", invalid, data->address, from_cpu);
 
-response = (ack_t*) kmalloc(sizeof(ack_t),GPF_ATOMIC);
+response = (ack_t*) pcn_kmsg_alloc_msg(sizeof(ack_t));
 if(response==NULL){
 	printk("Impossible to kmalloc in %s\n",__func__);
 	pcn_kmsg_free_msg(data);
@@ -3829,7 +3829,7 @@ response->address = data->address;
 response->ack = ack;
 pcn_kmsg_send(from_cpu, (struct pcn_kmsg_message*) (response));
 
-kfree(response);
+pcn_kmsg_free_msg(response);
 pcn_kmsg_free_msg(data);
 kfree(work);
 
@@ -3850,8 +3850,10 @@ kfree(work);
 					INIT_WORK( (struct work_struct*)request_work, process_invalid_request_for_2_kernels);
 					queue_work(invalid_message_wq, (struct work_struct*) request_work);
 				}
-				else
+				else {
 					printk("Impossible to kmalloc in %s\n",__func__);
+					pcn_kmsg_free_msg_now(inc_msg);
+				}
 				//p_trace_printk("e\n");
 #else
 	invalid_work_t* request_work;
@@ -4384,7 +4386,7 @@ resolved:
 					printk("Impossible to kmalloc in %s\n",__func__);
 					spin_unlock(ptl);
 					up_read(&mm->mmap_sem);
-					pcn_kmsg_free_msg(request);
+					pcn_kmsg_free_msg_now(request);
 					kfree(work);
 					return;
 				}
@@ -4400,12 +4402,12 @@ resolved:
 #endif
 
 					kunmap_atomic(vfrom, KM_USER0);
-					response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+compressed_byte, GFP_ATOMIC);
+					response = (data_response_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(data_response_for_2_kernels_t)+compressed_byte);
 					if (response == NULL) {
 						printk("Impossible to kmalloc in %s\n",__func__);
 						spin_unlock(ptl);
 						up_read(&mm->mmap_sem);
-						pcn_kmsg_free_msg(request);
+						pcn_kmsg_free_msg_now(request);
 						kfree(work);
 						kfree(app);
 						return;
@@ -4420,12 +4422,12 @@ resolved:
 					not_compressed_page++;
 #endif
 
-					response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
+					response = (data_response_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE);
 					if (response == NULL) {
 						printk("Impossible to kmalloc in %s\n",__func__);
 						spin_unlock(ptl);
 						up_read(&mm->mmap_sem);
-						pcn_kmsg_free_msg(request);
+						pcn_kmsg_free_msg_now(request);
 						kfree(work);
 						kfree(app);
 						return;
@@ -4441,12 +4443,12 @@ resolved:
 
 #else
 
-				response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
+				response = (data_response_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE);
 				if (response == NULL) {
 					printk("Impossible to kmalloc in %s\n",__func__);
 					spin_unlock(ptl);
 					up_read(&mm->mmap_sem);
-					pcn_kmsg_free_msg(request);
+					pcn_kmsg_free_msg_now(request);
 					kfree(work);
 					return;
 				}
@@ -4553,9 +4555,9 @@ resolved:
  				p_trace_printk("a\n");
 
 				// Clean up incoming messages
-				pcn_kmsg_free_msg(request);
+				pcn_kmsg_free_msg_now(request);
 				kfree(work);
-				kfree(response);
+				pcn_kmsg_free_msg(response);
 				//end= native_read_tsc();
 				PSPRINTK("Handle request end\n");
 
@@ -4571,7 +4573,7 @@ resolved_diff:
 					printk("ERROR: no previous version of the page to calculate diff address %lu\n",address);
 					spin_unlock(ptl);
 					up_read(&mm->mmap_sem);
-					pcn_kmsg_free_msg(request);
+					pcn_kmsg_free_msg_now(request);
 					kfree(work);
 					return;
 				}
@@ -4581,7 +4583,7 @@ resolved_diff:
 					printk("Impossible to kmalloc in %s\n",__func__);
 					spin_unlock(ptl);
 					up_read(&mm->mmap_sem);
-					pcn_kmsg_free_msg(request);
+					pcn_kmsg_free_msg_now(request);
 					kfree(work);
 					return;
 				}
@@ -4597,12 +4599,12 @@ resolved_diff:
 #endif
 
 					kunmap_atomic(vfrom, KM_USER0);
-					response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+compressed_byte, GFP_ATOMIC);
+					response = (data_response_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(data_response_for_2_kernels_t)+compressed_byte);
 					if (response == NULL) {
 						printk("Impossible to kmalloc in %s\n",__func__);
 						spin_unlock(ptl);
 						up_read(&mm->mmap_sem);
-						pcn_kmsg_free_msg(request);
+						pcn_kmsg_free_msg_now(request);
 						kfree(work);
 						kfree(app);
 						return;
@@ -4618,12 +4620,12 @@ resolved_diff:
 					not_compressed_diff_page++;
 #endif
 
-					response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
+					response = (data_response_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE);
 					if (response == NULL) {
 						printk("Impossible to kmalloc in %s\n",__func__);
 						spin_unlock(ptl);
 						up_read(&mm->mmap_sem);
-						pcn_kmsg_free_msg(request);
+						pcn_kmsg_free_msg_now(request);
 						kfree(work);
 						kfree(app);
 						return;
@@ -4693,9 +4695,9 @@ resolved_diff:
 				p_trace_printk("a\n");
 
 				// Clean up incoming messages
-				pcn_kmsg_free_msg(request);
+				pcn_kmsg_free_msg_now(request);
 				kfree(work);
-				kfree(response);
+				pcn_kmsg_free_msg(response);
 				//end= native_read_tsc();
 				PSPRINTK("Handle request end\n");
 
@@ -4708,14 +4710,14 @@ out:
 
 				PSPRINTK("sending void answer\n");
 
-				void_response = (data_void_response_for_2_kernels_t*) kmalloc(sizeof(data_void_response_for_2_kernels_t), GFP_ATOMIC);
+				void_response = (data_void_response_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(data_void_response_for_2_kernels_t));
 				if (void_response == NULL) {
 					printk("Impossible to kmalloc in %s\n",__func__);
 					if(lock){
 						spin_unlock(ptl);
 						up_read(&mm->mmap_sem);
 					}
-					pcn_kmsg_free_msg(request);
+					pcn_kmsg_free_msg_now(request);
 					kfree(work);
 					return;
 				}
@@ -4768,8 +4770,8 @@ PSPRINTK("void: response->vma_present %d response->vaddr_start %lu response->vad
  				p_trace_printk("a\n");
  
 				// Clean up incoming messages
-				pcn_kmsg_free_msg(request);
-				kfree(void_response);
+				pcn_kmsg_free_msg_now(request);
+				pcn_kmsg_free_msg(void_response);
 				kfree(work);
 				//end= native_read_tsc();
 				PSPRINTK("Handle request end\n");
@@ -5125,7 +5127,7 @@ PSPRINTK("void: response->vma_present %d response->vaddr_start %lu response->vad
 						if (page->concurrent_writers != page->concurrent_fetch) {
 							spin_unlock(ptl);
 							up_read(&mm->mmap_sem);
-							pcn_kmsg_free_msg(request);
+							pcn_kmsg_free_msg_now(request);
 							kfree(work);
 							PSPRINTK(
 									"Waiting, page->concurrent_writers!=page->concurrent_fetch\n");
@@ -5148,12 +5150,12 @@ PSPRINTK("void: response->vma_present %d response->vaddr_start %lu response->vad
 
 						//flush_tlb_fix_spurious_fault(vma, address);
 
-						response = (data_response_t*) kmalloc(sizeof(data_response_t),
+						response = (data_response_t*) pcn_kmsg_alloc_msg(sizeof(data_response_t),
 								GFP_ATOMIC);
 						if (response == NULL) {
 							spin_unlock(ptl);
 							up_read(&mm->mmap_sem);
-							pcn_kmsg_free_msg(request);
+							pcn_kmsg_free_msg_now(request);
 							kfree(work);
 							printk("Impossible to kmalloc in %s\n",__func__);
 							return;
@@ -5234,8 +5236,8 @@ for (i = 0; i < MAX_KERNEL_IDS; i++)
 	}
 
 up_read(&mm->mmap_sem);
-kfree(response);
-pcn_kmsg_free_msg(request);
+pcn_kmsg_free_msg(response);
+pcn_kmsg_free_msg_now(request);
 kfree(work);
 PSPRINTK("End request in written page \n");
 return;
@@ -5245,7 +5247,7 @@ return;
 
 				resolved:
 
-				response = (data_response_t*) kmalloc(sizeof(data_response_t), GFP_ATOMIC);
+				response = (data_response_t*) pcn_kmsg_alloc_msg(sizeof(data_response_t));
 				if (response == NULL) {
 					printk("Impossible to kmalloc in %s\n",__func__);
 					return;
@@ -5325,9 +5327,9 @@ pcn_kmsg_send_long(from_cpu, (struct pcn_kmsg_long_message*) (response),
 		sizeof(data_response_t) - sizeof(struct pcn_kmsg_hdr));
 
 // Clean up incoming messages
-pcn_kmsg_free_msg(request);
+pcn_kmsg_free_msg_now(request);
 kfree(work);
-kfree(response);
+pcn_kmsg_free_msg(response);
 //end= native_read_tsc();
 PSPRINTK("Handle request end\n");
 return;
@@ -5336,8 +5338,7 @@ out:
 
 PSPRINTK("There are no copies of the page...\n");
 
-void_response = (data_void_response_t*) kmalloc(
-		sizeof(data_void_response_t), GFP_ATOMIC);
+void_response = (data_void_response_t*) pcn_kmsg_alloc_msg(sizeof(data_void_response_t));
 if (void_response == NULL) {
 	printk("Impossible to kmalloc in %s\n",__func__);
 	return;
@@ -5389,8 +5390,8 @@ pcn_kmsg_send_long(from_cpu,
 		sizeof(data_void_response_t) - sizeof(struct pcn_kmsg_hdr));
 
 // Clean up incoming messages
-pcn_kmsg_free_msg(request);
-kfree(void_response);
+pcn_kmsg_free_msg_now(request);
+pcn_kmsg_free_msg(void_response);
 kfree(work);
 //end= native_read_tsc();
 PSPRINTK("Handle request end\n");
@@ -5413,8 +5414,10 @@ PSPRINTK("Handle request end\n");
 					INIT_WORK( (struct work_struct*)request_work, process_mapping_request_for_2_kernels);
 					queue_work(message_request_wq, (struct work_struct*) request_work);
 				}
-				else
+				else {
 					printk("Impossible to kmalloc in %s\n",__func__);
+					pcn_kmsg_free_msg_now(inc_msg);
+				}
 				//p_trace_printk("e\n");
 #else
 				data_request_t* request = (data_request_t*) inc_msg;
@@ -5425,8 +5428,10 @@ PSPRINTK("Handle request end\n");
 					request_work->request = request;
 					INIT_WORK( (struct work_struct*)request_work, process_mapping_request);
 					queue_work(message_request_wq, (struct work_struct*) request_work);
-				}else
+				} else {
 					printk("Impossible to kmalloc in %s\n",__func__);
+					pcn_kmsg_free_msg_now(inc_msg);
+				}
 
 #endif
 
@@ -5559,7 +5564,7 @@ PSPRINTK("Handle request end\n");
 					wake_up_process(mm_data->main);
 				}
 
-				pcn_kmsg_free_msg(msg);
+				pcn_kmsg_free_msg_now(msg);
 				kfree(work);
 
 			}
@@ -5622,7 +5627,7 @@ PSPRINTK("Handle request end\n");
 				} else
 					printk("ERROR: task not found. Impossible to kill shadow.");
 
-				pcn_kmsg_free_msg(msg);
+				pcn_kmsg_free_msg_now(msg);
 				kfree(work);
 
 			}
@@ -5643,8 +5648,10 @@ PSPRINTK("Handle request end\n");
 							process_exit_group_notification);
 					queue_work(exit_group_wq, (struct work_struct*) request_work);
 				}
-				else
+				else {
 					printk("Impossible to kmalloc in %s\n",__func__);
+					pcn_kmsg_free_msg_now(inc_msg);
+				}
 
 				return 1;
 			}
@@ -5687,14 +5694,14 @@ PSPRINTK("Handle request end\n");
 
 				task = find_task_by_vpid(msg->your_pid);
 				if (task == NULL || task->represents_remote == 0) {
-					pcn_kmsg_free_msg(inc_msg);
+					pcn_kmsg_free_msg_now(inc_msg);
 					return -1;
 				}
 				task->next_cpu = source_cpu;
 				task->next_pid = msg->my_pid;
 				task->executing_for_remote = 0;
 				//printk("assotiated pid %d with pid %d\n",msg->your_pid,msg->my_pid);	
-				pcn_kmsg_free_msg(inc_msg);
+				pcn_kmsg_free_msg_now(inc_msg);
 
 				return 1;
 			}
@@ -5711,7 +5718,7 @@ PSPRINTK("Handle request end\n");
 
 				if (data == NULL) {
 					PSPRINTK("unable to find remote thread count data\n");
-					pcn_kmsg_free_msg(inc_msg);
+					pcn_kmsg_free_msg_now(inc_msg);
 					return -1;
 				}
 
@@ -5729,7 +5736,7 @@ PSPRINTK("Handle request end\n");
 				if (to_wake != NULL)
 					wake_up_process(to_wake);
 
-				pcn_kmsg_free_msg(inc_msg);
+				pcn_kmsg_free_msg_now(inc_msg);
 
 				return 0;
 			}
@@ -5742,7 +5749,7 @@ PSPRINTK("Handle request end\n");
 
 				PSPRINTK("%s: entered - cpu{%d}, id{%d}\n", __func__, msg->tgroup_home_cpu, msg->tgroup_home_id);
 
-				response= (remote_thread_count_response_t*) kmalloc(sizeof(remote_thread_count_response_t),GFP_ATOMIC);
+				response = (remote_thread_count_response_t*) pcn_kmsg_alloc_msg(sizeof(remote_thread_count_response_t));
 				if(!response){
 					printk("Impossible to kmalloc in %s\n",__func__);
 					return;
@@ -5786,8 +5793,8 @@ PSPRINTK("Handle request end\n");
 				PSPRINTK("%s: responding to thread count request with %d\n", __func__, response->count);
 				// Send response
 				pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_long_message*) (response),sizeof(remote_thread_count_response_t)-sizeof(struct pcn_kmsg_hdr));
-				pcn_kmsg_free_msg(msg);
-				kfree(response);
+				pcn_kmsg_free_msg_now(msg);
+				pcn_kmsg_free_msg(response);
 				kfree(request_work);
 
 
@@ -5918,7 +5925,7 @@ PSPRINTK("Handle request end\n");
 
 				}
 
-				pcn_kmsg_free_msg(request);
+				pcn_kmsg_free_msg_now(request);
 				kfree(work);
 			}
 
@@ -5999,7 +6006,7 @@ PSPRINTK("Handle request end\n");
 
                                 }
 
-                                pcn_kmsg_free_msg(request);
+                                pcn_kmsg_free_msg_now(request);
 
 				return 0;
 
@@ -6049,8 +6056,7 @@ PSPRINTK("Handle request end\n");
 					 */
 					if (tsk->executing_for_remote) {
 
-						exiting_process_t* msg = (exiting_process_t*) kmalloc(
-								sizeof(exiting_process_t), GFP_ATOMIC);
+						exiting_process_t* msg = (exiting_process_t*) pcn_kmsg_alloc_msg(sizeof(exiting_process_t));
 
 						if (msg != NULL) {
 							msg->header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
@@ -6107,7 +6113,7 @@ PSPRINTK("Handle request end\n");
 							tx_ret = pcn_kmsg_send_long(tsk->prev_cpu,
 									(struct pcn_kmsg_long_message*) msg,
 									sizeof(exiting_process_t) - sizeof(struct pcn_kmsg_hdr));
-							kfree(msg);
+							pcn_kmsg_free_msg(msg);
 						}
 						else
 							printk("Impossible to kmalloc in %s\n",__func__);
@@ -6131,7 +6137,7 @@ PSPRINTK("Handle request end\n");
 				create_process_pairing_t* msg;
 				int tx_ret = -1;
 
-				msg= (create_process_pairing_t*) kmalloc(sizeof(create_process_pairing_t),GFP_ATOMIC);
+				msg= (create_process_pairing_t*) pcn_kmsg_alloc_msg(sizeof(create_process_pairing_t));
 				if(!msg){
 					printk("Impossible to kmalloc in %s\n",__func__);
 					return -1;
@@ -6144,7 +6150,7 @@ PSPRINTK("Handle request end\n");
 				msg->my_pid = pid;
 
 				tx_ret = pcn_kmsg_send_long(remote_cpu, (struct pcn_kmsg_long_message *) msg, sizeof(create_process_pairing_t)-sizeof(struct pcn_kmsg_hdr));
-				kfree(msg);
+				pcn_kmsg_free_msg(msg);
 
 				return tx_ret;
 
@@ -6578,8 +6584,7 @@ page->old_page_version= NULL;
 				page->reading= 1;
 
 				//message to ask for a copy
-				data_request_for_2_kernels_t* read_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
-						GFP_ATOMIC);
+				data_request_for_2_kernels_t* read_message = (data_request_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(data_request_for_2_kernels_t));
 				if (read_message == NULL) {
 					printk("Impossible to kmalloc in %s\n",__func__);
 					ret = VM_FAULT_OOM;
@@ -6720,7 +6725,7 @@ page->old_page_version= NULL;
 
 						if (reading_page->data->address != address) {
 							printk("ERROR: trying to copy wrong address!");
-							pcn_kmsg_free_msg(reading_page->data);
+							pcn_kmsg_free_msg_now(reading_page->data);
 							ret = VM_FAULT_REPLICATION_PROTOCOL;
 							goto exit_reading_page;
 						}
@@ -6756,7 +6761,7 @@ page->old_page_version= NULL;
 							else
 							{
 								kunmap_atomic(vto, KM_USER0);
-								pcn_kmsg_free_msg(reading_page->data);
+								pcn_kmsg_free_msg_now(reading_page->data);
 								printk("ERROR: received data not diff in write address %lu\n",address);
 								ret = VM_FAULT_REPLICATION_PROTOCOL;
 								goto exit_reading_page;
@@ -6777,20 +6782,20 @@ page->old_page_version= NULL;
 						__wsum check2= csum_partial(&(reading_page->data->data), PAGE_SIZE, 0);
 						if(check1!=check2) {
 							printk("ERROR: page just copied is not matching, address %lu\n",address);
-							pcn_kmsg_free_msg(reading_page->data);
+							pcn_kmsg_free_msg_now(reading_page->data);
 							ret= VM_FAULT_REPLICATION_PROTOCOL;
 							goto exit_reading_page;
 						}
 						if(check1!=reading_page->data->checksum) {
 							printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
-							pcn_kmsg_free_msg(reading_page->data);
+							pcn_kmsg_free_msg_now(reading_page->data);
 							ret= VM_FAULT_REPLICATION_PROTOCOL;
 							goto exit_reading_page;
 						}
 #endif
 #endif
 
-						pcn_kmsg_free_msg(reading_page->data);
+						pcn_kmsg_free_msg_now(reading_page->data);
 
 						page->status = REPLICATION_STATUS_VALID;
 						page->owner = reading_page->owner;
@@ -6829,7 +6834,7 @@ page->old_page_version= NULL;
 						ret= VM_FAULT_REPLICATION_PROTOCOL;
 						remove_mapping_entry(reading_page);
 						kfree(reading_page);
-						kfree(read_message);
+						pcn_kmsg_free_msg(read_message);
 						goto exit;
 
 					}
@@ -6843,7 +6848,7 @@ page->old_page_version= NULL;
 
 					exit_read_message:
 
-					kfree(read_message);
+					pcn_kmsg_free_msg(read_message);
 
 					exit:
 
@@ -6894,8 +6899,7 @@ attemps_read=0;
 page->reading = 1;
 
 //message to ask a copy of the page
-read_message = (data_request_t*) kmalloc(sizeof(data_request_t),
-		GFP_ATOMIC);
+read_message = (data_request_t*) pcn_kmsg_alloc_msg(sizeof(data_request_t));
 if (read_message == NULL) {
 	printk("Impossible to kmalloc in %s\n",__func__);
 	ret = VM_FAULT_OOM;
@@ -6999,7 +7003,7 @@ if (reading_page->address_present == REPLICATION_STATUS_INVALID
 
 	reading_page->address_present = REPLICATION_STATUS_INVALID;
 	if (reading_page->data != NULL) {
-		pcn_kmsg_free_msg(reading_page->data);
+		pcn_kmsg_free_msg(read_message);
 		reading_page->data = NULL;
 	}
 	reading_page->responses = 0;
@@ -7060,7 +7064,7 @@ if (reading_page->last_invalid >= reading_page->last_write) {
 
 	reading_page->address_present = REPLICATION_STATUS_INVALID;
 	if (reading_page->data != NULL) {
-		pcn_kmsg_free_msg(reading_page->data);
+		pcn_kmsg_free_msg_now(reading_page->data);
 		reading_page->data = NULL;
 	}
 	reading_page->responses = 0;
@@ -7087,7 +7091,7 @@ PSPRINTK("Out read %i address %lu iter %i \n", read, address, attemps_read);
 
 if (reading_page->data->address != address) {
 	printk("ERROR: trying to copy wrong address!");
-	pcn_kmsg_free_msg(reading_page->data);
+	pcn_kmsg_free_msg_now(reading_page->data);
 	ret = VM_FAULT_REPLICATION_PROTOCOL;
 	goto exit_reading_page;
 }
@@ -7104,19 +7108,19 @@ kunmap_atomic(vto, KM_USER0);
 __wsum check2= csum_partial(&(reading_page->data->data), PAGE_SIZE, 0);
 if(check1!=check2) {
 	printk("ERROR: page just copied is not matching, address %lu\n",address);
-	pcn_kmsg_free_msg(reading_page->data);
+	pcn_kmsg_free_msg_now(reading_page->data);
 	ret= VM_FAULT_REPLICATION_PROTOCOL;
 	goto exit_reading_page;
 }
 if(check1!=reading_page->data->checksum) {
 	printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
-	pcn_kmsg_free_msg(reading_page->data);
+	pcn_kmsg_free_msg_now(reading_page->data);
 	ret= VM_FAULT_REPLICATION_PROTOCOL;
 	goto exit_reading_page;
 }
 #endif
 
-pcn_kmsg_free_msg(reading_page->data);
+pcn_kmsg_free_msg_now(reading_page->data);
 
 page->last_write = reading_page->last_write;
 
@@ -7159,7 +7163,7 @@ kfree(reading_page);
 
 exit_read_message:
 
-kfree(read_message);
+pcn_kmsg_free_msg(read_message);
 
 exit:
 
@@ -7215,8 +7219,7 @@ return ret;
 		answers->waiting = current;
 
 		//message to invalidate the other copies
-		invalid_data_for_2_kernels_t* invalid_message = (invalid_data_for_2_kernels_t*) kmalloc(sizeof(invalid_data_for_2_kernels_t),
-			GFP_ATOMIC);
+		invalid_data_for_2_kernels_t* invalid_message = (invalid_data_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(invalid_data_for_2_kernels_t));
 		if (invalid_message == NULL) {
 			printk("Impossible to kmalloc in %s\n",__func__);
 			ret = VM_FAULT_OOM;
@@ -7318,7 +7321,7 @@ return ret;
 		PSPRINTK("Received ack to invalid %i address %lu \n", write, address);
 
 		exit_invalid:
-		kfree(invalid_message);
+		pcn_kmsg_free_msg(invalid_message);
 		remove_ack_entry(answers);
 		exit_answers:
 		kfree(answers);
@@ -7329,8 +7332,7 @@ return ret;
 		//in this case I send a mapping request with write flag set
 
 		//message to ask for a copy
-		data_request_for_2_kernels_t* write_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
-				GFP_ATOMIC);
+		data_request_for_2_kernels_t* write_message = (data_request_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(data_request_for_2_kernels_t));
 		if (write_message == NULL) {
 			printk("Impossible to kmalloc in %s\n",__func__);
 			ret = VM_FAULT_OOM;
@@ -7552,7 +7554,7 @@ exit_writing_page:
 
 exit_write_message:
 
-				kfree(write_message);
+				pcn_kmsg_free_msg(write_message);
 
 				if(ret!=0)
 					goto exit;
@@ -7561,7 +7563,7 @@ exit_write_message:
 
 				remove_mapping_entry(writing_page);
 				kfree(writing_page);
-				kfree(write_message);
+				pcn_kmsg_free_msg(write_message);
 
 				if(invalid){
 					printk("ERROR: writing an invalid page but not received a copy\n");
@@ -7689,8 +7691,7 @@ exit:
 		raw_spin_lock_init(&(answers->lock));
 
 		//message to invalidate the other copies
-		invalid_message = (invalid_data_t*) kmalloc(sizeof(invalid_data_t),
-				GFP_ATOMIC);
+		invalid_message = (invalid_data_t*) pcn_kmsg_alloc_msg(sizeof(invalid_data_t));
 		if (invalid_message == NULL) {
 			printk("Impossible to kmalloc in %s\n",__func__);
 			ret = VM_FAULT_OOM;
@@ -7724,8 +7725,7 @@ if (attemps_write != 1) {
 	page->reading = 1;
 
 	//message to ask for a copy
-	read_message = (data_request_t*) kmalloc(sizeof(data_request_t),
-			GFP_ATOMIC);
+	read_message = (data_request_t*) pcn_kmsg_alloc_msg(sizeof(data_request_t));
 	if (read_message == NULL) {
 		printk("Impossible to kmalloc in %s\n",__func__);
 		ret = VM_FAULT_OOM;
@@ -7825,7 +7825,7 @@ if (attemps_write != 1) {
 
 	if (reading_page->data->address != address) {
 		printk("ERROR: trying to copy wrong address!");
-		pcn_kmsg_free_msg(reading_page->data);
+		pcn_kmsg_free_msg_now(reading_page->data);
 		ret = VM_FAULT_REPLICATION_PROTOCOL;
 		goto exit_reading_page;
 	}
@@ -7841,19 +7841,19 @@ if (attemps_write != 1) {
 	__wsum check2= csum_partial(reading_page->data->data, PAGE_SIZE, 0);
 	if(check1!=check2) {
 		printk("ERROR: page just copied is not matching, address %lu\n",address);
-		pcn_kmsg_free_msg(reading_page->data);
+		pcn_kmsg_free_msg_now(reading_page->data);
 		ret= VM_FAULT_REPLICATION_PROTOCOL;
 		goto exit_reading_page;
 	}
 	if(check1!=reading_page->data->checksum) {
 		printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
-		pcn_kmsg_free_msg(reading_page->data);
+		pcn_kmsg_free_msg_now(reading_page->data);
 		ret= VM_FAULT_REPLICATION_PROTOCOL;
 		goto exit_reading_page;
 	}
 #endif
 
-	pcn_kmsg_free_msg(reading_page->data);
+	pcn_kmsg_free_msg_now(reading_page->data);
 	flush_cache_page(vma, address, pte_pfn(*pte));
 
 	page->status = REPLICATION_STATUS_VALID;
@@ -7878,7 +7878,7 @@ if (attemps_write != 1) {
 
 	remove_mapping_entry(reading_page);
 	kfree(reading_page);
-	kfree(read_message);
+	pcn_kmsg_free_msg(read_message);
 
 	page->reading = 0;
 
@@ -8016,12 +8016,12 @@ if (page->other_owners[i] == 1) {
 
 	exit_read_message:
 
-	kfree(read_message);
+	pcn_kmsg_free_msg(read_message);
 	page->reading = 0;
 
 	exit_invalid:
 
-	kfree(invalid_message);
+	pcn_kmsg_free_msg(invalid_message);
 	remove_ack_entry(answers);
 
 	exit_answers:
@@ -8444,8 +8444,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 			}
 		}
 
-		fetch_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
-				GFP_ATOMIC);
+		fetch_message = (data_request_for_2_kernels_t*) pcn_kmsg_alloc_msg(sizeof(data_request_for_2_kernels_t));
 		if (fetch_message == NULL) {
 			printk("Impossible to kmalloc in %s\n",__func__);
 			ret = VM_FAULT_OOM;
@@ -8629,7 +8628,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						status= REPLICATION_STATUS_WRITTEN;
 						if(fetching_page->owner==0){
 							printk("ERROR: copy of a page sent to a write fetch request without ownership\n");
-							pcn_kmsg_free_msg(fetching_page->data);
+							pcn_kmsg_free_msg_now(fetching_page->data);
 							ret = VM_FAULT_REPLICATION_PROTOCOL;
 							goto exit_fetch_message;
 						}
@@ -8640,7 +8639,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						status= REPLICATION_STATUS_VALID;
 						if(fetching_page->owner==1){
 							printk("ERROR: copy of a page sent to a read fetch request with ownership\n");
-							pcn_kmsg_free_msg(fetching_page->data);
+							pcn_kmsg_free_msg_now(fetching_page->data);
 							ret = VM_FAULT_REPLICATION_PROTOCOL;
 							goto exit_fetch_message;
 						}
@@ -8651,7 +8650,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 					if (fetching_page->data->address != address) {
 						printk("ERROR: trying to copy wrong address!");
-						pcn_kmsg_free_msg(fetching_page->data);
+						pcn_kmsg_free_msg_now(fetching_page->data);
 						ret = VM_FAULT_REPLICATION_PROTOCOL;
 						goto exit_fetch_message;
 					}
@@ -8661,7 +8660,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 					if(fetching_page->data->diff==1){
 						printk("ERROR: answered to a fetch with diff data\n");
-						pcn_kmsg_free_msg(fetching_page->data);
+						pcn_kmsg_free_msg_now(fetching_page->data);
 						ret = VM_FAULT_REPLICATION_PROTOCOL;
 						goto exit_fetch_message;
 					}
@@ -8683,7 +8682,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 									GFP_ATOMIC);
 							if(page->old_page_version==NULL){
 								printk("Impossible to kmalloc in %s\n",__func__);
-								pcn_kmsg_free_msg(fetching_page->data);
+								pcn_kmsg_free_msg_now(fetching_page->data);
 								ret = VM_FAULT_REPLICATION_PROTOCOL;
 								goto exit_fetch_message;
 							}
@@ -8718,13 +8717,13 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 					if(check1!=check2) {
 						printk("ERROR: page just copied is not matching, address %lu\n",address);
-						pcn_kmsg_free_msg(fetching_page->data);
+						pcn_kmsg_free_msg_now(fetching_page->data);
 						ret= VM_FAULT_REPLICATION_PROTOCOL;
 						goto exit_fetch_message;
 					}
 					if(check1!=fetching_page->data->checksum) {
 						printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
-						pcn_kmsg_free_msg(fetching_page->data);
+						pcn_kmsg_free_msg_now(fetching_page->data);
 						ret= VM_FAULT_REPLICATION_PROTOCOL;
 						goto exit_fetch_message;
 					}
@@ -8732,7 +8731,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 #endif
 
-					pcn_kmsg_free_msg(fetching_page->data);
+					pcn_kmsg_free_msg_now(fetching_page->data);
 
 					pte_t entry = mk_pte(page, vma->vm_page_prot);
 
@@ -8800,7 +8799,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 					status = REPLICATION_STATUS_INVALID;
 					mem_cgroup_uncharge_page(page);
 					page_cache_release(page);
-					pcn_kmsg_free_msg(fetching_page->data);
+					pcn_kmsg_free_msg_now(fetching_page->data);
 
 				}
 
@@ -8818,14 +8817,14 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 #endif
 				PSPRINTK("Copy not present in the other kernel, local fetch %d of address %lu\n", local_fetch, address);
 				PSMINPRINTK("Local fetch for address %lu\n",address);
-				kfree(fetch_message);
+				pcn_kmsg_free_msg(fetch_message);
 				ret = VM_CONTINUE_WITH_CHECK;
 				goto exit;
 			}
 
 			exit_fetch_message:
 
-			kfree(fetch_message);
+			pcn_kmsg_free_msg(fetch_message);
 
 			exit_fetching_page:
 
@@ -8908,8 +8907,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 			add_mapping_entry(fetching_page);
 
 			//create the message to broadcast to other kernels
-			fetch_message = (data_request_t*) kmalloc(sizeof(data_request_t),
-					GFP_ATOMIC);
+			fetch_message = (data_request_t*) pcn_kmsg_alloc_msg(sizeof(data_request_t));
 			if (fetch_message == NULL) {
 				printk("Impossible to kmalloc in %s\n",__func__);
 				ret = VM_FAULT_OOM;
@@ -9072,7 +9070,7 @@ if(memory->kernel_set[i]==1)
 
 				if (fetching_page->data->address != address) {
 					printk("ERROR: trying to copy wrong address!");
-					pcn_kmsg_free_msg(fetching_page->data);
+					pcn_kmsg_free_msg_now(fetching_page->data);
 					ret = VM_FAULT_REPLICATION_PROTOCOL;
 					goto exit_fetch_message;
 				}
@@ -9088,13 +9086,13 @@ if(memory->kernel_set[i]==1)
 				__wsum check2= csum_partial(fetching_page->data->data, PAGE_SIZE, 0);
 				if(check1!=check2) {
 					printk("ERROR: page just copied is not matching, address %lu\n",address);
-					pcn_kmsg_free_msg(fetching_page->data);
+					pcn_kmsg_free_msg_now(fetching_page->data);
 					ret= VM_FAULT_REPLICATION_PROTOCOL;
 					goto exit_fetch_message;
 				}
 				if(check1!=fetching_page->data->checksum) {
 					printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
-					pcn_kmsg_free_msg(fetching_page->data);
+					pcn_kmsg_free_msg_now(fetching_page->data);
 					ret= VM_FAULT_REPLICATION_PROTOCOL;
 					goto exit_fetch_message;
 				}
@@ -9102,7 +9100,7 @@ if(memory->kernel_set[i]==1)
 
 			}
 
-			pcn_kmsg_free_msg(fetching_page->data);
+			pcn_kmsg_free_msg_now(fetching_page->data);
 
 			pte_t entry = mk_pte(page, vma->vm_page_prot);
 
@@ -9182,14 +9180,14 @@ if(memory->kernel_set[i]==1)
 		PSPRINTK(
 				"Copy not present in the system, local fetch %d of address %lu\n", local_fetch, address);
 
-		kfree(fetch_message);
+		pcn_kmsg_free_msg(fetch_message);
 		ret = VM_CONTINUE_WITH_CHECK;
 		goto exit;
 	}
 
 	exit_fetch_message:
 
-	kfree(fetch_message);
+	pcn_kmsg_free_msg(fetch_message);
 
 	exit_fetching_page:
 
@@ -9874,7 +9872,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 	int ret;
 	back_migration_request_t* request;
 
-	request= (back_migration_request_t*) kmalloc(sizeof(back_migration_request_t), GFP_ATOMIC);
+	request = (back_migration_request_t*) pcn_kmsg_alloc_msg(sizeof(back_migration_request_t));
 	if(request==NULL){
 		printk("Impossible to kmalloc in %s\n",__func__);
 		return -1;
@@ -9991,7 +9989,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 	if (task->tgroup_distributed == 0) {
 		unlock_task_sighand(task, &flags);
 		printk("ERROR: back migrating thread of not tgroup_distributed process\n");
-		kfree(request);
+		pcn_kmsg_free_msg(request);
 		return -1;
 	}
 
@@ -10015,7 +10013,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
   
         }
 
-	kfree(request);
+	pcn_kmsg_free_msg(request);
 
 	return ret;
 }
@@ -10090,7 +10088,7 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
 	int first= 0;
 	unsigned long flags;
 
-	request = kmalloc(sizeof(clone_request_t), GFP_ATOMIC);
+	request = pcn_kmsg_alloc_msg(sizeof(clone_request_t));
 	if (request == NULL) {
 		printk("Impossible to kmalloc in %s\n",__func__);
 		return -1;
@@ -10312,7 +10310,7 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
 				create_kernel_thread_for_distributed_process_from_user_one,
 				entry, CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | SIGCHLD);
 
-	kfree(request);
+	pcn_kmsg_free_msg(request);
 
 	return tx_ret;
 }
@@ -10479,7 +10477,7 @@ void process_vma_op(struct work_struct* work) {
 			up_write(&mm->mmap_sem);
 			printk("ERROR: handling a new vma operation but mm->distr_vma_op_counter is %i and mm->was_not_pushed is %i \n",
 					mm->distr_vma_op_counter, mm->was_not_pushed);
-			pcn_kmsg_free_msg(operation);
+			pcn_kmsg_free_msg_now(operation);
 			kfree(work);
 			return ;
 		}
@@ -10553,7 +10551,7 @@ void process_vma_op(struct work_struct* work) {
 
 		wake_up(&request_distributed_vma_op);
 
-		pcn_kmsg_free_msg(operation);
+		pcn_kmsg_free_msg_now(operation);
 		kfree(work);
 		
 		PSVMAPRINTK("%s, SERVER: end requested operation pid %d\n",__func__,current->pid);
@@ -10574,7 +10572,7 @@ void process_vma_op(struct work_struct* work) {
 			if (memory->my_lock != 1) {
 				printk("ERROR: wrong distributed lock aquisition\n");
 				up_write(&mm->mmap_sem);
-				pcn_kmsg_free_msg(operation);
+				pcn_kmsg_free_msg_now(operation);
 				kfree(work);
 				return ;
 			}
@@ -10583,7 +10581,7 @@ void process_vma_op(struct work_struct* work) {
 				printk("ERROR: the server pushed me an operation %i of cpu %i\n",
 						operation->operation, operation->from_cpu);
 				up_write(&mm->mmap_sem);
-				pcn_kmsg_free_msg(operation);
+				pcn_kmsg_free_msg_now(operation);
 				kfree(work);
 				return ;
 			}
@@ -10591,7 +10589,7 @@ void process_vma_op(struct work_struct* work) {
 			if (memory->waiting_for_op == NULL) {
 				printk(	"ERROR:received a push operation started by me but nobody is waiting\n");
 				up_write(&mm->mmap_sem);
-				pcn_kmsg_free_msg(operation);
+				pcn_kmsg_free_msg_now(operation);
 				kfree(work);
 				return ;
 			}
@@ -10605,7 +10603,7 @@ void process_vma_op(struct work_struct* work) {
 
 			wake_up_process(memory->waiting_for_op);
 
-			pcn_kmsg_free_msg(operation);
+			pcn_kmsg_free_msg_now(operation);
 			kfree(work);
 			return ;
 
@@ -10617,7 +10615,7 @@ void process_vma_op(struct work_struct* work) {
 			if (memory->my_lock != 1) {
 				printk("ERROR: wrong distributed lock aquisition\n");
 				up_write(&mm->mmap_sem);
-				pcn_kmsg_free_msg(operation);
+				pcn_kmsg_free_msg_now(operation);
 				kfree(work);
 				return ;
 			}
@@ -10626,7 +10624,7 @@ void process_vma_op(struct work_struct* work) {
 				printk(
 						"ERROR:received a push operation started by me but nobody is waiting\n");
 				up_write(&mm->mmap_sem);
-				pcn_kmsg_free_msg(operation);
+				pcn_kmsg_free_msg_now(operation);
 				kfree(work);
 				return ;
 			}
@@ -10642,7 +10640,7 @@ void process_vma_op(struct work_struct* work) {
 
 			wake_up_process(memory->waiting_for_op);
 
-			pcn_kmsg_free_msg(operation);
+			pcn_kmsg_free_msg_now(operation);
 			kfree(work);
 			return ;
 		}
@@ -10651,7 +10649,7 @@ void process_vma_op(struct work_struct* work) {
 
 		if (operation->addr < 0) {
 			printk("WARNING: %s, server sent me and error\n",__func__);
-			pcn_kmsg_free_msg(operation);
+			pcn_kmsg_free_msg_now(operation);
 			kfree(work);
 			return ;
 		}
@@ -10716,7 +10714,7 @@ void process_vma_op(struct work_struct* work) {
 
 		wake_up(&request_distributed_vma_op);
 
-		pcn_kmsg_free_msg(operation);
+		pcn_kmsg_free_msg_now(operation);
 		kfree(work);
 
 		return ;
@@ -10758,7 +10756,7 @@ void process_vma_op(struct work_struct* work) {
 		up_write(&memory->mm->mmap_sem);
 	}
 
-	vma_ack_t* ack = (vma_ack_t*) kmalloc(sizeof(vma_ack_t), GFP_ATOMIC);
+	vma_ack_t* ack = (vma_ack_t*) pcn_kmsg_alloc_msg(sizeof(vma_ack_t));
 	if (ack == NULL){
 		printk("Impossible to kmalloc in %s\n",__func__);
 		return ;
@@ -10774,8 +10772,8 @@ void process_vma_op(struct work_struct* work) {
 
 	PSPRINTK("Operation done\n");
 
-	pcn_kmsg_free_msg(unmap);
-	kfree(ack);
+	pcn_kmsg_free_msg_now(unmap);
+	pcn_kmsg_free_msg(ack);
 	kfree(work);
 	return ;
 #endif
@@ -10796,8 +10794,7 @@ void process_vma_lock(struct work_struct* work) {
 			entry->my_lock = 1;
 	}
 
-	vma_ack_t* ack_to_server = (vma_ack_t*) kmalloc(sizeof(vma_ack_t),
-			GFP_ATOMIC);
+	vma_ack_t* ack_to_server = (vma_ack_t*) pcn_kmsg_alloc_msg(sizeof(vma_ack_t));
 	if (ack_to_server == NULL){
 		printk("Impossible to kmalloc in %s\n",__func__);
 		return ;
@@ -10812,8 +10809,8 @@ void process_vma_lock(struct work_struct* work) {
 			(struct pcn_kmsg_long_message*) (ack_to_server),
 			sizeof(vma_ack_t) - sizeof(struct pcn_kmsg_hdr));
 
-	kfree(ack_to_server);
-	pcn_kmsg_free_msg(lock);
+	pcn_kmsg_free_msg(ack_to_server);
+	pcn_kmsg_free_msg_now(lock);
 	kfree(work);
 
 	return ;
@@ -10835,7 +10832,7 @@ static int handle_vma_lock(struct pcn_kmsg_message* inc_msg) {
 
 	else {
 		printk("Impossible to kmalloc in %s\n",__func__);
-		pcn_kmsg_free_msg(lock);
+		pcn_kmsg_free_msg_now(lock);
 	}
 	return 1;
 
@@ -10882,7 +10879,7 @@ static int handle_vma_ack(struct pcn_kmsg_message* inc_msg) {
 
 	}
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
 
 	return 1;
 }
@@ -10919,7 +10916,7 @@ static int handle_vma_op(struct pcn_kmsg_message* inc_msg) {
 			PSVMAPRINTK(
 					"Received an operation for a distributed process not present here\n");
 		}
-		pcn_kmsg_free_msg(inc_msg);
+		pcn_kmsg_free_msg_now(inc_msg);
 	}
 
 	return 1;
@@ -10942,7 +10939,7 @@ static int handle_vma_op(struct pcn_kmsg_message* inc_msg) {
 		queue_work(vma_op_wq, (struct work_struct*) work);
 	} else {
 		printk("Impossible to kmalloc in %s\n",__func__);
-		pcn_kmsg_free_msg(inc_msg);
+		pcn_kmsg_free_msg_now(inc_msg);
 	}
 
 	return 1;
@@ -11007,6 +11004,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 			up_write(&current->mm->mmap_sem);
 
 			if (operation == VMA_OP_MAP || operation == VMA_OP_BRK) {
+				entry->message_push_operation->header.flag = PCN_KMSG_SYNC;
 				if (pcn_kmsg_send_long(entry->message_push_operation->from_cpu,
 						(struct pcn_kmsg_long_message*) (entry->message_push_operation),
 						sizeof(vma_operation_t) - sizeof(struct pcn_kmsg_hdr))
@@ -11032,6 +11030,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 					objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 					i = objPtr->_data._processor;
 #endif
+					entry->message_push_operation->header.flag = PCN_KMSG_SYNC;
 					if(entry->kernel_set[i]==1)
 						pcn_kmsg_send_long(i,
 							(struct pcn_kmsg_long_message*) (entry->message_push_operation),
@@ -11044,7 +11043,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 			if (current->main == 0) {
 
-				kfree(entry->message_push_operation);
+				pcn_kmsg_free_msg(entry->message_push_operation);
 				entry->message_push_operation = NULL;
 			}
 
@@ -11282,8 +11281,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				}
 
 				/*First: send a message to everybody to acquire the lock to block page faults*/
-				vma_lock_t* lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t),
-						GFP_ATOMIC);
+				vma_lock_t* lock_message = (vma_lock_t*) pcn_kmsg_alloc_msg(sizeof(vma_lock_t));
 				if (lock_message == NULL) {
 					printk("Impossible to kmalloc in %s\n",__func__);
 					down_write(&current->mm->mmap_sem);
@@ -11292,6 +11290,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				}
 				lock_message->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_LOCK;
 				lock_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+				lock_message->header.flag = PCN_KMSG_SYNC;
 				lock_message->tgroup_home_cpu = current->tgroup_home_cpu;
 				lock_message->tgroup_home_id = current->tgroup_home_id;
 				lock_message->from_cpu = entry->message_push_operation->from_cpu;
@@ -11301,7 +11300,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 						sizeof(vma_op_answers_t), GFP_ATOMIC);
 				if (acks == NULL) {
 					printk("Impossible to kmalloc in %s\n",__func__);
-					kfree(lock_message);
+					pcn_kmsg_free_msg_now(lock_message);
 					down_write(&current->mm->mmap_sem);
 					ret = -ENOMEM;
 					goto out;
@@ -11399,6 +11398,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				 if (operation == VMA_OP_UNMAP || operation == VMA_OP_PROTECT
 						 || ((operation == VMA_OP_REMAP) && (flags & MREMAP_FIXED))) {
 
+					 entry->message_push_operation->header.flag = PCN_KMSG_SYNC;
 					 PSVMAPRINTK("SERVER MAIN: sending done for operation, we can execute the operation in parallel! %d\n",operation);
 #ifndef SUPPORT_FOR_CLUSTERING
 					 for(i = 0; i < MAX_KERNEL_IDS; i++) {
@@ -11412,13 +11412,14 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 						 objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 						 i = objPtr->_data._processor;
 #endif
+					 	entry->message_push_operation->header.flag = PCN_KMSG_SYNC;
 						if(entry->kernel_set[i]==1)
 							pcn_kmsg_send_long(i,
 								(struct pcn_kmsg_long_message*) (entry->message_push_operation),sizeof(vma_operation_t)- sizeof(struct pcn_kmsg_hdr));
 
 					 }
 
-					 kfree(lock_message);
+					 pcn_kmsg_free_msg(lock_message);
 					 kfree(acks);
 
 					 down_write(&current->mm->mmap_sem);
@@ -11427,7 +11428,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 				} else {
 					 PSVMAPRINTK("SERVER MAIN: going to execute the operation locally %d\n",operation);
-					 kfree(lock_message);
+					 pcn_kmsg_free_msg(lock_message);
 					 kfree(acks);
 
 					 down_write(&current->mm->mmap_sem);
@@ -11474,8 +11475,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				 up_write(&current->mm->mmap_sem);
 
 				 /*First: send a message to everybody to acquire the lock to block page faults*/
-				 vma_lock_t* lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t),
-							 GFP_ATOMIC);
+				 vma_lock_t* lock_message = (vma_lock_t*) pcn_kmsg_alloc_msg(sizeof(vma_lock_t));
 				 if (lock_message == NULL) {
 					 printk("Impossible to kmalloc in %s\n",__func__);
 					 down_write(&current->mm->mmap_sem);
@@ -11484,6 +11484,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				 }
 				 lock_message->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_LOCK;
 				 lock_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+				 lock_message->header.flag = PCN_KMSG_SYNC;
 				 lock_message->tgroup_home_cpu = current->tgroup_home_cpu;
 				 lock_message->tgroup_home_id = current->tgroup_home_id;
 				 lock_message->from_cpu = _cpu;
@@ -11493,7 +11494,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 						 sizeof(vma_op_answers_t), GFP_ATOMIC);
 				 if (acks == NULL) {
 					 printk("Impossible to kmalloc in %s\n",__func__);
-					 kfree(lock_message);
+					 pcn_kmsg_free_msg_now(lock_message);
 					 down_write(&current->mm->mmap_sem);
 					 ret = -ENOMEM;
 					 goto out;
@@ -11511,7 +11512,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 						 current->tgroup_home_id);
 				 if (entry==NULL) {
 					 printk("ERROR: Mapping disappeared, cannot save message to update by exit_distribute_operation\n");
-					 kfree(lock_message);
+					 pcn_kmsg_free_msg_now(lock_message);
 					 kfree(acks);
 					 down_write(&current->mm->mmap_sem);
 					 ret = -EPERM;
@@ -11565,13 +11566,13 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 				remove_vma_ack_entry(acks);
 
-				vma_operation_t* operation_to_send = (vma_operation_t*) kmalloc(
-					sizeof(vma_operation_t), GFP_ATOMIC);
+				vma_operation_t* operation_to_send = (vma_operation_t*) pcn_kmsg_alloc_msg(
+					sizeof(vma_operation_t));
 				if (operation_to_send == NULL) {
 					printk("Impossible to kmalloc in %s\n",__func__);
 					down_write(&current->mm->mmap_sem);
 					up_read(&entry->kernel_set_sem);
-					kfree(lock_message);
+					pcn_kmsg_free_msg(lock_message);
 					kfree(acks);
 					ret = -ENOMEM;
 					goto out;
@@ -11591,6 +11592,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				operation_to_send->flags = flags;
 				operation_to_send->vma_operation_index = index;
 				operation_to_send->from_cpu = _cpu;
+				operation_to_send->header.flag = PCN_KMSG_SYNC;
 
 				/*I acquire the lock to block page faults too
 				 *Important: this should happen before sending the push message or executing the operation*/
@@ -11627,8 +11629,8 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 			 			}
 
-			 			kfree(lock_message);
-			 			kfree(operation_to_send);
+			 			pcn_kmsg_free_msg(lock_message);
+			 			pcn_kmsg_free_msg(operation_to_send);
 			 			kfree(acks);
 
 			 		down_write(&current->mm->mmap_sem);
@@ -11639,7 +11641,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 					PSVMAPRINTK("SERVER NOT MAIN: going to execute the operation locally %d\n",operation);
 			 		entry->message_push_operation = operation_to_send;
 
-			 		kfree(lock_message);
+					pcn_kmsg_free_msg(lock_message);
 			 		kfree(acks);
 
 			 		down_write(&current->mm->mmap_sem);
@@ -11655,8 +11657,8 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 
 		/*First: send the operation to the server*/
-		vma_operation_t* operation_to_send = (vma_operation_t*) kmalloc(
-			sizeof(vma_operation_t), GFP_ATOMIC);
+		vma_operation_t* operation_to_send = (vma_operation_t*) pcn_kmsg_alloc_msg(
+			sizeof(vma_operation_t));
 		if (operation_to_send == NULL) {
 			printk("Impossible to malloc in %s\n",__func__);
 			ret = -ENOMEM;
@@ -11695,7 +11697,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 			if (entry->waiting_for_op != NULL) {
 				printk("ERROR: Somebody is already waiting for an op\n");
-				kfree(operation_to_send);
+				pcn_kmsg_free_msg_now(operation_to_send);
 				ret = -EPERM;
 				goto out;
 			}
@@ -11705,7 +11707,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		} else {
 			printk("ERROR: Mapping disappeared, cannot wait for push op\n");
-			kfree(operation_to_send);
+			pcn_kmsg_free_msg_now(operation_to_send);
 			ret = -EPERM;
 			goto out;
 		}
@@ -11716,6 +11718,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 	
 	//	printk("before sending the message\n");
 		//send the operation to the server
+		operation_to_send->header.flag = PCN_KMSG_SYNC;
 		error = pcn_kmsg_send_long(current->tgroup_home_cpu,
 				(struct pcn_kmsg_long_message*) (operation_to_send),
 				sizeof(vma_operation_t) - sizeof(struct pcn_kmsg_hdr));
@@ -11724,7 +11727,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		if (error == -1) {
 			printk("Impossible to contact the server");
-			kfree(operation_to_send);
+			pcn_kmsg_free_msg_now(operation_to_send);
 			down_write(&current->mm->mmap_sem);
 			ret = -EPERM;
 			goto out;
@@ -11752,7 +11755,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		if (current->mm->thread_op != current) {
 			printk(	"ERROR: waking up to locally execute a vma operation started by me, but thread_op s not me\n");
-			kfree(operation_to_send);
+			pcn_kmsg_free_msg(operation_to_send);
 			ret = -EPERM;
 			goto out_dist_lock;
 		}
@@ -11768,7 +11771,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		entry->waiting_for_op = NULL;
 
-		kfree(operation_to_send);
+		pcn_kmsg_free_msg(operation_to_send);
 
 		return ret;
 
@@ -11838,8 +11841,8 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 						 up_write(&current->mm->mmap_sem);
 
-						 unmap_message_t* unmap_msg = (unmap_message_t*) kmalloc(
-								 sizeof(unmap_message_t), GFP_ATOMIC);
+						 unmap_message_t* unmap_msg = (unmap_message_t*) pcn_kmsg_alloc_msg(
+								 sizeof(unmap_message_t));
 						 if (unmap_msg == NULL) {
 							 printk("Impossible to kmalloc in %s\n",__func__);
 							 ret = -1;
@@ -11856,7 +11859,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 								 sizeof(vma_op_answers_t), GFP_ATOMIC);
 						 if (acks == NULL) {
 							 printk("Impossible to kmalloc in %s\n",__func__);
-							 kfree(unmap_msg);
+							 pcn_kmsg_free_msg_now(unmap_msg);
 							 ret = -1;
 							 goto out;
 						 }
@@ -11908,7 +11911,7 @@ if (error != -1) {
 
 	remove_vma_ack_entry(acks);
 
-	kfree(unmap_msg);
+	pcn_kmsg_free_msg(unmap_msg);
 	kfree(acks);
 
 	out: down_write(&current->mm->mmap_sem);
@@ -12291,7 +12294,7 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 		wake_up_process(task);
 
 		kfree(my_shadow);
-		pcn_kmsg_free_msg(clone_data);
+		pcn_kmsg_free_msg_now(clone_data);
 		return 0;
 
 	} else {
@@ -12434,8 +12437,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	entry->kernel_set[_cpu] = 1;
 	init_rwsem(&entry->kernel_set_sem);
 
-	new_kernel_t* new_kernel_msg = (new_kernel_t*) kmalloc(sizeof(new_kernel_t),
-			GFP_ATOMIC);
+	new_kernel_t* new_kernel_msg = (new_kernel_t*) pcn_kmsg_alloc_msg(sizeof(new_kernel_t));
 	if (new_kernel_msg == NULL) {
 		printk("Impossible to kmalloc in %s\n",__func__);
 		return;
@@ -12490,7 +12492,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	}
 
 	PSNEWTHREADPRINTK("received all answers\n");
-	kfree(new_kernel_msg);
+	pcn_kmsg_free_msg(new_kernel_msg);
 
 	lock_task_sighand(current, &flags);
 

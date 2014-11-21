@@ -2,6 +2,7 @@
  * pcn_scif.c - Kernel Module for Popcorn Messaging Layer over Intel SCIF
  */
 
+#include <linux/circ_buf.h>
 
 #include "pcn_scif_parallel.h"
 
@@ -24,6 +25,7 @@ extern 	int __scif_flush(ep);
 #define DEFAULT_BUFFER_SIZE 200
 #define MAX_LOOPS 12345
 #define MAX_LOOPS_JIFFIES (MAX_SCHEDULE_TIMEOUT)
+#define MAX_ASYNC_BUFFER 128 
 
 static scif_epd_t send_epd;
 static int msg_count;
@@ -33,7 +35,8 @@ static int err=0,control_msg=1;
 volatile unsigned long ticket;
 #define fetch_and_add xadd_sync
 
-int is_connection_done=PCN_CONN_WATING;
+int is_connection_done[MAX_CONNEC];
+int is_send_connection_done;
 
 extern scif_epd_t scif_open(void);
 
@@ -52,11 +55,7 @@ dq_info * excution_qs[MAX_CONNEC];
 	printk("==============================================================\n");\
 }
 
-//struct semaphore send_q_mutex;
-static struct semaphore send_q_empty;
-//static struct semaphore rcv_q_empty;
-
-static struct semaphore send_connDone;
+static struct semaphore send_connDone[MAX_CONNEC];
 static struct semaphore rcv_connDone[MAX_CONNEC];
 
 DEFINE_SPINLOCK(send_q_mutex_p); 
@@ -74,6 +73,7 @@ DEFINE_SPINLOCK(rcv_q_mutex_p);
 
 static int __init initialize(void);
 static void __exit unload(void);
+static void __free_msg(void *msg);
 
 unsigned int my_cpu;
 
@@ -88,6 +88,8 @@ static struct task_struct *test_handler;
 
 static char * freeList;
 static char * remote_free_list;
+
+static struct pcn_kmsg_buf * send_buf[MAX_CONNEC];
 
 //static struct buffer_desc dma_buffer_decs,remote_buffer_desc;
 
@@ -112,9 +114,9 @@ int buffer_init(struct buffer_desc * desc, int elem)
 }
 */
 
-int pcn_connection_staus()
+int pcn_connection_status(int conn_no)
 {
-	return is_connection_done;
+	return is_connection_done[conn_no];
 }
 
 static inline int buffer_empty(struct buffer_desc * desc)
@@ -163,35 +165,42 @@ static int buffer_put(struct buffer_desc * desc, long value)
   return 1;
 }
 
-
-static void enq_send(send_wait *strc)
+static void enq_send(struct pcn_kmsg_buf * buf, struct pcn_kmsg_message *msg, unsigned int dest_cpu, unsigned int payload_size)
 {
-	spin_lock(&send_q_mutex_p);
-	INIT_LIST_HEAD(&(strc->list));
-	list_add_tail(&(strc->list), &(send_wait_q.list));
-	up(&send_q_empty);
-	spin_unlock(&send_q_mutex_p);
+	down_interruptible(&(buf->snd_q_full));
+	spin_lock(&(buf->enq_buf_mutex));
+	unsigned long head = buf->head;
+	unsigned long tail = ACCESS_ONCE(buf->tail);
+
+	buf->rbuf[head].msg = msg;
+	buf->rbuf[head].msg->hdr.flag = PCN_KMSG_ASYNC;
+	buf->rbuf[head].dest_cpu = dest_cpu;
+	buf->rbuf[head].payload_size = payload_size;
+	smp_wmb();
+	buf->head = (head + 1) & (MAX_ASYNC_BUFFER - 1);
+	up(&(buf->snd_q_empty));
+	spin_unlock(&(buf->enq_buf_mutex));
 }
 
-static send_wait * dq_send(void)
+static void deq_send(struct pcn_kmsg_buf * buf, int conn_no)
 {
-	send_wait *tmp;
-	down_interruptible(&send_q_empty);
-	spin_lock(&send_q_mutex_p);
-	if(list_empty(&send_wait_q.list)){
-		printk("List is empty...\n");
-		spin_unlock(&send_q_mutex_p);
-		return NULL;	
-	}
-	else{
-		tmp = list_first_entry (&send_wait_q.list, send_wait, list);
-		list_del(send_wait_q.list.next);
-		spin_unlock(&send_q_mutex_p);
-		return tmp;
-	}
+	struct pcn_kmsg_buf_item msg;
+
+	down_interruptible(&(buf->snd_q_empty));
+	spin_lock(&(buf->deq_buf_mutex));
+	unsigned long head = ACCESS_ONCE(buf->head);
+	unsigned long tail = buf->tail;
+
+	smp_read_barrier_depends();
+	msg = buf->rbuf[tail];
+	smp_mb();
+	buf->tail = (tail + 1) & (MAX_ASYNC_BUFFER - 1);
+	up(&(buf->snd_q_full));
+	spin_unlock(&(buf->deq_buf_mutex));
+
+	__pcn_do_send(msg.dest_cpu, msg.msg, msg.payload_size, conn_no);
+	__free_msg(msg.msg);
 }
-
-
 
 static void enq_rcv(dq_info * q_info,rcv_wait *strc)
 {
@@ -230,12 +239,12 @@ static int __init initialize(){
 	uint16_t fromcpu;
 	int i;
 
+	memset(is_connection_done, 0, sizeof(is_connection_done));
+
 	printk("In pcn new messaging layer init\n");	
-	//sema_init(&(send_q_mutex), 0);
-	sema_init(&(send_q_empty), 0);
-	sema_init(&send_connDone,0);
 	for(i=0;i<MAX_CONNEC;i++)
 	{
+		sema_init(&send_connDone[i],0);
 		sema_init(&rcv_connDone[i],0);
 	}
 	
@@ -260,10 +269,13 @@ static int __init initialize(){
 	
 	for(i=0;i<MAX_CONNEC;i++)
 	{
-		conn_thread_data * data = (conn_thread_data*)kmalloc(sizeof(conn_thread_data),GFP_KERNEL);
-		data->portID=PORT_DATA_IN+i;
-		data->conn_no=i;
-		handler = kthread_run(connection_handler, data, "pcn_connd");
+		conn_thread_data * conn_data = (conn_thread_data*)kmalloc(sizeof(conn_thread_data),GFP_KERNEL);
+		BUG_ON(!conn_data);
+
+		conn_data->portID=PORT_DATA_IN+i;
+		conn_data->conn_no=i;
+
+		handler = kthread_run(connection_handler, conn_data, "pcn_connd");
 		if(handler < 0){
 			printk(KERN_INFO "kthread_run failed! Messaging Layer not initialized\n");
 			return (long long int)handler;
@@ -272,12 +284,38 @@ static int __init initialize(){
 		{
 			down_interruptible(&rcv_connDone[i]);
 		}
-		
 	}
-	sender_handler = kthread_run(send_thread, NULL, "pcnscif_sendD_parallel");
-	if(sender_handler < 0){
-		printk(KERN_INFO "kthread_run failed! Messaging Layer not initialized\n");
-		return (long long int)sender_handler;
+
+	for(i=0;i<MAX_CONNEC;i++)
+	{
+		send_thread_data * send_data = (send_thread_data*)kmalloc(sizeof(send_thread_data),GFP_KERNEL);
+		BUG_ON(!send_data);
+
+		send_data->portID=PORT_DATA_IN+i;
+		send_data->conn_no=i;
+		send_data->buf = (struct pcn_kmsg_buf *) kmalloc(sizeof(struct pcn_kmsg_buf), GFP_KERNEL);
+		BUG_ON(!(send_data->buf));
+		send_data->buf->rbuf = (struct pcn_kmsg_buf_item *) vmalloc(sizeof(struct pcn_kmsg_buf_item) * MAX_ASYNC_BUFFER);
+
+		send_data->buf->head = 0;
+		send_data->buf->tail = 0;
+
+		sema_init(&(send_data->buf->snd_q_empty), 0);
+		sema_init(&(send_data->buf->snd_q_full), MAX_ASYNC_BUFFER);
+		send_buf[i] = send_data->buf;
+		spin_lock_init(&(send_data->buf->enq_buf_mutex)); 
+		spin_lock_init(&(send_data->buf->deq_buf_mutex)); 
+
+		handler = kthread_run(send_thread, send_data, "pcn_sendd_parallel");
+		if(handler < 0){
+			printk(KERN_INFO "kthread_run failed! Messaging Layer not initialized\n");
+			return (long long int)handler;
+		}
+		if(my_cpu!=0)
+		{
+			down_interruptible(&send_connDone[i]);
+		}
+		printk("Send thread %d done\n", i);
 	}
 /*	
     exect_handler = kthread_run(executer_thread, NULL, "pcnscif_execD");
@@ -286,12 +324,6 @@ static int __init initialize(){
 		return (long long int)exect_handler;
 	}
 */ 
-	if(my_cpu!=0)
-	{
-		down_interruptible(&send_connDone);
-		
-		//down_interruptible(&rcv_connDone);
-	}
 #ifdef __TEST__
 	test_handler = kthread_run(test_thread, NULL, "pcnscif_testD");
 	if(test_handler < 0){
@@ -320,10 +352,11 @@ int test_thread(void* arg0)
 		handle_selfie_test);
 	for (i=0;i<10;i++)
 	{
-		struct pcn_kmsg_message msg;
-		msg.hdr.type= PCN_KMSG_TYPE_SELFIE_TEST;
-		memset(msg.payload,'a',PCN_KMSG_PAYLOAD_SIZE);
-		pcn_kmsg_send(my_cpu,&msg);
+		struct pcn_kmsg_message *msg = (struct pcn_kmsg_message *)pcn_kmsg_alloc_msg(sizeof(struct pcn_kmsg_message));
+		msg->hdr.type= PCN_KMSG_TYPE_SELFIE_TEST;
+		memset(msg->payload,'a',PCN_KMSG_PAYLOAD_SIZE);
+		pcn_kmsg_send(my_cpu, msg);
+		pcn_kmsg_free_msg(msg);
 	}
 }
 #endif
@@ -342,14 +375,14 @@ static int executer_thread(void* arg0)
 		//printk("Executer Thread\n type %d size %d\n",msg->hdr.type,msg->hdr.size);
 		if(msg->hdr.type < 0 || msg->hdr.type >= PCN_KMSG_TYPE_MAX){
 			printk(KERN_INFO "Received invalid message type %d\n", msg->hdr.type);
-			pcn_kmsg_free_msg(msg);
+			__free_msg(msg);
 		}else{
 			ftn = callbacks[msg->hdr.type];
 			if(ftn != NULL){
 				ftn(msg);
 			}else{
 				printk(KERN_INFO "Recieved message type %d size %d has no registered callback!\n", msg->hdr.type,msg->hdr.size,msg_count++);
-				pcn_kmsg_free_msg(msg);
+				__free_msg(msg);
 			}
 		}
 		kfree(wait_data);
@@ -362,15 +395,17 @@ static int send_thread(void* arg0)
 {
 	uint16_t fromcpu;
 	scif_epd_t epd;
-	int rc,number_of_conn=0;
+	int rc;
 	int err;
 	int dest_cpu;
+	send_thread_data *thread_data = arg0;
+	int conn_no = thread_data->conn_no;
 	
 	pcn_kmsg_cbftn ftn;
 //	off_t offset,remote_offset;
 	struct scif_portID portID;
 	int curr_size, no_bytes;
-	send_wait * wait_data;
+	struct pcn_kmsg_buf_item *item;
 	
 	if(scif_get_nodeIDs(NULL, 0, &fromcpu) == -1){
 		printk(KERN_INFO "scif_get_nodeIDs failed! Messaging layer not initialized\n");
@@ -382,79 +417,70 @@ static int send_thread(void* arg0)
 	else
 		dest_cpu=0;
 	printk("Dest_CPU %d\n",dest_cpu);
-//crete parallel connections 
 	
-	for(number_of_conn=0;number_of_conn<MAX_CONNEC;number_of_conn++)
-	{	
-		
-		//conn_descriptors[number_of_conn]=kmalloc(sizeof(send_conn_desc),GFP_KERNEL);
-		if((conn_descriptors[number_of_conn].send_epd = scif_open()) == NULL){
-			printk(KERN_INFO "scif_open failed! Could not send message.\n");
-			return (long long int)epd;
-		}
-		if((rc = scif_bind(conn_descriptors[number_of_conn].send_epd, 0)) < 0){
-			printk(KERN_INFO "Send Long: scif_bind failed with error %d. Could not send message.\n", rc);
-			return -1;
-		}
-		conn_descriptors[number_of_conn].ticket = number_of_conn;
-		conn_descriptors[number_of_conn].portID.node = dest_cpu;
-		conn_descriptors[number_of_conn].portID.port = PORT_DATA_IN+number_of_conn;
-		spin_lock_init(&conn_descriptors[number_of_conn].send_lock);
-		while((rc = scif_connect(conn_descriptors[number_of_conn].send_epd, &conn_descriptors[number_of_conn].portID)) < 0){
-			msleep(1000);
-			//printk(KERN_INFO "scif_connect failed with error %d! Could not send message\n", rc);
-			//return rc;
-		}
-		if(rc<0)
-			printk(KERN_INFO "scif_connect failed with error %d! Could not send message\n", rc);
-		
-		printk("send_para Before DMA stuff\n");	
-		conn_descriptors[number_of_conn].dma_send_buffer=vmalloc((NO_PAGES_MAPPED+1)*PAGE_SIZE);
-		conn_descriptors[number_of_conn].send_buffer = scif_register(conn_descriptors[number_of_conn].send_epd, conn_descriptors[number_of_conn].dma_send_buffer, (NO_PAGES_MAPPED+1)*PAGE_SIZE, 0x80000, 
-															SCIF_PROT_WRITE | SCIF_PROT_READ, SCIF_MAP_KERNEL | SCIF_MAP_FIXED);
-		
-		spin_lock_init(&conn_descriptors[number_of_conn].dma_q_free);
-		epd=conn_descriptors[number_of_conn].send_epd;
-		printk("send_para Before Bar stuff\n");
-		BARRIER(epd,"Register Send_PP");
-		struct pcn_kmsg_long_message *lmsg;
-	//	int use_dma=0;
-		
-		
-	//	send_epd = epd;
-		//printk("%s: epd %d send_epd %d\n",__func__,epd,send_epd);
-		struct scif_range *pages;
-		
-		err=scif_get_pages(conn_descriptors[number_of_conn].send_epd,0x80000+(NO_PAGES_MAPPED*PAGE_SIZE),PAGE_SIZE,&conn_descriptors[number_of_conn].pages);
-		if(err<0)
-		{
-			printk("Could not get remote freelist\n");
-		}
-		
-		
-		printk("%s: nPages %d err %d phy_addr %x\n",__func__,conn_descriptors[number_of_conn].pages->nr_pages,err,conn_descriptors[number_of_conn].pages->phys_addr);
-		
-		conn_descriptors[number_of_conn].remote_free_list=ioremap(conn_descriptors[number_of_conn].pages->phys_addr[0],PAGE_SIZE);	
-		conn_descriptors[number_of_conn].remote_buffer_desc.phead= (int*)(conn_descriptors[number_of_conn].remote_free_list);
-		conn_descriptors[number_of_conn].remote_buffer_desc.ptail=(int*)(conn_descriptors[number_of_conn].remote_buffer_desc.phead+1);
-		conn_descriptors[number_of_conn].remote_buffer_desc.buffer=(long*)(conn_descriptors[number_of_conn].remote_buffer_desc.ptail+1);
-		conn_descriptors[number_of_conn].remote_buffer_desc.elements=DEFAULT_BUFFER_SIZE;
-		
-		
-		printk("Ptail %d Phead %d\n",*conn_descriptors[number_of_conn].remote_buffer_desc.ptail,*conn_descriptors[number_of_conn].remote_buffer_desc.phead);
-		int i;
-		BARRIER(epd,"DMA mapping Done_PP");
-		printk("Connection Done %d\n",number_of_conn);
-
+	if((conn_descriptors[conn_no].send_epd = scif_open()) == NULL){
+		printk(KERN_INFO "scif_open failed! Could not send message.\n");
+		return (long long int)epd;
 	}
-	is_connection_done=PCN_CONN_CONNECTED;
-	up(&send_connDone);
-	printk("Connection Done...PCN_SEND Thread\n");
+	if((rc = scif_bind(conn_descriptors[conn_no].send_epd, 0)) < 0){
+		printk(KERN_INFO "Send Long: scif_bind failed with error %d. Could not send message.\n", rc);
+		return -1;
+	}
+	conn_descriptors[conn_no].ticket = conn_no;
+	conn_descriptors[conn_no].portID.node = dest_cpu;
+	conn_descriptors[conn_no].portID.port = PORT_DATA_IN+conn_no;
+	spin_lock_init(&conn_descriptors[conn_no].send_lock);
+	while((rc = scif_connect(conn_descriptors[conn_no].send_epd, &conn_descriptors[conn_no].portID)) < 0){
+		msleep(1000);
+	}
+	if(rc<0)
+		printk(KERN_INFO "scif_connect failed with error %d! Could not send message\n", rc);
+	
+	printk("send_para Before DMA stuff\n");	
+	conn_descriptors[conn_no].dma_send_buffer=vmalloc((NO_PAGES_MAPPED+1)*PAGE_SIZE);
+	conn_descriptors[conn_no].send_buffer = scif_register(conn_descriptors[conn_no].send_epd, conn_descriptors[conn_no].dma_send_buffer, (NO_PAGES_MAPPED+1)*PAGE_SIZE, 0x80000, 
+														SCIF_PROT_WRITE | SCIF_PROT_READ, SCIF_MAP_KERNEL | SCIF_MAP_FIXED);
+	
+	spin_lock_init(&conn_descriptors[conn_no].dma_q_free);
+	epd=conn_descriptors[conn_no].send_epd;
+	printk("send_para Before Bar stuff\n");
+	BARRIER(epd,"Register Send_PP");
+	struct pcn_kmsg_long_message *lmsg;
+	
+	
+	struct scif_range *pages;
+	
+	err=scif_get_pages(conn_descriptors[conn_no].send_epd,0x80000+(NO_PAGES_MAPPED*PAGE_SIZE),PAGE_SIZE,&conn_descriptors[conn_no].pages);
+	if(err<0)
+	{
+		printk("Could not get remote freelist\n");
+	}
+	printk("%s: nPages %d err %d phy_addr %x\n",__func__,conn_descriptors[conn_no].pages->nr_pages,err,conn_descriptors[conn_no].pages->phys_addr);
+	
+	conn_descriptors[conn_no].remote_free_list=ioremap(conn_descriptors[conn_no].pages->phys_addr[0],PAGE_SIZE);	
+	conn_descriptors[conn_no].remote_buffer_desc.phead= (int*)(conn_descriptors[conn_no].remote_free_list);
+	conn_descriptors[conn_no].remote_buffer_desc.ptail=(int*)(conn_descriptors[conn_no].remote_buffer_desc.phead+1);
+	conn_descriptors[conn_no].remote_buffer_desc.buffer=(long*)(conn_descriptors[conn_no].remote_buffer_desc.ptail+1);
+	conn_descriptors[conn_no].remote_buffer_desc.elements=DEFAULT_BUFFER_SIZE;
+	
+	
+	printk("Ptail %d Phead %d\n",*conn_descriptors[conn_no].remote_buffer_desc.ptail,*conn_descriptors[conn_no].remote_buffer_desc.phead);
+	int i;
+	BARRIER(epd,"DMA mapping Done_PP");
+
+	is_connection_done[conn_no] = PCN_CONN_CONNECTED;
+
+	if(my_cpu!=0)
+	{
+		printk("Waiting on send_thread no %d\n", conn_no);
+		printk("Waiting on send_thread no %d\n", conn_no);
+		up(&send_connDone[conn_no]);
+	}
+	printk("Connection %d Done...PCN_SEND Thread\n", conn_no);
 	
 	while(1)
 	{
-		wait_data=dq_send();
-	
+		deq_send(thread_data->buf, conn_no);
 	}
 }
 
@@ -555,6 +581,8 @@ static int connection_handler(void *arg0){
 		printk("%s_p:Calling a up on %d\n",__func__,conn_desc->conn_no);
 		up(&rcv_connDone[conn_desc->conn_no]);
 		
+		tmp = (struct pcn_kmsg_message*)vmalloc(2*PAGE_SIZE);
+
 while(TRUE){		
 
 		if(kthread_should_stop()){
@@ -562,9 +590,8 @@ while(TRUE){
 				return 0;
 		}
 	
-		msg = (struct pcn_kmsg_message*)vmalloc(2*PAGE_SIZE);
 		dflt_size = sizeof(struct pcn_kmsg_hdr);
-		curr_addr = (char*) msg;
+		curr_addr = (char*) tmp;
 		
 		if((no_bytes = scif_recv(newepd, curr_addr, dflt_size, SCIF_RECV_BLOCK)))
 		{				
@@ -579,8 +606,8 @@ while(TRUE){
 				continue;
 				
 			}
-			tmp=(struct pcn_kmsg_message*)curr_addr;
 			msg_size=tmp->hdr.size;
+			msg = (struct pcn_kmsg_message *) pcn_kmsg_alloc_msg(msg_size);
 			
 			//printk("Size %d NoRcv %d\n",tmp->hdr.size,no_bytes);
 			/*if(msg_size<=sizeof(struct pcn_kmsg_message))
@@ -601,24 +628,23 @@ while(TRUE){
 			else
 			{
 				//printk("Must be NoN-DMA Large %d\n",tmp->hdr.size);
-				curr_size = tmp->hdr.size - dflt_size;	
-				curr_addr = (char*) msg+no_bytes;
+				memcpy(msg, tmp, dflt_size);
+				curr_size = msg_size - dflt_size;	
+				curr_addr = (char*) msg + dflt_size;
 				while((no_bytes = scif_recv(newepd, curr_addr, curr_size, SCIF_RECV_BLOCK)) >= 0)
 				{
-					curr_addr = curr_addr + no_bytes;
-					curr_size = curr_size - no_bytes;
+					curr_addr += no_bytes;
+					curr_size -= no_bytes;
 					if(curr_size == 0)
-						break ;
+						break;
 				}
 			}	
 		}
 
 _process:
-			
 			wait_data=kmalloc(sizeof(rcv_wait),GFP_KERNEL);
 			wait_data->msg = msg;
-			
-			
+
 			enq_rcv(q_info,wait_data); //must be changed
 
 			
@@ -645,47 +671,28 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type){
 	return 0;
 }
 
-int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg){
-	
-	
-	if( pcn_connection_staus()==PCN_CONN_WATING)
-		return -1;
-	return pcn_kmsg_send_long(dest_cpu,msg,sizeof(struct pcn_kmsg_message)-sizeof(struct pcn_kmsg_hdr));
-}
-
-int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size){
-
-
-	
-	if( pcn_connection_staus()==PCN_CONN_WATING)
-		return -1;
-	
+static int __pcn_do_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size, int conn_no) {
 	int free_index;		
 	int no_bytes,data_send=0;
 	char * curr_addr;
 	int my_ticket;
 	my_ticket=fetch_and_add(&ticket, 1);
-	int conn_no=my_ticket%(MAX_CONNEC);
+	if (conn_no == -1) {
+		conn_no=my_ticket%(MAX_CONNEC);
+	}
 	
 //	if((my_cpu!=0))
 //		conn_no=conn_no+MAX_CONNEC/2;
 	
 	int curr_size;
-	lmsg->hdr.size = payload_size+sizeof(struct pcn_kmsg_hdr);	
+	lmsg->hdr.size = payload_size+sizeof(struct pcn_kmsg_hdr);
 	lmsg->hdr.from_cpu = my_cpu;
-	lmsg->hdr.conn_no= conn_no;
-	
-	//lmsg->hdr.is_lg_msg = 1;
-	//lmsg->hdr.size=curr_size;
+	lmsg->hdr.conn_no = conn_no;
+
 	unsigned long start_time[10], finish_time[10];
 
 	int i;
-	
 
-//	printk("%s:My Channel is %d current ticket %d conn_ticket %d pid %d\n",__func__,conn_no,my_ticket,conn_descriptors[conn_no].ticket,current->pid);
-	
-	
-	//printk("%s: is called\n",__func__);
 	if(dest_cpu==my_cpu)
 	{
 		rcv_wait *exec_data = NULL;
@@ -693,91 +700,49 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 		{
 				exec_data = kmalloc(sizeof(rcv_wait),GFP_KERNEL);
 		}
-		exec_data->msg=vmalloc(lmsg->hdr.size);
+		exec_data->msg=pcn_kmsg_alloc_msg(lmsg->hdr.size);
 		memcpy(exec_data->msg,lmsg,lmsg->hdr.size);
-		//exec_data->msg=wait_data->msg;
 		
 		enq_rcv(excution_qs[conn_no],exec_data);		
-	//	conn_descriptors[conn_no].ticket+=MAX_CONNEC;
-		//printk("%s: Next ticket %d\n",__func__,conn_descriptors[conn_no].ticket);
-		//printk("%s: This is a selfie...\n",__func__);
 		return lmsg->hdr.size;
 	}
-	
-	
-/*	
-	int loop=0;
-	while(my_ticket!=conn_descriptors[conn_no].ticket);
-	{
-		if ( !(++loop % MAX_LOOPS) )
-		{
-			//schedule_timeout(MAX_LOOPS_JIFFIES);
-			udelay(10);
-		}
-			
-	}
-*/
-	//spin_lock(&send_lock_pp);	
+
 	curr_size = lmsg->hdr.size;
 	if(lmsg->hdr.size>dma_send_thresh)
 	{
 		spin_lock(&conn_descriptors[conn_no].send_lock);
 		unsigned long bla=0;		
-		while(buffer_get(&conn_descriptors[conn_no].dma_buffer_decs,&free_index)!=1)
+		while(buffer_get(&conn_descriptors[conn_no].dma_buffer_decs,&free_index) != 1)
 		{
-//			printk("%s:My Channel is %d current ticket %d conn_ticket %d\n",__func__,conn_no,my_ticket,conn_descriptors[conn_no].ticket);
-//		 	printk("%s in while loop pid %d\n",__func__,current->pid);
-/*			spin_unlock(&conn_descriptors[conn_no].send_lock); 
-		 	if(bla%100==0){
-				printk("%s:My Channel is %d current ticket %d conn_ticket %d\n",__func__,conn_no,my_ticket,conn_descriptors[conn_no].ticket);
-		 		printk("%s in while loop pid %d\n",__func__,current->pid);
-			}
-			bla++;
-			msleep(10);	
-			spin_lock(&conn_descriptors[conn_no].send_lock);	
-*/ 
 		}
-		spin_unlock(&conn_descriptors[conn_no].send_lock);	
+		spin_unlock(&conn_descriptors[conn_no].send_lock);
 found:
-			//printk("%s: slot %d \n",__func__,free_index);
-			lmsg->hdr.slot=free_index;
-			curr_addr = (char*) lmsg;
-			int sts_from_peer=-1;
-		//	printk("%s:Through DMA MSG size %d\n",__func__,lmsg->hdr.size);
-			memcpy(conn_descriptors[conn_no].dma_send_buffer+free_index*DMA_MSG_OFFSET,curr_addr,lmsg->hdr.size);
-		//	printk("%s:Through DMA MSG size %d\n",__func__,lmsg->hdr.size);
-		//	printk("%s\n",dma_send_buffer);
-			err=scif_writeto(conn_descriptors[conn_no].send_epd, conn_descriptors[conn_no].send_buffer+free_index*DMA_MSG_OFFSET, lmsg->hdr.size, 0x80000+free_index*DMA_MSG_OFFSET, SCIF_RMA_SYNC);
-			if(err<0)
+		lmsg->hdr.slot=free_index;
+		curr_addr = (char*) lmsg;
+		int sts_from_peer=-1;
+		memcpy(conn_descriptors[conn_no].dma_send_buffer+free_index*DMA_MSG_OFFSET,curr_addr,lmsg->hdr.size);
+		err=scif_writeto(conn_descriptors[conn_no].send_epd, conn_descriptors[conn_no].send_buffer+free_index*DMA_MSG_OFFSET, lmsg->hdr.size, 0x80000+free_index*DMA_MSG_OFFSET, SCIF_RMA_SYNC);
+		if(err<0)
+		{
+			printk("error in DMA Transfer %d",err);
+			goto _out;
+		}
+		if((no_bytes = scif_send(conn_descriptors[conn_no].send_epd, curr_addr, sizeof(struct pcn_kmsg_hdr), SCIF_SEND_BLOCK)<0))
+		{
+			//printk("%s:Through NON-DMA\n",__func__);
+			if(no_bytes==-ENODEV)
 			{
-				printk("error in DMA Transfer %d",err);
-				goto _out;
-			}
-			if((no_bytes = scif_send(conn_descriptors[conn_no].send_epd, curr_addr, sizeof(struct pcn_kmsg_hdr), SCIF_SEND_BLOCK)<0))
-			{
-				//printk("%s:Through NON-DMA\n",__func__);
-				if(no_bytes==-ENODEV)
-				{
-					printk("%s:Terminatind pcn_sendD\n",__func__);
-					//up(&wait_data->_sem);
-					data_send=no_bytes;
-					is_connection_done = PCN_CONN_WATING;
-					return;
-				}
-				printk("Some thing went wrong Send Failed");
+				printk("%s:Terminatind pcn_sendD\n",__func__);
+				//up(&wait_data->_sem);
 				data_send=no_bytes;
-				goto _out;
+				is_connection_done[conn_no] = PCN_CONN_WATING;
+				return;
 			}
-	/*		scif_recv(send_epd,&sts_from_peer,sizeof(int),SCIF_RECV_BLOCK);
-			if(sts_from_peer!=DMA_DONE)
-			{
-			printk("DMA send failed 2\n");
-			/goto _out;
-			}
-	*/ 
-			data_send=lmsg->hdr.size;
-	//		goto _out;
-	//		spin_unlock(&conn_descriptors[conn_no].send_lock);	
+			printk("Some thing went wrong Send Failed");
+			data_send=no_bytes;
+			goto _out;
+		}
+		data_send=lmsg->hdr.size;
 	}
 	else
 	{
@@ -785,74 +750,93 @@ found:
 		//printk("Non_dma Send\n");
 		curr_addr = (char*) lmsg;
 		curr_size = lmsg->hdr.size;
-		while((no_bytes = scif_send(conn_descriptors[conn_no].send_epd, curr_addr, curr_size, 0)) >= 0){
-					
-					
-					if(no_bytes==-ENODEV)
-					{
-						printk("%s:Terminatind pcn_sendD\n",__func__);
-						//up(&wait_data->_sem);
-						data_send=no_bytes;
-						is_connection_done = PCN_CONN_WATING;
-						return;
-					}
-					
-					if(no_bytes<0)
-					{
-						printk("Some thing went wrong Send Failed\n");
-					}
-					curr_addr = curr_addr + no_bytes;
-					curr_size = curr_size - no_bytes;
-					data_send=data_send+no_bytes;
-					if(curr_size == 0)
-						break;
-					//printk("%s: total %d nobytes %d\n",__func__,lmsg->hdr.size,no_bytes);
-		}	
-	//	spin_unlock(&conn_descriptors[conn_no].send_lock);
-		
+		while((no_bytes = scif_send(conn_descriptors[conn_no].send_epd, curr_addr, curr_size, 0)) >= 0) {
+			if(no_bytes==-ENODEV)
+			{
+				printk("%s:Terminatind pcn_sendD\n",__func__);
+				//up(&wait_data->_sem);
+				data_send=no_bytes;
+				is_connection_done[conn_no] = PCN_CONN_WATING;
+				return;
+			}
+
+			if(no_bytes<0)
+			{
+				printk("Some thing went wrong Send Failed\n");
+			}
+			curr_addr = curr_addr + no_bytes;
+			curr_size = curr_size - no_bytes;
+			data_send=data_send+no_bytes;
+			if(curr_size == 0)
+				break;
+		}
 	}
 _out:
-//conn_descriptors[conn_no].ticket+=MAX_CONNEC;
-//printk("%s: Next ticket %d\n",__func__,conn_descriptors[conn_no].ticket);
-//spin_unlock(&send_lock_pp);
-//printk("%s: %d",__func__,data_send);
-return (data_send<0?-1:data_send);
-	
+	return (data_send<0?-1:data_send);
 }
 
-void pcn_kmsg_free_msg(void *msg){
-	
-	struct pcn_kmsg_message *msgPtr = (struct pcn_kmsg_message*)msg;
-	
-/*	if(msgPtr->hdr.size>dma_rcv_thresh)
-	{
-		 printk("%s before spinlock: conn_no %d slot %d\n",__func__,msgPtr->hdr.conn_no,msgPtr->hdr.slot);
-		spin_lock(&conn_descriptors[msgPtr->hdr.conn_no].dma_q_free);
-		printk("%s: conn_no %d slot %d\n",__func__,msgPtr->hdr.conn_no,msgPtr->hdr.slot);
-		buffer_put(&conn_descriptors[msgPtr->hdr.conn_no].remote_buffer_desc,msgPtr->hdr.slot);
-		//freeList[msgPtr->hdr.slot]=BUFFER_FREE;
-		spin_unlock(&conn_descriptors[msgPtr->hdr.conn_no].dma_q_free);
+static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *msg, unsigned int payload_size) {
+	int my_ticket;
+	my_ticket=fetch_and_add(&ticket, 1);
+	int conn_no=my_ticket%(MAX_CONNEC);
+	int ret;
+
+	if(pcn_connection_status(conn_no) == PCN_CONN_WATING) {
+		printk("Connection %d is not ready\n", conn_no);
+		return -1;
 	}
-	else{
-		printk("%s: small free\n",__func__);
-		vfree(msg);
-	}*/
-	vfree(msg);
+
+	if (msg->hdr.flag & PCN_KMSG_SYNC) {
+		ret = __pcn_do_send(dest_cpu, msg, payload_size, -1);
+	} else {
+		// Put it into the queue and return immediately
+		enq_send(send_buf[conn_no], msg, dest_cpu, payload_size);
+		ret = payload_size;
+	}
+
+	return ret;
+}
+
+int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg) {
+	return __pcn_kmsg_send(dest_cpu,msg,sizeof(struct pcn_kmsg_message)-sizeof(struct pcn_kmsg_hdr));
+}
+
+int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size) {
+	return __pcn_kmsg_send(dest_cpu, lmsg, payload_size);
+}
+
+void *pcn_kmsg_alloc_msg(size_t size) {
+	struct pcn_kmsg_message *msg;
+
+	msg = (struct pcn_kmsg_message *) kmalloc(size, GFP_ATOMIC);
+
+	msg->hdr.size = size;
+	msg->hdr.flag = PCN_KMSG_ASYNC;
+	return (void *) msg;
+}
+
+static void __free_msg(void *msg) {
+	struct pcn_kmsg_message *pmsg = (struct pcn_kmsg_message *)msg;
+	kfree(msg);
+}
+
+void pcn_kmsg_free_msg_now(void *msg) {
+	__free_msg(msg);
+}
+
+void pcn_kmsg_free_msg(void *msg) {
+	struct pcn_kmsg_message *pmsg = (struct pcn_kmsg_message *)msg;
+
+	if (pmsg->hdr.flag & PCN_KMSG_SYNC) {
+		__free_msg(msg);
+	}
 }
 
 
+EXPORT_SYMBOL(pcn_kmsg_alloc_msg);
 EXPORT_SYMBOL(pcn_kmsg_free_msg);
+EXPORT_SYMBOL(pcn_kmsg_free_msg_now);
 EXPORT_SYMBOL(pcn_kmsg_send_long);
 EXPORT_SYMBOL(pcn_kmsg_send);
 EXPORT_SYMBOL(pcn_kmsg_unregister_callback);
 EXPORT_SYMBOL(pcn_kmsg_register_callback);
-//EXPORT_SYMBOL(epd_fd);
-//EXPORT_SYMBOL(test_func);
-
-
-
-
-
-
- 
- 

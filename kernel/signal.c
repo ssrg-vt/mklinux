@@ -311,14 +311,14 @@ static int handle_remote_kill_response(struct pcn_kmsg_message* inc_msg) {
 	ptr->errno = msg->errno;
 	wake_up_interruptible(&ptr->wq);
 free:
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
 	return 0;
 }
 
 static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 
 	_remote_kill_request_t* msg = (_remote_kill_request_t*) inc_msg;
-	_remote_kill_response_t response;
+	_remote_kill_response_t* response = (_remote_kill_response_t *) pcn_kmsg_alloc_msg(sizeof(_remote_kill_response_t));
 
 	_incomming_remote_signal_pool_t *ptr;
 
@@ -328,9 +328,9 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 	//printk("%s: request -- entered current{%d} comm{%s} for pid{%d}\n", "handle_remote_kill_request",current->pid,current->comm, msg->pid);
 
 	// Finish constructing response
-	response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
-	response.header.prio = PCN_KMSG_PRIO_NORMAL;
-
+	response->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
+	response->header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.flag = PCN_KMSG_SYNC;
 
 	struct siginfo info;
 
@@ -358,14 +358,14 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 
 	if(ptr->assign_for_kthread == 0)
 	{
-	response.errno = ret;
-	response.request_id = msg->request_id;
+	response->errno = ret;
+	response->request_id = msg->request_id;
 
 	//printk("%s: request --remote:errno: %d \n", "handle_remote_kill_request",
 			//ret);
 
 	// Send response
-	pcn_kmsg_send(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response));
+	pcn_kmsg_send(msg->header.from_cpu, (struct pcn_kmsg_message*) (response));
 
 	//spin_lock(&in_list_lock);
 		find_and_delete_incomming(msg->pid,&inc_head);
@@ -376,7 +376,8 @@ static int handle_remote_kill_request(struct pcn_kmsg_message* inc_msg) {
 		//do nothing...taken care by kthread.
 	}
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg(response);
+	pcn_kmsg_free_msg_now(inc_msg);
 
 	return 0;
 }
@@ -386,8 +387,7 @@ int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 
 	int res = 0;
 
-	_remote_kill_request_t *request = kmalloc(sizeof(_remote_kill_request_t),
-	GFP_ATOMIC);
+	_remote_kill_request_t *request = pcn_kmsg_alloc_msg(sizeof(_remote_kill_request_t));
 //	printk(KERN_ALERT"%s: current pid{%d} comm {%s} sig{%d} pid{%d}\n",__func__, current->pid,current->comm,sig,pid);
 	_outgoing_remote_signal_pool_t *ptr;
 	// Build request
@@ -398,6 +398,7 @@ int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 
 	request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+	request->header.flag = PCN_KMSG_SYNC;
 
 	//spin_lock(&out_list_lock);
 	int req_id = get_counter_id();
@@ -407,6 +408,7 @@ int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 
 	// Send response
 	res = pcn_kmsg_send(kernel, (struct pcn_kmsg_message*) (request));
+	pcn_kmsg_free_msg(request);
 
 	wait_event_interruptible(ptr->wq, (ptr->status == DONE));
 
@@ -443,9 +445,8 @@ int remote_kill_pid_info_thread(void *data) {
 				schedule();
 			} else if (recv_signal == SIGCONT) {
 
-				_remote_kill_request_t *request = kmalloc(
-						sizeof(_remote_kill_request_t),
-						GFP_ATOMIC);
+				_remote_kill_request_t *request = pcn_kmsg_alloc_msg(
+						sizeof(_remote_kill_request_t));
 
 				_outgoing_remote_signal_pool_t *ptr;
 				// Build request
@@ -456,6 +457,7 @@ int remote_kill_pid_info_thread(void *data) {
 
 				request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 				request->header.prio = PCN_KMSG_PRIO_NORMAL;
+				request->header.flag = PCN_KMSG_SYNC;
 
 				//spin_lock(&out_list_lock);
 				int req_id = get_counter_id();
@@ -466,6 +468,7 @@ int remote_kill_pid_info_thread(void *data) {
 				// Send response to kill migrated pid
 				res = pcn_kmsg_send(killinfo->kernel,
 						(struct pcn_kmsg_message*) (request));
+				pcn_kmsg_free_msg(request);
 
 				wait_event_interruptible(ptr->wq, (ptr->status == DONE));
 
@@ -476,18 +479,20 @@ int remote_kill_pid_info_thread(void *data) {
 				//spin_unlock(&out_list_lock);
 
 
-				_remote_kill_response_t response;
+				_remote_kill_response_t *response = (_remote_kill_response_t *) pcn_kmsg_alloc_msg(sizeof(_remote_kill_response_t));
 				// Finish constructing response
-				response.header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
-				response.header.prio = PCN_KMSG_PRIO_NORMAL;
+				response->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_RESPONSE;
+				response->header.prio = PCN_KMSG_PRIO_NORMAL;
+				response->header.flag = PCN_KMSG_SYNC;
 
-				response.errno = (
+				response->errno = (
 						killinfo->respon ? killinfo->respon : (ret ? ret : 0));
-				response.request_id = killinfo->req_id;
+				response->request_id = killinfo->req_id;
 				printk("%s: request --remote:errno: %d \n", "remote_kill_pid_info_thread",
-											response.errno );
+											response->errno );
 				// Send response to the calling kernel
-				pcn_kmsg_send(killinfo->ret_cpu, (struct pcn_kmsg_message*) (&response));
+				pcn_kmsg_send(killinfo->ret_cpu, (struct pcn_kmsg_message*) response);
+				pcn_kmsg_free_msg(response);
 
 				//spin_lock(&in_list_lock);
 					find_and_delete_incomming(killinfo->pid,&inc_head);
@@ -513,8 +518,7 @@ static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
 		struct siginfo *info) {
 
 	int res = 0;
-	_remote_kill_request_t *request = kmalloc(sizeof(_remote_kill_request_t),
-	GFP_ATOMIC);
+	_remote_kill_request_t *request = pcn_kmsg_alloc_msg(sizeof(_remote_kill_request_t));
 
 	_outgoing_remote_signal_pool_t *ptr;
 	// Build request
@@ -525,6 +529,7 @@ static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
 
 	request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+	request->header.flag = PCN_KMSG_SYNC;
 
 	//spin_lock(&out_list_lock);
 	int req_id = get_counter_id();
@@ -534,6 +539,7 @@ static int remote_do_send_specific(int kernel, pid_t tgid, pid_t pid, int sig,
 
 	// Send response
 	res = pcn_kmsg_send(kernel, (struct pcn_kmsg_message*) (request));
+	pcn_kmsg_free_msg(request);
 
 	wait_event_interruptible(ptr->wq, ptr->status == DONE);
 
@@ -592,7 +598,7 @@ static int handle_remote_sigproc_response(struct pcn_kmsg_message* inc_msg) {
 	printk("%s: response --- errno stored - errno{%d} \n",
 			"handle_remote_sigproc_response", msg->errno);
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
 
 	return 0;
 }
@@ -611,7 +617,7 @@ static int handle_remote_sigproc_request(struct pcn_kmsg_message* inc_msg) {
 	printk("%s: request --remote:errno: %d \n", "handle_remote_kill_request",
 			ret);
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
 
 	return 0;
 }
@@ -621,8 +627,7 @@ static int remote_send_sigprocmask(int kernel, pid_t pid, int how, sigset_t *new
 		sigset_t *old) {
 
 	int res = 0;
-	_remote_sigproc_request_t *request = kmalloc(sizeof(_remote_sigproc_request_t),
-	GFP_ATOMIC);
+	_remote_sigproc_request_t *request = pcn_kmsg_alloc_msg(sizeof(_remote_sigproc_request_t));
 
 	sigset_t local_new;
 	sigset_t local_old;
@@ -642,9 +647,11 @@ static int remote_send_sigprocmask(int kernel, pid_t pid, int how, sigset_t *new
 
 	request->header.type = PCN_KMSG_TYPE_REMOTE_SENDSIG_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+	request->header.flag = PCN_KMSG_SYNC;
 
 	// Send response
 	res = pcn_kmsg_send(kernel, (struct pcn_kmsg_message*) (request));
+	pcn_kmsg_free_msg(request);
 
 	return res;
 }

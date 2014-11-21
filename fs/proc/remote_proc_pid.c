@@ -154,26 +154,28 @@ static int handle_remote_pid_response(struct pcn_kmsg_message* inc_msg) {
 static int handle_remote_pid_request(struct pcn_kmsg_message* inc_msg) {
 
 	_remote_pid_request_t* msg = (_remote_pid_request_t*) inc_msg;
-	_remote_pid_response_t response;
+	_remote_pid_response_t* response = (_remote_pid_response_t *) pcn_kmsg_alloc_msg(sizeof(_remote_pid_response_t));
 
 	PRINTK("%s: Entered remote PID request \n", __func__);
 
 	// Finish constructing response
-	response.header.type = PCN_KMSG_TYPE_REMOTE_PID_RESPONSE;
-	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.type = PCN_KMSG_TYPE_REMOTE_PID_RESPONSE;
+	response->header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.flag = PCN_KMSG_SYNC;
 	flush_variables();
 	unsigned long pid_arr[SIZE];
 
-	response.count = iterate_process(&pid_arr);
-	memcpy(&response.remote_pid, &pid_arr, SIZE * sizeof(long));
+	response->count = iterate_process(&pid_arr);
+	memcpy(&(response->remote_pid), &pid_arr, SIZE * sizeof(long));
 
-	PRINTK("%s: Remote:pid count : %d \n", __func__, response.count);
+	PRINTK("%s: Remote:pid count : %d \n", __func__, response->count);
 	// Send response
 	pcn_kmsg_send_long(msg->header.from_cpu,
-			(struct pcn_kmsg_message*) (&response),
+			(struct pcn_kmsg_message*) (response),
 			sizeof(_remote_pid_response_t) - sizeof(struct pcn_kmsg_hdr));
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
+	pcn_kmsg_free_msg(response);
 
 	return 0;
 }
@@ -630,14 +632,15 @@ static int remote_proc_pid_fill_cache(int Kernel_id, struct file *filp,
 int send_request_to_remote(int KernelId) {
 
 	int res = 0;
-	_remote_pid_request_t* request = kmalloc(sizeof(_remote_pid_request_t),
-	GFP_KERNEL);
+	_remote_pid_request_t* request = pcn_kmsg_alloc_msg(sizeof(_remote_pid_request_t));
 	// Build request
 	request->header.type = PCN_KMSG_TYPE_REMOTE_PID_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+	request->header.flag = PCN_KMSG_SYNC;
 
 	// Send response
 	res = pcn_kmsg_send(KernelId, (struct pcn_kmsg_message*) (request));
+	pcn_kmsg_free_msg(request);
 	return res;
 }
 

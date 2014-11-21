@@ -283,14 +283,15 @@ static int handle_remote_pid_stat_response(struct pcn_kmsg_message* inc_msg) {
 static int handle_remote_pid_stat_request(struct pcn_kmsg_message* inc_msg) {
 
 	_remote_pid_stat_request_t* msg = (_remote_pid_stat_request_t*) inc_msg;
-	_remote_pid_stat_response_t response;
+	_remote_pid_stat_response_t* response = (_remote_pid_stat_response_t*) pcn_kmsg_alloc_msg(sizeof(_remote_pid_stat_response_t));
 
 
 	PRINTK("%s: Entered remote pid stat request \n", __func__);
 
 	// Finish constructing response
-	response.header.type = PCN_KMSG_TYPE_REMOTE_PID_STAT_RESPONSE;
-	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.type = PCN_KMSG_TYPE_REMOTE_PID_STAT_RESPONSE;
+	response->header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.flag = PCN_KMSG_SYNC;
 
 	struct task_struct *task;
 	task=get_process(msg->_pid);
@@ -299,10 +300,11 @@ static int handle_remote_pid_stat_request(struct pcn_kmsg_message* inc_msg) {
 	fill_response(task,&response);
 
 	// Send response
-	pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response),
+	pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_message*) (response),
 			sizeof(_remote_pid_stat_response_t) - sizeof(struct pcn_kmsg_hdr));
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
+	pcn_kmsg_free_msg(response);
 
 	return 0;
 }
@@ -311,14 +313,16 @@ int send_stat_request(struct proc_remote_pid_info *task)
 {
 
 		int res=0;
-		_remote_pid_stat_request_t* request = kmalloc(sizeof(_remote_pid_stat_request_t),
-		GFP_KERNEL);
+		_remote_pid_stat_request_t* request = pcn_kmsg_alloc_msg(sizeof(_remote_pid_stat_request_t));
 		// Build request
 		request->header.type = PCN_KMSG_TYPE_REMOTE_PID_STAT_REQUEST;
 		request->header.prio = PCN_KMSG_PRIO_NORMAL;
+		request->header.flag = PCN_KMSG_SYNC;
 		request->_pid = task->pid;
 
 		res=pcn_kmsg_send(ORIG_NODE(task->pid), (struct pcn_kmsg_message*) (request));
+		pcn_kmsg_free_msg(request);
+
 		return res;
 }
 
@@ -475,7 +479,7 @@ static int handle_remote_pid_cpuset_response(struct pcn_kmsg_message* inc_msg) {
 	PRINTK("%s: response ---- wait{%d} \n",
 			__func__, cpusetwait);
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
 
 	return 0;
 }
@@ -484,14 +488,15 @@ static int handle_remote_pid_cpuset_response(struct pcn_kmsg_message* inc_msg) {
 static int handle_remote_pid_cpuset_request(struct pcn_kmsg_message* inc_msg) {
 
 	_remote_pid_cpuset_request_t* msg = (_remote_pid_cpuset_request_t*) inc_msg;
-	_remote_pid_cpuset_response_t response;
+	_remote_pid_cpuset_response_t* response = (_remote_pid_cpuset_response_t*) pcn_kmsg_alloc_msg(sizeof(_remote_pid_cpuset_response_t));
 
 
 	PRINTK("%s: Entered remote pid cpuset request \n", __func__);
 
 	// Finish constructing response
-	response.header.type = PCN_KMSG_TYPE_REMOTE_PID_CPUSET_RESPONSE;
-	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.type = PCN_KMSG_TYPE_REMOTE_PID_CPUSET_RESPONSE;
+	response->header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.flag = PCN_KMSG_SYNC;
 
 	struct pid * pidp = find_vpid(msg->_pid);
 
@@ -499,10 +504,11 @@ static int handle_remote_pid_cpuset_request(struct pcn_kmsg_message* inc_msg) {
 		fill_cpuset_response(pidp,&response);
 
 	// Send response
-	pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_message*) (&response),
+	pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_message*) (response),
 			sizeof(_remote_pid_cpuset_response_t) - sizeof(struct pcn_kmsg_hdr));
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
+	pcn_kmsg_free_msg(response);
 
 	return 0;
 }
@@ -510,14 +516,15 @@ cpuset_request(struct proc_remote_pid_info *task)
 {
 
 		int res=0;
-		_remote_pid_cpuset_request_t* request = kmalloc(sizeof(_remote_pid_cpuset_request_t),
-		GFP_KERNEL);
+		_remote_pid_cpuset_request_t* request = pcn_kmsg_alloc_msg(sizeof(_remote_pid_cpuset_request_t));
 		// Build request
 		request->header.type = PCN_KMSG_TYPE_REMOTE_PID_CPUSET_REQUEST;
 		request->header.prio = PCN_KMSG_PRIO_NORMAL;
+		request->header.flag = PCN_KMSG_SYNC;
 		request->_pid = task->pid;
 
 		res=pcn_kmsg_send(ORIG_NODE(task->pid), (struct pcn_kmsg_message*) (request));
+		pcn_kmsg_free_msg_now(request);
 		return res;
 }
 
