@@ -809,6 +809,7 @@ void *pcn_kmsg_alloc_msg(size_t size) {
 	struct pcn_kmsg_message *msg;
 
 	msg = (struct pcn_kmsg_message *) kmalloc(size, GFP_ATOMIC);
+	BUG_ON(!msg);
 
 	msg->hdr.size = size;
 	msg->hdr.flag = PCN_KMSG_ASYNC;
