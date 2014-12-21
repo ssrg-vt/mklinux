@@ -597,7 +597,7 @@ static int handle_remote_sigproc_response(struct pcn_kmsg_message* inc_msg) {
 	printk("%s: response --- errno stored - errno{%d} \n",
 			"handle_remote_sigproc_response", msg->errno);
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
 
 	return 0;
 }
@@ -616,7 +616,7 @@ static int handle_remote_sigproc_request(struct pcn_kmsg_message* inc_msg) {
 	printk("%s: request --remote:errno: %d \n", "handle_remote_kill_request",
 			ret);
 
-	pcn_kmsg_free_msg(inc_msg);
+	pcn_kmsg_free_msg_now(inc_msg);
 
 	return 0;
 }

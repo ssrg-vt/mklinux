@@ -1717,15 +1717,14 @@ int add_memory_entry_with_check(memory_t* entry) {
 
                 	} 
 			prev=curr;
-			curr= curr->next; 
-		}
-		while (curr->next != NULL) ;
+			curr = curr->next; 
+		} while (curr != NULL);
 
-		// Now curr should be the last entry.
-		// Append the new entry to curr.
-		curr->next = entry;
+		// Now prev should be the last entry.
+		// Append the new entry to prev.
+		prev->next = entry;
 		entry->next = NULL;
-		entry->prev = curr;
+		entry->prev = prev;
 	}
 
 	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
@@ -5390,11 +5389,11 @@ pcn_kmsg_send_long(from_cpu,
 		sizeof(data_void_response_t) - sizeof(struct pcn_kmsg_hdr));
 
 // Clean up incoming messages
-pcn_kmsg_free_msg_now(request);
 pcn_kmsg_free_msg(void_response);
 kfree(work);
 //end= native_read_tsc();
 PSPRINTK("Handle request end\n");
+pcn_kmsg_free_msg_now(request);
 			}
 #endif
 
@@ -10332,7 +10331,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	int back= 0;
 	int ret= 0;
 
-	//printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
+	printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d, to %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu, dst_cpu);
 	if(strcmp(current->comm,"IS") == 0){
 
         	p_trace_printk("s\n");
@@ -11043,7 +11042,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 			if (current->main == 0) {
 
-				pcn_kmsg_free_msg(entry->message_push_operation);
+				pcn_kmsg_free_msg_now(entry->message_push_operation);
 				entry->message_push_operation = NULL;
 			}
 
@@ -11419,7 +11418,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 					 }
 
-					 pcn_kmsg_free_msg(lock_message);
+					 pcn_kmsg_free_msg_now(lock_message);
 					 kfree(acks);
 
 					 down_write(&current->mm->mmap_sem);
@@ -11428,7 +11427,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 				} else {
 					 PSVMAPRINTK("SERVER MAIN: going to execute the operation locally %d\n",operation);
-					 pcn_kmsg_free_msg(lock_message);
+					 pcn_kmsg_free_msg_now(lock_message);
 					 kfree(acks);
 
 					 down_write(&current->mm->mmap_sem);
@@ -11572,7 +11571,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 					printk("Impossible to kmalloc in %s\n",__func__);
 					down_write(&current->mm->mmap_sem);
 					up_read(&entry->kernel_set_sem);
-					pcn_kmsg_free_msg(lock_message);
+					pcn_kmsg_free_msg_now(lock_message);
 					kfree(acks);
 					ret = -ENOMEM;
 					goto out;
@@ -11629,8 +11628,8 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 			 			}
 
-			 			pcn_kmsg_free_msg(lock_message);
-			 			pcn_kmsg_free_msg(operation_to_send);
+			 			pcn_kmsg_free_msg_now(lock_message);
+			 			pcn_kmsg_free_msg_now(operation_to_send);
 			 			kfree(acks);
 
 			 		down_write(&current->mm->mmap_sem);
@@ -11641,7 +11640,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 					PSVMAPRINTK("SERVER NOT MAIN: going to execute the operation locally %d\n",operation);
 			 		entry->message_push_operation = operation_to_send;
 
-					pcn_kmsg_free_msg(lock_message);
+					pcn_kmsg_free_msg_now(lock_message);
 			 		kfree(acks);
 
 			 		down_write(&current->mm->mmap_sem);
@@ -11755,7 +11754,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		if (current->mm->thread_op != current) {
 			printk(	"ERROR: waking up to locally execute a vma operation started by me, but thread_op s not me\n");
-			pcn_kmsg_free_msg(operation_to_send);
+			pcn_kmsg_free_msg_now(operation_to_send);
 			ret = -EPERM;
 			goto out_dist_lock;
 		}
@@ -11771,7 +11770,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		entry->waiting_for_op = NULL;
 
-		pcn_kmsg_free_msg(operation_to_send);
+		pcn_kmsg_free_msg_now(operation_to_send);
 
 		return ret;
 
@@ -12291,6 +12290,9 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 #endif
 		//the task will be activated only when task->executing_for_remote==1
 		task->executing_for_remote = 1;
+
+		process_server_notify_delegated_subprocess_starting(task->pid,
+			clone_data->placeholder_pid, clone_data->header.from_cpu);
 		wake_up_process(task);
 
 		kfree(my_shadow);

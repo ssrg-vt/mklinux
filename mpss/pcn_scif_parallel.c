@@ -826,11 +826,13 @@ void pcn_kmsg_free_msg_now(void *msg) {
 }
 
 void pcn_kmsg_free_msg(void *msg) {
-	struct pcn_kmsg_message *pmsg = (struct pcn_kmsg_message *)msg;
-
-	if (pmsg->hdr.flag & PCN_KMSG_SYNC) {
-		__free_msg(msg);
-	}
+/*
+ *    struct pcn_kmsg_message *pmsg = (struct pcn_kmsg_message *)msg;
+ *
+ *    if (pmsg->hdr.flag & PCN_KMSG_SYNC) {
+ *        __free_msg(msg);
+ *    }
+ */
 }
 
 
