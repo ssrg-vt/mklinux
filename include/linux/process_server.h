@@ -55,7 +55,7 @@ int process_server_import_address_space(unsigned long* ip, unsigned long *sp, st
 // long sys_process_server_import_task(void* info, struct pt_regs* regs) 
 #endif
 int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu);
-int process_server_do_exit(void);
+int process_server_do_exit(int exit);
 int process_server_do_group_exit(void);
 int process_server_notify_mmap(struct file *file, unsigned long addr,
                                 unsigned long len, unsigned long prot,

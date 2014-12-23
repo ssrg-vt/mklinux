@@ -2373,7 +2373,7 @@ static int futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 	 */
 	if(current->tgroup_distributed == 1 && l && l->wake_st == 1){
 		ret = 1;
-		printk(KERN_ALERT"unlock 1\n");
+		FPRINTK(KERN_ALERT"unlock 1\n");
 		if (q->lock_ptr != NULL && spin_is_locked(q->lock_ptr)) {
 			spin_unlock(&hb->lock);
 		}
@@ -2384,7 +2384,7 @@ static int futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 		if(ops != WAIT_MAIN)
 			queue_me(q, hb);
 		else{
-			printk(KERN_ALERT"unlock 2 ops{%d} \n",ops);
+			FPRINTK(KERN_ALERT"unlock 2 ops{%d} \n",ops);
 
 			if (q->lock_ptr != NULL && spin_is_locked(q->lock_ptr)) {
 				spin_unlock(&hb->lock);
@@ -3542,12 +3542,13 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 	u32 val2 = 0;
 	int cmd = op & FUTEX_CMD_MASK;
 	int retn=0;
-rcu_read_lock();
+	
+	rcu_read_lock();
 	current->futex_state = 1;
-rcu_read_unlock();
+	rcu_read_unlock();
 	smp_mb();
+	
 	if((current->migration_state == 1 || current->represents_remote ==1)){
-	   printk(KERN_ALERT"in the middle of migartion  pid{%d} ops{%d} cmd{%d}\n",current->pid,op,cmd);
 	 struct spin_key sk;
         __spin_key_init(&sk);
 
@@ -3570,10 +3571,6 @@ rcu_read_unlock();
 	  //current->thread.ip = (unsigned long) ip_func;
 	}
 
-      if(current->tgroup_distributed ==1 || (strcmp(current->comm,"is-gomp")==0)){
-                         printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d}tg{%d}  state{%d}\n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id(),current->tgroup_distributed,current->represents_remote);
-                        }
-  
 	if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
 				cmd == FUTEX_WAIT_BITSET ||
 				cmd == FUTEX_WAIT_REQUEUE_PI)) {
@@ -3597,11 +3594,10 @@ rcu_read_unlock();
 
 	retn = do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
 
-	    if( (strcmp(current->comm,"is-gomp")==0))
-                           printk(KERN_ALERT"%s: END +++++++++++++pid{%d} retn{%d} uaddr{%lx}\n",__func__,current->pid,retn,uaddr);
-rcu_read_lock();
+	
+	rcu_read_lock();
         current->futex_state = 0;
-rcu_read_unlock();
+	rcu_read_unlock();
 
 	return retn;	
 }

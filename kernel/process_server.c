@@ -5865,7 +5865,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     data_header_t* next = NULL;
     vma_data_t* vma = NULL;
     unsigned long lockflags;
-
+    printk("%s:called\n",__func__);
     int perf = PERF_MEASURE_START(&perf_handle_clone_request);
 
     perf_cc = native_read_tsc();
@@ -6758,10 +6758,10 @@ int process_server_import_address_space(unsigned long* ip,
                   fpu_copy(&current->thread.fpu, &temp);
               }
          }
-     printk(KERN_ALERT"%s: task flags %x fpu_counter %x has_fpu %x [%d:%d]\n",
+/*     printk(KERN_ALERT"%s: task flags %x fpu_counter %x has_fpu %x [%d:%d]\n",
          __func__, current->flags, (int)current->fpu_counter,
           (int)current->thread.has_fpu, (int)__thread_has_fpu(current), (int)fpu_allocated(&current->thread.fpu));
-          //FPU migration code --- is the following optional?
+  */        //FPU migration code --- is the following optional?
           if (tsk_used_math(current) && current->fpu_counter >5) //fpu.preload
               __math_state_restore(current);
 #endif    
@@ -6796,12 +6796,12 @@ int process_server_import_address_space(unsigned long* ip,
     total_time = end_time - start_time;
     PS_PROC_DATA_TRACK(PS_PROC_DATA_IMPORT_TASK_TIME,total_time);
 #endif
-
+/*
     printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu (%d)\n",
             __func__,
             perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
             perf_a, perf_b, perf_c, perf_d, perf_e, current->t_home_id);
-
+*/
     return 0;
 }
 
@@ -6854,7 +6854,7 @@ int process_server_do_group_exit(void) {
     do_time_measurement = 1;
 #endif
 
-    PSPRINTK("%s: doing distributed group exit\n",__func__);
+    printk(KERN_ALERT"%s: doing distributed group exit\n",__func__);
 
     // Build message
     msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_GROUP;
@@ -6897,7 +6897,7 @@ int process_server_do_group_exit(void) {
  *
  * <MEASURE perf_process_server_do_exit>
  */
-int process_server_do_exit(void) {
+int process_server_do_exit(int exit_code) {
 
     exiting_process_t msg;
     int is_last_thread_in_local_group = 1;
@@ -7036,7 +7036,13 @@ finished_membership_search:
             pcn_kmsg_send(i, (struct pcn_kmsg_message*)&msg);
         }
     } 
+	
+    //already sent group exit signals. wait for each one to respond.
+    if(current->tgid == current->pid && is_last_thread_in_local_group &&  (exit_code & SIGNAL_GROUP_EXIT)){
 
+	//printk(KERN_ALERT"should wait for others\n"); 
+	
+    }
     // If this was the last thread in the local work, we take one of two 
     // courses of action, either we:
     //
@@ -7052,7 +7058,7 @@ finished_membership_search:
         // thread group.
         if(is_last_thread_in_group) {
 
-            PSPRINTK("%s: This is the last thread member!\n",__func__);
+          //  printk("%s: This is the last thread member!\n",__func__);
 
             // Notify all cpus
             exit_notification.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION;
@@ -7080,8 +7086,8 @@ finished_membership_search:
             // This is NOT the last distributed thread group member.  Grab
             // a reference to the mm, and increase the number of users to keep 
             // it from being destroyed
-            PSPRINTK("%s: This is not the last thread member, saving mm\n",
-                    __func__);
+            //printk("%s: This is not the last thread member, saving mm\n",
+              //      __func__);
             if (current && current->mm)
                 atomic_inc(&current->mm->mm_users);
             else
@@ -7102,7 +7108,7 @@ finished_membership_search:
         }
 
     } else {
-        PSPRINTK("%s: This is not the last local thread member\n",__func__);
+        //printk("%s: This is not the last local thread member\n",__func__);
     }
 
     // We know that this task is exiting, and we will never have to work
@@ -8065,7 +8071,7 @@ int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     int lclone_request_id;
     int perf = -1;
 
-    printk("process_server_do_migration pid{%d} cpu {%d}\n",task->pid,cpu);
+    //printk("process_server_do_migration pid{%d} cpu {%d}\n",task->pid,cpu);
 
     // Nothing to do if we're migrating to the current cpu
     if(dst_cpu == _cpu) {
@@ -8298,9 +8304,9 @@ PSPRINTK(KERN_ERR"%s: task flags %x fpu_counter %x has_fpu %x [%d:%d] %d:%d %x\n
 		         fpu_copy(&temp, &task->thread.fpu);
 		         request->thread_has_fpu |= HAS_FPU_MASK;
 		     }
-		 printk(KERN_ALERT"%s: flags %x fpu_counter %x has_fpu %x [%d:%d]\n",
-				         __func__, request->task_flags, (int)request->task_fpu_counter,
-				         (int)request->thread_has_fpu, (int)__thread_has_fpu(task), (int)fpu_allocated(&task->thread.fpu));
+//		 printk(KERN_ALERT"%s: flags %x fpu_counter %x has_fpu %x [%d:%d]\n",
+//				         __func__, request->task_flags, (int)request->task_fpu_counter,
+//				         (int)request->thread_has_fpu, (int)__thread_has_fpu(task), (int)fpu_allocated(&task->thread.fpu));
 #endif
     
 	// ptrace, debug, dr7: struct perf_event *ptrace_bps[HBP_NUM]; unsigned long debugreg6; unsigned long ptrace_dr7;
@@ -8319,7 +8325,7 @@ PSPRINTK(KERN_ERR"%s: task flags %x fpu_counter %x has_fpu %x [%d:%d] %d:%d %x\n
 
     kfree(request);
 
-    printk(KERN_ALERT"Migration done\n");
+  //  printk(KERN_ALERT"Migration done\n");
     //dump_task(task,regs,request->stack_ptr);
     
     PERF_MEASURE_STOP(&perf_process_server_do_migration,"migration to new cpu",perf);
@@ -8405,10 +8411,10 @@ if (task->thread.usersp != _usersp) {
 		         fpu_copy(&temp, &task->thread.fpu);
 		          mig->thread_has_fpu |= HAS_FPU_MASK;
 		      }
-		   printk(KERN_ALERT"%s: flags %x fpu_counter %x has_fpu %x [%d:%d]\n",
+		 /*  printk(KERN_ALERT"%s: flags %x fpu_counter %x has_fpu %x [%d:%d]\n",
 				           __func__, mig->task_flags, (int)mig->task_fpu_counter,
 				           (int)mig->thread_has_fpu, (int)__thread_has_fpu(task), (int)fpu_allocated(&task->thread.fpu));
-
+*/
 #endif
 
     memcpy(&mig->regs, regs, sizeof(struct pt_regs));
@@ -9486,10 +9492,7 @@ static int __init process_server_init(void) {
      * Cache some local information.
      */
 //#ifndef SUPPORT_FOR_CLUSTERING
-	if(popcorn_boot == 1)
-           _cpu = cpumask_first(cpu_present_mask);
-	else
-		   _cpu = 0;
+           _cpu= smp_processor_id();
 //#else
 //	   _cpu = cpumask_first(cpu_present_mask);
 //#endif

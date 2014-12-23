@@ -673,7 +673,7 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 		FRPRINTK("%s: no task found {%d} \n",__func__,msg->tghid);
 		goto out;
 	}
-
+	get_task_struct(tsk);
 	if(( (msg->fn_flag < FLAGS_MAX) && (msg->fn_flag & FLAGS_ORIGINCALL)) || msg->rflag == 0){
 		//GENERAL_SPIN_LOCK(&access_global_value_table);
 
@@ -747,6 +747,7 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 		global_futex_wake(msg->uaddr, msg->flags, msg->nr_wake, msg->bitset,
 				msg->rflag,(unsigned long) (msg->uaddr2 & (PAGE_SIZE-1)));
 	}
+	put_task_struct(tsk);
 out:
 	pcn_kmsg_free_msg(inc_msg);
 
@@ -1011,7 +1012,7 @@ static int __init futex_remote_init(void)
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_RESPONSE,
 			handle_remote_futex_wake_response);
 
-	grq   = create_singlethread_workqueue(MODULE);
+	grq   =  alloc_workqueue(MODULE, WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_CPU_INTENSIVE ,1);//create_singlethread_workqueue(MODULE);
 	worker_pid=-1;
 
 	INIT_LIST_HEAD(&vm_head);

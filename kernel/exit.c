@@ -991,8 +991,10 @@ NORET_TYPE void do_exit(long code)
     /*
      * Multikernel
      */
+//	if(current->pid == current->tgid && strcmp(current->comm,"wrmem") == 0)
+//		printk(KERN_ALERT"conmes here at group exit\n");
 	
-    process_server_do_exit();
+    process_server_do_exit(code);
 #ifdef FUTEX_STAT
     if(current->tgroup_distributed && current->pid == current->tgroup_home_id){
     print_wait_perf();
@@ -1137,6 +1139,14 @@ NORET_TYPE void
 do_group_exit(int exit_code)
 {
 	struct signal_struct *sig = current->signal;
+	
+	 //if(current->pid == current->tgid && strcmp(current->comm,"wrmem") == 0)
+           //     printk(KERN_ALERT"conmes here at group exit 1\n");
+	
+	int quit_proc_exit = 0;
+
+	if(current->executing_for_remote)
+		quit_proc_exit = sig->flags & SIGNAL_REMOTE_GRP_EXIT; 
 
 	BUG_ON(exit_code & 0x80); /* core dumps don't get here */
 
@@ -1155,8 +1165,8 @@ do_group_exit(int exit_code)
 		}
 		spin_unlock_irq(&sighand->siglock);
 	}
-
-    process_server_do_group_exit();
+    if(!current->executing_for_remote && !quit_proc_exit)
+    	process_server_do_group_exit();
 //printk(KERN_ALERT"after do gp exit\n");
 	do_exit(exit_code);
 	/* NOTREACHED */
