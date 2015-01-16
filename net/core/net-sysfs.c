@@ -1278,7 +1278,7 @@ void netdev_unregister_kobject(struct net_device * net)
 
 	device_del(dev);
 }
-
+EXPORT_SYMBOL(netdev_unregister_kobject);
 /* Create sysfs entries for network device. */
 int netdev_register_kobject(struct net_device *net)
 {
@@ -1321,7 +1321,7 @@ int netdev_register_kobject(struct net_device *net)
 
 	return error;
 }
-
+EXPORT_SYMBOL(netdev_register_kobject);
 int netdev_class_create_file(struct class_attribute *class_attr)
 {
 	return class_create_file(&net_class, class_attr);

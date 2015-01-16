@@ -186,5 +186,26 @@ extern struct x86_msi_ops x86_msi;
 
 extern void x86_init_noop(void);
 extern void x86_init_uint_noop(unsigned int unused);
+//akshay
+struct IO_APIC_route_entry;
+struct io_apic_irq_attr;
+struct irq_data;
+struct cpumask;
+
+struct x86_io_apic_ops {
+         void            (*init)   (void);
+         unsigned int    (*read)   (unsigned int apic, unsigned int reg);
+         void            (*write)  (unsigned int apic, unsigned int reg, unsigned int value);
+         void            (*modify) (unsigned int apic, unsigned int reg, unsigned int value);
+         void            (*disable)(void);
+         void            (*print_entries)(unsigned int apic, unsigned int nr_entries);
+         int             (*set_affinity)(struct irq_data *data,
+                                         const struct cpumask *mask,
+                                         bool force);
+         int             (*setup_entry)(int irq, struct IO_APIC_route_entry *entry,
+                                        unsigned int destination, int vector,
+                                        struct io_apic_irq_attr *attr);
+         void            (*eoi_ioapic_pin)(int apic, int pin, int vector);
+};
 
 #endif

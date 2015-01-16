@@ -57,6 +57,27 @@
 /* Include the ID list */
 #include <linux/pci_ids.h>
 
+//akshay
+/*
+ 39  * The PCI interface treats multi-function devices as independent
+ 40  * devices.  The slot/function address of each device is encoded
+ 41  * in a single byte as follows:
+ 42  *
+ 43  *      7:3 = slot
+ 44  *      2:0 = function
+ 45  * PCI_DEVFN(), PCI_SLOT(), and PCI_FUNC() are defined uapi/linux/pci.h
+ 46  * In the interest of not exposing interfaces to user-space unnecessarily,
+ 47  * the following kernel only defines are being added here.
+ */
+#define PCI_DEVID(bus, devfn)  ((((u16)bus) << 8) | devfn)
+/* return bus from PCI devid = ((u16)bus_number) << 8) | devfn */
+#define PCI_BUS_NUM(x) (((x) >> 8) & 0xff)
+static inline int pci_pcie_type(const struct pci_dev *dev)
+{
+        return (PCI_EXP_FLAGS_TYPE) >> 4;
+}
+#define  PCI_EXP_TYPE_PCIE_BRIDGE 0x8   /* PCI/PCI-X to PCIe Bridge */
+
 /* pci_slot represents a physical slot */
 struct pci_slot {
 	struct pci_bus *bus;		/* The bus this slot is on */
@@ -345,6 +366,8 @@ struct pci_dev {
 	};
 	struct pci_ats	*ats;	/* Address Translation Service */
 #endif
+	//akshay
+	u8              msi_cap;        /* MSI capability offset */
 };
 
 static inline struct pci_dev *pci_physfn(struct pci_dev *dev)
@@ -1414,7 +1437,10 @@ enum pci_fixup_pass {
 			suspend##vendor##device##hook, vendor, device, hook)
 
 #ifdef CONFIG_PCI_QUIRKS
+struct pci_dev *pci_get_dma_source(struct pci_dev *dev);
+//akshay
 void pci_fixup_device(enum pci_fixup_pass pass, struct pci_dev *dev);
+int pci_dev_specific_acs_enabled(struct pci_dev *dev, u16 acs_flags);
 #else
 static inline void pci_fixup_device(enum pci_fixup_pass pass,
 				    struct pci_dev *dev) {}
@@ -1518,7 +1544,10 @@ static inline bool pci_is_pcie(struct pci_dev *dev)
 }
 
 void pci_request_acs(void);
-
+//akshay
+//extern bool pci_acs_enabled(struct pci_dev *pdev, u16 acs_flags);
+//extern bool pci_acs_path_enabled(struct pci_dev *start,
+  //                         struct pci_dev *end, u16 acs_flags);
 
 #define PCI_VPD_LRDT			0x80	/* Large Resource Data Type */
 #define PCI_VPD_LRDT_ID(x)		(x | PCI_VPD_LRDT)

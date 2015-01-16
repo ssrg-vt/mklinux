@@ -1137,6 +1137,8 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 {
 	unsigned int i;
 	unsigned int cpu = first_cpu(cpu_present_map);
+	
+	dump_stack();
 
 	preempt_disable();
 	smp_cpu_index_default();
@@ -1158,7 +1160,7 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 
 
 	if (smp_sanity_check(max_cpus) < 0) {
-		printk(KERN_INFO "SMP disabled\n");
+		printk(KERN_ALERT "SMP disabled\n");
 		disable_smp();
 		goto out;
 	}

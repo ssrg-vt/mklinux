@@ -156,6 +156,7 @@ struct in_ifaddr {
 	unsigned char		ifa_flags;
 	unsigned char		ifa_prefixlen;
 	char			ifa_label[IFNAMSIZ];
+	unsigned int 		remote;
 };
 
 extern int register_inetaddr_notifier(struct notifier_block *nb);

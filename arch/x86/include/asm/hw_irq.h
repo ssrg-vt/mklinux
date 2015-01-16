@@ -118,6 +118,11 @@ struct irq_2_iommu {
 	u8  irte_mask;
 };
 
+ /* AMD specific interrupt remapping information */
+struct irq_2_irte {
+         u16 devid; /* Device ID for IRTE table */
+         u16 index; /* Index into IRTE table*/
+};
 /*
  * This is performance-critical, we want to do it O(1)
  *
@@ -130,7 +135,12 @@ struct irq_cfg {
 	u8			vector;
 	u8			move_in_progress : 1;
 #ifdef CONFIG_IRQ_REMAP
-	struct irq_2_iommu	irq_2_iommu;
+	//akshay
+	u8                      remapped : 1;
+	union{
+		struct irq_2_iommu	irq_2_iommu;
+		struct irq_2_irte  irq_2_irte;
+	};
 #endif
 };
 

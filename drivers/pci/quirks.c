@@ -3093,3 +3093,140 @@ int pci_dev_specific_reset(struct pci_dev *dev, int probe)
 
 	return -ENOTTY;
 }
+//////////////////////akshay
+
+static struct pci_dev *pci_func_0_dma_source(struct pci_dev *dev)
+{
+         if (!PCI_FUNC(dev->devfn))
+                 return pci_dev_get(dev);
+ 
+         return pci_get_slot(dev->bus, PCI_DEVFN(PCI_SLOT(dev->devfn), 0));
+}
+
+static const struct pci_dev_dma_source {
+        u16 vendor;
+        u16 device;
+        struct pci_dev *(*dma_source)(struct pci_dev *dev);
+} pci_dev_dma_source[] = {
+        /*
+         * https://bugzilla.redhat.com/show_bug.cgi?id=605888
+         *
+         * Some Ricoh devices use the function 0 source ID for DMA on
+         * other functions of a multifunction device.  The DMA devices
+         * is therefore function 0, which will have implications of the
+         * iommu grouping of these devices.
+         */
+        { PCI_VENDOR_ID_RICOH, 0xe822, pci_func_0_dma_source },
+        { PCI_VENDOR_ID_RICOH, 0xe230, pci_func_0_dma_source },
+        { PCI_VENDOR_ID_RICOH, 0xe832, pci_func_0_dma_source },
+        { PCI_VENDOR_ID_RICOH, 0xe476, pci_func_0_dma_source },
+        { 0 }
+};
+
+/*
+ * IOMMUs with isolation capabilities need to be programmed with the
+ * correct source ID of a device.  In most cases, the source ID matches
+ * the device doing the DMA, but sometimes hardware is broken and will
+ * tag the DMA as being sourced from a different device.  This function
+ * allows that translation.  Note that the reference count of the
+ * returned device is incremented on all paths.
+ */
+struct pci_dev *pci_get_dma_source(struct pci_dev *dev)
+{
+        const struct pci_dev_dma_source *i;
+
+        for (i = pci_dev_dma_source; i->dma_source; i++) {
+                if ((i->vendor == dev->vendor ||
+                     i->vendor == (u16)PCI_ANY_ID) &&
+                    (i->device == dev->device ||
+                     i->device == (u16)PCI_ANY_ID))
+                        return i->dma_source(dev);
+        }
+
+        return pci_dev_get(dev);
+}
+
+/*
+ * AMD has indicated that the devices below do not support peer-to-peer
+ * in any system where they are found in the southbridge with an AMD
+ * IOMMU in the system.  Multifunction devices that do not support
+ * peer-to-peer between functions can claim to support a subset of ACS.
+ * Such devices effectively enable request redirect (RR) and completion
+ * redirect (CR) since all transactions are redirected to the upstream
+ * root complex.
+ *
+ * http://permalink.gmane.org/gmane.comp.emulators.kvm.devel/94086
+ * http://permalink.gmane.org/gmane.comp.emulators.kvm.devel/94102
+ * http://permalink.gmane.org/gmane.comp.emulators.kvm.devel/99402
+ *
+ * 1002:4385 SBx00 SMBus Controller
+ * 1002:439c SB7x0/SB8x0/SB9x0 IDE Controller
+ * 1002:4383 SBx00 Azalia (Intel HDA)
+ * 1002:439d SB7x0/SB8x0/SB9x0 LPC host controller
+ * 1002:4384 SBx00 PCI to PCI Bridge
+ * 1002:4399 SB7x0/SB8x0/SB9x0 USB OHCI2 Controller
+ */
+
+static int pci_quirk_amd_sb_acs(struct pci_dev *dev, u16 acs_flags)
+{
+#ifdef CONFIG_ACPI
+        struct acpi_table_header *header = NULL;
+        acpi_status status;
+
+        /* Targeting multifunction devices on the SB (appears on root bus) */
+        if (!dev->multifunction || !pci_is_root_bus(dev->bus))
+                return -ENODEV;
+
+        /* The IVRS table describes the AMD IOMMU */
+        status = acpi_get_table("IVRS", 0, &header);
+        if (ACPI_FAILURE(status))
+                return -ENODEV;
+
+        /* Filter out flags not applicable to multifunction */
+        acs_flags &= (PCI_ACS_RR | PCI_ACS_CR | PCI_ACS_EC | PCI_ACS_DT);
+
+        return acs_flags & ~(PCI_ACS_RR | PCI_ACS_CR) ? 0 : 1;
+#else
+        return -ENODEV;
+#endif
+}
+
+static const struct pci_dev_acs_enabled {
+        u16 vendor;
+        u16 device;
+        int (*acs_enabled)(struct pci_dev *dev, u16 acs_flags);
+} pci_dev_acs_enabled[] = {
+        { PCI_VENDOR_ID_ATI, 0x4385, pci_quirk_amd_sb_acs },
+        { PCI_VENDOR_ID_ATI, 0x439c, pci_quirk_amd_sb_acs },
+        { PCI_VENDOR_ID_ATI, 0x4383, pci_quirk_amd_sb_acs },
+        { PCI_VENDOR_ID_ATI, 0x439d, pci_quirk_amd_sb_acs },
+        { PCI_VENDOR_ID_ATI, 0x4384, pci_quirk_amd_sb_acs },
+        { PCI_VENDOR_ID_ATI, 0x4399, pci_quirk_amd_sb_acs },
+        { 0 }
+};
+
+int pci_dev_specific_acs_enabled(struct pci_dev *dev, u16 acs_flags)
+{
+        const struct pci_dev_acs_enabled *i;
+        int ret;
+
+        /*
+         * Allow devices that do not expose standard PCIe ACS capabilities
+         * or control to indicate their support here.  Multi-function express
+         * devices which do not allow internal peer-to-peer between functions,
+         * but do not implement PCIe ACS may wish to return true here.
+         */
+        for (i = pci_dev_acs_enabled; i->acs_enabled; i++) {
+                if ((i->vendor == dev->vendor ||
+  i->vendor == (u16)PCI_ANY_ID) &&
+                    (i->device == dev->device ||
+                     i->device == (u16)PCI_ANY_ID)) {
+                        ret = i->acs_enabled(dev, acs_flags);
+                        if (ret >= 0)
+                                return ret;
+                }
+        }
+
+        return -ENOTTY;
+}
+                          

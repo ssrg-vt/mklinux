@@ -4,7 +4,7 @@
  * Current ver: Antonio Barbalace, Phil Wilshire 2013
  * First ver: Ben Shelton <beshelto@vt.edu> 2013
  */
-
+#include <linux/module.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/smp.h>
@@ -343,10 +343,11 @@ static void process_kmsg_wq_item(struct work_struct * work)
 	kfree(work);
 }
 
-inline void pcn_kmsg_free_msg(void * msg)
+void pcn_kmsg_free_msg(void * msg)
 {
 	kfree(msg - sizeof(struct list_head));
 }
+EXPORT_SYMBOL(pcn_kmsg_free_msg);
 
 static int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message) 
 {
@@ -690,7 +691,7 @@ int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
 
 	return 0;
 }
-
+EXPORT_SYMBOL(pcn_kmsg_register_callback);
 /* Unregister a callback function when a kernel module is unloaded */
 int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 {
@@ -831,7 +832,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu,
 
 	return 0;
 }
-
+EXPORT_SYMBOL(pcn_kmsg_send_long);
 /* RECEIVING / UNMARSHALING */
 
 static int process_message_list(struct list_head *head) 

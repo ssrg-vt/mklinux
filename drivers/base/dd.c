@@ -283,10 +283,9 @@ static int __driver_attach(struct device *dev, void *data)
 	 * driver_probe_device() will spit a warning if there
 	 * is an error.
 	 */
-
-	if (!driver_match_device(drv, dev))
+	if (!driver_match_device(drv, dev)){
 		return 0;
-
+	}
 	if (dev->parent)	/* Needed for USB */
 		device_lock(dev->parent);
 	device_lock(dev);

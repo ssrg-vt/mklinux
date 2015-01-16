@@ -139,7 +139,7 @@
 #include <linux/net_tstamp.h>
 
 #include "net-sysfs.h"
-
+#include <popcorn/init.h>
 /* Instead of increasing this, you should create a hash table. */
 #define MAX_GRO_SKBS 8
 
@@ -233,6 +233,23 @@ static inline void rps_unlock(struct softnet_data *sd)
 #endif
 }
 
+/* Device list insertion */
+int __list_netdevice(struct net_device *dev)
+{
+	struct net *net = dev_net(dev);
+
+	write_lock_bh(&dev_base_lock);
+	list_add_tail_rcu(&dev->dev_list, &net->dev_base_head);
+	hlist_add_head_rcu(&dev->name_hlist, dev_name_hash(net, dev->name));
+	hlist_add_head_rcu(&dev->index_hlist,
+			   dev_index_hash(net, dev->ifindex));
+	write_unlock_bh(&dev_base_lock);
+
+	dev_base_seq_inc(net);
+
+	return 0;
+}
+EXPORT_SYMBOL(__list_netdevice);
 /* Device list insertion */
 static int list_netdevice(struct net_device *dev)
 {
@@ -5606,7 +5623,8 @@ int register_netdevice(struct net_device *dev)
 {
 	int ret;
 	struct net *net = dev_net(dev);
-
+	unsigned long kernel = Kernel_Id;
+        char oldname[IFNAMSIZ];
 	BUG_ON(dev_boot_phase);
 	ASSERT_RTNL();
 
@@ -5619,8 +5637,13 @@ int register_netdevice(struct net_device *dev)
 	spin_lock_init(&dev->addr_list_lock);
 	netdev_set_addr_lockdep_class(dev);
 
+        memcpy(oldname, dev->name, IFNAMSIZ);
 	dev->iflink = -1;
-
+	//if(strcmp("eth%d",oldname) == 0){
+//	memset(dev->name,0,sizeof(dev->name));
+	//memcpy(dev->name,"1-eth%d",IFNAMSIZ);
+//	snprintf(dev->name,IFNAMSIZ,"%d-%s",kernel,oldname);
+//	}
 	ret = dev_get_valid_name(dev, dev->name);
 	if (ret < 0)
 		goto out;
@@ -5948,6 +5971,7 @@ struct rtnl_link_stats64 *dev_get_stats(struct net_device *dev,
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
 
+	if(ops!= NULL){
 	if (ops->ndo_get_stats64) {
 		memset(storage, 0, sizeof(*storage));
 		ops->ndo_get_stats64(dev, storage);
@@ -5957,6 +5981,7 @@ struct rtnl_link_stats64 *dev_get_stats(struct net_device *dev,
 		netdev_stats_to_stats64(storage, &dev->stats);
 	}
 	storage->rx_dropped += atomic_long_read(&dev->rx_dropped);
+	}
 	return storage;
 }
 EXPORT_SYMBOL(dev_get_stats);
@@ -6614,7 +6639,6 @@ static struct pernet_operations __net_initdata default_device_ops = {
 static int __init net_dev_init(void)
 {
 	int i, rc = -ENOMEM;
-
 	BUG_ON(!dev_boot_phase);
 
 	if (dev_proc_init())

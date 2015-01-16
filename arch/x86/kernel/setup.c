@@ -1058,7 +1058,10 @@ void __init setup_arch(char **cmdline_p)
 
 	init_apic_mappings();
 	ioapic_and_gsi_init();
-
+//akshay
+/*	if (x86_io_apic_ops.init)
+                 x86_io_apic_ops.init();
+*/
 	kvm_guest_init();
 
 	e820_reserve_resources();

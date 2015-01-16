@@ -55,9 +55,17 @@ unsigned long get_percpu_old_rsp(void);
 #include<linux/signal.h>
 #include <linux/fcntl.h>
 #include "futex_remote.h"
-
+#include <linux/net.h>
+#include <net/sock.h>
+#include <linux/ip.h>
+#include <net/inet_sock.h>
 //#define FPU_ 1
 #undef FPU_
+
+#define MIG_SOCKET 1
+#define MIG_BIND 2
+#define MIG_LISTEN 3
+#define MIG_ACCEPT 4
 /**
  * General purpose configuration
  */
@@ -390,6 +398,16 @@ typedef struct _clone_data {
     unsigned long sas_ss_sp;
     size_t sas_ss_size;
     struct k_sigaction action[_NSIG];
+  //Socket Information
+    int skt_flag;
+    int skt_level;
+    int skt_type;
+    int skt_state;
+    int skt_dport;
+    int skt_sport;
+    __be32 skt_saddr;  
+    __be32 skt_daddr;
+    int skt_fd;
 } clone_data_t;
 
 /**
@@ -556,6 +574,16 @@ typedef struct _clone_request {
     size_t sas_ss_size;
     struct k_sigaction action[_NSIG];
     unsigned long previous_cpus;
+    //Socket Information
+    int skt_flag;
+    int skt_level;
+    int skt_type;
+    int skt_state;
+    int skt_dport;
+    int skt_sport;
+    __be32 skt_saddr;  
+    __be32 skt_daddr;
+    int skt_fd;
 } clone_request_t;
 
 /**
@@ -1258,6 +1286,7 @@ extern void flush_old_files(struct files_struct * files);
 #endif
 static unsigned long get_next_ts_value(void);
 
+extern struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed);
 /**
  * Module variables
  */
@@ -5865,12 +5894,12 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     data_header_t* next = NULL;
     vma_data_t* vma = NULL;
     unsigned long lockflags;
-    printk("%s:called\n",__func__);
+    printk(KERN_ALERT"%s:called\n",__func__);
     int perf = PERF_MEASURE_START(&perf_handle_clone_request);
 
     perf_cc = native_read_tsc();
 
-    printk("%s: entered\n",__func__);
+    printk(KERN_ALERT"%s: entered\n",__func__);
     
     /*
      * Remember this request
@@ -5942,7 +5971,17 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
     for(cnt=0;cnt<_NSIG;cnt++)
     	clone_data->action[cnt] = request->action[cnt];
 
-    /*
+    clone_data->skt_flag = request->skt_flag;
+    clone_data->skt_level = request->skt_level;
+
+    clone_data->skt_type = request->skt_type;
+    clone_data->skt_state = request->skt_state;
+    clone_data->skt_dport = request->skt_dport;
+    clone_data->skt_sport = request->skt_sport;
+    clone_data->skt_saddr = request->skt_saddr;
+    clone_data->skt_daddr = request->skt_daddr;
+    clone_data->skt_fd = request->skt_fd;
+     /*
      * Pull in vma data
      */
 #if COPY_WHOLE_VM_WITH_MIGRATION 
@@ -6275,7 +6314,7 @@ int process_server_import_address_space(unsigned long* ip,
 
     perf_a = native_read_tsc();
     
-    printk("import address space\n");
+    printk(KERN_ALERT"import address space\n");
     
     // Verify that we're a delegated task // deadlock.
 #ifdef PROCESS_SERVER_USE_KMOD
@@ -6778,371 +6817,417 @@ int process_server_import_address_space(unsigned long* ip,
     current->clone_data = clone_data;
 #endif
 
-    PS_UP_WRITE(&_import_sem);
+    // Socket Related Operations
+    int tempfd=0;
+    struct sockaddr_in serv_addr, cli_addr;
+ 
+    if(clone_data->skt_flag == 1){
+	    switch(1){
+	    case MIG_SOCKET:
+		  tempfd = sys_socket(AF_INET,clone_data->skt_type,IPPROTO_IP);
 
-    process_server_notify_delegated_subprocess_starting(current->pid,
-            clone_data->placeholder_pid,
-            clone_data->requesting_cpu);
+		  if(clone_data->skt_level == MIG_SOCKET) break;
+	    case MIG_BIND:
+		  serv_addr.sin_family = AF_INET;
+		  serv_addr.sin_addr.s_addr =  clone_data->skt_saddr;
+		  serv_addr.sin_port = clone_data->skt_sport;
+		  sys_bind(tempfd,&serv_addr,sizeof(serv_addr));
 
-    //dump_task(current,NULL,0);
+		  if(clone_data->skt_level == MIG_BIND) break;
+            case MIG_LISTEN:
+		  break;
+            case MIG_ACCEPT:
+                  break; 
+	    default:
+		  printk("Problem in the level index\n");
+	    }
+	    
 
-    PERF_MEASURE_STOP(&perf_process_server_import_address_space, " ",perf);
+	    struct fdtable *files_table;
+	    unsigned int i =0;
+	    struct files_struct *current_files = current->files;
+	    struct socket skt;
+	    files_table = files_fdtable(current_files);
+	    int err, fput_needed;
+	    struct socket *sock = kmalloc(sizeof(struct socket),GFP_KERNEL);
+	    while(files_table->fd[i] != NULL) {
+
+	    printk(KERN_ALERT "fd is {%d}",i);
+	    sock = sockfd_lookup_light(i, &err, &fput_needed);
+	    if(sock){
+		skt =(struct socket) *sock;
+		struct sock *sk = skt.sk;
+		struct inet_sock *in_ = inet_sk(sk);
+		printk(KERN_ALERT"fd{%d} sock ptr {%p} type{%d} state{%d} d %d s%d saddr %d mc %d - %d \n",i,(struct socket *) sock,(int) skt.type,(int) skt.state,(struct inet_sock *)in_->inet_dport,(struct inet_sock *)in_->inet_sport,(struct inet_sock*)in_->inet_saddr,(struct inet_sock*)in_->inet_daddr,(struct inet_sock *)in_->mc_addr);
+	    }
+		i++;
+	    }
+	}
+	    PS_UP_WRITE(&_import_sem);
+
+	    process_server_notify_delegated_subprocess_starting(current->pid,
+		    clone_data->placeholder_pid,
+		    clone_data->requesting_cpu);
+
+	    //dump_task(current,NULL,0);
+
+	    PERF_MEASURE_STOP(&perf_process_server_import_address_space, " ",perf);
 
 
-    perf_e = native_read_tsc();
+	    perf_e = native_read_tsc();
 
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    end_time = native_read_tsc();
-    total_time = end_time - start_time;
-    PS_PROC_DATA_TRACK(PS_PROC_DATA_IMPORT_TASK_TIME,total_time);
-#endif
-/*
-    printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu (%d)\n",
-            __func__,
-            perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
-            perf_a, perf_b, perf_c, perf_d, perf_e, current->t_home_id);
-*/
-    return 0;
-}
+	#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+	    kt_fdskt_fdskt_fdnd_time = native_read_tsc();
+	    total_time = end_time - start_time;
+	    PS_PROC_DATA_TRACK(PS_PROC_DATA_IMPORT_TASK_TIME,total_time);
+	#endif
 
-static int call_import_task(void* data) {
-    kernel_import_task(data);
-    return -1;
-}
+	    printk("%s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu (%d)\n",
+		    __func__,
+		    perf_aa, perf_bb, perf_cc, perf_dd, perf_ee,
+		    perf_a, perf_b, perf_c, perf_d, perf_e, current->t_home_id);
 
-static void process_import_task(struct work_struct* work) {
-    import_task_work_t* w = (import_task_work_t*)work;
-    clone_data_t* data = w->data;
-    kfree(work); 
-    kernel_thread(call_import_task, data, SIGCHLD);
-}
+	    return 0;
+	}
 
-long sys_process_server_import_task(void *info /*name*/,
-        const char* argv,
-        const char* envp,
-        struct pt_regs* regs) {
-    clone_data_t* clone_data = (clone_data_t*)info;
-    unsigned long ip, sp;
-    current->clone_data = clone_data;
-    //printk("in sys_process_server_import_task pid{%d}, clone_data{%lx}\n",current->pid,(unsigned long)clone_data);
-    process_server_import_address_space(&ip,&sp,regs);
-    return 0;
-}
+	static int call_import_task(void* data) {
+	    kernel_import_task(data);
+	    return -1;
+	}
 
-/**
- * @brief Distributes local calls to do_group_exit.  This function
- * sends a request to all other CPUs to do a group exit on this
- * distributed thread group.
- */
-int process_server_do_group_exit(void) {
-    exiting_group_t msg;
-    int i;
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    unsigned long long end_time;
-    unsigned long long total_time;
-    int do_time_measurement = 0;
-    unsigned long long start_time = native_read_tsc();
-#endif
+	static void process_import_task(struct work_struct* work) {
+	    import_task_work_t* w = (import_task_work_t*)work;
+	    clone_data_t* data = w->data;
+	    kfree(work); 
+	    kernel_thread(call_import_task, data, SIGCHLD);
+	}
 
-     // Select only relevant tasks to operate on
-    if(!(current->t_distributed || current->tgroup_distributed)/* || 
-            !current->enable_distributed_exit*/) {
-        return -1;
-    }
+	long sys_process_server_import_task(void *info /*name*/,
+		const char* argv,
+		const char* envp,
+		struct pt_regs* regs) {
+	    clone_data_t* clone_data = (clone_data_t*)info;
+	    unsigned long ip, sp;
+	    current->clone_data = clone_data;
+	    //printk("in sys_process_server_import_task pid{%d}, clone_data{%lx}\n",current->pid,(unsigned long)clone_data);
+	    process_server_import_address_space(&ip,&sp,regs);
+	    return 0;
+	}
 
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    do_time_measurement = 1;
-#endif
+	/**
+	 * @brief Distributes local calls to do_group_exit.  This function
+	 * sends a request to all other CPUs to do a group exit on this
+	 * distributed thread group.
+	 */
+	int process_server_do_group_exit(void) {
+	    exiting_group_t msg;
+	    int i;
+	#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+	    unsigned long long end_time;
+	    unsigned long long total_time;
+	    int do_time_measurement = 0;
+	    unsigned long long start_time = native_read_tsc();
+	#endif
 
-    printk(KERN_ALERT"%s: doing distributed group exit\n",__func__);
+	     // Select only relevant tasks to operate on
+	    if(!(current->t_distributed || current->tgroup_distributed)/* || 
+		    !current->enable_distributed_exit*/) {
+		return -1;
+	    }
 
-    // Build message
-    msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_GROUP;
-    msg.header.prio = PCN_KMSG_PRIO_NORMAL;
-    msg.tgroup_home_id = current->tgroup_home_id;
-    msg.tgroup_home_cpu = current->tgroup_home_cpu;
+	#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+	    do_time_measurement = 1;
+	#endif
 
-#ifndef SUPPORT_FOR_CLUSTERING
-    for(i = 0; i < NR_CPUS; i++) {
-        // Skip the current cpu
-        if(i == _cpu) continue;
-#else
-    // the list does not include the current processor group descirptor (TODO)
-    struct list_head *iter;
-    _remote_cpu_info_list_t *objPtr;
-    extern struct list_head rlist_head;
-    list_for_each(iter, &rlist_head) {
-        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-        i = objPtr->_data._processor;
-#endif
-	// Send
-        pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&msg));
-    }
+	    printk(KERN_ALERT"%s: doing distributed group exit\n",__func__);
 
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    if(do_time_measurement) {
-        end_time = native_read_tsc();
-        total_time = end_time - start_time;
-        PS_PROC_DATA_TRACK(PS_PROC_DATA_GROUP_EXIT_PROCESSING_TIME,total_time);
-    }
-#endif
+	    // Build message
+	    msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_GROUP;
+	    msg.header.prio = PCN_KMSG_PRIO_NORMAL;
+	    msg.tgroup_home_id = current->tgroup_home_id;
+	    msg.tgroup_home_cpu = current->tgroup_home_cpu;
 
-    return 0;
-}
-
-/**
- * @brief Notify of the fact that either a delegate or placeholder has died locally.  
- * In this case, the remote cpu housing its counterpart must be notified, so
- * that it can kill that counterpart.
- *
- * <MEASURE perf_process_server_do_exit>
- */
-int process_server_do_exit(int exit_code) {
-
-    exiting_process_t msg;
-    int is_last_thread_in_local_group = 1;
-    int is_last_thread_in_group = 1;
-    struct task_struct *task, *g;
-    mm_data_t* mm_data = NULL;
-    int i;
-    thread_group_exited_notification_t exit_notification;
-    clone_data_t* clone_data = NULL;
-    int perf = -1;
-
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    unsigned long long end_time;
-    unsigned long long total_time;
-    int do_time_measurement = 0;
-    unsigned long long start_time = native_read_tsc();
-#endif
-
-    // Select only relevant tasks to operate on
-    if(!(current->t_distributed || current->tgroup_distributed)/* || 
-            !current->enable_distributed_exit*/) {
-        return -1;
-    }
-
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    do_time_measurement = 1;
-#endif
-
-/*     printk("%s: CHANGED? prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
-		__func__,
-                 current->prio, current->static_prio, current->normal_prio, current->rt_priority,
-                 current->policy, rt_prio (current->prio));
-*/
-    perf = PERF_MEASURE_START(&perf_process_server_do_exit);
-
-    // Let's not do an exit while we're importing a new task.
-    // This could cause bad things to happen when looking
-    // for mm's.
-    PS_DOWN_WRITE(&_import_sem);
-
-    PSPRINTK("%s - pid{%d}, prev_cpu{%d}, prev_pid{%d}\n",__func__,
-            current->pid,
-            current->prev_cpu,
-            current->prev_pid);
-    
-    // Determine if this is the last _active_ thread in the 
-    // local group.  We have to count shadow tasks because
-    // otherwise we risk missing tasks when they are exiting
-    // and migrating back.
-    read_lock(&tasklist_lock);
-    do_each_thread(g,task) {
-        if(task->tgid == current->tgid &&           // <--- narrow search to current thread group only 
-                task->pid != current->pid &&        // <--- don't include current in the search
-                task->exit_state != EXIT_ZOMBIE &&  // <-,
-                task->exit_state != EXIT_DEAD &&    // <-|- check to see if it's in a runnable state
-                !(task->flags & PF_EXITING)) {      // <-'
-            is_last_thread_in_local_group = 0;
-            goto finished_membership_search;
-        }
-    } while_each_thread(g,task);
-finished_membership_search:
-    read_unlock(&tasklist_lock);
-
-    // Count the number of threads in this distributed thread group
-    // this will be useful for determining what to do with the mm.
-    if(!is_last_thread_in_local_group) {
-        // Not the last local thread, which means we're not the
-        // last in the distributed thread group either.
-        is_last_thread_in_group = 0;
-#ifndef SUPPORT_FOR_CLUSTERING
-    } else if (!(task->t_home_cpu == _cpu &&
-#else
-    } else if (!(task->t_home_cpu == cpumask_first(cpu_present_mask) &&
-#endif
-              task->t_home_id == task->pid)) {
-        // OPTIMIZATION: only bother to count threads if we are not home base for
-        // this thread.
-        is_last_thread_in_group = 0;
-    } else {
-        // Last local thread, which means we MIGHT be the last
-        // in the distributed thread group, but we have to check.
-        int count = count_thread_members();
-        if (count == 0) {
-            // Distributed thread count yielded no thread group members
-            // so the current <exiting> task is the last group member.
-            is_last_thread_in_group = 1;
-        } else {
-            // There are more thread group members.
-            is_last_thread_in_group = 0;
-        }
-    }
-    
-    // Find the clone data, we are going to destroy this very soon.
-    clone_data = get_current_clone_data();
-    //clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
-
-    // Build the message that is going to migrate this task back 
-    // from whence it came.
-    msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
-    msg.header.prio = PCN_KMSG_PRIO_NORMAL;
-    msg.my_pid = current->pid;
-    msg.t_home_id = current->t_home_id;
-    msg.t_home_cpu = current->t_home_cpu;
-    msg.is_last_tgroup_member = is_last_thread_in_group;
-
-    if(current->executing_for_remote) {
-        int i;
-        // this task is dying. If this is a migrated task, the shadow will soon
-        // take over, so do not mark this as executing for remote
-        current->executing_for_remote = 0;
-
-        // Migrate back - you just had an out of body experience, you will wake in
-        //                a familiar place (a place you've been before), but unfortunately, 
-        //                your life is over.
-        //                Note: comments like this must == I am tired.
-#ifndef SUPPORT_FOR_CLUSTERING
-        for(i = 0; i < NR_CPUS; i++) {
-          // Skip the current cpu
-          if(i == _cpu)
-            continue;
-	  if (test_bit(i,&current->previous_cpus))
-#else
-        // the list does not include the current processor group descirptor (TODO)
-        struct list_head *iter;
-        _remote_cpu_info_list_t *objPtr;
-        struct cpumask *pcpum =0;
-        extern struct list_head rlist_head;
-        list_for_each(iter, &rlist_head) {
-          objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-          i = objPtr->_data._processor;
-          pcpum  = &(objPtr->_data._cpumask);
-	  if ( bitmap_intersects(cpumask_bits(pcpum),  
-				&(current->previous_cpus),
-				(sizeof(unsigned long) *8)) )
-#endif
-            pcn_kmsg_send(i, (struct pcn_kmsg_message*)&msg);
-        }
-    } 
-	
-    //already sent group exit signals. wait for each one to respond.
-    if(current->tgid == current->pid && is_last_thread_in_local_group &&  (exit_code & SIGNAL_GROUP_EXIT)){
-
-	//printk(KERN_ALERT"should wait for others\n"); 
-	
-    }
-    // If this was the last thread in the local work, we take one of two 
-    // courses of action, either we:
-    //
-    // 1) determine that this is the last thread globally, and issue a 
-    //    notification to that effect.
-    //
-    //    or.
-    //
-    // 2) we determine that this is NOT the last thread globally, in which
-    //    case we save the mm to use to resolve mappings with.
-    if(is_last_thread_in_local_group) {
-        // Check to see if this is the last member of the distributed
-        // thread group.
-        if(is_last_thread_in_group) {
-
-          //  printk("%s: This is the last thread member!\n",__func__);
-
-            // Notify all cpus
-            exit_notification.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION;
-            exit_notification.header.prio = PCN_KMSG_PRIO_NORMAL;
-            exit_notification.tgroup_home_cpu = current->tgroup_home_cpu;
-            exit_notification.tgroup_home_id = current->tgroup_home_id;
-
-#ifndef SUPPORT_FOR_CLUSTERING
-            for(i = 0; i < NR_CPUS; i++) {
-              // Skip the current cpu
-              if(i == _cpu) continue;
-#else
+	#ifndef SUPPORT_FOR_CLUSTERING
+	    for(i = 0; i < NR_CPUS; i++) {
+		// Skip the current cpu
+		if(i == _cpu) continue;
+	#else
 	    // the list does not include the current processor group descirptor (TODO)
-	        struct list_head *iter;
-	        _remote_cpu_info_list_t *objPtr;
-            extern struct list_head rlist_head;
-            list_for_each(iter, &rlist_head) {
-              objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-              i = objPtr->_data._processor;
-#endif
-              pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&exit_notification));
-            }
+	    struct list_head *iter;
+	    _remote_cpu_info_list_t *objPtr;
+	    extern struct list_head rlist_head;
+	    list_for_each(iter, &rlist_head) {
+		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+		i = objPtr->_data._processor;
+	#endif
+		// Send
+		pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&msg));
+	    }
 
-        } else {
-            // This is NOT the last distributed thread group member.  Grab
-            // a reference to the mm, and increase the number of users to keep 
-            // it from being destroyed
-            //printk("%s: This is not the last thread member, saving mm\n",
-              //      __func__);
-            if (current && current->mm)
-                atomic_inc(&current->mm->mm_users);
-            else
-                printk("%s: ERROR current %p, current->mm %p\n", __func__, current, current->mm);
+	#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+	    if(do_time_measurement) {
+		end_time = native_read_tsc();
+		total_time = end_time - start_time;
+		PS_PROC_DATA_TRACK(PS_PROC_DATA_GROUP_EXIT_PROCESSING_TIME,total_time);
+	    }
+	#endif
 
-            // Remember the mm
-            mm_data = kmalloc(sizeof(mm_data_t),GFP_KERNEL);
-            mm_data->header.data_type = PROCESS_SERVER_MM_DATA_TYPE;
-            mm_data->mm = current->mm;
-            mm_data->tgroup_home_cpu = current->tgroup_home_cpu;
-            mm_data->tgroup_home_id  = current->tgroup_home_id;
+	    return 0;
+	}
 
-            // Add the data entry
-            add_data_entry_to(mm_data,
-                              &_saved_mm_head_lock,
-                              &_saved_mm_head);
+	/**
+	 * @brief Notify of the fact that either a delegate or placeholder has died locally.  
+	 * In this case, the remote cpu housing its counterpart must be notified, so
+	 * that it can kill that counterpart.
+	 *
+	 * <MEASURE perf_process_server_do_exit>
+	 */
+	int process_server_do_exit(int exit_code) {
 
-        }
+	    exiting_process_t msg;
+	    int is_last_thread_in_local_group = 1;
+	    int is_last_thread_in_group = 1;
+	    struct task_struct *task, *g;
+	    mm_data_t* mm_data = NULL;
+	    int i;
+	    thread_group_exited_notification_t exit_notification;
+	    clone_data_t* clone_data = NULL;
+	    int perf = -1;
 
-    } else {
-        //printk("%s: This is not the last local thread member\n",__func__);
-    }
+	#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+	    unsigned long long end_time;
+	    unsigned long long total_time;
+	    int do_time_measurement = 0;
+	    unsigned long long start_time = native_read_tsc();
+	#endif
 
-    // We know that this task is exiting, and we will never have to work
-    // with it again, so remove its clone_data from the linked list, and
-    // nuke it.
-    if(clone_data) {
-#ifdef PROCESS_SERVER_USE_KMOD
-        unsigned long lockflags;
-        spin_lock_irqsave(&_data_head_lock,lockflags);
-        remove_data_entry(clone_data);
-        spin_unlock_irqrestore(&_data_head_lock,lockflags);
-#endif
-        destroy_clone_data(clone_data);
-    }
+	    // Select only relevant tasks to operate on
+	    if(!(current->t_distributed || current->tgroup_distributed)/* || 
+		    !current->enable_distributed_exit*/) {
+		return -1;
+	    }
 
-    PS_UP_WRITE(&_import_sem);
-    
-    PERF_MEASURE_STOP(&perf_process_server_do_exit," ",perf);
+	#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+	    do_time_measurement = 1;
+	#endif
 
-#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
-    if(do_time_measurement) {
-        end_time = native_read_tsc();
-        total_time = end_time - start_time;
-        PS_PROC_DATA_TRACK(PS_PROC_DATA_EXIT_PROCESSING_TIME,total_time);
-    }
-#endif
+	/*     printk("%s: CHANGED? prio: %d static: %d normal: %d rt: %u class: %d rt_prio %d\n",
+			__func__,
+			 current->prio, current->static_prio, current->normal_prio, current->rt_priority,
+			 current->policy, rt_prio (current->prio));
+	*/
+	    perf = PERF_MEASURE_START(&perf_process_server_do_exit);
 
-    return 0;
-}
+	    // Let's not do an exit while we're importing a new task.
+	    // This could cause bad things to happen when looking
+	    // for mm's.
+	    PS_DOWN_WRITE(&_import_sem);
 
-/**
- * @brief Create a pairing between a newly created delegate process and the
- * remote placeholder process.  This function creates the local
- * pairing first, then sends a message to the originating cpu
+	    PSPRINTK("%s - pid{%d}, prev_cpu{%d}, prev_pid{%d}\n",__func__,
+		    current->pid,
+		    current->prev_cpu,
+		    current->prev_pid);
+	    
+	    // Determine if this is the last _active_ thread in the 
+	    // local group.  We have to count shadow tasks because
+	    // otherwise we risk missing tasks when they are exiting
+	    // and migrating back.
+	    read_lock(&tasklist_lock);
+	    do_each_thread(g,task) {
+		if(task->tgid == current->tgid &&           // <--- narrow search to current thread group only 
+			task->pid != current->pid &&        // <--- don't include current in the search
+			task->exit_state != EXIT_ZOMBIE &&  // <-,
+			task->exit_state != EXIT_DEAD &&    // <-|- check to see if it's in a runnable state
+			!(task->flags & PF_EXITING)) {      // <-'
+		    is_last_thread_in_local_group = 0;
+		    goto finished_membership_search;
+		}
+	    } while_each_thread(g,task);
+	finished_membership_search:
+	    read_unlock(&tasklist_lock);
+
+	    // Count the number of threads in this distributed thread group
+	    // this will be useful for determining what to do with the mm.
+	    if(!is_last_thread_in_local_group) {
+		// Not the last local thread, which means we're not the
+		// last in the distributed thread group either.
+		is_last_thread_in_group = 0;
+	#ifndef SUPPORT_FOR_CLUSTERING
+	    } else if (!(task->t_home_cpu == _cpu &&
+	#else
+	    } else if (!(task->t_home_cpu == cpumask_first(cpu_present_mask) &&
+	#endif
+		      task->t_home_id == task->pid)) {
+		// OPTIMIZATION: only bother to count threads if we are not home base for
+		// this thread.
+		is_last_thread_in_group = 0;
+	    } else {
+		// Last local thread, which means we MIGHT be the last
+		// in the distributed thread group, but we have to check.
+		int count = count_thread_members();
+		if (count == 0) {
+		    // Distributed thread count yielded no thread group members
+		    // so the current <exiting> task is the last group member.
+		    is_last_thread_in_group = 1;
+		} else {
+		    // There are more thread group members.
+		    is_last_thread_in_group = 0;
+		}
+	    }
+	    
+	    // Find the clone data, we are going to destroy this very soon.
+	    clone_data = get_current_clone_data();
+	    //clone_data = find_clone_data(current->prev_cpu, current->clone_request_id);
+
+	    // Build the message that is going to migrate this task back 
+	    // from whence it came.
+	    msg.header.type = PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS;
+	    msg.header.prio = PCN_KMSG_PRIO_NORMAL;
+	    msg.my_pid = current->pid;
+	    msg.t_home_id = current->t_home_id;
+	    msg.t_home_cpu = current->t_home_cpu;
+	    msg.is_last_tgroup_member = is_last_thread_in_group;
+
+	    if(current->executing_for_remote) {
+		int i;
+		// this task is dying. If this is a migrated task, the shadow will soon
+		// take over, so do not mark this as executing for remote
+		current->executing_for_remote = 0;
+
+		// Migrate back - you just had an out of body experience, you will wake in
+		//                a familiar place (a place you've been before), but unfortunately, 
+		//                your life is over.
+		//                Note: comments like this must == I am tired.
+	#ifndef SUPPORT_FOR_CLUSTERING
+		for(i = 0; i < NR_CPUS; i++) {
+		  // Skip the current cpu
+		  if(i == _cpu)
+		    continue;
+		  if (test_bit(i,&current->previous_cpus))
+	#else
+		// the list does not include the current processor group descirptor (TODO)
+		struct list_head *iter;
+		_remote_cpu_info_list_t *objPtr;
+		struct cpumask *pcpum =0;
+		extern struct list_head rlist_head;
+		list_for_each(iter, &rlist_head) {
+		  objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+		  i = objPtr->_data._processor;
+		  pcpum  = &(objPtr->_data._cpumask);
+		  if ( bitmap_intersects(cpumask_bits(pcpum),  
+					&(current->previous_cpus),
+					(sizeof(unsigned long) *8)) )
+	#endif
+		    pcn_kmsg_send(i, (struct pcn_kmsg_message*)&msg);
+		}
+	    } 
+		
+	    //already sent group exit signals. wait for each one to respond.
+	    if(current->tgid == current->pid && is_last_thread_in_local_group &&  (exit_code & SIGNAL_GROUP_EXIT)){
+
+		//printk(KERN_ALERT"should wait for others\n"); 
+		
+	    }
+	    // If this was the last thread in the local work, we take one of two 
+	    // courses of action, either we:
+	    //
+	    // 1) determine that this is the last thread globally, and issue a 
+	    //    notification to that effect.
+	    //
+	    //    or.
+	    //
+	    // 2) we determine that this is NOT the last thread globally, in which
+	    //    case we save the mm to use to resolve mappings with.
+	    if(is_last_thread_in_local_group) {
+		// Check to see if this is the last member of the distributed
+		// thread group.
+		if(is_last_thread_in_group) {
+
+		  //  printk("%s: This is the last thread member!\n",__func__);
+
+		    // Notify all cpus
+		    exit_notification.header.type = PCN_KMSG_TYPE_PROC_SRV_THREAD_GROUP_EXITED_NOTIFICATION;
+		    exit_notification.header.prio = PCN_KMSG_PRIO_NORMAL;
+		    exit_notification.tgroup_home_cpu = current->tgroup_home_cpu;
+		    exit_notification.tgroup_home_id = current->tgroup_home_id;
+
+	#ifndef SUPPORT_FOR_CLUSTERING
+		    for(i = 0; i < NR_CPUS; i++) {
+		      // Skip the current cpu
+		      if(i == _cpu) continue;
+	#else
+		    // the list does not include the current processor group descirptor (TODO)
+			struct list_head *iter;
+			_remote_cpu_info_list_t *objPtr;
+		    extern struct list_head rlist_head;
+		    list_for_each(iter, &rlist_head) {
+		      objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+		      i = objPtr->_data._processor;
+	#endif
+		      pcn_kmsg_send(i,(struct pcn_kmsg_message*)(&exit_notification));
+		    }
+
+		} else {
+		    // This is NOT the last distributed thread group member.  Grab
+		    // a reference to the mm, and increase the number of users to keep 
+		    // it from being destroyed
+		    //printk("%s: This is not the last thread member, saving mm\n",
+		      //      __func__);
+		    if (current && current->mm)
+			atomic_inc(&current->mm->mm_users);
+		    else
+			printk("%s: ERROR current %p, current->mm %p\n", __func__, current, current->mm);
+
+		    // Remember the mm
+		    mm_data = kmalloc(sizeof(mm_data_t),GFP_KERNEL);
+		    mm_data->header.data_type = PROCESS_SERVER_MM_DATA_TYPE;
+		    mm_data->mm = current->mm;
+		    mm_data->tgroup_home_cpu = current->tgroup_home_cpu;
+		    mm_data->tgroup_home_id  = current->tgroup_home_id;
+
+		    // Add the data entry
+		    add_data_entry_to(mm_data,
+				      &_saved_mm_head_lock,
+				      &_saved_mm_head);
+
+		}
+
+	    } else {
+		//printk("%s: This is not the last local thread member\n",__func__);
+	    }
+
+	    // We know that this task is exiting, and we will never have to work
+	    // with it again, so remove its clone_data from the linked list, and
+	    // nuke it.
+	    if(clone_data) {
+	#ifdef PROCESS_SERVER_USE_KMOD
+		unsigned long lockflags;
+		spin_lock_irqsave(&_data_head_lock,lockflags);
+		remove_data_entry(clone_data);
+		spin_unlock_irqrestore(&_data_head_lock,lockflags);
+	#endif
+		destroy_clone_data(clone_data);
+	    }
+
+	    PS_UP_WRITE(&_import_sem);
+	    
+	    PERF_MEASURE_STOP(&perf_process_server_do_exit," ",perf);
+
+	#ifdef PROCESS_SERVER_HOST_PROC_ENTRY
+	    if(do_time_measurement) {
+		end_time = native_read_tsc();
+		total_time = end_time - start_time;
+		PS_PROC_DATA_TRACK(PS_PROC_DATA_EXIT_PROCESSING_TIME,total_time);
+	    }
+	#endif
+
+	    return 0;
+	}
+
+	/**
+	 * @brief Create a pairing between a newly created delegate process and the
+	 * remote placeholder process.  This function creates the local
+	 * pairing first, then sends a message to the originating cpu
  * so that it can do the same.
  */
 int process_server_notify_delegated_subprocess_starting(pid_t pid, 
@@ -8051,6 +8136,8 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
 //printk(KERN_ALERT"TGID {%d} \n",task->tgid);
     return 1;
 }
+
+
 /**
  * @brief Migrate the specified task <task> to a CPU on which
  * it has not yet executed.
@@ -8070,7 +8157,7 @@ int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     char* rpath = d_path(&task->mm->exe_file->f_path,path,256);
     int lclone_request_id;
     int perf = -1;
-
+    int sock_fd;
     //printk("process_server_do_migration pid{%d} cpu {%d}\n",task->pid,cpu);
 
     // Nothing to do if we're migrating to the current cpu
@@ -8097,6 +8184,31 @@ int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     task->tgroup_distributed = 1;
     task->t_distributed = 1;
     spin_unlock_irq(&(task->mig_lock));
+
+    struct fdtable *files_table;
+    struct sock *sk = NULL;
+    struct inet_sock *in_ = NULL;
+    unsigned int i =0;
+    struct files_struct *current_files = current->files;
+    struct socket skt;
+    files_table = files_fdtable(current_files);
+    int err, fput_needed;
+    struct socket *sock = kmalloc(sizeof(struct socket),GFP_KERNEL);
+    while(files_table->fd[i] != NULL) {
+
+    printk(KERN_ALERT "fd is {%d}",i);
+    sock = sockfd_lookup_light(i, &err, &fput_needed);
+    if(sock){
+	sock_fd = i;
+        request->skt_flag = 1;
+        skt =(struct socket) *sock;
+	sk = skt.sk;
+	in_ = inet_sk(sk);
+	printk(KERN_ALERT"fd{%d} sock ptr {%p} type{%d} state{%d} d %d s%d saddr %d mc %d - %d \n",i,(struct socket *) sock,(int) skt.type,(int) skt.state,(struct inet_sock *)in_->inet_dport,(struct inet_sock *)in_->inet_sport,(struct inet_sock*)in_->inet_saddr,(struct inet_sock*)in_->inet_daddr,(struct inet_sock *)in_->mc_addr);
+    }
+	i++;
+    }
+
 
 
     /*mklinux_akshay*/
@@ -8226,7 +8338,18 @@ int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     int cnt = 0;
     for (cnt = 0; cnt < _NSIG; cnt++)
     	request->action[cnt] = task->sighand->action[cnt];
-
+    // socket informationi
+    if(request->skt_flag == 1){
+    request->skt_level = 1;
+ 
+    request->skt_type = skt.type;
+    request->skt_state = skt.state;
+    request->skt_dport = in_->inet_dport;
+    request->skt_sport = in_->inet_sport;
+    request->skt_saddr = in_->inet_saddr;
+    request->skt_daddr = in_->inet_daddr;
+    request->skt_fd = sock_fd;
+    }
     // struct thread_struct -------------------------------------------------------
     // have a look at: copy_thread() arch/x86/kernel/process_64.c 
     // have a look at: struct thread_struct arch/x86/include/asm/processor.h

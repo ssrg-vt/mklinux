@@ -145,6 +145,7 @@ static inline unsigned __inet_dev_addr_type(struct net *net,
 	struct fib_result	res;
 	unsigned ret = RTN_BROADCAST;
 	struct fib_table *local_table;
+	char *p = (char *) &addr;
 
 	if (ipv4_is_zeronet(addr) || ipv4_is_lbcast(addr))
 		return RTN_BROADCAST;
@@ -160,6 +161,7 @@ static inline unsigned __inet_dev_addr_type(struct net *net,
 		ret = RTN_UNICAST;
 		rcu_read_lock();
 		if (!fib_table_lookup(local_table, &fl4, &res, FIB_LOOKUP_NOREF)) {
+			//printk(KERN_ALERT"fibdev {%s} type{%u} addr{%d}.{%d}.{%d}.{%d} \n",res.fi->fib_dev->name,res.type,p[0],p[1],p[2],p[3]);
 			if (!dev || dev == res.fi->fib_dev)
 				ret = res.type;
 		}

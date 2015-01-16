@@ -64,7 +64,7 @@ __stringify(BUILD) "-k"
 char igb_driver_name[] = "igb";
 char igb_driver_version[] = DRV_VERSION;
 static const char igb_driver_string[] =
-				"Intel(R) Gigabit Ethernet Network Driver";
+				"Intel(R) Gigabit Ethernet Network Driver AKSHAY";
 static const char igb_copyright[] = "Copyright (c) 2007-2011 Intel Corporation.";
 
 static const struct e1000_info *igb_info_tbl[] = {
@@ -206,7 +206,7 @@ static struct pci_error_handlers igb_err_handler = {
 
 static void igb_init_dmac(struct igb_adapter *adapter, u32 pba);
 
-static struct pci_driver igb_driver = {
+struct pci_driver igb_driver = {
 	.name     = igb_driver_name,
 	.id_table = igb_pci_tbl,
 	.probe    = igb_probe,
@@ -219,9 +219,10 @@ static struct pci_driver igb_driver = {
 	.shutdown = igb_shutdown,
 	.err_handler = &igb_err_handler
 };
+EXPORT_SYMBOL(igb_driver);
 
 MODULE_AUTHOR("Intel Corporation, <e1000-devel@lists.sourceforge.net>");
-MODULE_DESCRIPTION("Intel(R) Gigabit Ethernet Network Driver");
+MODULE_DESCRIPTION("Intel(R) Gigabit Ethernet Network Driver Akshay");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);
 
@@ -798,7 +799,7 @@ static void igb_assign_vector(struct igb_q_vector *q_vector, int msix_vector)
 	int rx_queue = IGB_N0_QUEUE;
 	int tx_queue = IGB_N0_QUEUE;
 	u32 msixbm = 0;
-
+printk(KERN_ALERT"msix vector {%d} \n",msix_vector);
 	if (q_vector->rx.ring)
 		rx_queue = q_vector->rx.ring->reg_idx;
 	if (q_vector->tx.ring)
@@ -1524,7 +1525,6 @@ int igb_up(struct igb_adapter *adapter)
 {
 	struct e1000_hw *hw = &adapter->hw;
 	int i;
-
 	/* hardware has been reset, we need to reload some things */
 	igb_configure(adapter);
 
@@ -1766,7 +1766,7 @@ static int igb_set_features(struct net_device *netdev, u32 features)
 	return 0;
 }
 
-static const struct net_device_ops igb_netdev_ops = {
+const struct net_device_ops igb_netdev_ops = {
 	.ndo_open		= igb_open,
 	.ndo_stop		= igb_close,
 	.ndo_start_xmit		= igb_xmit_frame,
@@ -1789,7 +1789,6 @@ static const struct net_device_ops igb_netdev_ops = {
 	.ndo_fix_features	= igb_fix_features,
 	.ndo_set_features	= igb_set_features,
 };
-
 /**
  * igb_probe - Device Initialization Routine
  * @pdev: PCI device information struct
@@ -1804,6 +1803,11 @@ static const struct net_device_ops igb_netdev_ops = {
 static int __devinit igb_probe(struct pci_dev *pdev,
 			       const struct pci_device_id *ent)
 {
+	if(smp_processor_id() > 0){
+		printk(KERN_ALERT"come inside probing \n");
+		return 0;
+	}
+
 	struct net_device *netdev;
 	struct igb_adapter *adapter;
 	struct e1000_hw *hw;
@@ -2146,7 +2150,7 @@ err_dma:
  * Hot-Plug event, or because the driver is going to be removed from
  * memory.
  **/
-static void __devexit igb_remove(struct pci_dev *pdev)
+void __devexit igb_remove(struct pci_dev *pdev)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct igb_adapter *adapter = netdev_priv(netdev);
@@ -2480,8 +2484,8 @@ static int igb_open(struct net_device *netdev)
 	struct e1000_hw *hw = &adapter->hw;
 	int err;
 	int i;
-
 	/* disallow open during test */
+	printk(KERN_ALERT"adapater msix_ent{%d} {%d}\n",adapter->msix_entries,adapter->num_q_vectors);
 	if (test_bit(__IGB_TESTING, &adapter->state))
 		return -EBUSY;
 

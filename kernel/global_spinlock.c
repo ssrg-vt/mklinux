@@ -20,8 +20,6 @@ union futex_key; //forward decl for futex_remote.h
 #define FLAGS_REMOTECALL	16
 #define FLAGS_ORIGINCALL	32
 
-#define FLAGS_SHARED            0x01
-
 #define WAKE_OPS 1
 #define WAIT_OPS 0
 
@@ -40,10 +38,6 @@ _global_bkt global_bucket[1<<_SPIN_HASHBITS];
 #else
 #define GSPRINTK(...) ;
 #endif
-
-
-#define is_pfn_in_range(pfn)          ((pfn) < max_pfn && (pfn) > kernel_start_addr)
-
 //extern functions
 extern struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr);
 extern pte_t *do_page_walk(unsigned long address);
@@ -204,6 +198,7 @@ _local_rq_t *set_wake_request_by_pid(pid_t pid, struct list_head *head) {
 	GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
 	return NULL;
 }
+
 inline void spin_key_init (struct spin_key *st) {
 	st->_tgid = 0;
 	st->_uaddr = 0;
@@ -246,7 +241,7 @@ __releases(&value->_sp)
 {
 	int res = 0;
 	int cpu=0;
-	unsigned int wait_flag = 0;
+	unsigned int flgs;
 
 	_remote_key_request_t* wait_req= (_remote_key_request_t*) kmalloc(sizeof(_remote_key_request_t),
 			GFP_ATOMIC);
@@ -307,60 +302,41 @@ __releases(&value->_sp)
 
 	struct vm_area_struct *vma;
 	vma = getVMAfromUaddr(uaddr);
-	if (vma != NULL) {
-		//Remote kernel. So pages will be special or invalid
-		if( current->executing_for_remote && ((vma->vm_flags & (VM_PFNMAP|VM_MIXEDMAP)) || !pfn_valid(pfn) || !is_pfn_in_range(pfn))) {
-			if(_data->ops==WAIT_OPS){
-				wait_req->fn_flags |= FLAGS_REMOTECALL;
-			}
-			else{
-				wake_req->fn_flag |= FLAGS_REMOTECALL;
-			}
-			GSPRINTK(KERN_ALERT"%s: sending to origin remote callpfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
-			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
-				spin_unlock(&value->_sp);
-
-				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*)  ((_data->ops==WAKE_OPS)? (wake_req):(wait_req)));
-				wait_flag = 1;
-			}
-		}
-		//Origin kernel. check for normal pages or COW'd pages (in this case PFNMAP/MIXEDMAP is normal) 
-		else if (!current->executing_for_remote && ( !(vma->vm_flags & VM_PFNMAP)  || ((vma->vm_flags & VM_PFNMAP) && ((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE)))) {
-			if(_data->ops==WAIT_OPS){
-				wait_req->fn_flags |= FLAGS_ORIGINCALL;
-			}
-			else{
-				wake_req->fn_flag |= FLAGS_ORIGINCALL;
-				wake_req->rflag = current->pid;
-			}
-			GSPRINTK(KERN_ALERT"%s: sending to origin origin call cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
-			if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
-				spin_unlock(&value->_sp);
-
-				res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) ((_data->ops==WAKE_OPS)? (wake_req):(wait_req)));
-				wait_flag = 1;
-			}
+	if (vma != NULL && current->executing_for_remote && (vma->vm_flags & VM_PFNMAP)) {
+		if(_data->ops==WAIT_OPS){
+			wait_req->fn_flags |= FLAGS_REMOTECALL;
 		}
 		else{
-			//Check mm/memmory.c for more on pte_special rule check
-			GSPRINTK(KERN_ALERT" VMA FLAG RULE CHECK exec{%d} pfn{0x%lx} valid{%d}  vma{0x%lx} 1:{%d} 3:{%d} 4:{%d}\n",current->executing_for_remote,pfn,pfn_valid(pfn),vma->vm_flags,!(vma->vm_flags & (VM_PFNMAP|VM_MIXEDMAP)), ((vma->vm_flags & VM_PFNMAP) && ((vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE)), (vma->vm_flags & VM_MIXEDMAP) && pfn_valid(pfn) );
+			wake_req->fn_flag |= FLAGS_REMOTECALL;
+		//printk(KERN_ALERT"%s: uaddr{%lx}  uaddr2{%lx}\n",__func__,wake_req->uaddr,wake_req->uaddr2);
+		//printk(KERN_ALERT"%s: msg wake: uaddr {%lx}  uaddr2{%lx} ticket {%d} tghid{%d} bitset {%u} rflag{%d} pid{%d} ifn_flags{%lx} ops{%d} size{%d} \n", __func__,wake_req->uaddr,(wake_req->uaddr2),wake_req->ticket,wake_req->tghid,wake_req->bitset,wake_req->rflag,wake_req->pid,wake_req->fn_flag,_data->ops,sizeof(_remote_wakeup_request_t));
+		}
+		GSPRINTK(KERN_ALERT"%s: sending to origin remote callpfn cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
+		if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
 			spin_unlock(&value->_sp);
-	                wait_flag = 0;
+
+			res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*)  ((_data->ops==WAKE_OPS)? (wake_req):(wait_req)));
+		}
+	} else if (vma != NULL && !(vma->vm_flags & VM_PFNMAP) ) {
+		if(_data->ops==WAIT_OPS){
+			wait_req->fn_flags |= FLAGS_ORIGINCALL;
+		}
+		else{
+			wake_req->fn_flag |= FLAGS_ORIGINCALL;
+			wake_req->rflag = current->pid;
+		//printk(KERN_ALERT"%s: uaddr{%lx}  uaddr2{%lx}\n",__func__,wake_req->uaddr,wake_req->uaddr2);
+		//printk(KERN_ALERT"%s: msg wake: uaddr {%lx}  uaddr2{%lx} ticket {%d} tghid{%d} bitset {%u} rflag{%d} pid{%d} ifn_flags{%lx} ops{%d} size{%d} \n", __func__,wake_req->uaddr,(wake_req->uaddr2),wake_req->ticket,wake_req->tghid,wake_req->bitset,wake_req->rflag,wake_req->pid,wake_req->fn_flag,_data->ops,sizeof(_remote_wakeup_request_t));
+		}
+		GSPRINTK(KERN_ALERT"%s: sending to origin origin call cpu: 0x{%d} request->ticket{%d} \n",__func__,cpu,localticket_value);
+		if ((cpu = find_kernel_for_pfn(pfn, &pfn_list_head)) != -1){
+			spin_unlock(&value->_sp);
+
+			res = pcn_kmsg_send(cpu, (struct pcn_kmsg_message*) ((_data->ops==WAKE_OPS)? (wake_req):(wait_req)));
 		}
 	}
-	else{
-		printk(KERN_ALERT" VMA is NULL \n");		
-		spin_unlock(&value->_sp);
-		wait_flag = 0;
 
-	}
-	if(wait_flag == 1){
-		wait_event_interruptible(rq_ptr->_wq, (rq_ptr->status == DONE));
-		GSPRINTK(KERN_ALERT"%s:after wake up process: task woken{%d}\n",__func__,current->pid);
-		wait_flag = 0;
-	}
-	else
-		printk(KERN_ALERT"%s:task {%d} sleep not required\n",__func__,current->pid);
+	wait_event_interruptible(rq_ptr->_wq, (rq_ptr->status == DONE));
+	GSPRINTK(KERN_ALERT"%s:after wake up process: task woken{%d}\n",__func__,current->pid);
 
 out:
 	kfree(wake_req);
@@ -386,10 +362,10 @@ static int __init global_spinlock_init(void)
 	for (i = 0; i < ARRAY_SIZE(global_bucket); i++) {
 		spin_lock_init(&global_bucket[i].lock);
 		INIT_LIST_HEAD(&global_bucket[i].link);
-		//		global_bucket[i].thread_group_leader = NULL;
-		//		global_bucket[i].worker_task=NULL;
-		//		global_bucket[i].global_wq = NULL;
-		//		global_bucket[i].free = 0;
+//		global_bucket[i].thread_group_leader = NULL;
+//		global_bucket[i].worker_task=NULL;
+//		global_bucket[i].global_wq = NULL;
+//		global_bucket[i].free = 0;
 	}
 
 

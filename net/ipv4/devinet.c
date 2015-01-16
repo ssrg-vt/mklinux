@@ -193,10 +193,11 @@ static inline void devinet_sysctl_unregister(struct in_device *idev)
 
 /* Locks all the inet devices. */
 
-static struct in_ifaddr *inet_alloc_ifa(void)
+struct in_ifaddr *inet_alloc_ifa(void)
 {
 	return kzalloc(sizeof(struct in_ifaddr), GFP_KERNEL);
 }
+EXPORT_SYMBOL(inet_alloc_ifa);
 
 static void inet_rcu_free_ifa(struct rcu_head *head)
 {
@@ -228,6 +229,43 @@ void in_dev_finish_destroy(struct in_device *idev)
 		kfree(idev);
 }
 EXPORT_SYMBOL(in_dev_finish_destroy);
+
+struct in_device *__inetdev_init(struct net_device *dev)
+{
+	struct in_device *in_dev;
+
+	in_dev = kzalloc(sizeof(*in_dev), GFP_KERNEL);
+	if (!in_dev)
+		goto out;
+	memcpy(&in_dev->cnf, dev_net(dev)->ipv4.devconf_dflt,
+			sizeof(in_dev->cnf));
+	in_dev->cnf.sysctl = NULL;
+	in_dev->dev = dev;
+//	in_dev->arp_parms = neigh_parms_alloc(dev, &arp_tbl);
+//	if (!in_dev->arp_parms)
+//		goto out_kfree;
+	if (IPV4_DEVCONF(in_dev->cnf, FORWARDING))
+		dev_disable_lro(dev);
+	/* Reference in_dev->dev */
+	dev_hold(dev);
+	/* Account for reference dev->ip_ptr (below) */
+	in_dev_hold(in_dev);
+
+//	devinet_sysctl_register(in_dev);
+//	ip_mc_init_dev(in_dev);
+	if (dev->flags & IFF_UP)
+		ip_mc_up(in_dev);
+
+	/* we can receive as soon as ip_ptr is set -- do this last */
+	rcu_assign_pointer(dev->ip_ptr, in_dev);
+out:
+	return in_dev;
+out_kfree:
+	kfree(in_dev);
+	in_dev = NULL;
+	goto out;
+}
+EXPORT_SYMBOL(__inetdev_init);
 
 static struct in_device *inetdev_init(struct net_device *dev)
 {
@@ -426,8 +464,11 @@ static int __inet_insert_ifa(struct in_ifaddr *ifa, struct nlmsghdr *nlh,
 {
 	struct in_device *in_dev = ifa->ifa_dev;
 	struct in_ifaddr *ifa1, **ifap, **last_primary;
-
-	ASSERT_RTNL();
+	printk(KERN_ALERT"remote+++++{%d} \n",ifa->remote);	
+	if(ifa->remote == 1)
+		printk(KERN_ALERT "do not assert");
+	else
+		ASSERT_RTNL();
 
 	if (!ifa->ifa_local) {
 		inet_free_ifa(ifa);
@@ -480,7 +521,26 @@ static int inet_insert_ifa(struct in_ifaddr *ifa)
 	return __inet_insert_ifa(ifa, NULL, 0);
 }
 
-static int inet_set_ifa(struct net_device *dev, struct in_ifaddr *ifa)
+int __inet_set_ifa(struct net_device *dev, struct in_ifaddr *ifa)
+{
+	struct in_device *in_dev = __in_dev_get_rtnl(dev);
+
+	if (!in_dev) {
+		inet_free_ifa(ifa);
+		return -ENOBUFS;
+	}
+	ipv4_devconf_setall(in_dev);
+	if (ifa->ifa_dev != in_dev) {
+		WARN_ON(ifa->ifa_dev);
+		in_dev_hold(in_dev);
+		ifa->ifa_dev = in_dev;
+	}
+	if (ipv4_is_loopback(ifa->ifa_local))
+		ifa->ifa_scope = RT_SCOPE_HOST;
+	return inet_insert_ifa(ifa);
+}
+EXPORT_SYMBOL(__inet_set_ifa);
+int inet_set_ifa(struct net_device *dev, struct in_ifaddr *ifa)
 {
 	struct in_device *in_dev = __in_dev_get_rtnl(dev);
 
@@ -500,7 +560,7 @@ static int inet_set_ifa(struct net_device *dev, struct in_ifaddr *ifa)
 		ifa->ifa_scope = RT_SCOPE_HOST;
 	return inet_insert_ifa(ifa);
 }
-
+EXPORT_SYMBOL(inet_set_ifa);
 /* Caller must hold RCU or RTNL :
  * We dont take a reference on found in_device
  */
@@ -684,6 +744,7 @@ static inline int inet_abc_len(__be32 addr)
 
 int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 {
+	printk(KERN_ALERT"++++++++++++++cmd {%u}++++++++++\n",cmd);
 	struct ifreq ifr;
 	struct sockaddr_in sin_orig;
 	struct sockaddr_in *sin = (struct sockaddr_in *)&ifr.ifr_addr;
@@ -694,6 +755,7 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	char *colon;
 	int ret = -EFAULT;
 	int tryaddrmatch = 0;
+	char iname[IFNAMSIZ];
 
 	/*
 	 *	Fetch the caller's info block into kernel space
@@ -709,8 +771,13 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	colon = strchr(ifr.ifr_name, ':');
 	if (colon)
 		*colon = 0;
-
-	dev_load(net, ifr.ifr_name);
+/*	if(strstr( ifr.ifr_name,"eth") != NULL){
+		snprintf(iname, IFNAMSIZ , "%s", ifr.ifr_name);
+		printk(KERN_ALERT"string is {%s} \n",iname);
+		dev_load(net, iname);
+	}*/
+	else
+		dev_load(net, ifr.ifr_name);
 
 	switch (cmd) {
 	case SIOCGIFADDR:	/* Get interface address */
@@ -750,7 +817,7 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	rtnl_lock();
 
 	ret = -ENODEV;
-	dev = __dev_get_by_name(net, ifr.ifr_name);
+	dev = __dev_get_by_name(net,  ifr.ifr_name);
 	if (!dev)
 		goto done;
 
@@ -767,7 +834,7 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 			   This is checked above. */
 			for (ifap = &in_dev->ifa_list; (ifa = *ifap) != NULL;
 			     ifap = &ifa->ifa_next) {
-				if (!strcmp(ifr.ifr_name, ifa->ifa_label) &&
+				if (!strcmp(  ifr.ifr_name, ifa->ifa_label) &&
 				    sin_orig.sin_addr.s_addr ==
 							ifa->ifa_local) {
 					break; /* found */
@@ -780,7 +847,7 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 		if (!ifa) {
 			for (ifap = &in_dev->ifa_list; (ifa = *ifap) != NULL;
 			     ifap = &ifa->ifa_next)
-				if (!strcmp(ifr.ifr_name, ifa->ifa_label))
+				if (!strcmp(  ifr.ifr_name, ifa->ifa_label))
 					break;
 		}
 	}
@@ -831,7 +898,7 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 			if (!ifa)
 				break;
 			if (colon)
-				memcpy(ifa->ifa_label, ifr.ifr_name, IFNAMSIZ);
+				memcpy(ifa->ifa_label,  ifr.ifr_name, IFNAMSIZ);
 			else
 				memcpy(ifa->ifa_label, dev->name, IFNAMSIZ);
 		} else {

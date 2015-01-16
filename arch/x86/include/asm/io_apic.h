@@ -151,7 +151,11 @@ extern void ioapic_and_gsi_init(void);
 extern void ioapic_insert_resources(void);
 
 int io_apic_setup_irq_pin_once(unsigned int irq, int node, struct io_apic_irq_attr *attr);
-
+//akshay
+//extern void eoi_ioapic_irq(unsigned int irq, struct irq_cfg *cfg);
+//extern void native_compose_msi_msg(struct pci_dev *pdev,
+  //                                  unsigned int irq, unsigned int dest,
+    //                              struct msi_msg *msg, u8 hpet_id);
 extern int save_ioapic_entries(void);
 extern void mask_ioapic_entries(void);
 extern int restore_ioapic_entries(void);
@@ -175,7 +179,8 @@ extern void __init pre_init_apic_IRQ0(void);
 extern void mp_save_irq(struct mpc_intsrc *m);
 
 extern void disable_ioapic_support(void);
-
+//akshay
+extern void io_apic_eoi(unsigned int apic, unsigned int vector);
 #else  /* !CONFIG_X86_IO_APIC */
 
 #define io_apic_assign_pci_irqs 0

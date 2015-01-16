@@ -13,7 +13,7 @@
 #include "intr_remapping.h"
 #include <acpi/acpi.h>
 #include <asm/pci-direct.h>
-
+#define CONFIG_FORCE_IR 1
 static struct ioapic_scope ir_ioapic[MAX_IO_APICS];
 static struct hpet_scope ir_hpet[MAX_HPET_TBS];
 static int ir_ioapic_num, ir_hpet_num;
@@ -30,8 +30,9 @@ static __init int setup_nointremap(char *str)
 }
 early_param("nointremap", setup_nointremap);
 
-static __init int setup_intremap(char *str)
+static __init int __setup_intremap(char *str)
 {
+	printk(KERN_ALERT"INTR CALLED\n");
 	if (!str)
 		return -EINVAL;
 
@@ -49,10 +50,10 @@ static __init int setup_intremap(char *str)
 		while (*str == ',')
 			str++;
 	}
-
+	dump_stack();
 	return 0;
 }
-early_param("intremap", setup_intremap);
+early_param("intremap1_old", __setup_intremap);
 
 static DEFINE_RAW_SPINLOCK(irq_2_ir_lock);
 
@@ -152,8 +153,10 @@ static int qi_flush_iec(struct intel_iommu *iommu, int index, int mask)
 	return qi_submit_sync(&desc, iommu);
 }
 
+
 int map_irq_to_irte_handle(int irq, u16 *sub_handle)
 {
+	dump_stack();
 	struct irq_2_iommu *irq_iommu = irq_2_iommu(irq);
 	unsigned long flags;
 	int index;
@@ -170,6 +173,7 @@ int map_irq_to_irte_handle(int irq, u16 *sub_handle)
 
 int set_irte_irq(int irq, struct intel_iommu *iommu, u16 index, u16 subhandle)
 {
+	dump_stack();
 	struct irq_2_iommu *irq_iommu = irq_2_iommu(irq);
 	unsigned long flags;
 
@@ -190,6 +194,7 @@ int set_irte_irq(int irq, struct intel_iommu *iommu, u16 index, u16 subhandle)
 
 int modify_irte(int irq, struct irte *irte_modified)
 {
+	dump_stack();
 	struct irq_2_iommu *irq_iommu = irq_2_iommu(irq);
 	struct intel_iommu *iommu;
 	unsigned long flags;
@@ -305,10 +310,6 @@ int free_irte(int irq)
  */
 #define SQ_ALL_16	0x0  /* verify all 16 bits of request-id */
 #define SQ_13_IGNORE_1	0x1  /* verify most significant 13 bits, ignore
-			      * the third least significant bit
-			      */
-#define SQ_13_IGNORE_2	0x2  /* verify most significant 13 bits, ignore
-			      * the second and third least significant bits
 			      */
 #define SQ_13_IGNORE_3	0x3  /* verify most significant 13 bits, ignore
 			      * the least three significant bits
@@ -412,6 +413,7 @@ int set_msi_sid(struct irte *irte, struct pci_dev *dev)
 
 static void iommu_set_intr_remapping(struct intel_iommu *iommu, int mode)
 {
+	dump_stack();
 	u64 addr;
 	u32 sts;
 	unsigned long flags;
@@ -452,6 +454,7 @@ static void iommu_set_intr_remapping(struct intel_iommu *iommu, int mode)
 
 static int setup_intr_remapping(struct intel_iommu *iommu, int mode)
 {
+	dump_stack();
 	struct ir_table *ir_table;
 	struct page *pages;
 
@@ -522,10 +525,13 @@ static int __init dmar_x2apic_optout(void)
 int __init intr_remapping_supported(void)
 {
 	struct dmar_drhd_unit *drhd;
-
+	
 	if (disable_intremap)
 		return 0;
-
+#if 1
+	printk(KERN_ALERT"intr remapping supporte \n");
+	return 1;
+#else
 	if (!dmar_ir_support())
 		return 0;
 
@@ -535,12 +541,15 @@ int __init intr_remapping_supported(void)
 		if (!ecap_ir_support(iommu->ecap))
 			return 0;
 	}
-
+	printk(KERN_ALERT"intr remapping supporte \n");
 	return 1;
+#endif
 }
 
 int __init enable_intr_remapping(void)
 {
+	printk(KERN_ALERT"enable_intr_remapping\n");
+	dump_stack();
 	struct dmar_drhd_unit *drhd;
 	int setup = 0;
 	int eim = 0;
@@ -592,7 +601,7 @@ int __init enable_intr_remapping(void)
 			continue;
 
 		if (eim && !ecap_eim_support(iommu->ecap)) {
-			printk(KERN_INFO "DRHD %Lx: EIM not supported by DRHD, "
+			printk(KERN_ALERT "DRHD %Lx: EIM not supported by DRHD, "
 			       " ecap %Lx\n", drhd->reg_base_addr, iommu->ecap);
 			return -1;
 		}
@@ -607,7 +616,7 @@ int __init enable_intr_remapping(void)
 		ret = dmar_enable_qi(iommu);
 
 		if (ret) {
-			printk(KERN_ERR "DRHD %Lx: failed to enable queued, "
+			printk(KERN_ALERT "DRHD %Lx: failed to enable queued, "
 			       " invalidation, ecap %Lx, ret %d\n",
 			       drhd->reg_base_addr, iommu->ecap, ret);
 			return -1;
@@ -633,7 +642,7 @@ int __init enable_intr_remapping(void)
 		goto error;
 
 	intr_remapping_enabled = 1;
-	pr_info("Enabled IRQ remapping in %s mode\n", eim ? "x2apic" : "xapic");
+	printk(KERN_ALERT"Enabled IRQ remapping in %s mode\n", eim ? "x2apic" : "xapic");
 
 	return eim ? IRQ_REMAP_X2APIC_MODE : IRQ_REMAP_XAPIC_MODE;
 
@@ -717,11 +726,11 @@ static int ir_parse_ioapic_hpet_scope(struct acpi_dmar_header *header,
 		scope = start;
 		if (scope->entry_type == ACPI_DMAR_SCOPE_TYPE_IOAPIC) {
 			if (ir_ioapic_num == MAX_IO_APICS) {
-				printk(KERN_WARNING "Exceeded Max IO APICS\n");
+				printk(KERN_ALERT "Exceeded Max IO APICS\n");
 				return -1;
 			}
 
-			printk(KERN_INFO "IOAPIC id %d under DRHD base "
+			printk(KERN_ALERT "IOAPIC id %d under DRHD base "
 			       " 0x%Lx IOMMU %d\n", scope->enumeration_id,
 			       drhd->address, iommu->seq_id);
 
@@ -750,22 +759,30 @@ static int ir_parse_ioapic_hpet_scope(struct acpi_dmar_header *header,
  */
 int __init parse_ioapics_under_ir(void)
 {
+	dump_stack();
 	struct dmar_drhd_unit *drhd;
 	int ir_supported = 0;
 
 	for_each_drhd_unit(drhd) {
 		struct intel_iommu *iommu = drhd->iommu;
 
+		printk(KERN_ALERT"FUCKKKKKKKKKKKK ME I FOUND INTEL %d\n",iommu->ecap);
 		if (ecap_ir_support(iommu->ecap)) {
-			if (ir_parse_ioapic_hpet_scope(drhd->hdr, iommu))
+			if (ir_parse_ioapic_hpet_scope(drhd->hdr, iommu)){
+				printk(KERN_ALERT"FUCKKKKKKKKKKKK\n");
 				return -1;
+			}
 
 			ir_supported = 1;
 		}
 	}
+#ifdef CONFIG_FORCE_IR
+ir_supported = 1;
+printk(KERN_ALERT"Force IR \n");
+#endif
 
 	if (ir_supported && ir_ioapic_num != nr_ioapics) {
-		printk(KERN_WARNING
+		printk(KERN_ALERT
 		       "Not all IO-APIC's listed under remapping hardware\n");
 		return -1;
 	}

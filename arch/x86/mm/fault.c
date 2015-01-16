@@ -1046,6 +1046,8 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	 * protection error (error_code & 9) == 0.
 	 */
 	if (unlikely(fault_in_kernel_space(address))) {
+		if(strcmp(current->comm,"mig") == 0)
+			printk(KERN_ALERT"MIG kernel address sapce\n");
 		if (!(error_code & (PF_RSVD | PF_USER | PF_PROT))) {
 			if (vmalloc_fault(address) >= 0)
 				return;
@@ -1103,6 +1105,8 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	}
 
     vma = find_vma(mm, address);
+
+		
 #if defined(PROCESS_SERVER_USE_DISTRIBUTED_MM_LOCK)
     process_server_acquire_distributed_mm_lock();
 #else

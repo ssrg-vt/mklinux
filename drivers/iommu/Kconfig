@@ -13,6 +13,7 @@ menuconfig IOMMU_SUPPORT
 
 if IOMMU_SUPPORT
 
+
 # MSM IOMMU support
 config MSM_IOMMU
 	bool "MSM IOMMU Support"
@@ -34,14 +35,16 @@ config AMD_IOMMU
 	bool "AMD IOMMU support"
 	select SWIOTLB
 	select PCI_MSI
-	select PCI_IOV
+	select PCI_ATS
+	select PCI_PRI
+	select PCI_PASID
 	select IOMMU_API
 	depends on X86_64 && PCI && ACPI
 	---help---
 	  With this option you can enable support for AMD IOMMU hardware in
 	  your system. An IOMMU is a hardware component which provides
 	  remapping of DMA memory accesses from devices. With an AMD IOMMU you
-	  can isolate the the DMA memory of different devices and protect the
+	  can isolate the DMA memory of different devices and protect the
 	  system from misbehaving device drivers or hardware.
 
 	  You can find out if your system has an AMD IOMMU if you look into
@@ -58,54 +61,64 @@ config AMD_IOMMU_STATS
 	  information to userspace via debugfs.
 	  If unsure, say N.
 
+config AMD_IOMMU_V2
+	tristate "AMD IOMMU Version 2 driver"
+	depends on AMD_IOMMU && PROFILING
+	select MMU_NOTIFIER
+	---help---
+	  This option enables support for the AMD IOMMUv2 features of the IOMMU
+	  hardware. Select this option if you want to use devices that support
+	  the PCI PRI and PASID interface.
+
 # Intel IOMMU support
 config DMAR_TABLE
 	bool
 
 config INTEL_IOMMU
-	bool "Support for Intel IOMMU using DMA Remapping Devices"
-	depends on PCI_MSI && ACPI && (X86 || IA64_GENERIC)
-	select IOMMU_API
-	select DMAR_TABLE
-	help
-	  DMA remapping (DMAR) devices support enables independent address
-	  translations for Direct Memory Access (DMA) from devices.
-	  These DMA remapping devices are reported via ACPI tables
-	  and include PCI device scope covered by these DMA
-	  remapping devices.
+        bool "Support for Intel IOMMU using DMA Remapping Devices"
+        depends on PCI_MSI && ACPI && (X86 || IA64_GENERIC)
+        select IOMMU_API
+        select DMAR_TABLE
+        help
+          DMA remapping (DMAR) devices support enables independent address
+          translations for Direct Memory Access (DMA) from devices.
+          These DMA remapping devices are reported via ACPI tables
+          and include PCI device scope covered by these DMA
+          remapping devices.
 
 config INTEL_IOMMU_DEFAULT_ON
-	def_bool y
-	prompt "Enable Intel DMA Remapping Devices by default"
-	depends on INTEL_IOMMU
-	help
-	  Selecting this option will enable a DMAR device at boot time if
-	  one is found. If this option is not selected, DMAR support can
-	  be enabled by passing intel_iommu=on to the kernel.
+        def_bool y
+        prompt "Enable Intel DMA Remapping Devices by default"
+        depends on INTEL_IOMMU
+        help
+          Selecting this option will enable a DMAR device at boot time if
+          one is found. If this option is not selected, DMAR support can
+          be enabled by passing intel_iommu=on to the kernel.
 
 config INTEL_IOMMU_BROKEN_GFX_WA
-	bool "Workaround broken graphics drivers (going away soon)"
-	depends on INTEL_IOMMU && BROKEN && X86
-	---help---
-	  Current Graphics drivers tend to use physical address
-	  for DMA and avoid using DMA APIs. Setting this config
-	  option permits the IOMMU driver to set a unity map for
-	  all the OS-visible memory. Hence the driver can continue
-	  to use physical addresses for DMA, at least until this
-	  option is removed in the 2.6.32 kernel.
+        bool "Workaround broken graphics drivers (going away soon)"
+        depends on INTEL_IOMMU && BROKEN && X86
+        ---help---
+          Current Graphics drivers tend to use physical address
+          for DMA and avoid using DMA APIs. Setting this config
+          option permits the IOMMU driver to set a unity map for
+          all the OS-visible memory. Hence the driver can continue
+          to use physical addresses for DMA, at least until this
+          option is removed in the 2.6.32 kernel.
 
 config INTEL_IOMMU_FLOPPY_WA
-	def_bool y
-	depends on INTEL_IOMMU && X86
-	---help---
-	  Floppy disk drivers are known to bypass DMA API calls
-	  thereby failing to work when IOMMU is enabled. This
-	  workaround will setup a 1:1 mapping for the first
-	  16MiB to make floppy (an ISA device) work.
+        def_bool y
+        depends on INTEL_IOMMU && X86
+        ---help---
+          Floppy disk drivers are known to bypass DMA API calls
+          thereby failing to work when IOMMU is enabled. This
+          workaround will setup a 1:1 mapping for the first
+          16MiB to make floppy (an ISA device) work.
+
 
 config IRQ_REMAP
-	bool "Support for Interrupt Remapping (EXPERIMENTAL)"
-	depends on X86_64 && X86_IO_APIC && PCI_MSI && ACPI && EXPERIMENTAL
+	bool "Support for Interrupt Remapping"
+	depends on X86_64 && X86_IO_APIC && PCI_MSI && ACPI
 	select DMAR_TABLE
 	---help---
 	  Supports Interrupt remapping for IO-APIC and MSI devices.
@@ -115,7 +128,7 @@ config IRQ_REMAP
 # OMAP IOMMU support
 config OMAP_IOMMU
 	bool "OMAP IOMMU Support"
-	depends on ARCH_OMAP
+	depends on ARCH_OMAP2PLUS
 	select IOMMU_API
 
 config OMAP_IOVMM

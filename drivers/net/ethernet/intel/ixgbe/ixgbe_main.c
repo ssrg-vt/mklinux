@@ -1927,7 +1927,7 @@ static irqreturn_t ixgbe_msix_other(int irq, void *data)
 	struct ixgbe_adapter *adapter = data;
 	struct ixgbe_hw *hw = &adapter->hw;
 	u32 eicr;
-
+	printk(KERN_ALERT"ixgbe_msix_other cpu %d\n",smp_processor_id());
 	/*
 	 * Workaround for Silicon errata.  Use clear-by-write instead
 	 * of clear-by-read.  Reading with EICS will return the
@@ -1986,6 +1986,7 @@ static irqreturn_t ixgbe_msix_clean_rings(int irq, void *data)
 {
 	struct ixgbe_q_vector *q_vector = data;
 
+	printk(KERN_ALERT"ixgbe_msix_clean cpu %d\n",smp_processor_id());
 	/* EIAM disabled interrupts (on this vector) for us */
 
 	if (q_vector->rx.ring || q_vector->tx.ring)
@@ -2079,7 +2080,7 @@ static int ixgbe_request_msix_irqs(struct ixgbe_adapter *adapter)
 	int q_vectors = adapter->num_msix_vectors - NON_Q_VECTORS;
 	int vector, err;
 	int ri = 0, ti = 0;
-
+	printk(KERN_ALERT"q_vectors %d \n",q_vectors);
 	for (vector = 0; vector < q_vectors; vector++) {
 		struct ixgbe_q_vector *q_vector = adapter->q_vector[vector];
 		struct msix_entry *entry = &adapter->msix_entries[vector];
@@ -2148,7 +2149,7 @@ static irqreturn_t ixgbe_intr(int irq, void *data)
 	struct ixgbe_hw *hw = &adapter->hw;
 	struct ixgbe_q_vector *q_vector = adapter->q_vector[0];
 	u32 eicr;
-
+   	printk(KERN_ALERT"ixgbe_intr cpu %d\n",smp_processor_id()); 
 	/*
 	 * Workaround for silicon errata on 82598.  Mask the interrupts
 	 * before the read of EICR.
@@ -4377,6 +4378,7 @@ static void ixgbe_acquire_msix_vectors(struct ixgbe_adapter *adapter,
 		 */
 		adapter->num_msix_vectors = min(vectors,
 				   adapter->max_msix_q_vectors + NON_Q_VECTORS);
+		printk(KERN_ALERT"msix vector %d \n",adapter->num_msix_vectors);
 	}
 }
 
@@ -4696,6 +4698,8 @@ static int ixgbe_set_interrupt_capability(struct ixgbe_adapter *adapter)
 	 * those rare cases where the cpu count also exceeds our vector limit.
 	 */
 	v_budget = min(v_budget, (int)hw->mac.max_msix_vectors);
+
+	printk(KERN_ALERT"total budget %d \n",v_budget);
 
 	/* A failure in MSI-X entry allocation isn't fatal, but it does
 	 * mean we disable MSI-X capabilities of the adapter. */
@@ -7675,7 +7679,7 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 	err = register_netdev(netdev);
 	if (err)
 		goto err_register;
-
+	printk(KERN_ALERT"after register netdev \n");
 	/* power down the optics for multispeed fiber and 82599 SFP+ fiber */
 	if (hw->mac.ops.disable_tx_laser &&
 	    ((hw->phy.multispeed_fiber) ||
@@ -7685,7 +7689,7 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 
 	/* carrier off reporting is important to ethtool even BEFORE open */
 	netif_carrier_off(netdev);
-
+        printk(KERN_ALERT"after netif carrier of \n");
 #ifdef CONFIG_IXGBE_DCA
 	if (dca_add_requester(&pdev->dev) == 0) {
 		adapter->flags |= IXGBE_FLAG_DCA_ENABLED;

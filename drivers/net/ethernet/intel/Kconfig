@@ -111,6 +111,11 @@ config IGB
 	  To compile this driver as a module, choose M here. The module
 	  will be called igb.
 
+config IGB_PROXY
+	tristate "Proxy device support"
+	default y
+	depends on IGB 
+
 config IGB_DCA
 	bool "Direct Cache Access (DCA) Support"
 	default y

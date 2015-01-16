@@ -632,7 +632,6 @@ int bus_add_driver(struct device_driver *drv)
 	if (!bus)
 		return -EINVAL;
 
-	pr_debug("bus: '%s': add driver %s\n", bus->name, drv->name);
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
@@ -672,7 +671,7 @@ int bus_add_driver(struct device_driver *drv)
 		error = add_bind_files(drv);
 		if (error) {
 			/* Ditto */
-			printk(KERN_ERR "%s: add_bind_files(%s) failed\n",
+			printk(KERN_ALERT "%s: add_bind_files(%s) failed\n",
 				__func__, drv->name);
 		}
 	}

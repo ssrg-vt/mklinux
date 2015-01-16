@@ -33,6 +33,8 @@ static int apicid_phys_pkg_id(int initial_apic_id, int index_msb)
  */
 void __init default_setup_apic_routing(void)
 {
+	printk(KERN_ALERT"default_setup_apic_routing\n");
+	dump_stack();
 	struct apic **drv;
 
 	enable_IR_x2apic();

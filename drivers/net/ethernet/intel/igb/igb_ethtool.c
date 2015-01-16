@@ -135,6 +135,7 @@ static const char igb_gstrings_test[][ETH_GSTRING_LEN] = {
 
 static int igb_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 {
+	printk(KERN_ALERT" get settings for etho\n");
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
 	u32 status;
@@ -2194,3 +2195,4 @@ void igb_set_ethtool_ops(struct net_device *netdev)
 {
 	SET_ETHTOOL_OPS(netdev, &igb_ethtool_ops);
 }
+EXPORT_SYMBOL(igb_set_ethtool_ops);

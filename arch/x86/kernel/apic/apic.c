@@ -36,6 +36,8 @@
 #include <linux/mm.h>
 #include <linux/multikernel.h>
 
+//#include <asm/trace/irq_vectors.h>
+#include <asm/irq_remapping.h>
 #include <asm/perf_event.h>
 #include <asm/x86_init.h>
 #include <asm/pgalloc.h>
@@ -160,6 +162,7 @@ static __init int setup_nox2apic(char *str)
 	return 0;
 }
 early_param("nox2apic", setup_nox2apic);
+
 #endif
 
 unsigned long mp_lapic_addr;
@@ -1472,18 +1475,19 @@ void enable_x2apic(void)
 
 int __init enable_IR(void)
 {
+	printk(KERN_ALERT"enable_IR\n");
 #ifdef CONFIG_IRQ_REMAP
 	if (!intr_remapping_supported()) {
-		pr_debug("intr-remapping not supported\n");
+		printk(KERN_ALERT"intr-remapping not supported\n");
 		return -1;
 	}
 
 	if (!x2apic_preenabled && skip_ioapic_setup) {
-		pr_info("Skipped enabling intr-remap because of skipping "
+		printk(KERN_ALERT"Skipped enabling intr-remap because of skipping "
 			"io-apic setup\n");
 		return -1;
 	}
-
+	//irq_remapping_enable();
 	return enable_intr_remapping();
 #endif
 	return -1;
@@ -1494,11 +1498,18 @@ void __init enable_IR_x2apic(void)
 	unsigned long flags;
 	int ret, x2apic_enabled = 0;
 	int dmar_table_init_ret;
+	int hardware_init_ret;
 
 	dmar_table_init_ret = dmar_table_init();
+	dmar_table_init_ret = 0;
 	if (dmar_table_init_ret && !x2apic_supported())
 		return;
-
+/*
+	setup_irq_remapping_ops();
+	hardware_init_ret = irq_remapping_prepare();
+	if (hardware_init_ret && !x2apic_supported())
+		return;
+*/
 	ret = save_ioapic_entries();
 	if (ret) {
 		pr_info("Saving IO-APIC state failed: %d\n", ret);
@@ -1509,10 +1520,11 @@ void __init enable_IR_x2apic(void)
 	legacy_pic->mask_all();
 	mask_ioapic_entries();
 
-	if (dmar_table_init_ret)
+	if (hardware_init_ret)
 		ret = -1;
 	else
 		ret = enable_IR();
+
 
 	if (ret < 0) {
 		/* IR is required if there is APIC ID > 255 even when running
@@ -1520,6 +1532,8 @@ void __init enable_IR_x2apic(void)
 		 */
 		if (max_physical_apicid > 255 ||
 		    !hypervisor_x2apic_available())
+			//if (x2apic_preenabled)
+			//	disable_x2apic();
 			goto nox2apic;
 		/*
 		 * without IR all CPUs can be addressed by IOAPIC/MSI
@@ -1552,9 +1566,9 @@ out:
 	if (x2apic_preenabled)
 		panic("x2apic: enabled by BIOS but kernel init failed.");
 	else if (ret == IRQ_REMAP_XAPIC_MODE)
-		pr_info("x2apic not enabled, IRQ remapping is in xapic mode\n");
+		printk(KERN_ALERT"x2apic not enabled, IRQ remapping is in xapic mode\n");
 	else if (ret < 0)
-		pr_info("x2apic not enabled, IRQ remapping init failed\n");
+		printk(KERN_ALERT"x2apic not enabled, IRQ remapping init failed\n");
 }
 
 #ifdef CONFIG_X86_64
@@ -1746,6 +1760,8 @@ int apic_version[MAX_LOCAL_APIC];
 
 int __init APIC_init_uniprocessor(void)
 {
+	dump_stack();
+	printk(KERN_ALERT"UNIPROC\n");
 	if (disable_apic) {
 		pr_info("Apic disabled\n");
 		return -1;

@@ -231,11 +231,11 @@ int driver_register(struct device_driver *drv)
 	    (drv->bus->shutdown && drv->shutdown))
 		printk(KERN_WARNING "Driver '%s' needs updating - please use "
 			"bus_type methods\n", drv->name);
-
+	printk(KERN_ALERT"name {%s} ",drv->name);
 	other = driver_find(drv->name, drv->bus);
 	if (other) {
 		put_driver(other);
-		printk(KERN_ERR "Error: Driver '%s' is already registered, "
+		printk(KERN_ALERT "Error: Driver '%s' is already registered, "
 			"aborting...\n", drv->name);
 		return -EBUSY;
 	}

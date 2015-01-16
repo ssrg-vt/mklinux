@@ -408,6 +408,7 @@ EXPORT_SYMBOL(sk_dst_check);
 
 static int sock_bindtodevice(struct sock *sk, char __user *optval, int optlen)
 {
+	dump_stack();
 	int ret = -ENOPROTOOPT;
 #ifdef CONFIG_NETDEVICES
 	struct net *net = sock_net(sk);
