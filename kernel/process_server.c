@@ -6818,7 +6818,7 @@ int process_server_import_address_space(unsigned long* ip,
 #endif
 
     // Socket Related Operations
-    int tempfd=0;
+    int tempfd=0,err=0;
     struct sockaddr_in serv_addr, cli_addr;
  
     if(clone_data->skt_flag == 1){
@@ -6831,8 +6831,12 @@ int process_server_import_address_space(unsigned long* ip,
 		  serv_addr.sin_family = AF_INET;
 		  serv_addr.sin_addr.s_addr =  clone_data->skt_saddr;
 		  serv_addr.sin_port = clone_data->skt_sport;
-		  sys_bind(tempfd,&serv_addr,sizeof(serv_addr));
-
+ 		  char *add;		  
+    		  add = &serv_addr.sin_addr.s_addr;
+                  printk(KERN_ALERT"%d.%d.%d.%d \n",add[0],add[1],add[2],add[3]);
+	
+		  err = sys_bind(tempfd,&serv_addr,sizeof(struct sockaddr_in));
+		  printk(KERN_ALERT"BIND err %d\n",err);
 		  if(clone_data->skt_level == MIG_BIND) break;
             case MIG_LISTEN:
 		  break;
@@ -6858,7 +6862,7 @@ int process_server_import_address_space(unsigned long* ip,
 		skt =(struct socket) *sock;
 		struct sock *sk = skt.sk;
 		struct inet_sock *in_ = inet_sk(sk);
-		printk(KERN_ALERT"fd{%d} sock ptr {%p} type{%d} state{%d} d %d s%d saddr %d mc %d - %d \n",i,(struct socket *) sock,(int) skt.type,(int) skt.state,(struct inet_sock *)in_->inet_dport,(struct inet_sock *)in_->inet_sport,(struct inet_sock*)in_->inet_saddr,(struct inet_sock*)in_->inet_daddr,(struct inet_sock *)in_->mc_addr);
+		printk(KERN_ALERT"fd{%d} sock ptr {%p} type{%d} state{%d} d %d s%d saddr %d mc %d - %d \n",i,(struct socket *) sock,(int) skt.type,(int) skt.state,((struct inet_sock *)in_)->inet_dport,((struct inet_sock *)in_)->inet_sport,((struct inet_sock*)in_)->inet_saddr,((struct inet_sock*)in_)->inet_daddr,((struct inet_sock *)in_)->mc_addr);
 	    }
 		i++;
 	    }
@@ -8200,11 +8204,13 @@ int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     sock = sockfd_lookup_light(i, &err, &fput_needed);
     if(sock){
 	sock_fd = i;
+	char * add;
         request->skt_flag = 1;
         skt =(struct socket) *sock;
 	sk = skt.sk;
 	in_ = inet_sk(sk);
-	printk(KERN_ALERT"fd{%d} sock ptr {%p} type{%d} state{%d} d %d s%d saddr %d mc %d - %d \n",i,(struct socket *) sock,(int) skt.type,(int) skt.state,(struct inet_sock *)in_->inet_dport,(struct inet_sock *)in_->inet_sport,(struct inet_sock*)in_->inet_saddr,(struct inet_sock*)in_->inet_daddr,(struct inet_sock *)in_->mc_addr);
+	add = &in_->inet_saddr;
+	printk(KERN_ALERT"fd{%d} sock ptr {%p} type{%d} state{%d} d %d s%d saddr %ld (%d.%d.%d.%d) mc %d - %d \n",i,(struct socket *) sock,(int) skt.type,(int) skt.state,((struct inet_sock *)in_)->inet_dport,((struct inet_sock *)in_)->inet_sport,((struct inet_sock*)in_)->inet_saddr,add[0],add[1],add[2],add[3],((struct inet_sock*)in_)->inet_daddr,((struct inet_sock *)in_)->mc_addr);
     }
 	i++;
     }
@@ -8340,14 +8346,14 @@ int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     	request->action[cnt] = task->sighand->action[cnt];
     // socket informationi
     if(request->skt_flag == 1){
-    request->skt_level = 1;
+    request->skt_level = MIG_BIND;
  
     request->skt_type = skt.type;
     request->skt_state = skt.state;
-    request->skt_dport = in_->inet_dport;
-    request->skt_sport = in_->inet_sport;
-    request->skt_saddr = in_->inet_saddr;
-    request->skt_daddr = in_->inet_daddr;
+    request->skt_dport = ((struct inet_sock *)in_)->inet_dport;
+    request->skt_sport = ((struct inet_sock *)in_)->inet_sport;
+    request->skt_saddr = ((struct inet_sock *)in_)->inet_saddr;
+    request->skt_daddr = ((struct inet_sock *)in_)->inet_daddr;
     request->skt_fd = sock_fd;
     }
     // struct thread_struct -------------------------------------------------------

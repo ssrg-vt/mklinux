@@ -157,16 +157,25 @@ static inline unsigned __inet_dev_addr_type(struct net *net,
 #endif
 
 	local_table = fib_get_table(net, RT_TABLE_LOCAL);
+
+	if(strcmp(current->comm,"mig") == 0)			 
+		printk(KERN_ALERT"%s: loc tbl %p\n",__func__,local_table);
+
 	if (local_table) {
 		ret = RTN_UNICAST;
 		rcu_read_lock();
 		if (!fib_table_lookup(local_table, &fl4, &res, FIB_LOOKUP_NOREF)) {
-			//printk(KERN_ALERT"fibdev {%s} type{%u} addr{%d}.{%d}.{%d}.{%d} \n",res.fi->fib_dev->name,res.type,p[0],p[1],p[2],p[3]);
+		if(strcmp(current->comm,"mig") == 0)			 
+			printk(KERN_ALERT"fibdev {%s} type{%u} addr{%d}.{%d}.{%d}.{%d} \n",res.fi->fib_dev->name,res.type,p[0],p[1],p[2],p[3]);
+			
 			if (!dev || dev == res.fi->fib_dev)
 				ret = res.type;
 		}
 		rcu_read_unlock();
 	}
+	if(strcmp(current->comm,"mig") == 0)			 
+		printk(KERN_ALERT"%s: res type %d\n",__func__,res.type);
+
 	return ret;
 }
 
@@ -425,6 +434,50 @@ static int rtentry_to_fib_config(struct net *net, int cmd, struct rtentry *rt,
 
 	return 0;
 }
+
+int __ip_rt_ioctl(struct net *net, unsigned int cmd, void  *arg)
+{
+        struct fib_config cfg;
+        struct rtentry rt;
+        int err;
+
+        switch (cmd) {
+        case SIOCADDRT:         /* Add a route */
+        case SIOCDELRT:         /* Delete a route */
+                if (!capable(CAP_NET_ADMIN))
+                        return -EPERM;
+
+                memcpy(&rt, (struct rtentry*) arg,  sizeof(rt));
+
+                rtnl_lock();
+                err = rtentry_to_fib_config(net, cmd, &rt, &cfg);
+                if (err == 0) {
+                        struct fib_table *tb;
+
+                        if (cmd == SIOCDELRT) {
+                                tb = fib_get_table(net, cfg.fc_table);
+                                if (tb)
+                                        err = fib_table_delete(tb, &cfg);
+                                else
+                                        err = -ESRCH;
+                        } else {
+                                tb = fib_new_table(net, cfg.fc_table);
+                                if (tb)
+                                        err = fib_table_insert(tb, &cfg);
+                                else
+                                        err = -ENOBUFS;
+                        }
+
+                        /* allocated by rtentry_to_fib_config() */
+                        kfree(cfg.fc_mx);
+                }
+                rtnl_unlock();
+                return err;
+        }
+        return -EINVAL;
+}
+
+EXPORT_SYMBOL(__ip_rt_ioctl);
 
 /*
  * Handle IP routing ioctl calls.

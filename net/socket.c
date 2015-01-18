@@ -1428,12 +1428,23 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 	int err, fput_needed;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+        if(strcmp(current->comm,"mig") == 0)
+	  printk(KERN_ALERT"BIND sock %p - %p addr %d\n",sock,umyaddr,umyaddr ? ((struct sockaddr_in *) umyaddr)->sin_addr.s_addr : 0 );
+
 	if (sock) {
-		err = move_addr_to_kernel(umyaddr, addrlen, (struct sockaddr *)&address);
+               if(strcmp(current->comm,"mig") == 0 && smp_processor_id() == 1){
+		 err = 0;
+		 memcpy((struct sockaddr *) &address,umyaddr, addrlen);
+		}
+	       else
+		 err = move_addr_to_kernel(umyaddr, addrlen, (struct sockaddr *)&address);
 		if (err >= 0) {
 			err = security_socket_bind(sock,
 						   (struct sockaddr *)&address,
 						   addrlen);
+			if(strcmp(current->comm,"mig") == 0){
+			  printk(KERN_ALERT"after sock security err %d \n",err);
+			}
 			if (!err)
 				err = sock->ops->bind(sock,
 						      (struct sockaddr *)

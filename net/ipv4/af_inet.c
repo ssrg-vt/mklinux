@@ -484,6 +484,9 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	 *  is temporarily down)
 	 */
 	err = -EADDRNOTAVAIL;
+	if(strcmp(current->comm,"mig")==0) 
+	  printk(KERN_ALERT " chk_addr_ret %d local_bind %d free %d trans %d\n",chk_addr_ret,sysctl_ip_nonlocal_bind,inet->freebind,inet->transparent);
+
 	if (!sysctl_ip_nonlocal_bind &&
 	    !(inet->freebind || inet->transparent) &&
 	    addr->sin_addr.s_addr != htonl(INADDR_ANY) &&

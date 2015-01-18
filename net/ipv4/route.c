@@ -805,6 +805,46 @@ static void rt_do_flush(struct net *net, int process_context)
 	}
 }
 
+struct rtable * rt_get_iface(char *name)
+{
+        unsigned int i;
+        struct rtable *rth, *next;
+
+        for (i = 0; i <= rt_hash_mask; i++) {
+                struct rtable __rcu **pprev;
+                struct rtable *list;
+
+                rth = rcu_access_pointer(rt_hash_table[i].chain);
+                if (!rth){
+                        continue;
+		}
+
+                spin_lock_bh(rt_hash_lock_addr(i));
+
+                list = NULL;
+                pprev = &rt_hash_table[i].chain;
+                rth = rcu_dereference_protected(*pprev,
+                        lockdep_is_held(rt_hash_lock_addr(i)));
+
+                while (rth) {
+                        next = rcu_dereference_protected(rth->dst.rt_next,
+                                lockdep_is_held(rt_hash_lock_addr(i)));
+
+                        printk(KERN_ALERT"iface %s dest %d gate %d \n",rth->dst.dev->name,rth->rt_dst,rth->rt_gateway);
+                        if (!name &&
+                            strcmp(rth->dst.dev->name,name) == 0) {
+                                return rth;
+                        }
+                        rth = next;
+                }
+
+                spin_unlock_bh(rt_hash_lock_addr(i));
+
+        }
+	
+}
+
+EXPORT_SYMBOL(rt_get_iface);
 /*
  * While freeing expired entries, we compute average chain length
  * and standard deviation, using fixed-point arithmetic.

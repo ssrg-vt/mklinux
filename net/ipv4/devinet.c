@@ -464,16 +464,21 @@ static int __inet_insert_ifa(struct in_ifaddr *ifa, struct nlmsghdr *nlh,
 {
 	struct in_device *in_dev = ifa->ifa_dev;
 	struct in_ifaddr *ifa1, **ifap, **last_primary;
-	printk(KERN_ALERT"remote+++++{%d} \n",ifa->remote);	
+	printk(KERN_ALERT"%s: is remote{%d} \n",__func__,ifa->remote);	
 	if(ifa->remote == 1)
-		printk(KERN_ALERT "do not assert");
+		printk(KERN_ALERT "%s: do not assert \n",__func__);
 	else
 		ASSERT_RTNL();
 
 	if (!ifa->ifa_local) {
 		inet_free_ifa(ifa);
+		printk(KERN_ALERT "%s: ifa is not local \n",__func__);
 		return 0;
 	}
+	
+	if(ifa->remote == 1)
+		printk(KERN_ALERT "%s: flags are set\n",__func__);
+	
 
 	ifa->ifa_flags &= ~IFA_F_SECONDARY;
 	last_primary = &in_dev->ifa_list;
@@ -504,9 +509,13 @@ static int __inet_insert_ifa(struct in_ifaddr *ifa, struct nlmsghdr *nlh,
 
 	ifa->ifa_next = *ifap;
 	*ifap = ifa;
-
+	if(ifa->remote == 1)
+		printk(KERN_ALERT "%s: before inet_hash \n",__func__);
+	
 	inet_hash_insert(dev_net(in_dev->dev), ifa);
-
+	
+	if(ifa->remote == 1)
+		printk(KERN_ALERT "%s: before rtmsg_ifa \n",__func__);
 	/* Send message first, then call notifier.
 	   Notifier will trigger FIB update, so that
 	   listeners of netlink will know about new ifaddr */
@@ -1419,17 +1428,25 @@ static void rtmsg_ifa(int event, struct in_ifaddr *ifa, struct nlmsghdr *nlh,
 	skb = nlmsg_new(inet_nlmsg_size(), GFP_KERNEL);
 	if (skb == NULL)
 		goto errout;
-
+	if(ifa->remote == 1)
+		printk(KERN_ALERT "%s: skb ok \n",__func__);
+	
 	err = inet_fill_ifaddr(skb, ifa, pid, seq, event, 0);
 	if (err < 0) {
 		/* -EMSGSIZE implies BUG in inet_nlmsg_size() */
 		WARN_ON(err == -EMSGSIZE);
 		kfree_skb(skb);
 		goto errout;
-	}
+	} 
+	if(ifa->remote == 1)
+		printk(KERN_ALERT "%s: before rtnl notify \n",__func__);
+	
 	rtnl_notify(skb, net, pid, RTNLGRP_IPV4_IFADDR, nlh, GFP_KERNEL);
 	return;
 errout:
+	if(ifa->remote == 1)
+		printk(KERN_ALERT "%s: errout  \n",__func__);
+	
 	if (err < 0)
 		rtnl_set_sk_err(net, RTNLGRP_IPV4_IFADDR, err);
 }
