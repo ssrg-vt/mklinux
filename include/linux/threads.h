@@ -39,7 +39,6 @@
  *
  *Original implementation of linux
  */
-
 /*
  * This controls the default maximum pid allocated to a process
  

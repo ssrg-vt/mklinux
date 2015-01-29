@@ -319,24 +319,24 @@ static __init int pid_namespaces_init(void)
 
 static void *pidns_get(struct task_struct *task)
 {
-        struct pid_namespace *ns;
+	struct pid_namespace *ns;
 
-        rcu_read_lock();
-        ns = get_pid_ns(task_active_pid_ns(task));
-        rcu_read_unlock();
+	rcu_read_lock();
+	ns = get_pid_ns(task_active_pid_ns(task));
+	rcu_read_unlock();
 
-        return ns;
+	return ns;
 }
 
 static void pidns_put(void *ns)
 {
-        put_pid_ns(ns);
+	put_pid_ns(ns);
 }
 
 static int pidns_install(struct nsproxy *nsproxy, void *ns)
 {
-        struct pid_namespace *active = task_active_pid_ns(current);
-        struct pid_namespace *ancestor, *new = ns;
+	struct pid_namespace *active = task_active_pid_ns(current);
+	struct pid_namespace *ancestor, *new = ns;
 
 /*        if (!ns_capable(new->user_ns, CAP_SYS_ADMIN) ||
  *                    !nsown_capable(CAP_SYS_ADMIN))
@@ -344,26 +344,27 @@ static int pidns_install(struct nsproxy *nsproxy, void *ns)
  *                                    */
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
-        /*
- *          * Only allow entering the current active pid namespace
- *                   * or a child of the current active pid namespace.
- *                            *
- *                                     * This is required for fork to return a usable pid value and
- *                                              * this maintains the property that processes and their
- *                                                       * children can not escape their current pid namespace.
- *                                                                */
-        if (new->level < active->level)
-                return -EINVAL;
 
-        ancestor = new;
-        while (ancestor->level > active->level)
-                ancestor = ancestor->parent;
-        if (ancestor != active)
-                return -EINVAL;
+	/*
+	 * Only allow entering the current active pid namespace
+	 * or a child of the current active pid namespace.
+	 *
+	 * This is required for fork to return a usable pid value and
+	 * this maintains the property that processes and their
+	 * children can not escape their current pid namespace.
+	 */
+	if (new->level < active->level)
+		return -EINVAL;
 
-        put_pid_ns(nsproxy->pid_ns_for_children);
-        nsproxy->pid_ns_for_children = get_pid_ns(new);
-        return 0;
+	ancestor = new;
+	while (ancestor->level > active->level)
+		ancestor = ancestor->parent;
+	if (ancestor != active)
+		return -EINVAL;
+
+	put_pid_ns(nsproxy->pid_ns_for_children);
+	nsproxy->pid_ns_for_children = get_pid_ns(new);
+	return 0;
 }
 
 /*static unsigned int pidns_inum(void *ns)

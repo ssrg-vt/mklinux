@@ -58,7 +58,23 @@ typedef struct __cpuinfo_arch_x86{
 	char _power_management[64];
 }cpuinfo_arch_x86_t;
 
+#define MAX_ARM_CORES 8
+
+typedef struct __per_core_info_t{
+	unsigned int processor_id;
+	char model_name[64];
+	unsigned long cpu_freq;
+	char fpu[8];
+}per_core_info_t;
+
 typedef struct __cpuinfo_arch_arm64{
+	char __processor[64];
+	per_core_info_t per_core[MAX_ARM_CORES];
+	unsigned int cpu_implementer;
+	char cpu_arch[16];
+	unsigned int cpu_variant;
+	unsigned int cpu_part;
+	unsigned int cpu_revision;
 }cpuinfo_arch_arm64_t;
 
 typedef union __cpuinfo_arch{

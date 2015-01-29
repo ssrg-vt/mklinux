@@ -2541,7 +2541,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	 * places tmp vma above, and higher split_vma places tmp vma below.
 	 */
 	if (start > vma->vm_start) {
-		// int error;
+		int error;
 
 		/*
 		 * Make sure that map_count on return from munmap() will

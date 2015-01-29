@@ -8542,6 +8542,8 @@ int do_migration(struct task_struct* task, int dst_cpu,
        int first= 0;
        unsigned long flags;
 
+	printk(" TASK_SIZE = %llx %llx %llx\n", TASK_SIZE, TASK_SIZE_MAX, IA32_PAGE_OFFSET);
+	
        request = kmalloc(sizeof(clone_request_t), GFP_ATOMIC);
        if (request == NULL) {
 	       return -1;

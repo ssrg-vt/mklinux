@@ -296,11 +296,10 @@ typedef struct {
 		struct {
 			CLONE_FIELDS
 			field_arch arch;
-		};
+		}__attribute__((packed));
 #define	CLONE_STRUCT_PAD ((sizeof(struct _clone_request)>PCN_KMSG_PAYLOAD_SIZE)?PAD_LONG_MESSAGE(sizeof(struct _clone_request)):(PCN_KMSG_PAYLOAD_SIZE))
 		char pad[CLONE_STRUCT_PAD];
 	}__attribute__((packed));
-
 }__attribute__((packed)) clone_request_t;
 
 

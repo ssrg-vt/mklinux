@@ -59,7 +59,32 @@ void print_x86_cpuinfo(struct seq_file *m, _remote_cpu_info_list_t *objPtr){
 }
 
 void print_arm_cpuinfo(struct seq_file *m, _remote_cpu_info_list_t *objPtr){
-	// TODO: for ARM
+	
+	int i =0;
+		
+	seq_printf(m, "processor\t: %s %s\n\n", objPtr->_data.arch.arm64.__processor,\
+					objPtr->_data.arch.arm64.per_core[i].model_name);
+
+	for(i=0;i<MAX_ARM_CORES;i++)
+	{
+		seq_printf(m, "processor\t: %u\n", objPtr->_data.arch.arm64.per_core[i].processor_id);
+
+		seq_printf(m, "model name\t: %s\n", objPtr->_data.arch.arm64.per_core[i].model_name);
+
+		seq_printf(m, "cpu MHz\t\t: %lu.%02lu\n",
+			   	objPtr->_data.arch.arm64.per_core[i].cpu_freq / 1000000UL,
+			   	objPtr->_data.arch.arm64.per_core[i].cpu_freq % 1000000UL);
+		seq_printf(m, "fpu\t\t: %s\n\n", objPtr->_data.arch.arm64.per_core[i].fpu);
+	}
+
+	/* dump out the processor features */
+	seq_puts(m, "Features\t: ");
+
+	seq_printf(m, "\nCPU implementer\t: 0x%02x\n", objPtr->_data.arch.arm64.cpu_implementer);
+	seq_printf(m, "CPU architecture: %s\n", objPtr->_data.arch.arm64.cpu_arch);
+	seq_printf(m, "CPU variant\t: 0x%x\n", objPtr->_data.arch.arm64.cpu_variant);
+	seq_printf(m, "CPU part\t: 0x%03x\n", objPtr->_data.arch.arm64.cpu_part);
+	seq_printf(m, "CPU revision\t: %u\n", objPtr->_data.arch.arm64.cpu_revision);
 }
 
 void print_unknown_cpuinfo(struct seq_file *m, _remote_cpu_info_list_t *objPtr){

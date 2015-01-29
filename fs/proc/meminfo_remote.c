@@ -120,13 +120,7 @@ int fill_meminfo_response( _remote_mem_info_response_t *res)
 	res->_SwapFree = K(i.freeswap);
 	res->_Dirty = K(global_page_state(NR_FILE_DIRTY));
 	res->_Writeback = K(global_page_state(NR_WRITEBACK));
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	res->_Cached = K(global_page_state(NR_ANON_PAGES)
-		  + global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
-		  HPAGE_PMD_NR);
-#else
 	res->_AnonPages = K(global_page_state(NR_ANON_PAGES));
-#endif
 	res->_Mapped = K(global_page_state(NR_FILE_MAPPED));
 	res->_Shmem = K(global_page_state(NR_SHMEM));
 	res->_Slab = K(global_page_state(NR_SLAB_RECLAIMABLE) +
@@ -149,7 +143,7 @@ int fill_meminfo_response( _remote_mem_info_response_t *res)
 #ifdef CONFIG_MEMORY_FAILURE
 	// Sharath: mce_bad_pages is not available in Linux 3.12 
 	//res->_HardwareCorrupted = atomic_long_read(&mce_bad_pages) << (PAGE_SHIFT - 10);		
-	res->_HardwareCorrupted = 0;
+	res->_HardwareCorrupted = atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10);
 #endif
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	res->_AnonHugePages = K(global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
@@ -184,7 +178,8 @@ static int handle_remote_proc_mem_info_request(struct pcn_kmsg_message* inc_msg)
 
 	_remote_mem_info_request_t* msg = (_remote_mem_info_request_t*) inc_msg;
 	_remote_mem_info_response_t response;
-
+	
+	memset(&response, 0, sizeof(_remote_mem_info_response_t));
 
 	PRINTK("%s: Entered remote  cpu info request \n", __func__);
 
@@ -228,10 +223,8 @@ int remote_proc_meminfo_info(_remote_mem_info_response_t *total)
 
 	if (total == NULL) {
 		return -1;
-	} else if (sizeof(total) != sizeof(_remote_mem_info_response_t)) {
-		return -1;
-	}
-
+	} 
+	
 	/* clear the total meminfo */
 	memset(total, 0, sizeof(_remote_mem_info_response_t));
 

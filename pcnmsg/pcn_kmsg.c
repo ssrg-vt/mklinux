@@ -318,7 +318,7 @@ int send_thread(void)
 		}
 	}while(err < 0);
 
-        down_interruptible(&rcv_connDone);
+    down_interruptible(&rcv_connDone);
 	is_connection_done = PCN_CONN_CONNECTED;
 	up(&send_connDone);
 	printk("############## Connection Done...PCN_SEND Thread: my_ipaddr: 0x%x\n", my_ipaddr);

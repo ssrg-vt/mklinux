@@ -75,32 +75,32 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	savesegment(es, es);
 
 	if ((current == task) && (es != arch->thread_es)) {
-		PSPRINTK("%s: es %x thread %x\n", __func__, es, request->thread_es);
+		//PSPRINTK("%s: es %x thread %x\n", __func__, es, request->thread_es);
 	}
 	arch->thread_ds = task->thread.ds;
 	savesegment(ds, ds);
 	if (ds != arch->thread_ds) {
-		PSPRINTK("%s: ds %x thread %x\n", __func__, ds, request->thread_ds);
+		//PSPRINTK("%s: ds %x thread %x\n", __func__, ds, request->thread_ds);
 	}
 
 
 	arch->thread_fsindex = task->thread.fsindex;
 	savesegment(fs, fsindex);
 	if (fsindex != arch->thread_fsindex) {
-		PSPRINTK(
-				"%s: fsindex %x thread %x\n", __func__, fsindex, request->thread_fsindex);
+		//PSPRINTK(
+		//		"%s: fsindex %x thread %x\n", __func__, fsindex, request->thread_fsindex);
 	}
 	arch->thread_gsindex = task->thread.gsindex;
 	savesegment(gs, gsindex);
 	if (gsindex != arch->thread_gsindex) {
-		PSPRINTK(
-				"%s: gsindex %x thread %x\n", __func__, gsindex, request->thread_gsindex);
+		//PSPRINTK(
+		//		"%s: gsindex %x thread %x\n", __func__, gsindex, request->thread_gsindex);
 	}
 	arch->thread_fs = task->thread.fs;
 	rdmsrl(MSR_FS_BASE, fs);
 	if (fs != arch->thread_fs) {
-		PSPRINTK(
-				"%s: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
+		//PSPRINTK(
+		//		"%s: fs %lx thread %lx\n", __func__, fs, request->thread_fs);
 		arch->thread_fs = fs;
 	}
 
@@ -108,8 +108,8 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	rdmsrl(MSR_KERNEL_GS_BASE, gs);
 
 	if (gs != arch->thread_gs) {
-		PSPRINTK("%s: gs %lx thread %lx\n", __func__, gs, request->thread_gs);
-				arch->thread_gs = gs;
+		//PSPRINTK("%s: gs %lx thread %lx\n", __func__, gs, request->thread_gs);
+		//		arch->thread_gs = gs;
 	}
 	ret = 0;
 

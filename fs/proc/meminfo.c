@@ -169,12 +169,12 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 		K(committed) + rem_mem._Committed_AS,
 		((unsigned long)VMALLOC_TOTAL >> 10)  + rem_mem._VmallocTotal,
 		(vmi.used >> 10) + rem_mem._VmallocUsed,
-		(vmi.largest_chunk >> 10) + rem_mem._VmallocChunk,
+		(vmi.largest_chunk >> 10) + rem_mem._VmallocChunk
 #ifdef CONFIG_MEMORY_FAILURE
-		(atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10)) + rem_mem._HardwareCorrupted,
+		,(atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10)) + rem_mem._HardwareCorrupted
 #endif
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
-		K((global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
+		,K((global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
 					HPAGE_PMD_NR)) + rem_mem._AnonHugePages
 #endif
 		);
