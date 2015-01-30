@@ -1569,26 +1569,11 @@ struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
 		struct pt_regs *regs,
 		unsigned long stack_size,
 		int __user *parent_tidptr,
-		int __user *child_tidptr){
-
+		int __user *child_tidptr)
+{
 	struct task_struct *p;
 	int trace = 0;
 	long nr;
-
-	/*
-	 * Do some preliminary argument and permissions checking before we
-	 * actually start allocating stuff
-	 */
-	if (clone_flags & CLONE_NEWUSER) {
-		if (clone_flags & CLONE_THREAD)
-			return -EINVAL;
-		/* hopefully this check will go away when userns support is
-		 * complete
-		 */
-		if (!capable(CAP_SYS_ADMIN) || !capable(CAP_SETUID) ||
-				!capable(CAP_SETGID))
-			return -EPERM;
-	}
 
 	/*
 	 * Determine whether and which event to report to ptracer.  When
@@ -1596,7 +1581,7 @@ struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
 	 * requested, no event is reported; otherwise, report if the event
 	 * for the type of forking is enabled.
 	 */
-	if (likely(user_mode(regs)) && !(clone_flags & CLONE_UNTRACED)) {
+	if (!(clone_flags & CLONE_UNTRACED)) {
 		if (clone_flags & CLONE_VFORK)
 			trace = PTRACE_EVENT_VFORK;
 		else if ((clone_flags & CSIGNAL) != SIGCHLD)
@@ -1627,24 +1612,13 @@ struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
 		if (clone_flags & CLONE_VFORK) {
 			p->vfork_done = &vfork;
 			init_completion(&vfork);
+			get_task_struct(p);
 		}
-
-		//audit_finish_fork(p);
-
-		/*
-		 * We set PF_STARTING at creation in case tracing wants to
-		 * use this to distinguish a fully live task from one that
-		 * hasn't finished SIGSTOP raising yet.  Now we clear it
-		 * and set the child going.
-		 */
-		//p->flags &= ~PF_STARTING;
 
 		//Multikernel
 		process_server_dup_task(current, p);
-
 		p->represents_remote= 1;
 		p->distributed_exit= EXIT_NOT_ACTIVE;
-
 		wake_up_new_task(p);
 
 		/* forking complete and child started to run, tell ptracer */
@@ -1652,15 +1626,15 @@ struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
 			ptrace_event(trace, nr);
 
 		if (clone_flags & CLONE_VFORK) {
-			freezer_do_not_count();
-			wait_for_completion(&vfork);
-			freezer_count();
-			ptrace_event(PTRACE_EVENT_VFORK_DONE, nr);
+			if (!wait_for_vfork_done(p, &vfork))
+				ptrace_event(PTRACE_EVENT_VFORK_DONE, nr);
 		}
+	} else {
+		nr = PTR_ERR(p);
+		printk(KERN_ALERT"%s: Failed to fork kernel thread : %ld %ld\n", __func__, nr, -nr);
+		//p = NULL;
 	}
-
 	return p;
-
 }
 
 /*
@@ -1745,6 +1719,25 @@ pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
 {
 	return do_fork(flags|CLONE_VM|CLONE_UNTRACED, (unsigned long)fn,
 			(unsigned long)arg, NULL, NULL);
+}
+
+
+/*
+ * Create a kernel thread -  required for process server to create a 
+ * kernel thread from user context.
+ */
+pid_t kernel_thread_popcorn(int (*fn)(void *), void *arg, unsigned long flags)
+{
+	unsigned long flags_usr_thread = current->flags;
+	pid_t pid;
+
+	/* Change the flags to fake kernel that caller is a kernel thread */
+	current->flags |= PF_KTHREAD;
+        pid = do_fork(flags|CLONE_VM|CLONE_UNTRACED, (unsigned long)fn,
+                        (unsigned long)arg, NULL, NULL);
+
+	/* Restore the user thread flags */
+	current->flags = flags_usr_thread;
 }
 
 #ifdef __ARCH_WANT_SYS_FORK

@@ -847,58 +847,15 @@ ENTRY(\label)
 END(\label)
 	.endm
 
-	// PTREGSCALL not available on this kernel taken from 3.2
-	// Sharath: Below code is copied from 3.2 kernel since its 
-        //          not available on 3.12
-	// Start of addition +
-ENTRY(save_rest)
-        PARTIAL_FRAME 1 REST_SKIP+8
-        movq 5*8+16(%rsp), %r11 /* save return address */
-        movq_cfi rbx, RBX+16
-        movq_cfi rbp, RBP+16
-        movq_cfi r12, R12+16
-        movq_cfi r13, R13+16
-        movq_cfi r14, R14+16
-        movq_cfi r15, R15+16
-        movq %r11, 8(%rsp)      /* return address */
-        FIXUP_TOP_OF_STACK %r11, 16
-        ret
-        CFI_ENDPROC
-END(save_rest)
- 
-	.macro PTREGSCALL label,func,arg
-ENTRY(\label)
-	PARTIAL_FRAME 1 8               /* offset 8: return address */
-	subq $REST_SKIP, %rsp
-	CFI_ADJUST_CFA_OFFSET REST_SKIP
-	call save_rest
-	DEFAULT_FRAME 0 8               /* offset 8: return address */
-	leaq 8(%rsp), \arg      /* pt_regs pointer */
-	call \func
-	jmp ptregscall_common
-	CFI_ENDPROC
-END(\label)
-	.endm
-	// End of addition+
+
 
 	FORK_LIKE  clone
 	FORK_LIKE  fork
 	FORK_LIKE  vfork
 	FIXED_FRAME stub_iopl, sys_iopl
-	PTREGSCALL stub_sched_setaffinity, sys_sched_setaffinity, %rcx
 
-ENTRY(ptregscall_common)
-	DEFAULT_FRAME 1 8	/* offset 8: return address */
-	RESTORE_TOP_OF_STACK %r11, 8
-	movq_cfi_restore R15+8, r15
-	movq_cfi_restore R14+8, r14
-	movq_cfi_restore R13+8, r13
-	movq_cfi_restore R12+8, r12
-	movq_cfi_restore RBP+8, rbp
-	movq_cfi_restore RBX+8, rbx
-	ret $REST_SKIP		/* pop extended registers */
-	CFI_ENDPROC
-END(ptregscall_common)
+	FORK_LIKE sched_setaffinity
+
 
 ENTRY(stub_execve)
 	CFI_STARTPROC

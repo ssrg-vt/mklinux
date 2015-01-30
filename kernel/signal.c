@@ -2174,7 +2174,8 @@ static int kill_something_info(int sig, struct siginfo *info, pid_t pid) {
 		if(origin_pid!=-1 && next_pid != -1){
 			ret=0;
 		}
-		else if(p && p->tgroup_distributed == 1  && p->represents_remote == 1){
+
+		if(p && p->tgroup_distributed == 1  && p->represents_remote == 1){
 			printk(KERN_ALERT"%s:signal for shadow pid{%d} sig{%d} next{%d} \n",__func__,p->pid,sig,p->next_pid);
 			if(p->group_exit != -1){
 				printk(KERN_ALERT"%s group exit\n",__func__);

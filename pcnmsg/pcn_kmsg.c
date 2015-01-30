@@ -68,6 +68,7 @@ static rcv_wait rcv_wait_q;
 
 struct semaphore send_connDone;
 struct semaphore rcv_connDone;
+struct semaphore pcn_send_sem;
 
 static int __init initialize(void);
 
@@ -130,6 +131,7 @@ int __init initialize()
 
 	sema_init(&send_connDone,0);
 	sema_init(&rcv_connDone,0);
+	sema_init(&pcn_send_sem,1);
 
 	// Sharath: 
 	if(my_ipaddr == 0x0A0101B4)
@@ -341,188 +343,229 @@ int send_thread(void)
 	return 0;
 }
 
-
 int connection_handler(void *arg0)
 {
-	struct pcn_kmsg_message *message, *data, *msg_del;
-	int deficit = 0, msg_recvd = 0;
-	rcv_wait *wait_data;
-	int err = 0, msg_size=0;
-	int val = 1;
+        struct pcn_kmsg_message *message, *data, *msg_del, *temp_buff;
+        int deficit = 0, msg_recvd = 0;
+        rcv_wait *wait_data;
+        int err = 0, msg_size=0, temp_len = 0, copy_len = 0;
+        int val = 1;
 
-	printk(" IN %s\n", __func__);
+        printk(" IN %s\n", __func__);
 
-	err = sock_create(PF_INET, SOCK_STREAM,
-		    IPPROTO_TCP, &sock_recv);
-	if(err < 0)
-	{
-		printk("Failed to create socket..!! Messaging layer init failed with err %d\n", err);
-		return err;
-	}
+        err = sock_create(PF_INET, SOCK_STREAM,
+                    IPPROTO_TCP, &sock_recv);
+        if(err < 0)
+        {
+                printk("Failed to create socket..!! Messaging layer init failed with err %d\n", err);
+                return err;
+        }
 
-	printk(" successfully created socket\n");
+        printk(" successfully created socket\n");
 
-	err = sock_recv->ops->setsockopt(sock_recv, SOL_TCP, TCP_NODELAY,
-			(char __user *)&val, sizeof(val));
-	if(err < 0)
-	{
-		printk("Failed to set socket option for receive socket..!! err %d\n", err);
-	}
+        err = sock_recv->ops->setsockopt(sock_recv, SOL_TCP, TCP_NODELAY,
+                        (char __user *)&val, sizeof(val));
+        if(err < 0)
+        {
+                printk("Failed to set socket option for receive socket..!! err %d\n", err);
+        }
 
-	printk("Successfully set socket opt\n");
-	
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_addr.s_addr = INADDR_ANY;
-	serv_addr.sin_port = htons(PORT);
+        printk("Successfully set socket opt\n");
 
-	err = sock_recv->ops->bind(sock_recv, (struct sockaddr *)&serv_addr,
-    		     sizeof(serv_addr));
-	if(err < 0)
-	{
-		printk("Failed to bind connection..!! Messaging layer init failed\n");
-		goto end;
-	}
+        serv_addr.sin_family = AF_INET;
+        serv_addr.sin_addr.s_addr = INADDR_ANY;
+        serv_addr.sin_port = htons(PORT);
 
-	printk(" successfully bound to socket\n");
+        err = sock_recv->ops->bind(sock_recv, (struct sockaddr *)&serv_addr,
+                     sizeof(serv_addr));
+        if(err < 0)
+        {
+                printk("Failed to bind connection..!! Messaging layer init failed\n");
+                goto end;
+        }
 
-	err = sock_recv->ops->listen(sock_recv, 1);
-	if(err < 0)
-	{
-		printk("Failed to listen on connection..!! Messaging layer init failed\n");
-		goto end;
-	}
+        printk(" successfully bound to socket\n");
 
-	printk(" successfully listening on socket\n");
+        err = sock_recv->ops->listen(sock_recv, 1);
+        if(err < 0)
+        {
+                printk("Failed to listen on connection..!! Messaging layer init failed\n");
+                goto end;
+        }
 
-	err = sock_create(PF_INET, SOCK_STREAM,
-		    IPPROTO_TCP, &conn_sock);
-	if(err < 0)
-	{
-		printk("Failed to create socket..!! Messaging layer init failed with err %d\n", err);
-		goto end;
-	}
+        printk(" successfully listening on socket\n");
+        err = sock_create(PF_INET, SOCK_STREAM,
+                    IPPROTO_TCP, &conn_sock);
+        if(err < 0)
+        {
+                printk("Failed to create socket..!! Messaging layer init failed with err %d\n", err);
+                goto end;
+        }
 
-	err = conn_sock->ops->setsockopt(conn_sock, SOL_TCP, TCP_NODELAY,
-			(char __user *)&val, sizeof(val));
-	if(err < 0)
-	{
-		printk("Failed to set socket option for accept socket..!! err %d\n", err);
-	}
+        err = conn_sock->ops->setsockopt(conn_sock, SOL_TCP, TCP_NODELAY,
+                        (char __user *)&val, sizeof(val));
+        if(err < 0)
+        {
+                printk("Failed to set socket option for accept socket..!! err %d\n", err);
+        }
 
-	printk(" successfully set accept socket options\n");
+        printk(" successfully set accept socket options\n");
 
-	err = conn_sock->ops->accept(sock_recv, conn_sock, 0);
+        err = conn_sock->ops->accept(sock_recv, conn_sock, 0);
 
-	if(conn_sock == NULL)
-	{
-		printk("Failed to accept connection..!! Messaging layer init failed\n");
-		goto exit;
-	}
+        if(conn_sock == NULL)
+        {
+                printk("Failed to accept connection..!! Messaging layer init failed\n");
+                goto exit;
+        }
 
-	printk(" successfully created accept socket\n");
+        printk(" successfully created accept socket\n");
 
-	up(&rcv_connDone);
-	printk(" Recieve connection successfully completed..!!\n");
+        up(&rcv_connDone);
+        printk(" Recieve connection successfully completed..!!\n");
 
-	while(1)
-	{
+        /* temperory allocation to handle message less than header size */
+        temp_buff = vmalloc(sizeof(struct pcn_kmsg_hdr));
+        if(temp_buff==NULL)
+        {
+                printk("Can't Vmalloc..\n");
+                return -1;
+        }
+
+        /* buffer to recive data */
+        msg_del = (struct pcn_kmsg_message*)vmalloc(128*PAGE_SIZE);
+        if(msg_del==NULL)
+        {
+                printk("Can't Vmalloc..\n");
+                return -1;
+        }
+
+        while(1)
+        {
 #if TEST_MSG_LAYER
-		if(count == 10)
-		{
-			printk("entering while loop\n");
+                if(count == 10)
+                {
+                        printk("entering while loop\n");
 
-			while(1)
-			{
-				msleep(10);
-				if(kthread_should_stop())
-					return 0;
-			}
-		}
+                        while(1)
+                        {
+                                msleep(10);
+                                if(kthread_should_stop())
+                                        return 0;
+                        }
+                }
 #else
-		if(kthread_should_stop())
-			return 0;
+                if(kthread_should_stop())
+                {
+                        vfree(msg_del);
+                        vfree(temp_buff);
+                        return 0;
+                }
 
 #endif /*TEST_MSG_LAYER*/
 
-		data = (struct pcn_kmsg_message*)vmalloc(128*PAGE_SIZE);
+                struct msghdr msg;
+                struct iovec iov;
+                mm_segment_t oldfs;
+                int size = 0, len = 0;
 
-		struct msghdr msg;
-		struct iovec iov;
-		mm_segment_t oldfs;
-		int size = 0, len = 0;
+                if (conn_sock->sk==NULL)
+                        return 0;
 
-		if (conn_sock->sk==NULL) 
-			return 0;
+                len = (128*PAGE_SIZE);
+                data = msg_del;
 
-		len = (128*PAGE_SIZE);
-		iov.iov_base = data;
-		iov.iov_len = len;
+                iov.iov_base = data;
+                iov.iov_len = len;
 
-		msg.msg_flags = MSG_WAITFORONE;
-		msg.msg_name = conn_sock;
-		msg.msg_namelen  = sizeof(struct sockaddr_in);
-		msg.msg_control = NULL;
-		msg.msg_controllen = 0;
-		msg.msg_iov = &iov;
-		msg.msg_iovlen = 1;
-		msg.msg_control = NULL;
+                msg.msg_flags = MSG_WAITFORONE;
+                msg.msg_name = conn_sock;
+                msg.msg_namelen  = sizeof(struct sockaddr_in);
+                msg.msg_control = NULL;
+                msg.msg_controllen = 0;
+                msg.msg_iov = &iov;
+                msg.msg_iovlen = 1;
+                msg.msg_control = NULL;
 
-		oldfs = get_fs();
-		set_fs(KERNEL_DS);
-		size = sock_recvmsg(conn_sock,&msg,len,msg.msg_flags);
-		set_fs(oldfs);
+                oldfs = get_fs();
+                set_fs(KERNEL_DS);
+                size = sock_recvmsg(conn_sock,&msg,len,msg.msg_flags);
+                set_fs(oldfs);
 
-		msg_del = data;
+                while(size > 0)
+                {
+                        if(size < sizeof(struct pcn_kmsg_hdr)){
+                                printk(KERN_ALERT "msg recieved without header\n");
+                                memcpy(temp_buff, data, size);
+                                temp_len = size;
+                                break;
+                        }
 
-		//printk("In Recieve: Size %d NoRcv %d\n",data->hdr.size, size);
+                        if(temp_len != 0)
+                        {
+                                memcpy(temp_buff, data, (sizeof(struct pcn_kmsg_hdr) - temp_len));
+                                msg_size = temp_buff->hdr.size;
 
-		while(size > 0)
-		{
-			if(deficit == 0)
-			{
-				msg_size = data->hdr.size;
-				message=vmalloc(msg_size);
-				if(message==NULL)
-				{	
-					printk("Can't Vmalloc..\n");
-					return -1;
-				}
-				memcpy(message,data,msg_size);
-	                        data = (void *)data+msg_size;
-			}
-			else
-			{
-				memcpy((void *)message+msg_recvd, msg_del, deficit);
-	                        data = (void *)data+deficit;
-				msg_size = deficit;
-			}
+                                message=vmalloc(msg_size);
+                                if(message==NULL)
+                                {
+                                        printk("Can't Vmalloc..\n");
+                                        return -1;
+                                }
 
-			if(size < msg_size)
-			{
-				deficit = msg_size - size;
-				msg_recvd = size;
-				break;
-			}
-			
-			deficit = 0;
-			wait_data=kmalloc(sizeof(rcv_wait),GFP_KERNEL);
-			wait_data->msg = message;
-			enq_rcv(wait_data);
-			count++;
-			//printk("count = %d %d %d\n", count, msg_size, size);
-			size -= msg_size;
-		}
-		vfree(msg_del);
-	}
+                                memcpy(message,temp_buff,temp_len);
 
+                                copy_len = (size<(msg_size-temp_len))?size:(msg_size-temp_len);
+                                memcpy(message,data,copy_len);
+                                data = (void *)data+copy_len;
+                        }
+                        else if(deficit == 0)
+                        {
+                                msg_size = data->hdr.size;
+
+                                message=vmalloc(msg_size);
+                                if(message==NULL)
+                                {
+                                        printk("Can't Vmalloc..\n");
+                                        return -1;
+                                }
+
+                                copy_len = (size<msg_size)?size:msg_size;
+                                memcpy(message,data,copy_len);
+                                data = (void *)data+copy_len;
+                        }
+                        else
+                        {
+                                copy_len = (size<deficit)?size:deficit;
+                                memcpy((void *)message+msg_recvd, msg_del, copy_len);
+                                data = (void *)data+copy_len;
+                        }
+
+                        if(size < (msg_size - temp_len))
+                        {
+                                deficit = msg_size - size;
+                                msg_size = msg_size - copy_len;
+                                msg_recvd += size;
+                                break;
+                        }
+                        temp_len = 0;
+                        deficit = 0;
+                        msg_recvd = 0;
+                        wait_data=kmalloc(sizeof(rcv_wait),GFP_KERNEL);
+                        wait_data->msg = message;
+                        enq_rcv(wait_data);
+                        count++;
+                        size -= msg_size;
+                }
+        }
 exit:
-	sock_release(conn_sock);
-	conn_sock = NULL;
+        sock_release(conn_sock);
+        conn_sock = NULL;
 end:
-	sock_release(sock_recv);
-	sock_recv = NULL;
-	is_connection_done = PCN_CONN_WATING;
-	return err;
+        sock_release(sock_recv);
+        sock_recv = NULL;
+        is_connection_done = PCN_CONN_WATING;
+        return err;
 
 }
 
@@ -606,12 +649,13 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
         msg.msg_iovlen = 1;
         msg.msg_control = NULL;
 
+		down_interruptible(&pcn_send_sem);
         oldfs = get_fs();
         set_fs(KERNEL_DS);
+	
         size = sock_sendmsg(sock_send,&msg,curr_size);
         set_fs(oldfs);
-
-	printk("%s: %d",__func__,size);
+		up(&pcn_send_sem);
 	return (size<0?-1:size);
 
 }

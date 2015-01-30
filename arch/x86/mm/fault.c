@@ -1052,6 +1052,11 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	/* Get the faulting address: */
 	address = read_cr2();
 
+	if(tsk->tgroup_distributed==1 && tsk->main==1){
+
+		printk("main is having a page fault\n");
+		dump_stack();
+	}
 	/*
 	 * Detect and handle instructions that would cause a page fault for
 	 * both a tracked kernel page and a userspace page.
@@ -1146,7 +1151,7 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	//Multikernel
-	if(tsk->tgroup_distributed==1){
+	if(tsk->tgroup_distributed==1 && tsk->main==0){
 
 		down_read(&mm->distribute_sem);
 		lock_aquired= 1;
@@ -1201,7 +1206,7 @@ retry:
 	// Multikernel
 	repl_ret= 0;
 	// Nothing to do for a thread group that's not distributed.
-	if(tsk->tgroup_distributed==1) {
+	if(tsk->tgroup_distributed==1 && tsk->main==0) {
 
 		repl_ret= process_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
 
@@ -1296,7 +1301,7 @@ good_area:
 		goto out_distr;
 	}
 
-	if((tsk->tgroup_distributed == 1) && (repl_ret & VM_CONTINUE_WITH_CHECK)){
+	if((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)){
 
 		repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
 
@@ -1367,7 +1372,7 @@ out:
 
 out_distr:
 #if NOT_REPLICATED_VMA_MANAGEMENT
-	if((tsk->tgroup_distributed == 1) && lock_aquired){
+	if((tsk->tgroup_distributed == 1 && tsk->main==0) && lock_aquired){
 		up_read(&mm->distribute_sem);
 	}
 #endif
