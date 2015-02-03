@@ -9836,6 +9836,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
         task->group_exit= -1;
         task->uaddr = 0;
         task->origin_pid = -1;
+	task->remote_hb = NULL;
 	// If the new task is not in the same thread group as the parent,
 	// then we do not need to propagate the old thread info.
 	if (orig->tgid != task->tgid) {
@@ -10331,7 +10332,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	int back= 0;
 	int ret= 0;
 
-	printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d, to %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu, dst_cpu);
+	//printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d, to %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu, dst_cpu);
 	if(strcmp(current->comm,"IS") == 0){
 
         	p_trace_printk("s\n");

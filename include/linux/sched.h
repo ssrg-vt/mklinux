@@ -1605,6 +1605,7 @@ struct task_struct {
 	int origin_pid;
 	pid_t surrogate;
 	unsigned long uaddr;
+	struct futex_hash_bucket *remote_hb;
 
 
 };

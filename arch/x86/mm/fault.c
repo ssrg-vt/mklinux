@@ -1028,6 +1028,7 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 {
 	struct vm_area_struct *vma;
 	struct task_struct *tsk;
+	int retrying = 0;
 	unsigned long address;
 	struct mm_struct *mm;
 	int fault,repl_ret,lock_aquired;
@@ -1179,7 +1180,7 @@ retry:
 	// Multikernel
 	repl_ret= 0;
 	// Nothing to do for a thread group that's not distributed.
-	if(tsk->tgroup_distributed==1) {
+	if(tsk->tgroup_distributed==1 && (retrying == 0)) {
 
 		repl_ret= process_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
 
@@ -1267,7 +1268,7 @@ good_area:
 			goto out_distr;
 	}
 
-	if(tsk->tgroup_distributed==1 && (repl_ret & VM_CONTINUE_WITH_CHECK)){
+	if(tsk->tgroup_distributed==1 && (repl_ret & VM_CONTINUE_WITH_CHECK)&&(retrying == 0)){
 
 		repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
 
@@ -1336,6 +1337,11 @@ printk(KERN_ALERT"{%lx} ",_buff[ct]);
 			/* Clear FAULT_FLAG_ALLOW_RETRY to avoid any risk
 			 * of starvation. */
 			flags &= ~FAULT_FLAG_ALLOW_RETRY;
+			if (tsk->tgroup_distributed == 1) {
+                               printk("%s: Retrying the local fetch: 0x%x flags 0x%x\n", __func__, address, flags);
+                               retrying = 1;
+                        }
+
 			goto retry;
 		}
 	}
