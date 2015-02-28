@@ -22,6 +22,7 @@
  *
  */
 #define FIELDS_ARCH struct pt_regs regs;\
+	unsigned long migration_pc;\
 	unsigned long thread_usersp;\
 	unsigned long old_rsp;\
 	unsigned short thread_es;\

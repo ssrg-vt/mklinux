@@ -94,6 +94,8 @@
 #include <linux/popcorn_cpuinfo.h>
 #endif
 
+#include <process_server_arch.h>
+
 #define DEBUG_RATE 3000000
 //static char debug_buffer[128];
 
@@ -3699,7 +3701,7 @@ out_put_task:
 	return retval;
 }
 
-long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct cpumask *in_mask,unsigned int len)
+long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct cpumask *in_mask,unsigned int len, unsigned long migration_pc)
 {
 	cpumask_var_t cpus_allowed, new_mask;
 	//struct task_struct *p;
@@ -3707,6 +3709,8 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	int current_cpu = smp_processor_id();
 	int i,ret;
 	struct pt_regs *regs = current_pt_regs(); 
+
+	printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
 
 	get_online_cpus();
 	rcu_read_lock();
@@ -3722,6 +3726,8 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 #define CONFIG_CPU_NAMESPACE
 #ifndef CONFIG_CPU_NAMESPACE
 
+
+	printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
 	/*
 	 * Multikernel
 	 */
@@ -3750,6 +3756,10 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 				// do the migration
 				get_task_struct(p);
 				rcu_read_unlock();
+				
+				/*Ajith - taking migration PC from syscall for het migration */
+				p->migration_pc = migration_pc;
+
 				ret= process_server_do_migration(p,i,regs);
 				printk("MIGRATED: PID %d \n", p->pid);
 				put_task_struct(p);
@@ -3779,6 +3789,7 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	/* the following is similar to intersecting on local */
 
 	if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
+	printk(" coming to %s:%d %lx %lx\n", __func__, __LINE__, migration_pc, *cpumask_bits(in_mask));
 		struct list_head *iter;
 		_remote_cpu_info_list_t *objPtr;
 		struct cpumask *pcpum;
@@ -3822,11 +3833,19 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 			//bitmap_scnprintf(pippo,128,cpumask_bits(in_mask),len*8);
 			//  printk("in mask printed with len%s\n",pippo);
 
+			printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
+			printk(" values : %d, %d\n", p->nsproxy->cpu_ns->nr_cpu_ids, cbitmap);
 			if ( bitmap_intersects(cpumask_bits(in_mask), cbitmap, p->nsproxy->cpu_ns->nr_cpu_ids) ) {
 				// TODO ask the global scheduler if there are multiple affinities    
 				// do the migration
 				get_task_struct(p);
 				rcu_read_unlock();
+
+				printk("before writing to migration_pc = %lx\n",migration_pc);
+                /*Ajith - taking migration PC from syscall for het migration */
+                p->migration_pc = migration_pc;
+				printk("value of migration_pc = %lx\n",p->migration_pc);
+
 				ret= process_server_do_migration(p,i,regs);
 				printk("MIGRATED: PID %d \n", p->pid);
 				put_task_struct(p);
@@ -3854,7 +3873,7 @@ sleep_again:
 						goto sleep_again;					
 					}
 
-				synchronize_migrations(current->tgroup_home_cpu,current->tgroup_home_id );
+				//synchronize_migrations(current->tgroup_home_cpu,current->tgroup_home_id );
 
 				return task_pt_regs(current)->orig_ax;
 
@@ -3911,6 +3930,7 @@ out_free_cpus_allowed:
 out_put_task:
 	put_task_struct(p);
 	put_online_cpus();
+	printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
 	return retval;
 }
 
@@ -3925,7 +3945,7 @@ static int _get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
 		len = mask_len;
 
 	ret=copy_from_user(new_mask, user_mask_ptr, len);
-	//printk("%s copy from user returned %d len is %d\n",__func__,ret,len);
+	printk("%s copy from user returned %d %d len is %d\n",__func__,*user_mask_ptr,*new_mask,len);
 	return ret ? -EFAULT : 0;
 }
 
@@ -3995,7 +4015,7 @@ asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long 
 
 		if ( (p->cpus_allowed_map &&
 					(p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) )
-			retval= sched_setaffinity_on_popcorn(pid,p, pmask, len);
+			retval= sched_setaffinity_on_popcorn(pid,p, pmask, len, 0);
 		else
 			retval= sched_setaffinity(pid, pmask);
 	}
@@ -4009,6 +4029,92 @@ asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long 
 	//#endif
 
 	return retval;
+}
+
+/**
+ * sys_sched_setaffinity_popcorn - set the cpu affinity of a process for het migration
+ * @pid: pid of the process
+ * @len: length in bytes of the bitmask pointed to by user_mask_ptr
+ * @user_mask_ptr: user-space pointer to the new cpu mask
+ * @migration_pc:  PC to be used after migration on remote side
+ *
+ * Return: 0 on success. An error code otherwise.
+ */
+asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
+				unsigned long __user * user_mask_ptr, unsigned long migration_pc)
+{
+        cpumask_var_t new_mask;
+        int retval;
+
+        struct cpumask *pmask;
+        int nr_cpus;
+        struct cpu_namespace * ns = current->nsproxy->cpu_ns;
+
+		printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
+	
+        // WARN the following maybe requires a per process lock
+        if (ns !=  &init_cpu_ns) {
+                // printk("%s:not the init cpu namespace\n", __func__);
+                nr_cpus = ns->nr_cpu_ids;
+        }
+        else
+                nr_cpus = nr_cpu_ids;
+
+		printk("nr_cpus = %d %d %d %d %d\n", nr_cpus, ns->nr_cpu_ids, nr_cpu_ids, ns->cpumask_size, cpumask_size());
+
+        if ( !(nr_cpus > nr_cpu_ids) ) {
+                 if (!alloc_cpumask_var(&new_mask, GFP_KERNEL))
+                        return -ENOMEM;
+
+                 pmask = new_mask;
+        }
+        else { 
+		/* gloabl cpumask is bigger than local cpumask */
+                pmask= kmalloc(ns->cpumask_size , GFP_KERNEL);
+                if (pmask) {
+                        unsigned char *ptr = (unsigned char*)pmask;
+                        unsigned int tail;
+                        tail = BITS_TO_LONGS(ns->nr_cpus - ns->nr_cpu_ids) * sizeof(long);
+                        memset(ptr + ns->cpumask_size - tail, 0, tail);
+                }
+                else {
+                        printk(KERN_ALERT"%s: kmalloc_node failed\n", __func__);
+                        return -ENOMEM;
+                }
+        }
+  
+        retval = _get_user_cpu_mask(user_mask_ptr, len, pmask,
+                        (!(nr_cpus > nr_cpu_ids)) ? cpumask_size() : ns->cpumask_size);
+        if (retval == 0) {
+                struct task_struct * p = find_process_by_pid(pid);
+                if (!p) {
+                        return -ESRCH;
+                }
+
+        	dump_processor_regs(task_pt_regs(p));
+	        printk("after dumping regs\n");
+
+                if ( (p->cpus_allowed_map &&
+                                        (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) )
+                        retval= sched_setaffinity_on_popcorn(pid,p, pmask, len, migration_pc);
+                else
+                        retval= sched_setaffinity(pid, pmask);
+        }
+
+        if ( !(nr_cpus > nr_cpu_ids))
+                free_cpumask_var(new_mask);
+        else
+                kfree(pmask);
+
+		printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
+		struct task_struct * p = find_process_by_pid(pid);		
+		dump_processor_regs(task_pt_regs(p));
+
+
+		printk("Before syscall exit\n");
+		dump_processor_regs(task_pt_regs(p));
+
+        return retval;
 }
 
 long sched_getaffinity(pid_t pid, struct cpumask *mask)

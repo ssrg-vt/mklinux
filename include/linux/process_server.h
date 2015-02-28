@@ -227,7 +227,6 @@ typedef struct {
 		pid_t placeholder_tgid;\
 		int back;\
 		int prev_pid;\
-		struct pt_regs regs;\
 		int tgroup_home_cpu;\
 		int tgroup_home_id;\
 		int origin_pid;\
@@ -249,7 +248,7 @@ typedef struct {
 		struct {
 			BACK_MIGRATION_FIELDS
 			field_arch arch;
-		};
+		}__attribute__((packed));
 #define	BACK_MIGRATION_STRUCT_PAD ((sizeof(struct _back_migration_request)>PCN_KMSG_PAYLOAD_SIZE)?PAD_LONG_MESSAGE(sizeof(struct _back_migration_request)):(PCN_KMSG_PAYLOAD_SIZE))
 		char pad[BACK_MIGRATION_STRUCT_PAD];
 	}__attribute__((packed));

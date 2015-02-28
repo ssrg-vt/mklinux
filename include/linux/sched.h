@@ -1434,6 +1434,9 @@ struct task_struct {
 	int origin_pid;
 	pid_t surrogate;
 	unsigned long uaddr;
+
+	/*Ajith - for het migration */
+	unsigned long migration_pc;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

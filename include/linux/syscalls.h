@@ -850,4 +850,10 @@ asmlinkage long sys_kcmp(pid_t pid1, pid_t pid2, int type,
 			 unsigned long idx1, unsigned long idx2);
 asmlinkage long sys_finit_module(int fd, const char __user *uargs, int flags);
 asmlinkage long sys_take_time(int start);
+
+/*Ajith- new syscall for popcorn sched_setaffinity */
+asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
+                                        unsigned long __user *user_mask_ptr,
+					unsigned long migration_pc);
+
 #endif

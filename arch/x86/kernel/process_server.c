@@ -109,6 +109,13 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 		PSPRINTK("%s: gs %lx thread %lx\n", __func__, gs, arch->thread_gs);
 				arch->thread_gs = gs;
 	}
+
+	/*Ajith - for het migration */
+	if(task->migration_pc != 0){
+		arch->migration_pc = task->migration_pc;
+		printk("IN %s:%d migration PC = %lx\n", arch->migration_pc);
+	}
+
 	ret = 0;
 	//dump_processor_regs(regs);
 	//__show_regs(regs, 1);
@@ -145,21 +152,22 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 {
 	int ret = -1;
 
-	//printk("%s [+] TID: %d\n", __func__, task->pid);
+	printk("%s [+] TID: %d\n", __func__, task->pid);
 	
 	if((task == NULL)  || (arch == NULL)){
 		printk(KERN_ERR"process_server: invalid params to restore_thread_info()");
 		goto exit;
 	}
 
+#if 0
 	task->thread.usersp = arch->old_rsp;
 	
 	memcpy(task_pt_regs(task), &arch->regs, sizeof(struct pt_regs));
 
-	//dump_processor_regs(&arch->regs);
+	dump_processor_regs(&arch->regs);
 	//__show_regs(&arch->regs, 1);
 
-	task_pt_regs(task)->sp = arch->old_rsp; // ?
+	//task_pt_regs(task)->sp = arch->old_rsp; // ?
 
 	task->thread.es = arch->thread_es;
 	task->thread.ds = arch->thread_ds;
@@ -167,9 +175,21 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	task->thread.fs = arch->thread_fs;
 	task->thread.gs = arch->thread_gs;
 	task->thread.gsindex = arch->thread_gsindex;
+#endif
+
+	printk("IN %s:%d migration PC = %lx %lx\n", __func__, __LINE__, arch->migration_pc, task->stack);
+    /*Ajith - for het migration */
+    if(arch->migration_pc != 0)
+	{
+    	task_pt_regs(task)->ip=arch->migration_pc;
+		printk("IN %s:%d migration PC = %lx %lx\n", __func__, __LINE__, task_pt_regs(task)->ip, arch->migration_pc);
+	}
+
+	dump_processor_regs(task_pt_regs(task));
+
 	ret = 0;
 
-	//printk("%s [-] TID: %d\n", __func__, task->pid);
+	printk("%s [-] TID: %d\n", __func__, task->pid);
 exit:
 	return ret;
 }
