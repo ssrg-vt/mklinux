@@ -244,6 +244,8 @@ dotraplinkage void do_stack_segment(struct pt_regs *regs, long error_code)
 {
 	enum ctx_state prev_state;
 
+	printk("In %s:%d\n", __func__, __LINE__);
+
 	prev_state = exception_enter();
 	if (notify_die(DIE_TRAP, "stack segment", regs, error_code,
 		       X86_TRAP_SS, SIGBUS) != NOTIFY_STOP) {
@@ -258,6 +260,8 @@ dotraplinkage void do_double_fault(struct pt_regs *regs, long error_code)
 {
 	static const char str[] = "double fault";
 	struct task_struct *tsk = current;
+
+	printk("In %s:%d\n", __func__, __LINE__);
 
 	exception_enter();
 	/* Return not checked because double check cannot be ignored */
@@ -283,6 +287,8 @@ do_general_protection(struct pt_regs *regs, long error_code)
 {
 	struct task_struct *tsk;
 	enum ctx_state prev_state;
+
+		printk("In %s:%d\n", __func__, __LINE__);
 
 	prev_state = exception_enter();
 	conditional_sti(regs);
@@ -511,6 +517,7 @@ void math_error(struct pt_regs *regs, int error_code, int trapnr)
 	char *str = (trapnr == X86_TRAP_MF) ? "fpu exception" :
 						"simd exception";
 
+	printk("In %s:%d\n", __func__, __LINE__);
 	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, SIGFPE) == NOTIFY_STOP)
 		return;
 	conditional_sti(regs);
@@ -590,7 +597,7 @@ void math_error(struct pt_regs *regs, int error_code, int trapnr)
 dotraplinkage void do_coprocessor_error(struct pt_regs *regs, long error_code)
 {
 	enum ctx_state prev_state;
-
+	printk("In %s:%d\n", __func__, __LINE__);
 	prev_state = exception_enter();
 	math_error(regs, error_code, X86_TRAP_MF);
 	exception_exit(prev_state);
@@ -600,7 +607,7 @@ dotraplinkage void
 do_simd_coprocessor_error(struct pt_regs *regs, long error_code)
 {
 	enum ctx_state prev_state;
-
+	printk("In %s:%d\n", __func__, __LINE__);	
 	prev_state = exception_enter();
 	math_error(regs, error_code, X86_TRAP_XF);
 	exception_exit(prev_state);
@@ -609,6 +616,7 @@ do_simd_coprocessor_error(struct pt_regs *regs, long error_code)
 dotraplinkage void
 do_spurious_interrupt_bug(struct pt_regs *regs, long error_code)
 {
+	printk("In %s:%d\n", __func__, __LINE__);
 	conditional_sti(regs);
 #if 0
 	/* No need to warn about this any longer. */
@@ -700,6 +708,8 @@ dotraplinkage void do_iret_error(struct pt_regs *regs, long error_code)
 {
 	siginfo_t info;
 	enum ctx_state prev_state;
+
+	printk("In %s:%d\n", __func__, __LINE__);	
 
 	prev_state = exception_enter();
 	local_irq_enable();

@@ -22,6 +22,8 @@
 #include <linux/process_server.h>
 #include <linux/cpu_namespace.h>
 
+extern long my_pid;
+
 /*
  * Page fault error code bits:
  *
@@ -1052,6 +1054,11 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	/* Get the faulting address: */
 	address = read_cr2();
 
+	if(my_pid == tsk->prev_pid)
+	{
+		printk("coming to page fault for thread %ld\n", tsk->pid, tsk->prev_pid);
+	}
+
 	if(tsk->tgroup_distributed==1 && tsk->main==1){
 
 		printk("main is having a page fault\n");
@@ -1207,7 +1214,7 @@ retry:
 	repl_ret= 0;
 	// Nothing to do for a thread group that's not distributed.
 	if(tsk->tgroup_distributed==1 && tsk->main==0) {
-
+		printk("In %s %d\n",__func__, __LINE__);
 		repl_ret= process_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
 
 		if(repl_ret==0)
@@ -1376,6 +1383,11 @@ out_distr:
 		up_read(&mm->distribute_sem);
 	}
 #endif
+	if(my_pid == tsk->prev_pid)
+	{
+		printk("In %s %d\n",__func__, __LINE__);
+		dump_stack();
+	}
 	return;
 }
 

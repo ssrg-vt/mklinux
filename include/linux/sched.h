@@ -1437,6 +1437,7 @@ struct task_struct {
 
 	/*Ajith - for het migration */
 	unsigned long migration_pc;
+	unsigned long saved_old_rsp;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

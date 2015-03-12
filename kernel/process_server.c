@@ -63,6 +63,10 @@
 #include <linux/process_server.h>
 #include <process_server_arch.h>
 
+#include <linux/elf.h>
+#include <linux/binfmts.h>
+#include <asm/elf.h>
+
 #include "WKdm.h"
 #include "futex_remote.h"
 /*akshay*/
@@ -73,6 +77,8 @@
  */
 
 static int _cpu = -1;
+
+int long my_pid = 0;
 
 data_header_t* _data_head = NULL; // General purpose data store
 fetching_t* _fetching_head = NULL;
@@ -121,6 +127,14 @@ DECLARE_WAIT_QUEUE_HEAD( request_distributed_vma_op);
 extern unsigned long do_brk(unsigned long addr, unsigned long len);
 extern unsigned long mremap_to(unsigned long addr, unsigned long old_len,
 		unsigned long new_addr, unsigned long new_len, bool *locked);
+
+/* ajith - for file offset fetch */
+#if ELF_EXEC_PAGESIZE > PAGE_SIZE
+#define ELF_MIN_ALIGN   ELF_EXEC_PAGESIZE
+#else
+#define ELF_MIN_ALIGN   PAGE_SIZE
+#endif
+unsigned long get_file_offset(struct file* file);
 
 /* For timing measurements
  * */
@@ -1180,7 +1194,7 @@ static void _create_thread_pull(struct work_struct* work){
 	int i;
 
 	for(i=0;i<NR_THREAD_PULL;i++){
-		//   printk("%s creating thread pull %d \n",__func__,i);
+		printk("%s creating thread pull %d \n",__func__,i);
 		kernel_thread(create_kernel_thread_for_distributed_process, NULL, SIGCHLD);
 	}
 
@@ -1230,6 +1244,7 @@ void create_thread_pull(void){
 }
 
 static int handle_thread_pull_creation(struct pcn_kmsg_message* inc_msg){
+	printk("IN %s:%d\n", __func__, __LINE__);
 	create_thread_pull();
 	pcn_kmsg_free_msg(inc_msg);
 	return 0;
@@ -1245,6 +1260,8 @@ static int exit_distributed_process(memory_t* mm_data, int flush,thread_pull_t *
 	int is_last_thread_in_local_group = 1;
 	int count = 0, i, status;
 	thread_group_exited_notification_t* exit_notification;
+
+	printk("IN %s:%d\n", __func__, __LINE__);
 
 	lock_task_sighand(current, &flags);
 	g = current;
@@ -1490,6 +1507,7 @@ again:
 
 		while (current->distributed_exit != EXIT_ALIVE) {
 			flush = exit_distributed_process(mm_data, flush, my_thread_pull);
+			msleep(1000);
 		}
 		while (mm_data->operation != VMA_OP_NOP && 
 		       mm_data->mm->thread_op == current) {
@@ -2724,7 +2742,6 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 			  printk("%s:%d going to void response\n", __func__, __LINE__);
 			  goto out;
 		  }
-
 
 	      if(_cpu!=request->tgroup_home_cpu){
 
@@ -4706,6 +4723,8 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 
 	memory_t* entry = NULL;
 	unsigned long flags;
+	
+	printk("MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
 
 	if(tsk->distributed_exit==EXIT_ALIVE){
 
@@ -6911,6 +6930,11 @@ static int do_mapping_for_distributed_process(mapping_answers_t* fetching_page,
 
 #endif
 #endif
+
+						printk("%s:%d page offset = %d %lx\n", __func__, __LINE__, fetching_page->pgoff, mm->exe_file);
+						fetching_page->pgoff = get_file_offset(mm->exe_file);
+						printk("%s:%d page offset = %d\n", __func__, __LINE__, fetching_page->pgoff);
+
 						/*map_difference should map in such a way that no unmap operations (the only nested operation that mmap can call) are nested called.
 						 * This is important both to not unmap pages that should not be unmapped
 						 * but also because otherwise the vma protocol will deadlock!
@@ -7893,6 +7917,7 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 
 	if (address == 0) {
 		printk("ERROR: accessing page at address 0 pid %i\n",tsk->pid);
+		dump_processor_regs(task_pt_regs(tsk));
 		return VM_FAULT_ACCESS_ERROR | VM_FAULT_VMA;
 	}
 
@@ -10523,6 +10548,47 @@ void sleep_shadow() {
 	 update_time_migration(elapsed_time, NORMAL_MIG_R);
 #endif*/
 }
+
+//Ajith - to crosscheck
+
+int new_init_regs(struct pt_regs* regs) {
+	int ret = -1;
+	unsigned long fs, gs;
+
+	if(regs == NULL){
+		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
+		goto exit;
+	}
+	printk(KERN_ALERT"DUMP REGS\n");
+
+	if(NULL != regs) {
+		regs->r15 = 0;
+		regs->r14 = 0x404490;//0x403900;
+		regs->r13 = 0x404520;//0x403990;
+		regs->r12 = 0;
+		regs->r11 = 0x202;
+		regs->r10 = 0x402db0;
+		regs->r9 = 0;
+		regs->r8 = 0;
+		regs->bp = 0x7f06b6e0a0;
+		regs->sp = 0x7f06b6e0a0;
+		regs->bx = 0xffffffff8178bf32;
+		regs->ax = 0x13b;
+		regs->cx = 0x4d0800;
+		regs->dx = 0x7f06b6dfe0;
+		regs->di = 0;
+		regs->orig_ax = 0x13b;
+		regs->cs = 0x33;
+		regs->flags = 0x202;
+		regs->ss = 0x2b;
+	}
+	printk(KERN_ALERT"REGS INIT COMPLETE\n");
+	ret = 0;
+
+exit:
+	return ret;
+}
+
 int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 	       thread_pull_t* my_thread_pull) {
        shadow_thread_t* my_shadow;
@@ -10598,7 +10664,25 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 #endif
 	       //the task will be activated only when task->executing_for_remote==1
 	       task->executing_for_remote = 1;
+
+		   //Ajith
+			new_init_regs(task_pt_regs(task));
+
+			task->thread.es = 0;
+			task->thread.ds = 0;
+			task->thread.fsindex = 0;
+			task->thread.fs = 0xed2880;
+			task->thread.gs = 0xffff88027fc00000;
+			task->thread.gsindex = 0;
+
+			printk("After init\n");
+			printk("For init process\n");
+			dump_processor_regs(task_pt_regs(task));
+
 	       wake_up_process(task);
+
+	       my_pid = task->prev_pid;
+	       printk("####### MIGRATED - PID: %ld to %ld\n", task->prev_pid, task->pid);
 
 	       kfree(my_shadow);
 	       pcn_kmsg_free_msg(clone_data);
@@ -10953,6 +11037,54 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
        }
 
        return 0;
+}
+
+/* Ajith - adding file offset parsing */
+unsigned long get_file_offset(struct file *file)
+{
+	struct elfhdr elf_ex;
+	struct elf_phdr* elf_eppnt;
+	int size, retval, i;
+	printk("%s:%d\n", __func__, __LINE__);
+
+	retval = kernel_read(file, 0, (char *)&elf_ex, sizeof(elf_ex));
+	if (retval != sizeof(elf_ex)) {
+		printk(" Error in Kernel read of ELF file\n");
+		retval = -1;
+		goto out;
+	}
+
+	size = elf_ex.e_phnum * sizeof(struct elf_phdr);
+
+	elf_eppnt = kmalloc(size, GFP_KERNEL);
+	if(elf_eppnt == NULL)
+	{
+		printk("Kmalloc failed in %s\n", __func__);
+		retval = -1;
+		goto out;
+	}
+
+	retval = kernel_read(file, elf_ex.e_phoff,
+                         (char *)elf_eppnt, size);
+	if (retval != size) {
+		printk(" Error in Kernel read of ELF file\n");
+		retval = -1;
+		goto out;
+	}
+
+	for (i = 0; i < elf_ex.e_phnum; i++, elf_eppnt++) {
+		if (elf_eppnt->p_type == PT_LOAD) {
+			if ((elf_eppnt->p_flags & PF_R) && (elf_eppnt->p_flags & PF_X)) {
+				printk("Coming to executable program load section\n");
+				retval = (elf_eppnt->p_offset - (elf_eppnt->p_vaddr & (ELF_MIN_ALIGN-1)));
+				goto out;
+			}
+		}
+	}
+
+out:
+	kfree(elf_eppnt);
+	return retval >> PAGE_SHIFT;
 }
 
 /**
