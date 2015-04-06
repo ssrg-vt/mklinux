@@ -594,7 +594,8 @@ while(TRUE){
 		curr_addr = (char*) tmp;
 		
 		if((no_bytes = scif_recv(newepd, curr_addr, dflt_size, SCIF_RECV_BLOCK)))
-		{				
+		{	
+//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());	
 			if(no_bytes==-ECONNRESET)
 			{
 				printk("%s: Peer lost Terminating PCN_Messaging....\n",__func__);
@@ -608,7 +609,10 @@ while(TRUE){
 			}
 			msg_size=tmp->hdr.size;
 			msg = (struct pcn_kmsg_message *) pcn_kmsg_alloc_msg(msg_size);
-			
+if(tmp->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST)
+{
+//	trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
+}			
 			//printk("Size %d NoRcv %d\n",tmp->hdr.size,no_bytes);
 			/*if(msg_size<=sizeof(struct pcn_kmsg_message))
 			{
@@ -639,6 +643,8 @@ while(TRUE){
 						break;
 				}
 			}	
+//trace_printk("%s:2 %llu\n",__func__,native_read_tsc());
+
 		}
 
 _process:
@@ -704,6 +710,8 @@ static int __pcn_do_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *lm
 		memcpy(exec_data->msg,lmsg,lmsg->hdr.size);
 		
 		enq_rcv(excution_qs[conn_no],exec_data);		
+//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
+	
 		return lmsg->hdr.size;
 	}
 
@@ -722,6 +730,8 @@ found:
 		int sts_from_peer=-1;
 		memcpy(conn_descriptors[conn_no].dma_send_buffer+free_index*DMA_MSG_OFFSET,curr_addr,lmsg->hdr.size);
 		err=scif_writeto(conn_descriptors[conn_no].send_epd, conn_descriptors[conn_no].send_buffer+free_index*DMA_MSG_OFFSET, lmsg->hdr.size, 0x80000+free_index*DMA_MSG_OFFSET, SCIF_RMA_SYNC);
+//trace_printk("%s:3 %llu\n",__func__,native_read_tsc());
+
 		if(err<0)
 		{
 			printk("error in DMA Transfer %d",err);
@@ -742,7 +752,12 @@ found:
 			data_send=no_bytes;
 			goto _out;
 		}
+
 		data_send=lmsg->hdr.size;
+if(lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST||lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_BACK_MIG_REQUEST )
+{
+	trace_printk("%s:1 %llu pid: %d\n",__func__,native_read_tsc(),lmsg->hdr.sender_pid);
+}
 	}
 	else
 	{
@@ -770,7 +785,12 @@ found:
 			if(curr_size == 0)
 				break;
 		}
+if(lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST||lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_BACK_MIG_REQUEST)
+{
+	trace_printk("%s:1 %llu %d\n",__func__,native_read_tsc(),lmsg->hdr.sender_pid);
+}
 	}
+
 _out:
 	return (data_send<0?-1:data_send);
 }
@@ -798,10 +818,19 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *
 }
 
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg) {
+if (msg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST) {
+
+//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
+}
 	return __pcn_kmsg_send(dest_cpu,msg,sizeof(struct pcn_kmsg_message)-sizeof(struct pcn_kmsg_hdr));
+
 }
 
 int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size) {
+
+if (lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST) {
+//	trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
+}
 	return __pcn_kmsg_send(dest_cpu, lmsg, payload_size);
 }
 

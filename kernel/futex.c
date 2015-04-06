@@ -447,6 +447,7 @@ out:
 #if NOT_REPLICATED_VMA_MANAGEMENT
 		int lock_aquired= 0;
 		if(current->tgroup_distributed==1){
+	//		printk("%s acquiring\n",__func__);
 			down_read(&mm->distribute_sem);
 			lock_aquired= 1;
 		}
@@ -460,6 +461,7 @@ out:
 #if NOT_REPLICATED_VMA_MANAGEMENT
 		if(current->tgroup_distributed==1 && lock_aquired){
 			up_read(&mm->distribute_sem);
+	//		printk("%s relised\n",__func__);
 		}
 #endif
 		return ret < 0 ? ret : 0;

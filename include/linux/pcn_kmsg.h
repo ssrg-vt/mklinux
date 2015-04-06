@@ -121,6 +121,7 @@ struct pcn_kmsg_hdr {
 	unsigned int slot;
 	unsigned int conn_no;
 	unsigned int flag;
+	unsigned int sender_pid;
 }__attribute__((packed));
 
 #define CACHE_LINE_SIZE 64

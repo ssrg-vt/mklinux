@@ -153,7 +153,11 @@
  * single value that denotes runtime == period, ie unlimited time.
  */
 #define RUNTIME_INF	((u64)~0ULL)
-
+#ifdef _trace_mig
+        #define p_trace_printk_mig(...) trace_printk(__VA_ARGS__)
+#else
+        #define p_trace_printk_mig(...)
+#endif
 static inline int rt_policy(int policy)
 {
 	if (policy == SCHED_FIFO || policy == SCHED_RR)
@@ -5684,7 +5688,7 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 		return -ESRCH;
 	}*/
 	pid = current->pid;
-
+//	trace_printk("%s:1  %llu\n",__func__,native_read_tsc());
 #define CONFIG_CPU_NAMESPACE
 #ifndef CONFIG_CPU_NAMESPACE
 
@@ -5730,7 +5734,7 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 						do_exit(current->distributed_exit_code);
 
 				}
-
+trace_printk("%s:1 %llu %llu \n",__func__,native_read_tsc(),current->prev_pid);
 				return task_pt_regs(current)->orig_ax;
 			}
 		}
@@ -5814,7 +5818,7 @@ sleep_again:
 					}
 			
        				synchronize_migrations(current->tgroup_home_cpu,current->tgroup_home_id );
- 
+ trace_printk("%s:1 %llu %llu \n",__func__,native_read_tsc(),current->pid);
                                 return task_pt_regs(current)->orig_ax;
 
                         }
@@ -5822,7 +5826,7 @@ sleep_again:
         } /* if cpus_allowed_map is not existent or its ns does not point to the current ns DO NOT mig */
 
 #endif
-
+//trace_printk("%s:2 %llu\n",__func__,native_read_tsc());
 //printk("not migration\n");
 	/* Prevent p going away */
 	get_task_struct(p);
@@ -5952,7 +5956,11 @@ asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long 
 
                 if ( (p->cpus_allowed_map &&
 		  (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) )
-                        retval= sched_setaffinity_on_popcorn(pid,p, pmask, len, regs);
+		{
+			
+                	trace_printk("%s: %llu pid: %d\n",__func__,native_read_tsc(),current->pid);	
+		        retval= sched_setaffinity_on_popcorn(pid,p, pmask, len, regs);
+		}
                 else
 			retval= sched_setaffinity(pid, pmask);
         }

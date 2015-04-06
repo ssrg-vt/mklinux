@@ -2117,13 +2117,17 @@ if(mm_data->kernel_set[i]==1){
 		new_kernel_work_answer_t* my_work= (new_kernel_work_answer_t*)work;
 		new_kernel_answer_t* answer= my_work->answer;
 		memory_t* memory= my_work->memory;
+		int wake=0;
 
+		//printk("%s 1\n",__func__);
 		if(answer->header.from_cpu==answer->tgroup_home_cpu){
 			down_write(&memory->mm->mmap_sem);
 			//	printk("%s answer->vma_operation_index %d NR_CPU %d\n",__func__,answer->vma_operation_index,MAX_KERNEL_IDS);
 			memory->mm->vma_operation_index= answer->vma_operation_index;
 			up_write(&memory->mm->mmap_sem);
 		}
+	
+		// printk("%s 2\n",__func__);
 
 		down_write(&memory->kernel_set_sem);
 		int i;
@@ -2133,14 +2137,20 @@ if(mm_data->kernel_set[i]==1){
 		}
 		memory->answers++;
 
-
+		
 		if(memory->answers >= memory->exp_answ)
-			wake_up_process(memory->main);
+			wake=1;
 
 		up_write(&memory->kernel_set_sem);
+		
+		// printk("%s 2\n",__func__);
+
+		if(wake==1)
+			wake_up_process(memory->main);
 
 		pcn_kmsg_free_msg_now(answer);
 		kfree(work);
+		 //printk("%s 2\n",__func__);
 
 	}
 
@@ -2184,19 +2194,20 @@ if(mm_data->kernel_set[i]==1){
 			memory = find_memory_entry(new_kernel_work->request->tgroup_home_cpu,
 					new_kernel_work->request->tgroup_home_id);
 			if (memory != NULL) {
-
+				//printk("before adding new kernel\n");
 				down_write(&memory->kernel_set_sem);
 				memory->kernel_set[new_kernel_work->request->header.from_cpu]= 1;
 				memcpy(answer->my_set,memory->kernel_set,MAX_KERNEL_IDS*sizeof(int));
-				up_write(&memory->kernel_set_sem);
-
+			//	up_write(&memory->kernel_set_sem);
+			//	printk("after adding new kernel\n");
 				if(_cpu==new_kernel_work->request->tgroup_home_cpu){
 					down_read(&memory->mm->mmap_sem);
 					answer->vma_operation_index= memory->mm->vma_operation_index;
 					//printk("%s answer->vma_operation_index %d \n",__func__,answer->vma_operation_index);
 					up_read(&memory->mm->mmap_sem);
 				}
-
+				up_write(&memory->kernel_set_sem);
+				printk("after adding new kernel\n");
 			}
 			else{
 				memset(answer->my_set,0,MAX_KERNEL_IDS*sizeof(int));
@@ -5931,7 +5942,7 @@ pcn_kmsg_free_msg_now(request);
 			static int handle_back_migration(struct pcn_kmsg_message* inc_msg){
 
 				back_migration_request_t* request= (back_migration_request_t*) inc_msg;
-
+trace_printk("%s:1 %llu pid %d \n",__func__,native_read_tsc(),request->placeholder_pid);
 				//for synchronizing migratin threads
 				 memory_t* memory = NULL;
 
@@ -6027,7 +6038,7 @@ pcn_kmsg_free_msg_now(request);
 				PSPRINTK(
 						"MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
 				//	dump_stack();
-				//printk("%s, entered pid %d\n",__func__,tsk->pid);
+				printk("%s, entered pid %d\n",__func__,tsk->pid);
 
 				if(tsk->distributed_exit==EXIT_ALIVE){
 
@@ -9871,7 +9882,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 	unsigned long flags;
 	int ret;
 	back_migration_request_t* request;
-
+//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
 	request = (back_migration_request_t*) pcn_kmsg_alloc_msg(sizeof(back_migration_request_t));
 	if(request==NULL){
 		printk("Impossible to kmalloc in %s\n",__func__);
@@ -9881,6 +9892,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
 //printk("%s entered dst{%d} \n",__func__,dst_cpu);
 	request->header.type = PCN_KMSG_TYPE_PROC_SRV_BACK_MIG_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+	request->header.sender_pid=current->pid;
 
 	request->tgroup_home_cpu = task->tgroup_home_cpu;
 	request->tgroup_home_id = task->tgroup_home_id;
@@ -10004,7 +10016,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
         	p_trace_printk("s\n");
    
         }
-
+//trace_printk("%s:2 before msg %llu\n",__func__,native_read_tsc());
 	ret = pcn_kmsg_send_long(dst_cpu,(struct pcn_kmsg_long_message*) request,sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
 
 	if(strcmp(current->comm,"IS") == 0){
@@ -10012,7 +10024,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
         	p_trace_printk("e\n");
   
         }
-
+//trace_printk("%s:3 after msg%llu\n",__func__,native_read_tsc());
 	pcn_kmsg_free_msg(request);
 
 	return ret;
@@ -10087,7 +10099,9 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
 	memory_t* entry;
 	int first= 0;
 	unsigned long flags;
-
+	
+//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
+	
 	request = pcn_kmsg_alloc_msg(sizeof(clone_request_t));
 	if (request == NULL) {
 		printk("Impossible to kmalloc in %s\n",__func__);
@@ -10100,6 +10114,7 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
 	// Build request
 	request->header.type = PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST;
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
+        request->header.sender_pid=current->pid; 
 
 	// struct mm_struct -----------------------------------------------------------
 	rpath = d_path(&task->mm->exe_file->f_path, path, 256);
@@ -10259,6 +10274,7 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
 		entry->my_lock = 0;
 		memset(entry->kernel_set,0,MAX_KERNEL_IDS*sizeof(int));
 		entry->kernel_set[_cpu]= 1;
+		//printk("%s kernel 0 %d kernel 1 %d",__func__,entry->kernel_set[0],entry->kernel_set[1]);
 		init_rwsem(&entry->kernel_set_sem);
 		entry->setting_up= 0;
 		init_rwsem(&task->mm->distribute_sem);
@@ -10273,6 +10289,8 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
 		first=1;
 		*is_first = 1;
 
+		//let all memory operations ends
+		down_write(&task->mm->mmap_sem);
 		tgroup_iterator = task;
 		while_each_thread(task, tgroup_iterator)
 		{
@@ -10280,6 +10298,7 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
 			tgroup_iterator->tgroup_home_cpu = task->tgroup_home_cpu;
 			tgroup_iterator->tgroup_distributed = 1;
 		};
+		up_write(&task->mm->mmap_sem);
 
 	}
 
@@ -10296,6 +10315,7 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
         	
         }
 	//dump_regs(&request->regs);
+//	trace_printk("%s:1 before msg %llu\n",__func__,native_read_tsc());
 	tx_ret = pcn_kmsg_send_long(dst_cpu,
 			(struct pcn_kmsg_long_message*) request,
 			sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
@@ -10304,7 +10324,8 @@ static int write_proc (struct file *file, const char __user *buffer, unsigned lo
 	        p_trace_printk("e\n");
 
         }
-
+	
+///	trace_printk("%s:2 after msg %llu\n",__func__,native_read_tsc());
 	if (first)
 		kernel_thread(
 				create_kernel_thread_for_distributed_process_from_user_one,
@@ -10373,7 +10394,7 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
      }
 #endif*/
 
-
+//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
 	if(task->prev_cpu==dst_cpu){
 		back= 1;
 		ret= do_back_migration(task, dst_cpu, regs);
@@ -10704,7 +10725,8 @@ void process_vma_op(struct work_struct* work) {
 		mm->vma_operation_index++;
 
 		if (memory->my_lock != 1) {
-			PSVMAPRINTK("Released distributed lock\n");
+			PSVMAPRINTK("Released distributed lock 1\n");
+			//printk("Released distributed lock 1 for index %d\n",operation->vma_operation_index);
 			up_write(&mm->distribute_sem);
 		}
 
@@ -10788,11 +10810,20 @@ void process_vma_lock(struct work_struct* work) {
 	memory_t* entry = find_memory_entry(lock->tgroup_home_cpu,
 			lock->tgroup_home_id);
 	if (entry != NULL) {
+		//printk("%s lock for %d before setting up cpu %d tgid %d\n",__func__,lock->vma_operation_index,lock->tgroup_home_cpu,lock->tgroup_home_id);
+		while(entry->setting_up == 1) 
+			schedule();
+		//printk("%s lock for %d\n",__func__,lock->vma_operation_index);
 		down_write(&entry->mm->distribute_sem);
-		PSVMAPRINTK("Acquired distributed lock\n");
+		//printk("%s lock for acquired%d\n",__func__,lock->vma_operation_index);
+		PSVMAPRINTK("Acquired distributed lock  2 for lock->tgroup_home_cpu {%d} tgroup_home_id {%d} \n",lock->tgroup_home_cpu,lock->tgroup_home_id);
 		if (lock->from_cpu == _cpu)
 			entry->my_lock = 1;
 	}
+	else
+		printk("Entry not ready for hosting operations!! in %s\n",__func__);
+
+	
 
 	vma_ack_t* ack_to_server = (vma_ack_t*) pcn_kmsg_alloc_msg(sizeof(vma_ack_t));
 	if (ack_to_server == NULL){
@@ -10822,6 +10853,7 @@ static int handle_vma_lock(struct pcn_kmsg_message* inc_msg) {
 	vma_lock_work_t* work;
 	
 	PSVMAPRINTK("%s entered\n",__func__);
+	
 	work = kmalloc(sizeof(vma_lock_work_t), GFP_ATOMIC);
 
 	if (work) {
@@ -10909,9 +10941,9 @@ static int handle_vma_op(struct pcn_kmsg_message* inc_msg) {
 			printk("Impossible to kmalloc in %s\n",__func__);
 
 	} else {
-		if (operation->tgroup_home_cpu == _cpu)
-			printk(
-					"ERROR: received an operation that said that I am the server but no memory_t found\n");
+		if (operation->tgroup_home_cpu == _cpu){
+			printk("ERROR: received an operation that said that I am the server but no memory_t found. This may be not an error but just an unlikely timing issue. The first migrating thread may have not already created memory_t\n");
+		}
 		else {
 			PSVMAPRINTK(
 					"Received an operation for a distributed process not present here\n");
@@ -11055,6 +11087,9 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 	if (current->mm->distr_vma_op_counter == 0) {
 
+		if(current->main==1)
+			printk("ERROR count is 0 but I am main in %s",__func__);
+
 		current->mm->thread_op = NULL;
 
 		entry->my_lock = 0;
@@ -11064,7 +11099,8 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				current->mm->vma_operation_index++;
 		}
 
-		PSVMAPRINTK("Releasing distributed lock\n");
+		PSVMAPRINTK("Releasing distributed lock 3\n");
+		//printk("Releasing distributed lock 3\n");
 		up_write(&current->mm->distribute_sem);
 
 		if(_cpu == current->tgroup_home_cpu && !(operation == VMA_OP_MAP || operation == VMA_OP_BRK)){
@@ -11074,30 +11110,105 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 		wake_up(&request_distributed_vma_op);
 
 	} else
-		 if (current->mm->distr_vma_op_counter == 1
-				&& _cpu == current->tgroup_home_cpu && current->main == 1) {
+		 if (/*current->mm->distr_vma_op_counter == 1
+				&& */_cpu == current->tgroup_home_cpu && current->main == 1) {
 
-			if(!(operation == VMA_OP_MAP || operation == VMA_OP_BRK)){
-				PSVMAPRINTK("%s incrementing vma_operation_index\n",__func__);
-				current->mm->vma_operation_index++;
-				up_read(&entry->kernel_set_sem);
+			//server main not nested
+			if(current->mm->distr_vma_op_counter == 1){
+				if(!(operation == VMA_OP_MAP || operation == VMA_OP_BRK)){
+					PSVMAPRINTK("%s incrementing vma_operation_index\n",__func__);
+					current->mm->vma_operation_index++;
+					up_read(&entry->kernel_set_sem);
+				}
+
+				PSVMAPRINTK("Releasing distributed lock 4\n");
+				//printk("Releasing distributed lock 4\n");
+				up_write(&current->mm->distribute_sem);
+			}
+			//server main nested
+			/*FIXFIXFIX*/
+			if(current->mm->distr_vma_op_counter == 2){
+		
+			 	if(operation != VMA_OP_UNMAP)
+                                	 printk("ERROR exiting fom a nest operation that is %d",operation);
+			 
+				//it can be nested after map or br 
+				//or nested after remap
+				if(current->mm->was_not_pushed>0){
+					//map or br
+					PSVMAPRINTK("%s incrementing vma_operation_index\n",__func__);
+                                	current->mm->vma_operation_index++;
+                                	up_read(&entry->kernel_set_sem);
+				}
+				else{
+					PSVMAPRINTK("%s ending nested operation after remap\n",__func__);
+				}
 			}
 
-			PSVMAPRINTK("Releasing distributed lock\n");
-			up_write(&current->mm->distribute_sem);
-
 		}else{
-			if (!(current->mm->distr_vma_op_counter == 1
+			/*if (!(current->mm->distr_vma_op_counter == 1
                                 && _cpu != current->tgroup_home_cpu && current->main == 1)) {
 
+				if(current->mm->distr_vma_op_counter == 1
+					&& _cpu == current->tgroup_home_cpu && current->main != 1){
+						if(!(operation == VMA_OP_MAP || operation == VMA_OP_BRK)){
+							PSVMAPRINTK("%s relising other lock\n",__func__);
+							up_read(&entry->kernel_set_sem);
+						}
+				}
 				//nested operation
 				if(operation != VMA_OP_UNMAP)
 					printk("ERROR exiting fom a nest operation that is %d",operation);
 
 				//nested operation do not release the lock
 			 	PSVMAPRINTK("%s incrementing vma_operation_index\n",__func__);
+
+				//all nested operations come here,
+				//but if this is an unmap subsequent, say, a remap shuldnt increment 
                          	current->mm->vma_operation_index++;
+			}*/
+			
+			//server not main or client
+			if(_cpu == current->tgroup_home_cpu){
+				//server not main
+				//count is 1 => nested
+				if(operation != VMA_OP_UNMAP)
+                                        printk("ERROR exiting fom a nest operation that is %d",operation);
+
+				if(current->mm->was_not_pushed>0){
+                                    
+                                        PSVMAPRINTK("%s incrementing vma_operation_index\n",__func__);
+                                        current->mm->vma_operation_index++;
+					PSVMAPRINTK("%s relising other lock\n",__func__);
+                                        up_read(&entry->kernel_set_sem);
+                                }
+                                else{
+                                        PSVMAPRINTK("%s ending nested operation after remap\n",__func__);
+                                }
+	
+
 			}
+			else{
+				if(current->main != 1){
+					//client not main
+					//nested
+					PSVMAPRINTK("%s ending nested operation after remap\n",__func__);
+					if(current->mm->was_not_pushed>0){
+					
+                                        	printk("ERROR not  clien main with count > 0 and was_not_pushed > 0 %s",__func__);
+                                       	}
+
+				}
+				else{
+					//client main
+					//this is executed with distribute_unmap == 0
+					//so should not be here
+					printk("ERROR  clien main with count > 0 in %s",__func__);
+				}
+
+			}
+
+			
 
 		}
 
@@ -11121,7 +11232,15 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		long ret;
 		int server;
-
+	
+		/* check that the first thread finished to create metadata
+                  while it is creating everything is holding sighand*/
+	/*	if(current->main!=1){
+                        unsigned long flags;
+                        lock_task_sighand(current, &flags);
+                        unlock_task_sighand(current, &flags);
+                }*/
+		
 		if (current->tgroup_home_cpu != _cpu)
 			server = 0;
 		else
@@ -11134,6 +11253,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 			ret = new_addr;
 		else
 			ret = addr;
+		
 
 		/*Operations can be nested-called.
 		 * MMAP->UNMAP
@@ -11166,29 +11286,40 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		PSVMAPRINTK("%s, Starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lu len %lu end %lu\n",
 				__func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
+		
+		//printk("%s, Starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i vma_id %d\n",
+                  //              __func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, current->mm->vma_operation_index);
 
 
-		/*only server can have legal distributed nested operations*/
+		/*only server can (maybe) distribute nested operations*/
 		if (current->mm->distr_vma_op_counter > 0
 				&& current->mm->thread_op == current) {
 
 
 			PSVMAPRINTK("%s, Recursive operation\n",__func__);
 
-			if (server == 0
+			/*if (server == 0
 					|| (current->main == 0 && current->mm->distr_vma_op_counter > 1)
 					|| (current->main == 0 && operation != VMA_OP_UNMAP)) {
 				printk("ERROR: invalid nested vma operation %i\n", operation);
-				return -EPERM;
+				return -EPERM;*/
+			if(current->main == 0 && current->mm->distr_vma_op_counter > 1){
+				printk("ERROR: invalid nested vma operation %i\n", operation);
+                                return -EPERM;
 			} else
 				/*the main executes the operations for the clients
 				 *distr_vma_op_counter is already increased when it start the operation*/
 				if (current->main == 1) {
 
-					PSVMAPRINTK("%s, I am the main, so it maybe not a real recursive operation...\n",__func__);
+					if(server==0){
+						//note that the process_vma_op set distributed unmap to 0 when servers pushes operations
+						printk("ERROR: invalid nested vma operation in main client\n");
+                                                return -EPERM;
+					}
 
-					if (current->mm->distr_vma_op_counter < 1
-							|| current->mm->distr_vma_op_counter > 2
+					PSVMAPRINTK("%s, I am the main server, so it maybe not a real recursive operation...\n",__func__);
+
+					if (current->mm->distr_vma_op_counter > 2
 							|| (current->mm->distr_vma_op_counter == 2
 									&& operation != VMA_OP_UNMAP)) {
 						printk("ERROR: invalid nested vma operation in main server\n");
@@ -11201,6 +11332,9 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 							 * if the previous operation was a pushed operation
 							 * do not distribute it again*/
 							if (current->mm->was_not_pushed == 0) {
+								//previous one was REMAP 
+								//FIXFIXFIX
+								//do not increas era after (in the end distribuete) potentially server and clinets have different numbers of unmap
 								current->mm->distr_vma_op_counter++;
 								PSVMAPRINTK("%s, don't ditribute again, return!\n",__func__);
 								return ret;
@@ -11209,14 +11343,30 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 						}
 						else
 							goto start;
-				} else
-					if (current->mm->was_not_pushed == 0) {
-						current->mm->distr_vma_op_counter++;
-						PSVMAPRINTK("%s, don't ditribute again, return!\n",__func__);
-						return ret;
-					} else
-						goto start;
+				} else{
 
+					//client or server not main
+					if (operation != VMA_OP_UNMAP) {
+                                                printk("ERROR: invalid nested vma operation in main server\n");
+                                                return -EPERM;
+                                        }
+
+					if(server==1){
+						//same as server main if it was MAP or BRK this unmap must be distributed
+						if (current->mm->was_not_pushed == 0) {
+							current->mm->distr_vma_op_counter++;
+							PSVMAPRINTK("%s, don't ditribute again, return!\n",__func__);
+							return ret;
+						} else
+							goto start;
+					}
+					else{
+						//clients never distributes nested operations
+						 current->mm->distr_vma_op_counter++;
+                                                 PSVMAPRINTK("%s, don't ditribute again, return!\n",__func__);
+                                                 return ret;
+					}
+				}
 		}
 
 		/* I did not start an operation, but another thread maybe did...
@@ -11386,7 +11536,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				  *Important: this should happen before sending the push message or executing the operation*/
 				 if (current->mm->distr_vma_op_counter == 2) {
 					 down_write(&current->mm->distribute_sem);
-					 PSVMAPRINTK("local distributed lock acquired\n");
+					 PSVMAPRINTK("local distributed lock acquired 5\n");
 				 }
 
 				 /* Third: push the operation to everybody
@@ -11438,7 +11588,8 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				 }
 
 			 } else {
-				//server not main
+			
+				//server not main or server main recursive operation 
 				 PSVMAPRINTK("SERVER NOT MAIN: Starting operation %d for pid %d current index is %d\n", operation, current->pid, current->mm->vma_operation_index);
 
 				 switch (operation) {
@@ -11451,7 +11602,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 							 up_write(&current->mm->mmap_sem);
 
 							 down_write(&current->mm->distribute_sem);
-							 PSVMAPRINTK("Distributed lock acquired\n");
+							 PSVMAPRINTK("Distributed lock acquired 6\n");
 							 down_write(&current->mm->mmap_sem);
 
 							 //(current->mm->vma_operation_index)++;
@@ -11469,6 +11620,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				 //(current->mm->vma_operation_index)++;
 				 int index = current->mm->vma_operation_index;
 				 PSVMAPRINTK("current index is %d\n", index);
+				// printk("current index is %d current->tgroup_home_cpu %d current->tgroup_home_id %d  \n", index, current->tgroup_home_cpu, current->tgroup_home_id);
 
 				 /*Important: while I am waiting for the acks to the LOCK message
 					  * mmap_sem have to be unlocked*/
@@ -11537,10 +11689,17 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 #endif
 
 					if(entry->kernel_set[i]==1){
-						error = pcn_kmsg_send_long(i,
-							(struct pcn_kmsg_long_message*) (lock_message),	sizeof(vma_lock_t) - sizeof(struct pcn_kmsg_hdr));
-						if (error != -1) {
-							acks->expected_responses++;
+						/* FIXFIXFIX
+ 							*/
+						//if this is a recursive operation of the main started by another kernel (current->mm->distr_vma_op_counter>2)
+						//do not send the lock message again to the requester
+						if(!((current->main == 1 && (current->mm->distr_vma_op_counter>2)) && i==entry->message_push_operation->from_cpu)){
+							error = pcn_kmsg_send_long(i,
+								(struct pcn_kmsg_long_message*) (lock_message),	sizeof(vma_lock_t) - sizeof(struct pcn_kmsg_hdr));
+							if (error != -1) {
+								acks->expected_responses++;
+								//printk("%s send index %d\n",__func__,lock_message->vma_operation_index);
+							}
 						}
 					}
 				}
@@ -11552,6 +11711,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 					if (acks->expected_responses != acks->responses) {
 						schedule();
+
 					}
 
 					set_task_state(current, TASK_RUNNING);
@@ -11598,7 +11758,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				 *Important: this should happen before sending the push message or executing the operation*/
 	 			if (current->mm->distr_vma_op_counter == 1) {
 		 			down_write(&current->mm->distribute_sem);
-		 			PSVMAPRINTK("Distributed lock acquired locally\n");
+		 			PSVMAPRINTK("Distributed lock acquired locally 7\n");
 	 			}
 
 
@@ -11772,6 +11932,9 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 		entry->waiting_for_op = NULL;
 
 		pcn_kmsg_free_msg_now(operation_to_send);
+
+		/*FIXFIXFIX*/
+		//no nested operation should be distributed now...
 
 		return ret;
 
@@ -12117,6 +12280,7 @@ void sleep_shadow() {
 
 	//printk("%s main set up me\n",__func__);
 
+	printk("%s shadow activated old pid %d new pid %d\n", __func__,current->prev_pid,current->pid);
 	memory = find_memory_entry(current->tgroup_home_cpu,
 			current->tgroup_home_id);
 	memory->alive = 1;
@@ -12173,6 +12337,7 @@ void sleep_shadow() {
 	else
 		update_time_migration(elapsed_time, NORMAL_MIG_R);
 #endif*/
+trace_printk("%s:1 %llu pid: %d \n",__func__,native_read_tsc(),current->prev_pid);
 
 }
 int create_user_thread_for_distributed_process(clone_request_t* clone_data,
@@ -12180,9 +12345,10 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 	shadow_thread_t* my_shadow;
 	struct task_struct* task;
 	int ret;
-
+//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
 	my_shadow = (shadow_thread_t*) pop_data((data_header_t**)&(my_thread_pull->threads),
 			&(my_thread_pull->spinlock));
+
 	if (my_shadow) {
 
 		//printk("%s found a shadow  %p \n",__func__,my_shadow);
@@ -12291,9 +12457,10 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 #endif
 		//the task will be activated only when task->executing_for_remote==1
 		task->executing_for_remote = 1;
-
+//trace_printk("%s:2 %llu\n",__func__,native_read_tsc());
 		process_server_notify_delegated_subprocess_starting(task->pid,
 			clone_data->placeholder_pid, clone_data->header.from_cpu);
+//trace_printk("%s:3 %llu\n",__func__,native_read_tsc());
 		wake_up_process(task);
 
 		kfree(my_shadow);
@@ -12302,6 +12469,7 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 
 	} else {
 		//printk("%s no shadows found!!\n", __func__);
+trace_printk("%s:4 %llu\n",__func__,native_read_tsc());
 		wake_up_process(my_thread_pull->main);
 		return -1;
 	}
@@ -12366,7 +12534,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	current->mm->thread_op = NULL;
 	current->mm->vma_operation_index = 0;
 	current->mm->distribute_unmap = 1;
-
+	
 	my_thread_pull->memory= NULL;
 	my_thread_pull->threads= NULL;
 	raw_spin_lock_init(&(my_thread_pull->spinlock));
@@ -12509,7 +12677,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	
 	unlock_task_sighand(current, &flags);
 	
-	//printk("woke up everybody\n");
+	printk("woke up everybody %d cpu %d is\n",current->tgroup_home_cpu,current->tgroup_home_id);
 	entry->alive = 1;
 	entry->setting_up = 0;
 
@@ -12526,7 +12694,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 	memory_t* memory = NULL;
 	unsigned long flags;
 	int ret;
-
+//trace_printk("%s:1 %llu pid: %d\n",__func__,native_read_tsc(),clone->placeholder_pid);
 	retry: memory = find_memory_entry(clone->tgroup_home_cpu,
 			clone->tgroup_home_id);
 
@@ -12543,6 +12711,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 				atomic_inc(&(memory->pending_migration));
 		}
 		if (memory->thread_pull) {
+//trace_printk("%s:2 %llu\n",__func__,native_read_tsc());
 			return create_user_thread_for_distributed_process(clone,
 					memory->thread_pull);
 		} else {
@@ -12625,8 +12794,9 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 				unlock_task_sighand(my_thread_pull->main, &flags);
 				
 				my_thread_pull->memory = entry;
+//trace_printk("%s:3 %llu\n",__func__,native_read_tsc());
 				wake_up_process(my_thread_pull->main);
-				
+//trace_printk("%s:4 %llu\n",__func__,native_read_tsc());				
 				return create_user_thread_for_distributed_process(clone,
 						my_thread_pull);
 
@@ -12650,6 +12820,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 			goto retry;
 		}
 	}
+
 }
 
 void try_create_remote_thread(struct work_struct* work) {
@@ -12658,7 +12829,7 @@ void try_create_remote_thread(struct work_struct* work) {
 	int ret;
 
 	ret = clone_remote_thread(clone, 0);
-
+trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
 	if (ret != 0) {
 		
 		clone_work_t* delay = (clone_work_t*) kmalloc(sizeof(clone_work_t),
@@ -12683,13 +12854,13 @@ void try_create_remote_thread(struct work_struct* work) {
 static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 	clone_request_t* clone = (clone_request_t*) inc_msg;
 	int ret;
-
+trace_printk("%s:1 %llu pid:%d \n",__func__,native_read_tsc(),clone->placeholder_pid);
 	ret = clone_remote_thread(clone, 1);
 
 	if (ret != 0) {
 		
 		clone_work_t* request_work = kmalloc(sizeof(clone_work_t), GFP_ATOMIC);
-
+///trace_printk("%s:2 %llu\n",__func__,native_read_tsc());
 		if (request_work) {
 			request_work->request = clone;
 			INIT_WORK( (struct work_struct*)request_work,

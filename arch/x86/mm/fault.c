@@ -1127,7 +1127,7 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	//Multikernel
 	if(tsk->tgroup_distributed==1){
-
+//		printk("%s acquiring\n",__func__);
 		down_read(&mm->distribute_sem);
 		lock_aquired= 1;
 	}
@@ -1341,7 +1341,6 @@ printk(KERN_ALERT"{%lx} ",_buff[ct]);
                                printk("%s: Retrying the local fetch: 0x%x flags 0x%x\n", __func__, address, flags);
                                retrying = 1;
                         }
-
 			goto retry;
 		}
 	}
@@ -1356,6 +1355,7 @@ printk(KERN_ALERT"{%lx} ",_buff[ct]);
 	if(tsk->tgroup_distributed==1 && lock_aquired){
 
 		up_read(&mm->distribute_sem);
+	//	printk("%s relised\n",__func__);
 	}
 #endif
 
