@@ -3,6 +3,7 @@
  */
 
 #include <linux/circ_buf.h>
+#include <linux/proc_fs.h>
 
 #include "pcn_scif_parallel.h"
 
@@ -26,6 +27,9 @@ extern 	int __scif_flush(ep);
 #define MAX_LOOPS 12345
 #define MAX_LOOPS_JIFFIES (MAX_SCHEDULE_TIMEOUT)
 #define MAX_ASYNC_BUFFER 128 
+
+#define _PAGE_MSG_GET 1
+
 
 static scif_epd_t send_epd;
 static int msg_count;
@@ -71,6 +75,9 @@ DEFINE_SPINLOCK(rcv_q_mutex_p);
 //DEFINE_SPINLOCK(dma_q_free_p); 
 
 
+DEFINE_SPINLOCK(sent_msg_mutex);
+DEFINE_SPINLOCK(rcvd_msg_mutex);
+
 static int __init initialize(void);
 static void __exit unload(void);
 static void __free_msg(void *msg);
@@ -88,6 +95,9 @@ static struct task_struct *test_handler;
 
 static char * freeList;
 static char * remote_free_list;
+unsigned long  pages_send=0;
+unsigned long  pages_rcv=0;
+
 
 static struct pcn_kmsg_buf * send_buf[MAX_CONNEC];
 
@@ -113,6 +123,46 @@ int buffer_init(struct buffer_desc * desc, int elem)
   return 0;
 }
 */
+
+
+static int read_pages_send(char *page, char **start, off_t off, int count, int *eof, void *data)
+{
+        int len;
+
+        len=sprintf(page,"%lu",pages_send);
+
+        return len;
+
+}
+static int write_pages_send (struct file *file, const char __user *buffer, unsigned long count, void *data)
+{
+        int i;
+
+        kstrtol_from_user(buffer, count, 0, &pages_send);
+      //  printk("%s: migrating_threads %d\n",__func__,migrating_threads);
+        return count;
+}
+
+static int read_pages_rcv(char *page, char **start, off_t off, int count, int *eof, void *data)
+{
+        int len;
+
+        len=sprintf(page,"%lu",pages_rcv);
+
+        return len;
+        
+}
+static int write_pages_rcv (struct file *file, const char __user *buffer, unsigned long count, void *data)
+{
+        int i;
+
+        kstrtol_from_user(buffer, count, 0, &pages_rcv);
+      //  printk("%s: migrating_threads %d\n",__func__,migrating_threads);
+        return count;
+}
+      
+
+
 
 int pcn_connection_status(int conn_no)
 {
@@ -240,6 +290,27 @@ static int __init initialize(){
 	int i;
 
 	memset(is_connection_done, 0, sizeof(is_connection_done));
+
+	struct proc_dir_entry *res_send;
+	res_send = create_proc_entry("pages_send", S_IRUGO, NULL);
+	if (!res_send) {
+        	printk(KERN_ALERT"%s: create_proc_entry failed (%p)\n", __func__, res_send);
+	        return -ENOMEM;
+	}
+	
+	res_send->read_proc = read_pages_send;
+	res_send->write_proc = write_pages_send;
+	
+	struct proc_dir_entry *res_rcv;
+        res_rcv = create_proc_entry("pages_rcv", S_IRUGO, NULL);
+        if (!res_rcv) {
+                printk(KERN_ALERT"%s: create_proc_entry failed (%p)\n", __func__, res_rcv);
+                return -ENOMEM;
+        }
+
+	res_rcv->read_proc = read_pages_rcv;
+	res_rcv->write_proc =write_pages_rcv;
+
 
 	printk("In pcn new messaging layer init\n");	
 	for(i=0;i<MAX_CONNEC;i++)
@@ -613,6 +684,16 @@ if(tmp->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST)
 {
 //	trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
 }			
+		
+#if _PAGE_MSG_GET
+ 	       if( msg_size>PAGE_SIZE)
+        	{
+                	spin_lock(&rcvd_msg_mutex);
+                	pages_rcv++;
+                	spin_unlock(&rcvd_msg_mutex);
+        	}
+#endif	
+	
 			//printk("Size %d NoRcv %d\n",tmp->hdr.size,no_bytes);
 			/*if(msg_size<=sizeof(struct pcn_kmsg_message))
 			{
@@ -716,6 +797,16 @@ static int __pcn_do_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *lm
 	}
 
 	curr_size = lmsg->hdr.size;
+#if _PAGE_MSG_GET
+	if( lmsg->hdr.size>PAGE_SIZE)
+	{
+		spin_lock(&sent_msg_mutex);
+		pages_send++;
+		spin_unlock(&sent_msg_mutex);
+		
+	}
+#endif
+	
 	if(lmsg->hdr.size>dma_send_thresh)
 	{
 		spin_lock(&conn_descriptors[conn_no].send_lock);
