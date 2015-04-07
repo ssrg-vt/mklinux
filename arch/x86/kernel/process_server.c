@@ -119,6 +119,8 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 		printk("IN %s:%d migration PC = %lx %lx\n", __func__, __LINE__, arch->migration_pc, read_old_rsp());
 	}
 
+	printk("IN %s:%d fs = %ld\n", __func__, __LINE__, arch->thread_fs);
+
 	ret = 0;
 	//dump_processor_regs(regs);
 	//__show_regs(regs, 1);
@@ -189,6 +191,9 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 
 		printk("IN %s:%d migration PC = %lx %lx %lx %lx\n", __func__, __LINE__, task_pt_regs(task)->ip, arch->migration_pc, arch->regs.sp, task_pt_regs(task)->sp);
 	}
+
+	task->thread.fs = arch->thread_fs;
+	printk("IN %s:%d migration fs = %ld\n", __func__, __LINE__, task->thread.fs);
 
 	dump_processor_regs(task_pt_regs(task));
 
