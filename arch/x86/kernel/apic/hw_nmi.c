@@ -33,10 +33,11 @@ static DECLARE_BITMAP(backtrace_mask_hints, NR_CPUS) __read_mostly;
 /* "in progress" flag of arch_trigger_all_cpu_backtrace */
 static unsigned long backtrace_flag;
 
+#define BACKTRACE_MASK 128
 void arch_trigger_all_cpu_backtrace(void)
 {
 	int i;
-	char buffer[128];
+	char buffer[BACKTRACE_MASK];
 
 	if (test_and_set_bit(0, &backtrace_flag))
 		/*
@@ -58,8 +59,8 @@ void arch_trigger_all_cpu_backtrace(void)
 		mdelay(1);
 	}
 
-	cpumask_scnprintf(buffer, 128, to_cpumask(backtrace_mask));
-	printk("%s: mask %s\n", __func__, buffer);
+	cpumask_scnprintf(buffer, BACKTRACE_MASK, to_cpumask(backtrace_mask));
+	printk(KERN_ERR "%s: mask %s\n", __func__, buffer);
 
 	cpumask_clear(to_cpumask(backtrace_mask_hints));
 	clear_bit(0, &backtrace_flag);
@@ -93,7 +94,7 @@ void arch_trigger_backtrace_hints(struct cpumask * cpum)
 
 static int __init register_trigger_all_cpu_backtrace(void)
 {
-printk("%s: interrupt %d\n", __func__, NMI_LOCAL);
+	printk(KERN_ERR "%s: interrupt %d\n", __func__, NMI_LOCAL);
 	register_nmi_handler(NMI_LOCAL, arch_trigger_all_cpu_backtrace_handler,
 				0, "arch_bt");
         cpumask_clear(to_cpumask(backtrace_mask_hints));

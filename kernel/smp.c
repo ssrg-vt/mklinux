@@ -26,6 +26,9 @@
  *
  * (C) Jens Axboe <jens.axboe@oracle.com> 2008
  */
+/*
+ * extended for Popcorn Linux, 2014-2015 Antonio Barbalace, SSRG Virginia Tech
+ */
 #include <linux/rcupdate.h>
 #include <linux/rculist.h>
 #include <linux/kernel.h>
@@ -675,13 +678,12 @@ static int __init nrcpus(char *str)
 		nr_cpu_ids = nr_cpus;
 	}
 	
-//#ifdef CONFIG_CPU_NAMESPACE
+/*#ifdef CONFIG_CPU_NAMESPACE */
 	init_cpu_ns.nr_cpu_ids = nr_cpu_ids;
 	init_cpu_ns._nr_cpumask_bits = nr_cpumask_bits;
-//	printk(KERN_INFO"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
-	printk(KERN_ERR"%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
-	__func__, nr_cpu_ids, nr_cpumask_bits);
-//#endif
+	printk(KERN_ALERT "%s: nr_cpu_ids %d nr_cpumask_bits %d\n",
+		__func__, nr_cpu_ids, nr_cpumask_bits);
+/*#endif */
 
 
 	return 0;

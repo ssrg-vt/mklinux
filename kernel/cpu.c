@@ -1,5 +1,7 @@
 /* CPU control.
  * (C) 2001, 2002, 2003, 2004 Rusty Russell
+ * 
+ * extended for Popcorn Linux, 2015-2015 Antonio Barbalace and Akshay Ravichandran, SSRG Virginia Tech
  *
  * This code is licenced under the GPL.
  */
@@ -795,17 +797,19 @@ void init_cpu_online(const struct cpumask *src)
 	cpumask_copy(to_cpumask(cpu_online_bits), src);
 }
 
+/*
+ * initial cpu namespace for Popcorn points to the available cpus on this kernel
+ */
 struct cpu_namespace init_cpu_ns = {
-    .kref = {
-         .refcount = ATOMIC_INIT(2),
-    },
-    .nr_cpus = NR_CPUS,
-    .cpumask_size = (BITS_TO_LONGS(NR_CPUS) * sizeof(long)),
-    .cpu_online_mask = to_cpumask(cpu_online_bits),
-//.get_online_cpus = get_online_cpus;
-//.get_offline_cpus = get_offline_cpus,
-    .parent = NULL,
-    .level = 0,
+	.kref = {
+		.refcount = ATOMIC_INIT(2),
+	},
+	.nr_cpus = NR_CPUS,
+	.cpumask_size = (BITS_TO_LONGS(NR_CPUS) * sizeof(long)),
+	.cpu_online_mask = to_cpumask(cpu_online_bits),
+	//.get_online_cpus = get_online_cpus;
+	//.get_offline_cpus = get_offline_cpus,
+	.parent = NULL,
+	.level = 0,
 };
 EXPORT_SYMBOL_GPL(init_cpu_ns);
-
