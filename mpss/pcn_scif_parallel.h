@@ -1,3 +1,13 @@
+/**
+ *  Header file for parallel messaging layer
+ * B M Saif Ansary<bmsaif86@vt.edu>2015
+ * 
+ */
+
+
+
+
+
 #ifndef _PCN_SCIF_PARALLEL_
 #define _PCN_SCIF_PARALLEL_
 #include <linux/spinlock.h>
@@ -56,8 +66,6 @@ typedef struct _rcv_conn_desc
 	dq_info q_info;
 	
 }rcv_conn_desc;
-
-
 
 typedef struct _conn_thread_data
 {

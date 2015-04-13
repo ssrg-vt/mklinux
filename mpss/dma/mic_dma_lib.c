@@ -35,6 +35,9 @@
  * license agreement provided with this code and agreed upon with Intel,
  * no license, express or implied, by estoppel or otherwise, to any
  * intellectual property rights is granted herein.
+ * 
+ * Popcorn : we have changed some parameters
+ *           B M Saif Ansary<bmsaif86@vt.edu> 2014
  */
 
 #include<linux/module.h>

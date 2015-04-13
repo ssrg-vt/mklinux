@@ -1,5 +1,8 @@
 /*
  * pcn_scif.c - Kernel Module for Popcorn Messaging Layer over Intel SCIF
+ * 
+ * Initial Fail safe Masseging layer
+ * B M Saif Ansary <bmsaif86@vt.edu> 2014
  */
 #include <linux/module.h>
 #include <linux/kernel.h>

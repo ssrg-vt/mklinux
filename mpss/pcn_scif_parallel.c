@@ -1,10 +1,11 @@
 /*
- * pcn_scif.c - Kernel Module for Popcorn Messaging Layer over Intel SCIF
+ * pcn_scif_parallel.c - Kernel Module for Popcorn Messaging Layer over Intel SCIF
+ * Parallel Messaging layer
+ * B M Saif Ansary<bmsaif86@vt.edu> 2014
  */
 
 #include <linux/circ_buf.h>
 #include <linux/proc_fs.h>
-
 #include "pcn_scif_parallel.h"
 
 extern 	int __scif_flush(ep);
@@ -432,6 +433,9 @@ int test_thread(void* arg0)
 }
 #endif
 
+
+/*Code for executer threads. These threads are execute the message actions*/
+
 static int executer_thread(void* arg0)
 {
 	rcv_wait * wait_data;
@@ -461,6 +465,8 @@ static int executer_thread(void* arg0)
 	}
 	
 }
+
+/*Code for send threads. They send messages to the other kernel*/
 
 static int send_thread(void* arg0)
 {
@@ -555,6 +561,7 @@ static int send_thread(void* arg0)
 	}
 }
 
+/* The code for receiving threads. They recieve the messages comming from other kernels.*/
 static int connection_handler(void *arg0){
 	int rc;
 	int cmd;
@@ -744,14 +751,14 @@ _process:
 }
 
 
-
+/*API for call back registration*/
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback){
 	if(type >= PCN_KMSG_TYPE_MAX) return -1; //invalid type
 	//printk("%s: registering %d \n",type);
 	callbacks[type] = callback;
 	return 0;
 }
-
+/*API for call back unregister*/
 int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type){
 	if(type >= PCN_KMSG_TYPE_MAX) return -1;
 	callbacks[type] = NULL;
@@ -908,20 +915,23 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *
 	return ret;
 }
 
+/*API for small message send*/
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg) {
-if (msg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST) {
+	
+/*	if (msg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST) {
 
-//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
-}
+	//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
+	}
+*/ 
 	return __pcn_kmsg_send(dest_cpu,msg,sizeof(struct pcn_kmsg_message)-sizeof(struct pcn_kmsg_hdr));
 
 }
-
+/*API for large message send*/
 int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size) {
 
-if (lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST) {
+//if (lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST) {
 //	trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
-}
+//}
 	return __pcn_kmsg_send(dest_cpu, lmsg, payload_size);
 }
 
@@ -940,11 +950,12 @@ static void __free_msg(void *msg) {
 	struct pcn_kmsg_message *pmsg = (struct pcn_kmsg_message *)msg;
 	kfree(msg);
 }
-
+/*API for message free*/
 void pcn_kmsg_free_msg_now(void *msg) {
 	__free_msg(msg);
 }
 
+/*API (DUMMY) for messahe free*/
 void pcn_kmsg_free_msg(void *msg) {
 /*
  *    struct pcn_kmsg_message *pmsg = (struct pcn_kmsg_message *)msg;
