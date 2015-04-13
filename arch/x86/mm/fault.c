@@ -13,7 +13,7 @@
 #include <linux/perf_event.h>		/* perf_sw_event		*/
 #include <linux/hugetlb.h>		/* hstate_index_to_shift	*/
 #include <linux/prefetch.h>		/* prefetchw			*/
-#include <linux/process_server.h> /* Multikernel */
+#include <linux/popcorn_user_dsm.h>
 
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
@@ -986,38 +986,6 @@ static int fault_in_kernel_space(unsigned long address)
 	return address >= TASK_SIZE_MAX;
 }
 
-static void dump_regs(struct pt_regs* regs) {
-    unsigned long fs, gs;
-   printk(KERN_ALERT"DUMP REGS\n");
-    if(NULL != regs) {
-        printk(KERN_ALERT"r15{%lx}\n",regs->r15);
-        printk(KERN_ALERT"r14{%lx}\n",regs->r14);
-        printk(KERN_ALERT"r13{%lx}\n",regs->r13);
-        printk(KERN_ALERT"r12{%lx}\n",regs->r12);
-        printk(KERN_ALERT"r11{%lx}\n",regs->r11);
-        printk(KERN_ALERT"r10{%lx}\n",regs->r10);
-        printk(KERN_ALERT"r9{%lx}\n",regs->r9);
-        printk(KERN_ALERT"r8{%lx}\n",regs->r8);
-        printk(KERN_ALERT"bp{%lx}\n",regs->bp);
-        printk(KERN_ALERT"bx{%lx}\n",regs->bx);
-        printk(KERN_ALERT"ax{%lx}\n",regs->ax);
-        printk(KERN_ALERT"cx{%lx}\n",regs->cx);
-        printk(KERN_ALERT"dx{%lx}\n",regs->dx);
-        printk(KERN_ALERT"di{%lx}\n",regs->di);
-        printk(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
-        printk(KERN_ALERT"ip{%lx}\n",regs->ip);
-        printk(KERN_ALERT"cs{%lx}\n",regs->cs);
-        printk(KERN_ALERT"flags{%lx}\n",regs->flags);
-        printk(KERN_ALERT"sp{%lx}\n",regs->sp);
-        printk(KERN_ALERT"ss{%lx}\n",regs->ss);
-    }
-    rdmsrl(MSR_FS_BASE, fs);
-    rdmsrl(MSR_GS_BASE, gs);
-    printk(KERN_ALERT"fs{%lx}\n",fs);
-    printk(KERN_ALERT"gs{%lx}\n",gs);
-    printk(KERN_ALERT"REGS DUMP COMPLETE\n");
-}
-extern unsigned long read_old_rsp(void);
 /*
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
@@ -1035,12 +1003,9 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	int write = error_code & PF_WRITE;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
 					(write ? FAULT_FLAG_WRITE : 0);
-	int cnt=0;
 	tsk = (current->surrogate == -1) ? current : pid_task(find_get_pid(current->surrogate), PIDTYPE_PID);
 	mm = tsk->mm;
-/*	if(current->surrogate != -1)
-	      printk("%s: server {%s} in action for {%s} ",__func__,current->comm,tsk->comm);
-*/
+
 	/* Get the faulting address: */
 	address = read_cr2();
 	/*
@@ -1124,16 +1089,14 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		return;
 	}
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
-	//Multikernel
 	if(tsk->tgroup_distributed==1){
-//		printk("%s acquiring\n",__func__);
+
 		down_read(&mm->distribute_sem);
 		lock_aquired= 1;
 	}
 	else
 		lock_aquired= 0;
-#endif
+
 	/*
 	 * When running in the kernel we expect faults to occur only to
 	 * addresses in user space.  All other faults represent errors in
@@ -1169,49 +1132,32 @@ retry:
 
 	vma = find_vma(mm, address);
 
-	/*if(current->nsproxy->cpu_ns == popcorn_ns && (strcmp(current->comm,"is") == 0)){
-		printk(KERN_ALERT"%s:Page fault for address %lu in page %lu pid %d\n",__func__,address,address&PAGE_MASK,current->pid);
-		if(flags&FAULT_FLAG_WRITE)
-			printk(KERN_ALERT"write\n");
-		else
-			printk(KERN_ALERT"read\n");
-	}*/
-
-	// Multikernel
 	repl_ret= 0;
-	// Nothing to do for a thread group that's not distributed.
+
+	/* Nothing to do for a thread group that's not distributed.*/
 	if(tsk->tgroup_distributed==1 && (retrying == 0)) {
 
-		repl_ret= process_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
+		repl_ret= popcorn_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
 
 		if(repl_ret==0)
 			goto out;
 
 		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
-			/*printk(KERN_ALERT" stack value old rsp{%lx},cx{%lx} , edi{%lx} address{%lx} \n", read_old_rsp(),regs->cx,regs->di,address);
-			unsigned long *_base= 0x492e10; //read_old_rsp();
-			int ret =0;
-			for(cnt=0 ;cnt< 16;cnt++){
-			unsigned long ptr;
-			ret =  get_user(ptr,((_base)+cnt));
-			printk(KERN_ALERT" {%lx} ret{%d}\t",ptr,ret);
-			}*/
-			dump_regs(regs);
+
 			bad_area(regs, error_code, address);
 			goto out_distr;
 		}
 
 		if(unlikely(repl_ret & VM_FAULT_ACCESS_ERROR)){
 			
-			dump_regs(regs);
 			bad_area_access_error(regs, error_code, address);
 			goto out_distr;
 		}
 
 		if (unlikely(repl_ret & VM_FAULT_ERROR)) {
+
 			mm_fault_error(regs, error_code, address, repl_ret);
-		        dump_regs(regs);
-			goto out_distr;
+		        goto out_distr;
 		}
 
 		vma = find_vma(mm, address);
@@ -1268,9 +1214,9 @@ good_area:
 			goto out_distr;
 	}
 
-	if(tsk->tgroup_distributed==1 && (repl_ret & VM_CONTINUE_WITH_CHECK)&&(retrying == 0)){
+	if(tsk->tgroup_distributed==1 && (repl_ret & VM_CONTINUE_WITH_CHECK) && (retrying == 0)){
 
-		repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
+		repl_ret= popcorn_update_page(tsk,mm,vma,address,flags);
 
 		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
 			bad_area(regs, error_code, address);
@@ -1283,41 +1229,7 @@ good_area:
 		}
 	}
 
-/*	if(current->nsproxy->cpu_ns == popcorn_ns && (strcmp(current->comm,"cond") == 0)){
-	if((address & PAGE_MASK) == 4222976){
 
-spinlock_t *ptl;
-
-pgd_t* pgd = pgd_offset(mm, address);
-
-pud_t *pud = pud_alloc(mm, pgd, address);
-
-pmd_t *pmd = pmd_alloc(mm, pud, address);
-
-pte_t *pte = pte_offset_map_lock(mm, pmd, address, &ptl);
-
-
-pte_t value_pte = *pte;
-struct page *page = pte_page(value_pte);
-
-void *vfrom = kmap_atomic(page, KM_USER0);
-
-int ct=0;
-unsigned long _buff[16];
-
-for(ct=0;ct<8;ct++){
-_buff[ct]=(unsigned long) *(((unsigned long *)vfrom) + ct);
-}
-kunmap_atomic(vfrom, KM_USER0);
-
-for(ct=0;ct<8;ct++){
-printk(KERN_ALERT"{%lx} ",_buff[ct]);
-}
- spin_unlock(ptl);
-
-	
-	}	
-}*/
 	/*
 	 * Major/minor page fault accounting is only done on the
 	 * initial attempt. If we go through a retry, it is extremely
@@ -1337,10 +1249,10 @@ printk(KERN_ALERT"{%lx} ",_buff[ct]);
 			/* Clear FAULT_FLAG_ALLOW_RETRY to avoid any risk
 			 * of starvation. */
 			flags &= ~FAULT_FLAG_ALLOW_RETRY;
+
 			if (tsk->tgroup_distributed == 1) {
-                               printk("%s: Retrying the local fetch: 0x%x flags 0x%x\n", __func__, address, flags);
-                               retrying = 1;
-                        }
+				retrying = 1;
+			}
 			goto retry;
 		}
 	}
@@ -1351,13 +1263,12 @@ printk(KERN_ALERT"{%lx} ",_buff[ct]);
 
 	out_distr:
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
 	if(tsk->tgroup_distributed==1 && lock_aquired){
 
 		up_read(&mm->distribute_sem);
-	//	printk("%s relised\n",__func__);
+
 	}
-#endif
+
 
 	return;
 }

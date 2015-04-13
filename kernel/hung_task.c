@@ -79,7 +79,7 @@ static void check_hung_task(struct task_struct *t, unsigned long timeout)
 	if (unlikely(t->flags & (PF_FROZEN | PF_FREEZER_SKIP)))
 	    return;
 
-	/* Multikernel
+	/* Popcorn
 	 * a shadow thread can be in interruptible state for very long....
 	 * */
 	if(t->represents_remote || t->main)

@@ -29,6 +29,7 @@
 #define ENOTINKRN 999
 #define MODULE "GRQ-"
 #include <popcorn/global_spinlock.h>
+#include <linux/popcorn_migration.h>
 
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>

@@ -26,8 +26,7 @@
 
 #include "internal.h"
 
-//Multikernel
-#include <linux/process_server.h>
+#include <linux/popcorn_vma_operation.h>
 
 static pmd_t *get_old_pmd(struct mm_struct *mm, unsigned long addr)
 {
@@ -454,11 +453,10 @@ unsigned long do_mremap(unsigned long addr,
 	if (!new_len)
 		goto out;
 
-	//Multikernel
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed =1;
-		printk("WARNING: remap called\n");
-		distr_ret= process_server_do_mremap_start(addr,
+
+		distr_ret= popcorn_do_mremap_start(addr,
 			old_len,  new_len,
 			 flags, new_addr);
 
@@ -466,9 +464,8 @@ unsigned long do_mremap(unsigned long addr,
 			return distr_ret;
 
 		/* Only the server can have as output VMA_OP_SAVE and VMA_OP_NOT_SAVE.
-		 * the only output of server are VMA_OP_SAVE and VMA_OP_NOT_SAVE.
 		 * the client should always overwrite new_addr, the server never.
-		 * */
+		 */
 		if(distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
 			new_addr= ret;
 			flags|= MREMAP_FIXED;
@@ -558,9 +555,8 @@ out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
 
-	//Multikernel
 	if(current->tgroup_distributed==1 && distributed == 1){
-		process_server_do_mremap_end( addr,
+		popcorn_do_mremap_end( addr,
 			 old_len,new_len,
 			flags,  new_addr, distr_ret);
 

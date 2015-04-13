@@ -31,7 +31,6 @@
 #include <linux/bootmem.h>
 //#include <linux/multikernel.h>
 
-#include <linux/process_server.h>
 
 extern unsigned long orig_boot_params;
 #define max_nodes 1 << 8

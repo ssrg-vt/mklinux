@@ -62,6 +62,7 @@
 #include <linux/io.h>
 #include <linux/ftrace.h>
 #include <linux/cpuidle.h>
+#include <linux/popcorn_migration.h>
 
 #include <asm/pgtable.h>
 #include <asm/system.h>
@@ -403,8 +404,160 @@ start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 			    __USER_CS, __USER_DS, 0);
 }
 
-unsigned long read_old_rsp(){
-	return percpu_read(old_rsp);
+void fake_successfull_syscall_on_regs_of_task(struct task_struct* task){
+	task_pt_regs(task)->ax = 0;
+}
+
+void copy_arch_dep_field_to_task(struct task_struct* task,
+		arch_dep_mig_fields_t *src)
+{
+
+	task->thread.usersp = src->old_rsp;
+	memcpy(task_pt_regs(task), &src->regs, sizeof(struct pt_regs));
+
+	task_pt_regs(task)->sp = src->old_rsp;
+
+	// set thread info
+	task->thread.es = src->thread_es;
+	task->thread.ds = src->thread_ds;
+
+	task->thread.fsindex = src->thread_fsindex;
+	task->thread.fs = src->thread_fs;
+	task->thread.gs = src->thread_gs;
+	task->thread.gsindex = src->thread_gsindex;
+
+#if MIGRATE_FPU
+	//FPU migration code --- server
+	/* PF_USED_MATH is set if the task used the FPU before
+	 * fpu_counter is incremented every time you go in __switch_to while owning the FPU
+	 * has_fpu is true if the task is the owner of the FPU, thus the FPU contains its data
+	 * fpu.preload (see arch/x86/include/asm.i387.h:switch_fpu_prepare()) is a heuristic
+	 */
+	if (src->task_flags & PF_USED_MATH)
+	//set_used_math();
+	set_stopped_child_used_math(task);
+
+	task->fpu_counter = src->task_fpu_counter;
+
+	//    if (__thread_has_fpu(current)) {
+	if (!fpu_allocated(&task->thread.fpu)) {
+		fpu_alloc(&task->thread.fpu);
+		fpu_finit(&task->thread.fpu);
+	}
+
+	struct fpu temp; temp.state = &clone_data->fpu_state;
+	fpu_copy(&task->thread.fpu, &temp);
+
+	//    }
+
+	//FPU migration code --- is the following optional?
+	if (tsk_used_math(task) && task->fpu_counter >5)//fpu.preload
+	__math_state_restore(task);
+#endif
+
+}
+
+void copy_arch_dep_field_from_task(struct task_struct *task,
+		arch_dep_mig_fields_t *dst)
+{
+
+	unsigned long fs, gs;
+
+	memcpy(&dst->regs, task_pt_regs(task), sizeof(struct pt_regs));
+
+	dst->thread_usersp = task->thread.usersp;
+
+	dst->old_rsp = percpu_read(old_rsp);
+
+	dst->thread_es = task->thread.es;
+
+	dst->thread_ds = task->thread.ds;
+
+	dst->thread_fsindex = task->thread.fsindex;
+
+	dst->thread_gsindex = task->thread.gsindex;
+
+	dst->thread_fs = task->thread.fs;
+	rdmsrl(MSR_FS_BASE, fs);
+	if(fs != dst->thread_fs) {
+		dst->thread_fs = fs;
+	}
+
+	dst->thread_gs = task->thread.gs;
+	rdmsrl(MSR_KERNEL_GS_BASE, gs);
+
+	if(gs != dst->thread_gs) {
+		dst->thread_gs = gs;
+	}
+
+#if MIGRATE_FPU
+	//FPU migration code --- initiator
+	dst->task_flags = task->flags;
+	dst->task_fpu_counter = task->fpu_counter;
+	dst->thread_has_fpu = task->thread.has_fpu;
+
+	//    if (__thread_has_fpu(task)) {
+	if (!fpu_allocated(&task->thread.fpu)) {
+		fpu_alloc(&task->thread.fpu);
+		fpu_finit(&task->thread.fpu);
+	}
+
+	fpu_save_init(&task->thread.fpu);
+
+	struct fpu temp; temp.state = &dst->fpu_state;
+
+	fpu_copy(&temp,&task->thread.fpu);
+
+	//    }
+#endif
+
+}
+
+void update_registers_for_shadow(void)
+{
+
+	unsigned int fsindex, gsindex;
+
+	savesegment(fs, fsindex);
+	if(unlikely(fsindex | current->thread.fsindex))
+		loadsegment(fs, current->thread.fsindex);
+	else
+		loadsegment(fs, 0);
+
+	if(current->thread.fs)
+		checking_wrmsrl(MSR_FS_BASE, current->thread.fs);
+
+	savesegment(gs, gsindex);
+	if(unlikely(gsindex | current->thread.gsindex))
+		load_gs_index(current->thread.gsindex);
+	else
+		load_gs_index(0);
+
+	if(current->thread.gs)
+		checking_wrmsrl(MSR_KERNEL_GS_BASE, current->thread.gs);
+
+}
+
+struct pt_regs create_registers_for_shadow_threads(void)
+{
+
+	struct pt_regs regs;
+	memset(&regs, 0, sizeof(regs));
+
+#ifdef CONFIG_X86_32
+	regs.ds = __USER_DS;
+	regs.es = __USER_DS;
+	regs.fs = __KERNEL_PERCPU;
+	regs.gs = __KERNEL_STACK_CANARY;
+#else
+	regs.ss = __KERNEL_DS;
+#endif
+
+	regs.orig_ax = -1;
+	regs.cs = __KERNEL_CS | get_kernel_rpl();
+	regs.flags = X86_EFLAGS_IF | 0x2;
+
+	return regs;
 }
 
 #ifdef CONFIG_IA32_EMULATION

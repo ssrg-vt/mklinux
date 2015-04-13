@@ -67,7 +67,7 @@
 #include <linux/oom.h>
 #include <linux/khugepaged.h>
 #include <linux/signalfd.h>
-#include <linux/process_server.h>
+#include <linux/popcorn_migration.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -703,9 +703,7 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 			 * We don't check the error code - if userspace has
 			 * not set up a proper pointer then tough luck.
 			 */
-		/*	if(tsk->tgroup_distributed==1)
-				printk(KERN_ALERT"%s: sys futex wake\n",__func__);
-		*/	put_user(0, tsk->clear_child_tid);
+			put_user(0, tsk->clear_child_tid);
 			sys_futex(tsk->clear_child_tid, FUTEX_WAKE,
 					1, NULL, NULL, 0);
 		}
@@ -1477,13 +1475,13 @@ struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
 	 */
 	if (clone_flags & CLONE_NEWUSER) {
 		if (clone_flags & CLONE_THREAD)
-			return -EINVAL;
+			return ERR_PTR(-EINVAL);
 		/* hopefully this check will go away when userns support is
 		 * complete
 		 */
 		if (!capable(CAP_SYS_ADMIN) || !capable(CAP_SETUID) ||
 				!capable(CAP_SETGID))
-			return -EPERM;
+			return ERR_PTR(-EPERM);
 	}
 
 	/*
@@ -1535,8 +1533,7 @@ struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
 		 */
 		p->flags &= ~PF_STARTING;
 
-		//Multikernel
-		process_server_dup_task(current, p);
+		popcorn_dup_task(current, p);
 
 		p->represents_remote= 1;
 		p->distributed_exit= EXIT_NOT_ACTIVE;
@@ -1639,8 +1636,7 @@ long do_fork(unsigned long clone_flags,
 		 */
 		p->flags &= ~PF_STARTING;
 
-		//Multikernel
-		process_server_dup_task(current, p);
+		popcorn_dup_task(current, p);
 
 		wake_up_new_task(p);
 

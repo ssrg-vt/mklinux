@@ -1,14 +1,14 @@
 /*
  * Wkdm.h
- *
- *  Created on: May 28, 2014
- *      Author: marina
+ * Author: Marina Sadini, SSRG Virginia Tech
  */
 
 #ifndef WKDM_H_
 #define WKDM_H_
 
-/* direct-mapped partial matching compressor with simple 22/10 split
+/* Code modified from version of:
+ *
+ * direct-mapped partial matching compressor with simple 22/10 split
  *
  *  Compresses buffers using a dictionary based match and partial match
  *  (high bits only or full match) scheme.
@@ -107,27 +107,28 @@ typedef WK_word DictionaryElement;
 /* ============================================================ */
 /* Misc constants */
 
-//#define BITS_PER_WORD 32
-//#define BYTES_PER_WORD 4
-//#define NUM_LOW_BITS 10
-//#define LOW_BITS_MASK 0x3FF
-//#define ALL_ONES_MASK 0xFFFFFFFF
+/*#define BITS_PER_WORD 32
+ *#define BYTES_PER_WORD 4
+ *#define NUM_LOW_BITS 10
+ *#define LOW_BITS_MASK 0x3FF
+ *#define ALL_ONES_MASK 0xFFFFFFFF
 
-//#define TWO_BITS_PACKING_MASK 0x03030303
-//#define FOUR_BITS_PACKING_MASK 0x0F0F0F0F
-//#define TEN_LOW_BITS_MASK 0x000003FF
-//#define TWENTY_TWO_HIGH_BITS_MASK 0xFFFFFC00
-///////////////////////////////////////////////////////////////////////////////////////
+ *#define TWO_BITS_PACKING_MASK 0x03030303
+ *#define FOUR_BITS_PACKING_MASK 0x0F0F0F0F
+ *#define TEN_LOW_BITS_MASK 0x000003FF
+ *#define TWENTY_TWO_HIGH_BITS_MASK 0xFFFFFC00
+ * */
+
 #define BITS_PER_WORD 64
 #define BYTES_PER_WORD 8
 #define NUM_LOW_BITS 20
 #define LOW_BITS_MASK 0xFFFFF
-//#define ALL_ONES_MASK 0xFFFFFFFFFFFFFFFF
+/*#define ALL_ONES_MASK 0xFFFFFFFFFFFFFFFF*/
 
 #define TWO_BITS_PACKING_MASK 0x0303030303030303
 #define FOUR_BITS_PACKING_MASK 0x0F0F0F0F0F0F0F0F
-//#define TEN_LOW_BITS_MASK 0x000003FF
-//#define TWENTY_TWO_HIGH_BITS_MASK 0xFFFFFC00
+/*#define TEN_LOW_BITS_MASK 0x000003FF
+*#define TWENTY_TWO_HIGH_BITS_MASK 0xFFFFFC00*/
 
 /* Tag values.  NOTE THAT CODE MAY DEPEND ON THE NUMBERS USED.
  * Check for conditionals doing arithmetic on these thingsSET_LOW_BITS_AREA_END
@@ -209,8 +210,6 @@ typedef WK_word DictionaryElement;
 
 #define HASH_TO_DICT_BYTE_OFFSET(pattern) \
         ((hashLookupTable[((pattern) >> NUM_LOW_BITS) & 0xFF]) *2)
-
-  //((hashLookupTable[((pattern) >> 10) & 0xFF]) *2)
 
 
 extern const char hashLookupTable[];

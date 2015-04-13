@@ -1,8 +1,24 @@
+/*
+ * Wkdm.h
+ * Author: Marina Sadini, SSRG Virginia Tech
+ */
+
+/* Code modified from version of:
+ *
+ * direct-mapped partial matching compressor with simple 22/10 split
+ *
+ *  Compresses buffers using a dictionary based match and partial match
+ *  (high bits only or full match) scheme.
+ *
+ *  Paul Wilson -- wilson@cs.utexas.edu
+ *  Scott F. Kaplan -- sfkaplan@cs.utexas.edu
+ *  September 1997
+ */
 
 #include "WKdm.h"
 #include <linux/slab.h>
 #include <linux/kernel.h>
-/***************************************************************************
+/*
  *          THE UNPACKING ROUTINES should GO HERE
  */
 
@@ -112,7 +128,7 @@ WK_unpack_3_twentybits(WK_word *input_buf,
 
 }
 
-/*********************************************************************
+/*
  * WKdm_decompress --- THE DECOMPRESSOR
  * Expects WORD pointers to the source and destination buffers
  * and a page size in words.  The page size had better be 1024 unless
