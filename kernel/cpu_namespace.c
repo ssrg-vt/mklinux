@@ -34,7 +34,7 @@ static struct cpu_namespace *create_cpu_namespace(struct cpu_namespace *parent_c
 {
 	struct cpu_namespace *ns;
 	unsigned int level = parent_cpu_ns->level +1;
-	int i, err = -ENOMEM;
+	int err = -ENOMEM;
 
 	ns = kmem_cache_zalloc(cpu_ns_cachep, GFP_KERNEL);
 	if (ns == NULL)
@@ -59,17 +59,17 @@ static struct cpu_namespace *create_cpu_namespace(struct cpu_namespace *parent_c
 */
         return ns;
 
-out_put_parent_cpu_ns:
+/*out_put_parent_cpu_ns:
         put_cpu_ns(parent_cpu_ns);
 out_free:
         kmem_cache_free(cpu_ns_cachep, ns);
+*/
 out:
         return ERR_PTR(err);
 }
 
 static void destroy_cpu_namespace(struct cpu_namespace *ns)
 {
-	int i;
 //TODO add code here
 	kmem_cache_free(cpu_ns_cachep, ns);
 }
@@ -142,7 +142,7 @@ struct cpu_namespace * popcorn_ns = 0;
 int read_notify_cpu_ns(char *page, char **start, off_t off, int count, int *eof, void *data)
 {
 	char *p = page;
-	int len, i, idx;
+	int len;
 	struct cpu_namespace *ns = current->nsproxy->cpu_ns;
 	char cpumask_buffer[1024];
 	
@@ -179,20 +179,18 @@ extern unsigned int offset_cpus; //from kernel/smp.c
  */
 int build_popcorn_ns( int force)
 {
-	int cnr_cpus =0;
-	int cnr_cpu_ids =0;
+	int cnr_cpu_ids =0, cpuid =-1;
 	struct list_head *iter;
 	_remote_cpu_info_list_t *objPtr;
 	struct cpumask *pcpum =0;
 	unsigned long * summary, * tmp;
-	int size, offset, error;
+	int size, offset;
 
 	/* calculate the minimum size of the bitmask */
 	cnr_cpu_ids += cpumask_weight(cpu_online_mask); // current kernel
-	int cpuid =-1;
 	list_for_each(iter, &rlist_head) { // other kernels  
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-		pcpum = &(objPtr->_data.cpumask); //&(objPtr->_data._cpumask);
+		pcpum = (struct cpumask*) &(objPtr->_data.cpumask); //&(objPtr->_data._cpumask);
 		cnr_cpu_ids += bitmap_weight(cpumask_bits(pcpum),
 			(objPtr->_data.cpumask_size * BITS_PER_BYTE));//cpumask_weight(pcpum);
 	}    
@@ -216,7 +214,7 @@ int build_popcorn_ns( int force)
 	list_for_each(iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		cpuid = objPtr->_data._processor;
-		pcpum = &(objPtr->_data.cpumask);//&(objPtr->_data._cpumask);
+		pcpum = (struct cpumask*) &(objPtr->_data.cpumask);//&(objPtr->_data._cpumask);
 		offset = objPtr->_data.cpumask_offset;
 		bitmap_zero(tmp, size * BITS_PER_BYTE);
 		bitmap_copy(tmp, cpumask_bits(pcpum), (objPtr->_data.cpumask_size *BITS_PER_BYTE));
@@ -237,7 +235,7 @@ int build_popcorn_ns( int force)
 		popcorn_ns = tmp_ns;
 	}
 	if (popcorn_ns->cpu_online_mask) {
-		if (popcorn_ns->cpu_online_mask != cpumask_bits(cpu_online_mask))
+		if (cpumask_bits(popcorn_ns->cpu_online_mask) != cpumask_bits(cpu_online_mask))
 			kfree(popcorn_ns->cpu_online_mask);
 	else
 		printk(KERN_ERR "%s: Popcorn was associated with cpu_online_mask\n", __func__);
@@ -280,7 +278,7 @@ int associate_to_popcorn_ns(struct task_struct * tsk)
 		}
 		cbitm->size = size-sizeof(struct cpubitmap);
 		cbitm->ns = popcorn_ns;
-		bitmap_copy (cbitm->bitmap, tsk->nsproxy->cpu_ns->cpu_online_mask, popcorn_ns->nr_cpu_ids);
+		bitmap_copy (cbitm->bitmap, cpumask_bits(tsk->nsproxy->cpu_ns->cpu_online_mask), popcorn_ns->nr_cpu_ids);
 		tsk->cpus_allowed_map = cbitm;
 	}
 	return 0;
@@ -396,6 +394,8 @@ int register_popcorn_ns(void)
 	res->read_proc = read_notify_cpu_ns;
 	res->write_proc = write_notify_cpu_ns;
 	//res->proc_fops  = &ns_file_operations; // required by setns
+	
+	return 0;
 }
 
 extern const struct file_operations ns_file_operations;

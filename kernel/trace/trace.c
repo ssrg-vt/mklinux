@@ -3640,8 +3640,8 @@ tracing_mark_write(struct file *filp, const char __user *ubuf,
 	struct page *pages[2];
 	int nr_pages = 1;
 	ssize_t written;
-	void *page1;
-	void *page2;
+	void *page1 = 0;
+	void *page2 = 0;
 	int offset;
 	int size;
 	int len;
