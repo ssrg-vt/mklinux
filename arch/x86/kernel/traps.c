@@ -176,7 +176,7 @@ trap_signal:
 	if (show_unhandled_signals && unhandled_signal(tsk, signr) &&
 	    printk_ratelimit()) {
 		int ret =0, cnt=0;
-		unsigned long *_base= read_old_rsp();
+		unsigned long *_base= (unsigned long*) read_old_rsp();
 		
 		dump_stack();
 		printk(KERN_ALERT"last 16 sp add\n");

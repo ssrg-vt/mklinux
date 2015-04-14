@@ -6,7 +6,6 @@
 
 #include <linux/popcorn_user_dsm.h>
 #include <linux/popcorn_migration.h>
-#include <linux/mcomm.h>
 #include <linux/kthread.h>
 #include <linux/export.h>
 #include <linux/delay.h>
@@ -929,7 +928,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 	pmd_t* pmd;
 	pte_t* pte;
 	pte_t entry;
-	spinlock_t* ptl;
+	spinlock_t* ptl = NULL;
 	struct page_fault_mapping_request_work* delay;
 	struct page* page, *old_page;
 	struct mapping_response* response;

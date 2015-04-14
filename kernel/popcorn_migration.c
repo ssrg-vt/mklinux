@@ -2349,7 +2349,7 @@ static int do_migration(struct task_struct* task, int dst_cpu,
 	struct task_struct* tgroup_iterator = NULL;
 	char path[256] = {0};
 	char* rpath;
-	struct migration_memory* entry;
+	struct migration_memory* entry = NULL;
 	int first = 0;
 	unsigned long flags;
 
@@ -2497,8 +2497,8 @@ static int do_migration(struct task_struct* task, int dst_cpu,
  * remote cpu will then select a new thread and import that
  * info into its context.
  *
- * It returns PROCESS_SERVER_CLONE_FAIL in case of error,
- * PROCESS_SERVER_CLONE_SUCCESS otherwise.
+ * It returns CLONE_FAIL in case of error,
+ * CLONE_SUCCESS otherwise.
  */
 int popcorn_do_migration(struct task_struct* task, int dst_cpu,
 		struct pt_regs * regs)
@@ -2516,11 +2516,11 @@ int popcorn_do_migration(struct task_struct* task, int dst_cpu,
 
 		__set_task_state(task, TASK_UNINTERRUPTIBLE);
 
-		return PROCESS_SERVER_CLONE_SUCCESS;
+		return CLONE_SUCCESS;
 
 	} else
 
-		return PROCESS_SERVER_CLONE_FAIL;
+		return CLONE_FAIL;
 
 }
 
@@ -2606,9 +2606,9 @@ static int read_proc_migrating_threads_barrier(char *page, char **start,
 static int write_proc_migrating_threads_barrier(struct file *file,
 		const char __user *buffer, unsigned long count, void *data)
 {
-	kstrtol_from_user(buffer, count, 0, &migrating_threads_barrier);
-	printk("%s: migrating_threads_barrier %ld\n", __func__,
-			migrating_threads_barrier);
+	int ret = kstrtol_from_user(buffer, count, 0, &migrating_threads_barrier);
+	printk("%s: migrating_threads_barrier %ld (%d)\n", __func__,
+			migrating_threads_barrier, ret);
 	return count;
 }
 

@@ -5665,14 +5665,10 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	int retval;
 	int i,ret;
 
-
 	get_online_cpus();
 	rcu_read_lock();
 
-
 	pid = current->pid;
-
-
 
 	if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
 
@@ -5685,16 +5681,17 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 		extern struct list_head rlist_head;
 
 		list_for_each(iter, &rlist_head) {
+			struct cpu_namespace * ns = current->nsproxy->cpu_ns;
+			int mask_len=  ( !( ns->nr_cpu_ids > nr_cpu_ids) ) ? cpumask_size() : ns->cpumask_size;	
+		  
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
-			pcpum = &(objPtr->_data.cpumask);
+			pcpum = (struct cpumask*) &(objPtr->_data.cpumask);
 
 			bitmap_zero(cbitmap, p->nsproxy->cpu_ns->nr_cpu_ids);
 			bitmap_copy(cbitmap, cpumask_bits(pcpum), objPtr->_data.cpumask_size * 8);
 			bitmap_shift_left(cbitmap, cbitmap, objPtr->_data.cpumask_offset, p->nsproxy->cpu_ns->nr_cpu_ids);
 
-			struct cpu_namespace * ns = current->nsproxy->cpu_ns;	
-			int mask_len=  ( !( ns->nr_cpu_ids > nr_cpu_ids) ) ? cpumask_size() : ns->cpumask_size;	
 			if (len > mask_len)
 				len = mask_len;
 
@@ -5706,10 +5703,10 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 				put_task_struct(p);
 				put_online_cpus();
 
-				sleep_again:
+sleep_again:
 				schedule();
 
-				if(ret==PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote && current->group_exit!=-1){
+				if(ret==CLONE_SUCCESS && current->represents_remote && current->group_exit!=-1){
 
 					if(current->group_exit){
 						do_group_exit(current->distributed_exit_code);
@@ -5719,7 +5716,7 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 
 				}
 				else
-					if(ret==PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote && current->group_exit==-1){
+					if(ret==CLONE_SUCCESS && current->represents_remote && current->group_exit==-1){
 						__set_task_state(current, TASK_UNINTERRUPTIBLE);
 						goto sleep_again;					
 					}
@@ -5794,10 +5791,13 @@ static int _get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
         return ret ? -EFAULT : 0;
 }
 
+/*
 static int get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
-                             struct cpumask *new_mask) {
+                             struct cpumask *new_mask)
+{
   return _get_user_cpu_mask(user_mask_ptr, len, new_mask, cpumask_size());
 }
+*/
 
 /**
  * sys_sched_setaffinity - set the cpu affinity of a process

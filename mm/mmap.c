@@ -950,7 +950,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	int error, distributed=0;
 	unsigned long reqprot = prot;
 	unsigned long ret;
-	long distr_ret;
+	long distr_ret = 0;
 
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC?
@@ -2062,7 +2062,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	unsigned long end;
 	struct vm_area_struct *vma, *prev, *last;
 	int error, distributed= 0 ;
-	long ret;
+	long ret =0;
 
 	if ((start & ~PAGE_MASK) || start > TASK_SIZE || len > TASK_SIZE-start)
 		return -EINVAL;

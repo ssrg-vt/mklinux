@@ -255,7 +255,7 @@ int kernel_mprotect(unsigned long start, size_t len,
 	struct vm_area_struct *vma, *prev;
 	int error = -EINVAL, distributed= 0;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
-	long distr_ret;
+	long distr_ret = 0;
 
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
@@ -370,7 +370,7 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	struct vm_area_struct *vma, *prev;
 	int error = -EINVAL, distributed= 0;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
-	long distr_ret;
+	long distr_ret = 0;
 
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
