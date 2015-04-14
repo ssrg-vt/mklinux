@@ -1,3 +1,8 @@
+
+/*
+ * extended for Popcorn Linux, 2014-2015 Antonio Barbalace, SSRG Virginia Tech
+ */
+
 #include <linux/proc_fs.h>
 #include <linux/nsproxy.h>
 #include <linux/sched.h>
@@ -15,7 +20,6 @@
 #include <linux/cpu_namespace.h>
 #include "internal.h"
 
-
 static const struct proc_ns_operations *ns_entries[] = {
 #ifdef CONFIG_NET_NS
 	&netns_operations,
@@ -29,9 +33,9 @@ static const struct proc_ns_operations *ns_entries[] = {
 #ifdef CONFIG_PID_NS
         &pidns_operations,
 #endif
-//#ifdef CONFIG_CPU_NS
+/*#ifdef CONFIG_CPU_NS */
 	&cpuns_operations,
-//#endif
+/*#endif */
 };
 
 /*const struct file_operations ns_popcorn_operations = {
@@ -201,10 +205,9 @@ struct file *proc_ns_fget(int fd)
 	file = fget(fd);
 	if (!file)
 		return ERR_PTR(-EBADF);
-//antonio
 /*	if (file->f_op == &ns_popcorn_operations)
 		printk("%s: ns_popcorn_operations\n", __func__);
-*///antonio	  
+*/
 	if (file->f_op != &ns_file_operations)
 		goto out_invalid;
 

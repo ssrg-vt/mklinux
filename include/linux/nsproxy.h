@@ -1,3 +1,7 @@
+/*
+ * extended for Popcorn Linux, 2012-2015 Antonio Barbalace, SSRG Virginia Tech
+ */
+
 #ifndef _LINUX_NSPROXY_H
 #define _LINUX_NSPROXY_H
 

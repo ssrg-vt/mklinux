@@ -4,6 +4,7 @@
  * Boot parameters and other support stuff for MKLinux
  *
  * (C) Ben Shelton <beshelto@vt.edu> 2012
+ * (C) Antonio Barbalace <antoniob@vt.edu> 2012-2015
  */
 
 #define POPCORN_MAX_CPUS 64

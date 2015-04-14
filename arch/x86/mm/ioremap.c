@@ -101,7 +101,6 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 			return NULL;
 		WARN_ON_ONCE(is_ram);
 	}
-//printk("%s: last %lx phys %lx\n", __func__, (unsigned long)last_addr, (unsigned long)phys_addr);
 
 	/*
 	 * Mappings have to be page-aligned

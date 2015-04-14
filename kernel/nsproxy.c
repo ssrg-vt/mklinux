@@ -11,6 +11,8 @@
  *  Jun 2006 - namespaces support
  *             OpenVZ, SWsoft Inc.
  *             Pavel Emelianov <xemul@openvz.org>
+ * 
+ * extended for Popcorn Linux, 2014-2015 Antonio Barbalace, SSRG Virginia Tech
  */
 
 #include <linux/slab.h>
