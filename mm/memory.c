@@ -65,7 +65,7 @@
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
 
-#include <linux/process_server.h>
+#include <linux/popcorn_user_dsm.h>
 
 #include "internal.h"
 
@@ -1110,6 +1110,89 @@ int copy_page_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	return ret;
 }
 
+/* Correctly zap a present pte for popcorn
+ */
+void popcorn_zap_pte_page_present(struct page *page){
+
+	if(page->replicated==1){
+#if DIFF_PAGE
+		if(page->old_page_version!=NULL){
+			kfree(page->old_page_version);
+			page->old_page_version= NULL;
+		}
+#endif
+		popcorn_clean_page(page);
+	}
+}
+
+/* Correctly zap a not present pte for popcorn.
+ * return 0 for normal flow;
+ * -1 for break;
+ * -2 for continue
+ */
+int popcorn_zap_pte_page_not_present(pte_t ptent, struct mm_struct *mm,
+		unsigned long addr, pte_t *pte, struct mmu_gather *tlb, int *rss,
+		struct vm_area_struct *vma, int *force_flush){
+
+	struct page *page;
+
+	if(pte_none(pte_clear_flags(ptent, _PAGE_UNUSED1))){
+		ptent= pte_clear_flags(ptent, _PAGE_UNUSED1);
+		set_pte_at_notify(mm, addr, pte, ptent);
+		return -2;
+	}
+
+	page= pte_page(ptent);
+
+	if(page!=vm_normal_page(vma, addr, ptent))
+		printk("page!=vm_normal_page in zap pte invalid\n");
+
+	if (unlikely(!page))
+		return -2;
+
+	if(page->replicated==1){
+
+		if(page->status==REPLICATION_STATUS_INVALID){
+
+			ptent = ptep_get_and_clear_full(mm, addr, pte,
+					tlb->fullmm);
+			tlb_remove_tlb_entry(tlb, pte, addr);
+			if (unlikely(!page))
+				return -2;
+
+			if (PageAnon(page))
+				rss[MM_ANONPAGES]--;
+			else {
+				rss[MM_FILEPAGES]--;
+			}
+			page_remove_rmap(page);
+			if (unlikely(page_mapcount(page) < 0)){
+				print_bad_pte(vma, addr, ptent, page);
+			}
+			*force_flush = !__tlb_remove_page(tlb, page);
+#if DIFF_PAGE
+			if(page->old_page_version!=NULL){
+				kfree(page->old_page_version);
+				page->old_page_version= NULL;
+			}
+#endif
+			popcorn_clean_page(page);
+			if (*force_flush)
+				return -1;
+			return -2;
+		}
+#if DIFF_PAGE
+		if(page->old_page_version!=NULL){
+			kfree(page->old_page_version);
+			page->old_page_version= NULL;
+		}
+#endif
+		popcorn_clean_page(page);
+	}
+
+	return 0;
+}
+
 static unsigned long zap_pte_range(struct mmu_gather *tlb,
 				struct vm_area_struct *vma, pmd_t *pmd,
 				unsigned long addr, unsigned long end,
@@ -1161,16 +1244,7 @@ again:
 			if (unlikely(!page))
 				continue;
 
-			//Multikernel
-			if(page->replicated==1){
-#if DIFF_PAGE
-				if(page->old_page_version!=NULL){
-					kfree(page->old_page_version);
-					page->old_page_version= NULL;
-				}
-#endif
-				process_server_clean_page(page);
-			}
+			popcorn_zap_pte_page_present(page);
 
 			if (unlikely(details) && details->nonlinear_vma
 			    && linear_page_index(details->nonlinear_vma,
@@ -1189,7 +1263,6 @@ again:
 			}
 			page_remove_rmap(page);
 			if (unlikely(page_mapcount(page) < 0)){
-				printk("%s A\n",__func__);
 				print_bad_pte(vma, addr, ptent, page);
 			}
 			force_flush = !__tlb_remove_page(tlb, page);
@@ -1197,66 +1270,16 @@ again:
 				break;
 			continue;
 		}
-		//Multikernel
+		/*Popcorn*/
 		else{
-
-			if(pte_none(pte_clear_flags(ptent, _PAGE_UNUSED1))){
-				ptent= pte_clear_flags(ptent, _PAGE_UNUSED1);
-				set_pte_at_notify(mm, addr, pte, ptent);
+			int ret= popcorn_zap_pte_page_not_present(ptent, mm,
+					addr, pte, tlb, rss,
+					vma, &force_flush);
+			if(ret==-2)
 				continue;
-			}
+			if(ret==-1)
+				break;
 
-			struct page *page;
-			page= pte_page(ptent);
-
-			if(page!=vm_normal_page(vma, addr, ptent))
-				printk("page!=vm_normal_page in zap pte invalid\n");
-
-			if (unlikely(!page))
-				continue;
-
-			if(page->replicated==1){
-
-				if(page->status==REPLICATION_STATUS_INVALID){
-					if (unlikely(details) && page) {
-						printk("----------------details-----------\n");
-					}
-					ptent = ptep_get_and_clear_full(mm, addr, pte,
-							tlb->fullmm);
-					tlb_remove_tlb_entry(tlb, pte, addr);
-					if (unlikely(!page))
-						continue;
-
-					if (PageAnon(page))
-						rss[MM_ANONPAGES]--;
-					else {
-						rss[MM_FILEPAGES]--;
-					}
-					page_remove_rmap(page);
-					if (unlikely(page_mapcount(page) < 0)){
-						printk("%s B\n",__func__);
-						print_bad_pte(vma, addr, ptent, page);
-					}
-					force_flush = !__tlb_remove_page(tlb, page);
-#if DIFF_PAGE
-					if(page->old_page_version!=NULL){
-						kfree(page->old_page_version);
-						page->old_page_version= NULL;
-					}
-#endif
-					process_server_clean_page(page);
-					if (force_flush)
-						break;
-					continue;
-				}
-#if DIFF_PAGE
-				if(page->old_page_version!=NULL){
-					kfree(page->old_page_version);
-					page->old_page_version= NULL;
-				}
-#endif
-				process_server_clean_page(page);
-			}
 		}
 		/*
 		 * If details->check_mapping, we leave swap entries;
@@ -1266,7 +1289,6 @@ again:
 			continue;
 		if (pte_file(ptent)) {
 			if (unlikely(!(vma->vm_flags & VM_NONLINEAR))){
-				printk("%s C\n",__func__);
 				print_bad_pte(vma, addr, ptent, NULL);
 			}
 		} else {
@@ -1826,7 +1848,7 @@ int __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 					fault_flags |= (FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_RETRY_NOWAIT);
 
 				if(current->tgroup_distributed==1)
-					ret= process_server_try_handle_mm_fault(current,
+					ret= popcorn_try_handle_mm_fault(current,
 							mm, vma,
 							start, fault_flags,
 							0);
@@ -1947,7 +1969,7 @@ int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
 
                 if (!vma || address < vma->vm_start)
                         vma=NULL;
-                ret= process_server_try_handle_mm_fault(tsk,
+                ret= popcorn_try_handle_mm_fault(tsk,
                                 mm, vma,
                                 address, fault_flags,
                                 0);
@@ -2572,7 +2594,7 @@ static inline void cow_user_page(struct page *dst, struct page *src, unsigned lo
 		copy_user_highpage(dst, src, va, vma);
 }
 
-//do cow page for Multikernel
+/*does cow page for Popcorn*/
 int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
 		spinlock_t *ptl, pte_t orig_pte)
@@ -2715,8 +2737,8 @@ gotten:
 		goto oom_free_new;
 
 	/*
- * 	 * Re-check the pte - we dropped the lock
- * 	 	 */
+	 * 	 * Re-check the pte - we dropped the lock
+	 * 	 	 */
 	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
 	if (likely(pte_same(*page_table, orig_pte))) {
 		if (old_page) {

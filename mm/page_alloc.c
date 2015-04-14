@@ -58,7 +58,7 @@
 #include <linux/hash.h>
 #include <linux/memcontrol.h>
 #include <linux/prefetch.h>
-#include <linux/process_server.h>
+#include <linux/popcorn_user_dsm.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -1724,8 +1724,7 @@ try_this_zone:
 		page = buffered_rmqueue(preferred_zone, zone, order,
 						gfp_mask, migratetype);
 
-		//Multikernel
-				process_server_clean_page(page);
+		popcorn_clean_page(page);
 
 		if (page)
 			break;

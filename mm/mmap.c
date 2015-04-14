@@ -30,9 +30,7 @@
 #include <linux/perf_event.h>
 #include <linux/audit.h>
 #include <linux/khugepaged.h>
-//Multikernel
-#include <linux/process_server.h>
-
+#include <linux/popcorn_vma_operation.h>
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
 #include <asm/tlb.h>
@@ -1087,12 +1085,11 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	if (error)
 		return error;
 
-
-	//Multikernel
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
+
 		distributed= 1;
 
-		distr_ret= process_server_do_mmap_pgoff_start(file,addr,
+		distr_ret= popcorn_do_mmap_pgoff_start(file,addr,
 			 len, prot,
 			flags,pgoff);
 
@@ -1109,7 +1106,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	ret= mmap_region(file, addr, len, flags, vm_flags, pgoff);
 
 	if(current->tgroup_distributed==1 && distributed==1){
-		 process_server_do_mmap_pgoff_end(file,addr,
+		 popcorn_do_mmap_pgoff_end(file,addr,
 					 len, prot,
 					flags,pgoff,distr_ret);
 	}
@@ -2073,11 +2070,12 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	if ((len = PAGE_ALIGN(len)) == 0)
 		return -EINVAL;
 
-	//Multikernel
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
+
 		distributed= 1;
-		//printk("WARNING: unmap called \n");
-		ret= process_server_do_unmap_start(mm, start, len);
+
+		ret= popcorn_do_unmap_start(mm, start, len);
+
 		if(ret<0 && ret!=VMA_OP_SAVE && ret!=VMA_OP_NOT_SAVE){
 			return ret;
 		}
@@ -2107,7 +2105,6 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	 * places tmp vma above, and higher split_vma places tmp vma below.
 	 */
 	if (start > vma->vm_start) {
-		//int error;
 
 		/*
 		 * Make sure that map_count on return from munmap() will
@@ -2128,7 +2125,6 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	/* Does it split the last one? */
 	last = find_vma(mm, end);
 	if (last && end > last->vm_start) {
-		//int error = __split_vma(mm, last, end, 1);
 		error = __split_vma(mm, last, end, 1);
 		if (error)
 			goto exit;
@@ -2162,9 +2158,8 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 
 	exit:
 
-	//Multikernel
 	if(current->tgroup_distributed==1 && distributed==1){
-		process_server_do_unmap_end(mm, start, len, ret);
+		popcorn_do_unmap_end(mm, start, len, ret);
 	}
 
 	return error;
@@ -2208,32 +2203,32 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
 	struct rb_node ** rb_link, * rb_parent;
 	pgoff_t pgoff = addr >> PAGE_SHIFT;
 	int error, distributed=0;
-	long distr_ret;
+	long distr_ret= 0;
 	len = PAGE_ALIGN(len);
 	if (!len)
 		return addr;
 
-	//Multikernel
 	if(current->tgroup_distributed == 1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
 
-		distr_ret= process_server_do_brk_start(addr, len);
+		distr_ret= popcorn_do_brk_start(addr, len);
 		if(distr_ret==-1){
 			error=-1;
 			goto exit;
 		}
 
-		//Note: start distributed operation could give me a different address to map
-		//However brk get the address with get_unmapped_area(NULL, addr, len, 0, MAP_FIXED);
-		//so with MAP_FIXED =>
-		//the new address should be the same!!
 		if(distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
 
 			if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE)
 				return distr_ret;
 
+			/*Note: start distributed operation could give me a different address to map
+			 *However brk get the address with get_unmapped_area(NULL, addr, len, 0, MAP_FIXED);
+			 *so with MAP_FIXED =>
+			 *the new address should be the same!!
+			 * */
 			if(distr_ret!=addr)
-				printk("SERVER chose an addr for brk different from the one suggested. ERROR!!!\n");
+				printk("addr for brk different from the one suggested in %s. ERROR?!?\n", __func__);
 
 			addr= distr_ret;
 		}
@@ -2332,14 +2327,14 @@ out:
 	}
 
 	if(current->tgroup_distributed==1 && distributed==1){
-		process_server_do_brk_end(addr, len, distr_ret);
+		popcorn_do_brk_end(addr, len, distr_ret);
 	}
 
 	return addr;
 
-	//Multikernel
+
 exit:	if(current->tgroup_distributed==1 && distributed==1){
-		process_server_do_brk_end(addr, len, distr_ret);
+		popcorn_do_brk_end(addr, len, distr_ret);
 	}
 
 	return error;

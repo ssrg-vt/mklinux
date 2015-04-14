@@ -17,7 +17,7 @@
 #include <linux/file.h>
 #include <linux/module.h>
 #include <linux/namei.h>
-#include <linux/process_server.h>
+#include <linux/popcorn_migration.h>
 
 static DEFINE_MUTEX(cpu_caches_mutex);
 static struct kmem_cache *cpu_ns_cachep;
@@ -254,7 +254,7 @@ int build_popcorn_ns( int force)
     
 	//TODO unlock popcorn namespace
 	//TODO unlock kernel list
-	create_thread_pull();
+	popcorn_create_thread_pool();
 	return 0;
 }
 

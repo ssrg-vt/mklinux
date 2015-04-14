@@ -10,7 +10,8 @@ obj-y     = sched.o fork.o exec_domain.o panic.o printk.o \
 	    kthread.o wait.o kfifo.o sys_ni.o posix-cpu-timers.o mutex.o \
 	    hrtimer.o rwsem.o nsproxy.o srcu.o semaphore.o \
 	    notifier.o ksysfs.o sched_clock.o cred.o \
-	    async.o range.o process_server.o \
+	    async.o range.o popcorn_migration.o\
+	    popcorn_vma_operation.o popcorn_user_dsm.o\
 	    WKdmCompress.o WKdmDecompress.o futex_remote.o global_spinlock.o
 obj-y += groups.o
 

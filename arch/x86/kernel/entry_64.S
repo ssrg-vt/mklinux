@@ -488,7 +488,7 @@ ENTRY(system_call)
 	CFI_SIGNAL_FRAME
 	CFI_DEF_CFA	rsp,KERNEL_STACK_OFFSET
 	CFI_REGISTER	rip,rcx
-	//Uncommented for Multikernel
+	/*Uncommented for Popcorn*/
 	CFI_REGISTER	rflags,r11
 	SWAPGS_UNSAFE_STACK
 	/*
@@ -509,10 +509,10 @@ ENTRY(system_call_after_swapgs)
 	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp)
 	movq  %rcx,RIP-ARGOFFSET(%rsp)
 	CFI_REL_OFFSET rip,RIP-ARGOFFSET
-	/*Multikernel add eflags copy start*/
+	/*Popcorn add eflags copy start*/
 	movq  %r11, EFLAGS-ARGOFFSET(%rsp)
 	CFI_REL_OFFSET rflags,EFLAGS-ARGOFFSET
-	/*Multikernel add eflags copy end*/
+	/*Popcorn add eflags copy end*/
 	GET_THREAD_INFO(%rcx)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
 	jnz tracesys
