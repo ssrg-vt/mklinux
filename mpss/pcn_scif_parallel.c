@@ -687,10 +687,10 @@ while(TRUE){
 			}
 			msg_size=tmp->hdr.size;
 			msg = (struct pcn_kmsg_message *) pcn_kmsg_alloc_msg(msg_size);
-if(tmp->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST)
-{
+//if(tmp->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST)
+//{
 //	trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
-}			
+//}			
 		
 #if _PAGE_MSG_GET
  	       if( msg_size>PAGE_SIZE)
@@ -852,10 +852,10 @@ found:
 		}
 
 		data_send=lmsg->hdr.size;
-if(lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST||lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_BACK_MIG_REQUEST )
-{
-	trace_printk("%s:1 %llu pid: %d\n",__func__,native_read_tsc(),lmsg->hdr.sender_pid);
-}
+//if(lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST||lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_BACK_MIG_REQUEST )
+//{
+//	trace_printk("%s:1 %llu pid: %d\n",__func__,native_read_tsc(),lmsg->hdr.sender_pid);
+//}
 	}
 	else
 	{
@@ -883,10 +883,10 @@ if(lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST||lmsg->hdr.type==PCN_KMS
 			if(curr_size == 0)
 				break;
 		}
-if(lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST||lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_BACK_MIG_REQUEST)
-{
-	trace_printk("%s:1 %llu %d\n",__func__,native_read_tsc(),lmsg->hdr.sender_pid);
-}
+//if(lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST||lmsg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_BACK_MIG_REQUEST)
+//{
+//	trace_printk("%s:1 %llu %d\n",__func__,native_read_tsc(),lmsg->hdr.sender_pid);
+//}
 	}
 
 _out:
@@ -917,12 +917,19 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *
 
 /*API for small message send*/
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg) {
+
 	
 /*	if (msg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST) {
 
 	//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
 	}
 */ 
+
+//if (msg->hdr.type==PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST) {
+
+//trace_printk("%s:1 %llu\n",__func__,native_read_tsc());
+//}
+
 	return __pcn_kmsg_send(dest_cpu,msg,sizeof(struct pcn_kmsg_message)-sizeof(struct pcn_kmsg_hdr));
 
 }

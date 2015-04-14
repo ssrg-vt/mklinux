@@ -595,10 +595,9 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 	if (loc->elf_ex.e_type != ET_EXEC && loc->elf_ex.e_type != ET_DYN)
 		goto out;
 	if (!elf_check_arch(&loc->elf_ex)){
-	  if((&loc->elf_ex)->e_machine == EM_X86_64){
-	 	printk(KERN_ALERT"WARNING : Weird Compiler fix\n");
-		 }
-	  else
+		if((&loc->elf_ex)->e_machine == EM_X86_64)
+			printk(KERN_ALERT"WARNING: elf format check\n");
+	else
 		goto out;
 	}
 	if (!bprm->file->f_op || !bprm->file->f_op->mmap)

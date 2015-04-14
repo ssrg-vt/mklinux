@@ -847,7 +847,7 @@ static inline int page_mapped(struct page *page)
 
 #define VM_FAULT_HWPOISON_LARGE_MASK 0xf000 /* encodes hpage index for large hwpoison */
 
-//Multikernel
+/*Popcorn*/
 #define VM_FAULT_VMA	0x0800
 #define VM_FAULT_ACCESS_ERROR 0x1000
 #define VM_CONTINUE_WITH_CHECK 0x2000

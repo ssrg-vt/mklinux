@@ -1579,28 +1579,27 @@ struct task_struct {
 	atomic_t ptrace_bp_refcnt;
 #endif
 
-	/*
-	 * Multikernel
+	/* Popocorn
 	 */
-	int tgroup_distributed;
-	int tgroup_home_cpu;     /* cpu where the thread group was first migrated */
-	int tgroup_home_id;         /* home thread group id */
+	int tgroup_distributed;/* if the process is distributed */
+	int tgroup_home_cpu; /* cpu where the thread group was first migrated */
+	int tgroup_home_id; /* home thread group id */
 
-	int represents_remote;      /* Is this a shadow process? */
-	pid_t next_pid;             /* What is the pid on the remote cpu? */
+	int represents_remote; /* Is this is a thread that is sleeping in this kernel and running on another one */
+	pid_t next_pid;/* What is the pid on the remote cpu? */
 	int next_cpu;
 
-	int executing_for_remote;   /* Is this executing on behalf of another cpu? */
-	pid_t prev_pid;				/* What is the pid on the remote cpu? */
+	int executing_for_remote;/* Is this executing on behalf of another cpu? */
+	pid_t prev_pid;	/* What is the pid on the remote cpu? */
 	int prev_cpu;
 
-	int main;					/* kernel thread that manages the process*/
+	int main;/* kernel thread that manages the process*/
 
 	int distributed_exit_code;
 	int group_exit;
 	int distributed_exit;
 	
-	/*akshay*/
+
 	int return_disposition;
 	int origin_pid;
 	pid_t surrogate;

@@ -40,7 +40,6 @@ static inline bool trigger_all_cpu_backtrace(void)
 #else
 static inline bool trigger_all_cpu_backtrace(void)
 {
-printk(KERN_ERR"%s: joke of the day\n", __func__);
 	return false;
 }
 #endif

@@ -1,6 +1,7 @@
 /*
  *  Copyright (C) 1991, 1992  Linus Torvalds
  *  Copyright (C) 2000, 2001, 2002 Andi Kleen, SuSE Labs
+ *  extended for Popcorn Linux, 2012-2015 Antonio Barbalace, SSRG Virginia Tech
  */
 #include <linux/kallsyms.h>
 #include <linux/kprobes.h>
@@ -170,7 +171,7 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 	if (!task)
 		task = current;
 
-//printk("itask: %p current: %p regs: %p sp %lx stack %p\n", task, current, regs, (regs) ? regs->sp : 0, stack);
+	//printk("itask: %p current: %p regs: %p sp %lx stack %p\n", task, current, regs, (regs) ? regs->sp : 0, stack);
 	if (!stack) {
 		if (regs)
 			stack = (unsigned long *)regs->sp;

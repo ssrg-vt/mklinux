@@ -1,7 +1,24 @@
+/*
+ * Wkdm.h
+ * Author: Marina Sadini, SSRG Virginia Tech
+ */
+
+/* Code modified from version of:
+ *
+ * direct-mapped partial matching compressor with simple 22/10 split
+ *
+ *  Compresses buffers using a dictionary based match and partial match
+ *  (high bits only or full match) scheme.
+ *
+ *  Paul Wilson -- wilson@cs.utexas.edu
+ *  Scott F. Kaplan -- sfkaplan@cs.utexas.edu
+ *  September 1997
+ */
+
 #include "WKdm.h"
 #include <linux/slab.h>
 #include <linux/kernel.h>
-/***********************************************************************
+/*
  *                   THE PACKING ROUTINES
  */
 
@@ -87,7 +104,7 @@ WK_pack_3_twentybits(WK_word* source_buf,
 
 }
 
-/***************************************************************************
+/*
  *  WKdm_compress()---THE COMPRESSOR
  */
 
@@ -171,7 +188,7 @@ WKdm_compress (WK_word* src_buf,
 
      dict_word = *dict_location;
 
-//printk("hash %i input %lu dictionary %lu\n",HASH_TO_DICT_BYTE_OFFSET(input_word),input_word,dict_word);
+
      if (input_word == 0)
      {
     	 RECORD_ZERO ;
@@ -179,7 +196,7 @@ WKdm_compress (WK_word* src_buf,
      }
      else if (input_word == dict_word) {
     	 RECORD_EXACT(dict_location - dictionary);
-    	 //printk("exact\n");
+
      }
      else
      {
@@ -187,12 +204,12 @@ WKdm_compress (WK_word* src_buf,
         if (input_high_bits == HIGH_BITS(dict_word)) {
 	  RECORD_PARTIAL(dict_location - dictionary, LOW_BITS(input_word));
           *dict_location = input_word;
-          //printk("partial\n");
+
         }
         else {
 	  RECORD_MISS(input_word);
             *dict_location = input_word;
-            // printk("miss\n");
+
         }
      }
      next_input_word++;
@@ -442,7 +459,7 @@ WKdm_diff_and_compress (WK_word* src_buf1, WK_word* src_buf2,
      dict_location =
        (WK_word *)
        (((char*) dictionary) + HASH_TO_DICT_BYTE_OFFSET(input_word));
-		//printk("hash %i input %lu\n",HASH_TO_DICT_BYTE_OFFSET(input_word),input_word);
+
      dict_word = *dict_location;
 
      if (input_word == 0)

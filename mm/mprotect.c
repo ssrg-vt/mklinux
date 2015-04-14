@@ -27,8 +27,8 @@
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
-//Multikernel
-#include <linux/process_server.h>
+#include <linux/popcorn_vma_operation.h>
+#include <linux/popcorn_user_dsm.h>
 #include <linux/rmap.h>
 
 #ifndef pgprot_modify
@@ -52,63 +52,10 @@ static void change_pte_range(struct mm_struct *mm, pmd_t *pmd,
 		if (pte_present(oldpte)) {
 			pte_t ptent;
 			int clear= 0;
-			//Multikernel
+
 			if(current->tgroup_distributed==1){
 
-				//case pte_present: or REPLICATION_STATUS_NOT_REPLICATED or
-				// REPLICATION_STATUS_VALID or REPLICATION_STATUS_WRITTEN
-
-				struct page *page= pte_page(oldpte);
-
-				if (!is_zero_page(pte_pfn(oldpte))) {
-
-					if (page->status == REPLICATION_STATUS_INVALID) {
-						printk("ERROR: mprotect moving "
-								"a present page that is in invalid state\n");
-					}
-
-					if (!(newprot.pgprot & PROT_WRITE)) { //it is becoming a read only vma
-
-						if (page->replicated == 1) {
-							printk("mprot: changing to read only address %lu\n",addr);
-							if (page->status == REPLICATION_STATUS_NOT_REPLICATED) {
-								printk("ERROR:  page replicated is 1 "
-										"but in state not replicated\n");
-							}
-
-							page->replicated = 0;
-
-							page->status = REPLICATION_STATUS_NOT_REPLICATED;
-						}
-
-					} else { // it is becoming a writable vma
-
-						if (page->replicated == 0) {
-							printk("mprot: changing to read write address %lu\n",addr);
-							if (page->status != REPLICATION_STATUS_NOT_REPLICATED) {
-								printk("ERROR: page replicated is zero "
-										"but not in state not replicated\n");
-							}
-							//check if somebody else fetched the page
-							int i,count=0;
-							for (i = 0; i < MAX_KERNEL_IDS; i++) {
-								count=count+page->other_owners[i];
-							}
-							if(count>1){
-								page->replicated = 1;
-								page->status = REPLICATION_STATUS_VALID;
-								clear=1;
-							}
-						}else
-						{
-							//in case valid I enforce a clear
-							if (page->status == REPLICATION_STATUS_VALID) {
-								clear=1;
-							}
-						}
-
-					}
-				}
+				clear= popcorn_change_present_pte_for_mprotect(oldpte, newprot);
 			}
 
 			ptent = ptep_modify_prot_start(mm, addr, pte);
@@ -128,56 +75,8 @@ static void change_pte_range(struct mm_struct *mm, pmd_t *pmd,
 		} else
 			if(current->tgroup_distributed==1){
 
-				if(!( pte==NULL || pte_none(pte_clear_flags(oldpte, _PAGE_UNUSED1)) )){
+				popcorn_change_not_present_pte_for_mprotect(pte, oldpte, newprot, mm, addr);
 
-					struct page *page= pte_page(oldpte);
-
-					if(page->replicated!=1 || page->status!=REPLICATION_STATUS_INVALID){
-						printk("ERROR: mprotect moving a not present page that is not in invalid state or replicated\n");
-					}
-
-					if( !(newprot.pgprot & PROT_WRITE)) { //it is becoming a read only vma
-						printk("mprot: removing page address %lu\n",addr);
-						//force a new fetch
-						int rss[NR_MM_COUNTERS];
-						memset(rss, 0, sizeof(int) * NR_MM_COUNTERS);
-
-						if (PageAnon(page))
-							rss[MM_ANONPAGES]--;
-						else {
-							rss[MM_FILEPAGES]--;
-						}
-
-#if DIFF_PAGE
-						if(page->old_page_version!=NULL)
-							kfree(page->old_page_version);
-#endif
-
-						page_remove_rmap(page);
-
-						page->replicated= 0;
-						page->status= REPLICATION_STATUS_NOT_REPLICATED;
-
-#if FOR_2_KERNELS
-						//add if for 2 kernels
-						if(cpumask_first(cpu_present_mask)==current->tgroup_home_cpu){
-							ptep_get_and_clear(mm, addr, pte);
-							pte_t ptent= *pte;
-							if(!pte_none(ptent))
-								printk("ERROR: mprot cleaning pte but after not none\n");
-							ptent = pte_set_flags(ptent, _PAGE_UNUSED1);
-							set_pte_at_notify(mm, addr, pte, ptent);
-						}
-#endif
-						int i;
-
-						if (current->mm == mm)
-							sync_mm_rss(current, mm);
-						for (i = 0; i < NR_MM_COUNTERS; i++)
-							if (rss[i])
-								atomic_long_add(rss[i], &mm->rss_stat.count[i]);
-					}
-				}
 			}
 			else{
 				if (PAGE_MIGRATION && !pte_file(oldpte)) {
@@ -356,7 +255,7 @@ int kernel_mprotect(unsigned long start, size_t len,
 	struct vm_area_struct *vma, *prev;
 	int error = -EINVAL, distributed= 0;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
-	long distr_ret;
+	long distr_ret = 0;
 
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
@@ -384,11 +283,9 @@ int kernel_mprotect(unsigned long start, size_t len,
 
 	down_write(&current->mm->mmap_sem);
 
-	//Multikernel
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
-		//printk("WARNING: mprotect called \n");
-		distr_ret= process_server_mprotect_start( start, len, prot);
+		distr_ret= popcorn_mprotect_start( start, len, prot);
 		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
 			up_write(&current->mm->mmap_sem);
 			return distr_ret;
@@ -458,9 +355,8 @@ int kernel_mprotect(unsigned long start, size_t len,
 	}
 	out:
 
-	//Multikernel
 	if(current->tgroup_distributed==1 && distributed == 1){
-		process_server_mprotect_end(start,len,prot,distr_ret);
+		popcorn_mprotect_end(start,len,prot,distr_ret);
 	}
 
 	up_write(&current->mm->mmap_sem);
@@ -474,7 +370,7 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	struct vm_area_struct *vma, *prev;
 	int error = -EINVAL, distributed= 0;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
-	long distr_ret;
+	long distr_ret = 0;
 
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
@@ -502,11 +398,9 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 
 	down_write(&current->mm->mmap_sem);
 	
-	//Multikernel
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
-		//printk("WARNING: mprotect called\n");
-		distr_ret= process_server_mprotect_start( start, len, prot);
+		distr_ret= popcorn_mprotect_start( start, len, prot);
 		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
 			up_write(&current->mm->mmap_sem);
 			return distr_ret;
@@ -536,10 +430,6 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 		}
 	}
 
-	
-	/*if(vma && (vma->vm_file != NULL) && strcmp(vma->vm_file,"/bin/is") == 0){
-	printk(KERN_ALERT"%s: vma start{%lx}  end{%lx} \n)",__func__,vma->vm_start,vma->vm_end);	
-	}*/
 
 	if (start > vma->vm_start)
 		prev = vma;
@@ -582,9 +472,8 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	}
 	out:
 
-	//Multikernel
 	if(current->tgroup_distributed==1 && distributed == 1){
-		process_server_mprotect_end(start,len,prot,distr_ret);
+		popcorn_mprotect_end(start,len,prot,distr_ret);
 	}
 
 	up_write(&current->mm->mmap_sem);

@@ -14,7 +14,7 @@
 #include <linux/page-debug-flags.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
-#include <linux/process_server_macro.h>
+#include <linux/popcorn_macro.h>
 
 #ifndef AT_VECTOR_SIZE_ARCH
 #define AT_VECTOR_SIZE_ARCH 0
@@ -157,7 +157,7 @@ struct page {
 	void *shadow;
 #endif
 
-	//Multikernel
+	/*Popcorn*/
 	int replicated;
 	int status;
 	int owner;
@@ -165,19 +165,11 @@ struct page {
 	int other_owners[MAX_KERNEL_IDS];
 	int writing;
 	int reading;
-	//Futex
 	int futex_owner;
-
-#if FOR_2_KERNELS
 #if DIFF_PAGE
 	char* old_page_version;
 #endif
-#else
-	unsigned long long time_stamp;
-	int concurrent_writers;
-	int concurrent_fetch;
-	int need_fetch[MAX_KERNEL_IDS];
-#endif
+
 }
 /*
  * If another subsystem starts using the double word pairing for atomic
@@ -419,7 +411,7 @@ struct mm_struct {
 	struct cpumask cpumask_allocation;
 #endif
 
-	//Multikernel
+	/*Popcorn*/
 	struct rw_semaphore distribute_sem;
 	int distr_vma_op_counter;
 	int was_not_pushed;

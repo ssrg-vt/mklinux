@@ -77,7 +77,7 @@
 #include <trace/events/sched.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/oom.h>
-#include <linux/process_server.h>
+#include <linux/popcorn_migration.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -672,7 +672,7 @@ static void exit_mm(struct task_struct * tsk,long code)
 		return;
 
 	if(tsk->tgroup_distributed && tsk->main==0) {
-                process_server_task_exit_notification(tsk, code);
+                popcorn_thread_exit(tsk, code);
         }
 	/*
 	 * Serialize with any possible pending coredump.
@@ -926,13 +926,6 @@ NORET_TYPE void do_exit(long code)
 	struct task_struct *tsk = current;
 	int group_dead;
 
-	/*
-	 * Multikernel
-	 */
-	/*if(tsk->tgroup_distributed && tsk->main==0) {
-		process_server_task_exit_notification(tsk, code);
-	}*/
-
 	profile_task_exit(tsk);
 
 	WARN_ON(blk_needs_flush_plug(tsk));
@@ -979,21 +972,19 @@ NORET_TYPE void do_exit(long code)
 	exit_irq_thread();
 
 	exit_signals(tsk);  /* sets PF_EXITING */
-//#ifdef CONFIG_CPU_NAMESPACE    
-	// should I do any kind of unlinking somewhere else
-	// TODO when ported to linked list you must do unlinking
-    if (tsk->cpus_allowed_map){
- 
-	kfree(tsk->cpus_allowed_map); //this is in any case safe because is pointing to other stuff but duplicate per task
-    }
-//#endif
+
+	if (tsk->cpus_allowed_map){
+
+		kfree(tsk->cpus_allowed_map);
+	}
+
 #ifdef FUTEX_STAT
-    if(current->tgroup_distributed && current->pid == current->tgroup_home_id){
-    print_wait_perf();
-    print_wake_perf();
-    print_wakeop_perf();
-    print_requeue_perf();
-    }
+	if(current->tgroup_distributed && current->pid == current->tgroup_home_id){
+		print_wait_perf();
+		print_wake_perf();
+		print_wakeop_perf();
+		print_requeue_perf();
+	}
 #endif
 	/*
 	 * tsk->flags are checked in the futex code to protect against
@@ -1007,7 +998,7 @@ NORET_TYPE void do_exit(long code)
 				current->comm, task_pid_nr(current),
 				preempt_count());
 
-    //cleanup global worker thread only for the thread group leader
+	//cleanup global worker thread only for the thread group leader
 	futex_global_worker_cleanup(tsk);
 	
 	acct_update_integrals(tsk);
@@ -1134,7 +1125,6 @@ do_group_exit(int exit_code)
 
 	BUG_ON(exit_code & 0x80); /* core dumps don't get here */
 
-	//Multikernel
 	if(current->tgroup_distributed==1)
 		current->group_exit= 1;
 

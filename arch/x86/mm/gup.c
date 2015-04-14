@@ -11,7 +11,6 @@
 #include <linux/swap.h>
 
 #include <asm/pgtable.h>
-#include <linux/process_server_macro.h>
 
 static inline pte_t gup_get_pte(pte_t *ptep)
 {
@@ -318,6 +317,7 @@ int get_user_pages_fast(unsigned long start, int nr_pages, int write,
 	unsigned long next;
 	pgd_t *pgdp;
 	int nr = 0;
+	int lock_aquired= 0;
 
 	start &= PAGE_MASK;
 	addr = start;
@@ -376,10 +376,6 @@ slow_irqon:
 		start += nr << PAGE_SHIFT;
 		pages += nr;
 
-
-#if NOT_REPLICATED_VMA_MANAGEMENT
-		int lock_aquired= 0;
-		//Multikernel
 		if(current->tgroup_distributed==1){
 
 			down_read(&mm->distribute_sem);
@@ -387,19 +383,19 @@ slow_irqon:
 		}
 		else
 			lock_aquired= 0;
-#endif
+
 
 		down_read(&mm->mmap_sem);
 		ret = get_user_pages(current, mm, start,
 				(end - start) >> PAGE_SHIFT, write, 0, pages, NULL);
 		up_read(&mm->mmap_sem);
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
+
 		if(current->tgroup_distributed==1 && lock_aquired){
 
 			up_read(&mm->distribute_sem);
 		}
-#endif
+
 		/* Have to be a bit careful with return values */
 		if (nr > 0) {
 			if (ret < 0)
