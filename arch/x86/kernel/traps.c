@@ -175,17 +175,6 @@ trap_signal:
 #ifdef CONFIG_X86_64
 	if (show_unhandled_signals && unhandled_signal(tsk, signr) &&
 	    printk_ratelimit()) {
-		int ret =0, cnt=0;
-		unsigned long *_base= (unsigned long*) read_old_rsp();
-		
-		dump_stack();
-		printk(KERN_ALERT"last 16 sp add\n");
-		for(cnt=0 ;cnt< 16;cnt++) {
-			unsigned long ptr;
-			ret =  get_user(ptr,((_base)+cnt));
-			printk(KERN_ALERT" {%lx} ret{%d}\t",ptr,ret);
-		}
-
 		printk(KERN_INFO
 		       "%s[%d] trap %s ip:%lx sp:%lx error:%lx",
 		       tsk->comm, tsk->pid, str,
