@@ -1,3 +1,13 @@
+/**
+ *  Header file for parallel messaging layer
+ * B M Saif Ansary<bmsaif86@vt.edu>2015
+ * 
+ */
+
+
+
+
+
 #ifndef _PCN_SCIF_PARALLEL_
 #define _PCN_SCIF_PARALLEL_
 #include <linux/spinlock.h>
@@ -57,8 +67,6 @@ typedef struct _rcv_conn_desc
 	
 }rcv_conn_desc;
 
-
-
 typedef struct _conn_thread_data
 {
 	int portID;
@@ -108,7 +116,7 @@ static int __pcn_do_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *lm
 static int connection_handler(void *arg0);
 static int send_thread(void* arg0);
 static int executer_thread(void* arg0);
-static int test_thread(void* arg0);
+//static int test_thread(void* arg0);
 
  
 #endif
