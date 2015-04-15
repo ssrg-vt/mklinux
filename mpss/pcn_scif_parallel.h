@@ -116,7 +116,7 @@ static int __pcn_do_send(unsigned int dest_cpu, struct pcn_kmsg_long_message *lm
 static int connection_handler(void *arg0);
 static int send_thread(void* arg0);
 static int executer_thread(void* arg0);
-static int test_thread(void* arg0);
+//static int test_thread(void* arg0);
 
  
 #endif
