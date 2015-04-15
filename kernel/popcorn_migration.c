@@ -1887,8 +1887,9 @@ void popcorn_sleep_shadow(void)
 		set_task_state(current, TASK_UNINTERRUPTIBLE);
 
 		if(current->executing_for_remote
-				== 0&& current->distributed_exit == EXIT_NOT_ACTIVE) {schedule();
-	}
+				== 0&& current->distributed_exit == EXIT_NOT_ACTIVE) {
+			schedule();
+		}
 
 		set_task_state(current, TASK_RUNNING);
 	}
@@ -1937,6 +1938,7 @@ void popcorn_sleep_shadow(void)
 	if (tsk_used_math(current) && current->fpu_counter >5)
 	__math_state_restore(current);
 #endif
+	/*printk("sleep shadow %d activated\n",current->pid);*/
 
 }
 

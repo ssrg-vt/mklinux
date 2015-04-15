@@ -1560,6 +1560,8 @@ static long start_operation_client(int operation, unsigned long addr,
 
 	pcn_kmsg_free_msg_now(operation_to_send);
 
+	return ret;
+
 	out_dist_lock:
 
 	up_write(&current->mm->distribute_sem);

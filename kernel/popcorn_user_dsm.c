@@ -1999,7 +1999,6 @@ static int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	}
 
 	if(sent){
-
 		/*wait for answer*/
 		while (reading_page->arrived_response == 0) {
 
@@ -2700,6 +2699,7 @@ static int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id
 	up_read(&memory->kernel_set_sem);
 
 	if(reachable>0){
+
 		while (fetching_page->arrived_response==0) {
 
 			set_task_state(current, TASK_UNINTERRUPTIBLE);
