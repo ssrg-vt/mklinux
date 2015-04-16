@@ -121,13 +121,15 @@ static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(pidmap_lock);
 
 static void free_pidmap(struct upid *upid)
 {
+	struct pidmap *map;
+	int offset;
 	int nr = upid->nr;
 	/*mklinux_akshay*/
 	int nr_t= ORIG_PID(upid->nr);
 	//printk(KERN_ERR "Free GLobal PID %d:--: %d",nr_t,nr);
 	nr=nr_t;/*mklinux_akshay*/
-	struct pidmap *map = upid->ns->pidmap + nr / BITS_PER_PAGE;
-	int offset = nr & BITS_PER_PAGE_MASK;
+	map = upid->ns->pidmap + nr / BITS_PER_PAGE;
+	offset = nr & BITS_PER_PAGE_MASK;
     //printk(KERN_ERR "Free offset %d:\n",offset);
 	clear_bit(offset, map->page);
 	atomic_inc(&map->nr_free);

@@ -1,7 +1,7 @@
 // Copyright (c) 2013 - 2014, Akshay
-// modified by Antonio Barbalace (c) 2014
 
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <asm/bootparam.h>
 #include <asm/system.h>
 #include <asm/uaccess.h>
@@ -43,8 +43,8 @@ extern unsigned long orig_boot_params;
 #endif
 
 
-static inline int __getproccessor(){
-
+static inline int __getproccessor(void)
+{
 	unsigned int a,b,feat;
 
 	asm volatile(
@@ -54,7 +54,7 @@ static inline int __getproccessor(){
 		     : "cx" );
 	if(feat & (1 << 25)) //TODO: Need to be refactored
 		return 0;
-return 1;
+	return 1;
 }
 
 unsigned long *token_bucket;
@@ -141,7 +141,7 @@ static void display(struct list_head *head)
 
 	memset(buffer, 0, DISPLAY_BUFFER);
 //	cpumask_scnprintf(buffer, (DISPLAY_BUFFER -1), &(objPtr->_data._cpumask));
-	bitmap_scnprintf(buffer, (DISPLAY_BUFFER -1), &(objPtr->_data.cpumask), POPCORN_CPUMASK_BITS);
+	bitmap_scnprintf(buffer, (DISPLAY_BUFFER -1), (const long unsigned int*) &(objPtr->_data.cpumask), POPCORN_CPUMASK_BITS);
         printk("%s: cpu:%d fam:%d %s off:%d\n", __func__,
 		objPtr->_data._processor, objPtr->_data._cpu_family,
 		buffer, objPtr->_data.cpumask_offset);
@@ -149,11 +149,9 @@ static void display(struct list_head *head)
 }
 void popcorn_init(void)
 {
-	int cnt=0;
 	int vendor_id=0;
-	printk("POP_INIT:first_online_node{%d} cpumask_first{%d} \n",first_online_node,cpumask_first(cpu_present_mask));
 	struct cpuinfo_x86 *c = &boot_cpu_data;
-	
+	printk("POP_INIT:first_online_node{%d} cpumask_first{%d} \n",first_online_node,cpumask_first(cpu_present_mask));
 
 	if(!strcmp(((const char *) c->x86_vendor_id),((const char *)"AuthenticAMD"))){
 		vendor amd = AuthenticAMD;
@@ -170,8 +168,8 @@ void popcorn_init(void)
 
     printk("POP_INIT:Kernel id is %d\n",Kernel_Id);
     //printk("POP_INIT: kernel start add is 0x%lx",kernel_start_addr);
-    printk("POP_INIT:max_low_pfn id is 0x%lx\n",PFN_PHYS(max_low_pfn));
-    printk("POP_INIT:min_low_pfn id is 0x%lx\n",PFN_PHYS(min_low_pfn));
+    printk("POP_INIT:max_low_pfn id is 0x%llx\n", PFN_PHYS(max_low_pfn));
+    printk("POP_INIT:min_low_pfn id is 0x%llx\n", PFN_PHYS(min_low_pfn));
 
 }
 ///////////////////////////////////////////////////////////////////////////////
@@ -225,11 +223,11 @@ int fill_cpu_info(_remote_cpu_info_data_t *res) {
 
 	void *p;
 	loff_t pos = 0;
-	p = remote_c_start(&pos);
-
-	struct cpuinfo_x86 *c = p;
+	struct cpuinfo_x86 *c;
 	unsigned int cpu = 0;
 	int i;
+	p = remote_c_start(&pos);
+	c = p;
 
 #ifdef CONFIG_SMP
 	cpu = c->cpu_index;
@@ -255,7 +253,7 @@ int fill_cpu_info(_remote_cpu_info_data_t *res) {
 
 		if (!freq)
 			freq = cpu_khz;
-		res->_cpu_freq = freq / 1000, (freq % 1000);
+		res->_cpu_freq = freq / 1000; //, (freq % 1000);
 	}
 
 	/* Cache size */
@@ -317,7 +315,6 @@ static int handle_remote_proc_cpu_info_response(struct pcn_kmsg_message* inc_msg
 extern int my_cpu;
 static int handle_remote_proc_cpu_info_request(struct pcn_kmsg_message* inc_msg)
 {
-  int i;
   _remote_cpu_info_request_t* msg = (_remote_cpu_info_request_t*) inc_msg;
   _remote_cpu_info_response_t *response = (_remote_cpu_info_response_t *) pcn_kmsg_alloc_msg(sizeof(_remote_cpu_info_response_t));
 
@@ -330,8 +327,8 @@ static int handle_remote_proc_cpu_info_request(struct pcn_kmsg_message* inc_msg)
   //response._data._cpumask = kmalloc( sizeof(struct cpumask), GFP_KERNEL); //this is an error, how you can pass a pointer to another kernel?!i
   fill_cpu_info(&(response->_data));
 #if 1
-  bitmap_zero(&(response->_data.cpumask), POPCORN_CPUMASK_BITS);
-  bitmap_copy(&(response->_data.cpumask), cpumask_bits(cpu_present_mask),
+  bitmap_zero((long unsigned int*)&(response->_data.cpumask), POPCORN_CPUMASK_BITS);
+  bitmap_copy((long unsigned int*)&(response->_data.cpumask), cpumask_bits(cpu_present_mask),
 	(nr_cpu_ids > POPCORN_CPUMASK_BITS) ? POPCORN_CPUMASK_BITS : nr_cpu_ids);
 #else
   memcpy(&(response->_data._cpumask), cpu_present_mask, sizeof(struct cpumask));
@@ -378,8 +375,8 @@ int send_cpu_info_request(int KernelId)
   fill_cpu_info(&request->_data);
   
 #if 1
-  bitmap_zero(&(request->_data.cpumask), POPCORN_CPUMASK_BITS);
-  bitmap_copy(&(request->_data.cpumask), cpumask_bits(cpu_present_mask),
+  bitmap_zero((long unsigned int*)&(request->_data.cpumask), POPCORN_CPUMASK_BITS);
+  bitmap_copy((long unsigned int*)&(request->_data.cpumask), cpumask_bits(cpu_present_mask),
 	(nr_cpu_ids > POPCORN_CPUMASK_BITS) ? POPCORN_CPUMASK_BITS : nr_cpu_ids);
 #else
   memcpy(&(request->_data._cpumask), cpu_present_mask, sizeof(struct cpumask));

@@ -1,7 +1,7 @@
 /*
  * This file for Obtaining Remote CPU info
  *
- * Akshay
+ * (C) 2014, Akshay Ravichandran, SSRG Virginia Tech
  */
 
 #include <linux/kernel.h>
@@ -39,13 +39,9 @@ static int _cpu=-1;
 /*
  * ************************************* Function (hook) to be called from other file ********************
  */
-int remote_proc_cpu_info(struct seq_file *m) {
-
-	int res = 0;
-
-	int result = 0;
+int remote_proc_cpu_info(struct seq_file *m)
+{
 	int i;
-	int retval;
 
 	struct list_head *iter;
 	_remote_cpu_info_list_t *objPtr;
@@ -68,9 +64,9 @@ int remote_proc_cpu_info(struct seq_file *m) {
 	    	  			else
 	    	  				seq_printf(m, "stepping\t: unknown\n");
 
-	    	  			seq_printf(m, "microcode\t: 0x%x\n", objPtr->_data._microcode);
+	    	  			seq_printf(m, "microcode\t: 0x%lx\n", objPtr->_data._microcode);
 
-	    	  			seq_printf(m, "cpu MHz\t\t: %u.%03u\n", objPtr->_data._cpu_freq);
+	    	  			seq_printf(m, "cpu MHz\t\t: %u\n", objPtr->_data._cpu_freq);
 
 	    	  			seq_printf(m, "cache size\t: %d KB\n", objPtr->_data._cache_size);
 
@@ -108,9 +104,7 @@ int remote_proc_cpu_info(struct seq_file *m) {
 	    	  						 }
 	    	  			seq_printf(m, "\n\n");
 	    }
-
-
-
+	return 0;
 }
 extern int scif_get_nodeIDs(uint16_t *nodes, int len, uint16_t *self);
 static int __init proc_cpu_handler_init(void)

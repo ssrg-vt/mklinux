@@ -1,3 +1,4 @@
+/* (C) 2014, Akshay Ravichandran, SSRG Virginia Tech */
 /*
  *  Fast Userspace Mutexes (which I call "Futexes!").
  *  (C) Rusty Russell, IBM 2002
@@ -214,13 +215,13 @@ int setFutexOwnerToPage(unsigned long address, unsigned long uaddr){
 	return -1;
 	}
 
-	int getFutexOwnerFromPage(unsigned long uaddr){
-		struct vm_area_struct *vma;
+	int getFutexOwnerFromPage(unsigned long uaddr) {
 		struct page * pg;
 		unsigned long address = (unsigned long)uaddr;
 		unsigned int offset =  address % PAGE_SIZE;
-		address -= offset;
 		int err = 0;
+		address -= offset;
+		
 		//Get it for read access
 		err = get_user_pages_fast(address, 1, 0, &pg);
 		if (err < 0){
@@ -259,9 +260,8 @@ int setFutexOwnerToPage(unsigned long address, unsigned long uaddr){
 		{
 			unsigned long address = (unsigned long)uaddr;
 			struct mm_struct *mm = current->mm;
-			struct task_struct *tsk = current;
-			int pid=tsk->pid;
-			pte_t pte;
+			//struct task_struct *tsk = current;
+			//int pid=tsk->pid;
 			int owner;
 
 			struct page *page, *page_head;
@@ -283,11 +283,13 @@ int setFutexOwnerToPage(unsigned long address, unsigned long uaddr){
 			 *        but access_ok() should be faster than find_vma()
 			 */
 			if (!fshared) {
+				int nr_cpus;
+				struct cpu_namespace * _ns;
+				
 				if (unlikely(!access_ok(VERIFY_WRITE, uaddr, sizeof(u32))))
 					return -EFAULT;
-
-				int nr_cpus;
-				struct cpu_namespace * _ns = current->nsproxy->cpu_ns;
+				
+				_ns = current->nsproxy->cpu_ns;
 				if (_ns != &init_cpu_ns) {
 					nr_cpus = nr_cpu_ids + 228;//((struct cpu_namespace *)_ns)->nr_cpu_ids;
 				}
@@ -297,7 +299,7 @@ int setFutexOwnerToPage(unsigned long address, unsigned long uaddr){
 				if ((nr_cpus > nr_cpu_ids) ) {
 					//TODO: make it only for Popcorn threads.
 					//if((current->cpus_allowed_map  && (current->cpus_allowed_map->ns == current->nsproxy->cpu_ns)))
-					owner = setFutexOwnerToPage(address,uaddr);
+					owner = setFutexOwnerToPage(address, (long unsigned int) uaddr);
 					//printk(KERN_ALERT "%s: owner for addr {%d} \n",__func__,owner);
 				}
 				key->private.mm = mm;
@@ -1082,25 +1084,28 @@ retry:
 		{
 
 			struct spin_key sk;
-			__spin_key_init(&sk);
-			//Get the local mapped value for the key (TGID|Uaddr)
-			getKey(uaddr, &sk,current->tgroup_home_id);
-			_spin_value *value = hashspinkey(&sk);
-			int localticket_value = xadd_sync(&value->_ticket, 1);
+			_spin_value *value;
+			int localticket_value;
 			int ret;
-			u32 dval;
-			int x=0,y=0,cpu=0;
+			int cpu=0;
+			_local_rq_t *rq_ptr;
+			futex_common_data_t data_;
 
+			__spin_key_init(&sk);
+			
+			//Get the local mapped value for the key (TGID|Uaddr)
+			getKey((long unsigned int)uaddr, &sk,current->tgroup_home_id);
+			value = hashspinkey(&sk);
+			localticket_value = xadd_sync(&value->_ticket, 1);
 
 			cpu = getFutexOwnerFromPage((unsigned long)uaddr);
 			if(cpu < 0)
 				return cpu; //return ERROR
 
-
 			//Get the request id
 			spin_lock(&value->_sp);
 
-			_local_rq_t *rq_ptr= add_request_node(localticket_value,current->pid,&value->_lrq_head);
+			rq_ptr= add_request_node(localticket_value,current->pid,&value->_lrq_head);
 			rq_ptr->_pid = current->pid;
 			rq_ptr->status = INPROG;
 			rq_ptr->_st = 0;
@@ -1112,7 +1117,6 @@ retry:
 			hb = hash_futex(&q->key);
 			q->lock_ptr = &hb->lock;
 
-			futex_common_data_t data_;
 			data_.fn_flag = fn_flag;
 			data_.val= val;
 			data_.flags =fshared;
@@ -1122,7 +1126,6 @@ retry:
 
 			//replacing the spin lock call with global spin lock
 			ret= global_spinlock((unsigned long)uaddr,&data_,value,rq_ptr,localticket_value,cpu);
-
 
 			ret = rq_ptr->errno;
 			smp_mb();

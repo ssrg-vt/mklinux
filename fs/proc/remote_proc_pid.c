@@ -1,7 +1,7 @@
 /*
  * This file for Obtaining Remote PID
  *
- * Akshay
+ * (C) 2014, Akshay Ravichandran, SSRG Virginia Tech 
  */
 #include <linux/kernel.h>
 #include <linux/kthread.h>
@@ -107,7 +107,7 @@ static _remote_pid_response_t *pid_result;
  * **************************************common functions*************************************
  */
 
-int flush_variables() {
+int flush_variables(void) {
 	pid_result = NULL;
 	wait = -1;
 	return 0;
@@ -133,7 +133,8 @@ int iterate_process(unsigned long *pid_arr) {
  * ********************************** Message handling functions for /pid *************************************
  */
 
-static int handle_remote_pid_response(struct pcn_kmsg_message* inc_msg) {
+static int handle_remote_pid_response(struct pcn_kmsg_message* inc_msg)
+{
 	_remote_pid_response_t* msg = (_remote_pid_response_t*) inc_msg;
 
 	PRINTK("%s: Entered remote pid response : pid count :{%d} \n", __func__,
@@ -151,8 +152,9 @@ static int handle_remote_pid_response(struct pcn_kmsg_message* inc_msg) {
 	return 0;
 }
 
-static int handle_remote_pid_request(struct pcn_kmsg_message* inc_msg) {
-
+static int handle_remote_pid_request(struct pcn_kmsg_message* inc_msg)
+{
+	unsigned long pid_arr[SIZE];
 	_remote_pid_request_t* msg = (_remote_pid_request_t*) inc_msg;
 	_remote_pid_response_t* response = (_remote_pid_response_t *) pcn_kmsg_alloc_msg(sizeof(_remote_pid_response_t));
 
@@ -163,15 +165,14 @@ static int handle_remote_pid_request(struct pcn_kmsg_message* inc_msg) {
 	response->header.prio = PCN_KMSG_PRIO_NORMAL;
 	response->header.flag = PCN_KMSG_SYNC;
 	flush_variables();
-	unsigned long pid_arr[SIZE];
 
-	response->count = iterate_process(&pid_arr);
+	response->count = iterate_process(pid_arr);
 	memcpy(&(response->remote_pid), &pid_arr, SIZE * sizeof(long));
 
 	PRINTK("%s: Remote:pid count : %d \n", __func__, response->count);
 	// Send response
 	pcn_kmsg_send_long(msg->header.from_cpu,
-			(struct pcn_kmsg_message*) (response),
+			(struct pcn_kmsg_long_message*) (response),
 			sizeof(_remote_pid_response_t) - sizeof(struct pcn_kmsg_hdr));
 
 	pcn_kmsg_free_msg_now(inc_msg);
@@ -207,8 +208,7 @@ static int remote_proc_single_show(struct seq_file *m, void *v) {
 	//struct pid_namespace *ns;
 	struct pid *pid;
 	struct proc_remote_pid_info *task;
-	int ret;
-
+	int ret = 0;
 	unsigned long page;
 
 	//ns = inode->i_sb->s_fs_info;
@@ -219,8 +219,10 @@ static int remote_proc_single_show(struct seq_file *m, void *v) {
 
 	if (!(page = __get_free_page(GFP_TEMPORARY)))
 		goto out;
-	ret = task->op.proc_show(m, task, (char *) page, (size_t)PAGE_SIZE);
-	out: return ret;
+	// the following is not conform to the prototype on purpose
+	ret = task->op.proc_show((struct file *)m, task, (char *) page, (size_t)PAGE_SIZE);
+out:
+	return ret;
 }
 
 static int remote_proc_single_open(struct inode *inode, struct file *filp) {
@@ -228,8 +230,11 @@ static int remote_proc_single_open(struct inode *inode, struct file *filp) {
 }
 
 static const struct file_operations remote_proc_single_file_operations = {
-		.open = remote_proc_single_open, .read = seq_read, .llseek = seq_lseek,
-		.release = single_release, };
+	.open = remote_proc_single_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
 
 /*
  * ****************************************** Functions copied from base.c ***********************************
@@ -288,8 +293,10 @@ static int remote_pid_delete_dentry(struct dentry *dentry) {
 
 	return 0;
 }
-static struct dentry_operations remote_pid_dentry_operations = { .d_revalidate =
-		remote_pid_revalidate, .d_delete = remote_pid_delete_dentry, };
+static struct dentry_operations remote_pid_dentry_operations = {
+	.d_revalidate = remote_pid_revalidate,
+	.d_delete = remote_pid_delete_dentry,
+};
 
 /* Unsupported entries are commented out */
 static struct remote_pid_entry remote_tgid_base_stuff[] = {
@@ -645,14 +652,14 @@ int send_request_to_remote(int KernelId) {
 }
 
 int fill_next_remote_tgids(int Kernel_id, struct file *filp, void *dirent,
-		filldir_t filldir, loff_t offset) {
+		filldir_t filldir, loff_t offset)
+{
 	struct tgid_iter iter;
+	int result = 0, retval = -1;
+	int i;
 
 	//flush the structure holding the previous result
 	flush_variables();
-	int result = 0;
-	int i;
-	int retval = -1;
 
 	result = send_request_to_remote(Kernel_id);
 
@@ -681,7 +688,8 @@ int fill_next_remote_tgids(int Kernel_id, struct file *filp, void *dirent,
 }
 
 int fill_next_tgids(int Kernel_id, struct file *filp, void *dirent,
-		filldir_t filldir, loff_t offset) {
+		filldir_t filldir, loff_t offset)
+{
 	pid_t tgid;
 	int retval;
 
@@ -698,15 +706,16 @@ int fill_next_tgids(int Kernel_id, struct file *filp, void *dirent,
 }
 
 int remote_proc_pid_readdir(struct file *filp, void *dirent, filldir_t filldir,
-		loff_t offset) {
-
-	flush_variables();
+		loff_t offset)
+{
 	pid_t tgid;
-	int node;
+	int node, global;
 	int retval = 0, i;
 
 	tgid = filp->f_pos - offset;
-	int global = (tgid & GLOBAL_PID_MASK);
+	global = (tgid & GLOBAL_PID_MASK);
+
+	flush_variables();
 
 	if (!global) {
 		tgid = GLOBAL_PID_NODE(0, 0);

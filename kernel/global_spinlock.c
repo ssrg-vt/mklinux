@@ -45,12 +45,11 @@ static int _cpu =0;
  extern  int find_kernel_for_pfn(unsigned long addr, struct list_head *head);
  extern int getFutexOwnerFromPage(unsigned long uaddr);
 
- _local_rq_t * add_request_node(int request_id, pid_t pid, struct list_head *head) {
-
+_local_rq_t * add_request_node(int request_id, pid_t pid, struct list_head *head)
+{
 	 unsigned long f;
+	 _local_rq_t *Ptr = (_local_rq_t *) kmalloc(sizeof(_local_rq_t), GFP_ATOMIC);
 	 GENERAL_SPIN_LOCK(&request_queue_lock,f);
-	 _local_rq_t *Ptr = (_local_rq_t *) kmalloc(
- 			sizeof(_local_rq_t), GFP_ATOMIC);
 
  	memset(Ptr, 0, sizeof(_local_rq_t));
  	Ptr->_request_id = request_id;
@@ -65,7 +64,7 @@ static int _cpu =0;
  	return Ptr;
  }
 
- int find_and_delete_request(int request_id, struct list_head *head) {
+int find_and_delete_request(int request_id, struct list_head *head) {
 
  	struct list_head *iter;
  	_local_rq_t *objPtr;
@@ -82,7 +81,8 @@ static int _cpu =0;
  		}
  	}
  	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
- }
+	 return 0;
+}
 
 int find_and_delete_pid(int pid, struct list_head *head) {
 
@@ -101,7 +101,8 @@ int find_and_delete_pid(int pid, struct list_head *head) {
  		}
  	}
  	 GENERAL_SPIN_UNLOCK(&request_queue_lock,f);
- }
+	 return 0;
+}
 
  _local_rq_t * find_request(int request_id, struct list_head *head) {
 
@@ -222,8 +223,9 @@ int getKey(unsigned long uaddr, _spin_key *sk, pid_t tgid)
 // hash spin key to find the spin bucket
 _spin_value *hashspinkey(_spin_key *sk)
 {
+	u32 hash;
 	pagefault_disable();
-	u32 hash = sp_hashfn(sk->_uaddr,sk->_tgid);
+	hash = sp_hashfn(sk->_uaddr,sk->_tgid);
 	pagefault_enable();
 	return &spin_bucket[hash];
 }
@@ -231,8 +233,7 @@ _spin_value *hashspinkey(_spin_key *sk)
 //to get the global worker and global request queue
 _global_value *hashgroup(struct task_struct *group_pid)
 {
-	struct task_struct *tsk =NULL;
-	tsk= group_pid;
+	struct task_struct *tsk = group_pid;
 //	pagefault_disable();
 	u32 hash = sp_hashfn(tsk->pid,0);
 //	pagefault_enable();
@@ -244,7 +245,7 @@ int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value *
 __releases(&value->_sp)
 {
 	int res = 0;
-	unsigned int flgs;
+	struct vm_area_struct *vma;
 
 	 _remote_key_request_t* wait_req= (_remote_key_request_t*) pcn_kmsg_alloc_msg(sizeof(_remote_key_request_t));
 	 _remote_wakeup_request_t *wake_req = (_remote_wakeup_request_t*) pcn_kmsg_alloc_msg(sizeof(_remote_wakeup_request_t));
@@ -298,8 +299,7 @@ __releases(&value->_sp)
 
     //if(cpu < 0)
     //	return cpu; //return ERROR
-
-	struct vm_area_struct *vma;
+    
 	vma = getVMAfromUaddr(uaddr);
 
 	if (vma != NULL && _cpu != 0){// && current->executing_for_remote && ((vma->vm_flags & VM_PFNMAP) || (vma->vm_flags & VM_MIXEDMAP))) {
@@ -360,7 +360,6 @@ __releases(&value->_sp)
     		wait_event_interruptible(rq_ptr->_wq, (rq_ptr->status == DONE));
     		GSPRINTK(KERN_ALERT"%s:after wake up process: task woken{%d}\n",__func__,current->pid);
 
-out:
    pcn_kmsg_free_msg(wake_req);
    pcn_kmsg_free_msg(wait_req);
    return 0;
@@ -395,9 +394,6 @@ _cpu = Kernel_Id;
 }
 static void __exit global_spinlock_exit(void)
 {
-
-	int i=0;
-
 }
 __initcall(global_spinlock_init);
 

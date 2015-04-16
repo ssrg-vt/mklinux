@@ -1,7 +1,7 @@
 /*
  * This file for Obtaining Remote MEM info
  *
- * Akshay
+ * (C) 2014, Akshay Ravichandran, SSRG Virginia Tech
  */
 
 #include <linux/kernel.h>
@@ -117,7 +117,7 @@ static _remote_mem_info_response_t *meminfo_result;
  */
 
 
-int flush_meminfo_var()
+int flush_meminfo_var(void )
 {
 	meminfo_result=NULL;
 	wait=-1;
@@ -256,10 +256,10 @@ static int handle_remote_proc_mem_info_request(struct pcn_kmsg_message* inc_msg)
 	response->header.prio = PCN_KMSG_PRIO_NORMAL;
 	response->header.flag = PCN_KMSG_SYNC;
 
-	fill_meminfo_response(&response);
+	fill_meminfo_response(response);
 
 	// Send response
-	pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_message*) (response),
+	pcn_kmsg_send_long(msg->header.from_cpu, (struct pcn_kmsg_long_message*) (response),
 			sizeof(_remote_mem_info_response_t) - sizeof(struct pcn_kmsg_hdr));
 
 	pcn_kmsg_free_msg_now(inc_msg);
@@ -288,10 +288,11 @@ int send_meminfo_request(int KernelId)
  */
 int remote_proc_meminfo_info(struct seq_file *m)
 {
-	flush_meminfo_var();
 	int s;
 	int ret=0;
 	int i;
+	flush_meminfo_var();
+	
 		 for(i = 0; i < MAX_KERN; i++) {
 
 			    flush_meminfo_var();

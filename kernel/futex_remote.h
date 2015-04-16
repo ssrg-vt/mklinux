@@ -2,7 +2,7 @@
  * futex_remote.h
  *
  *  Created on: Oct 8, 2013
- *      Author: akshay
+ *      Author: Akshay Ravichandran, SSRG Virginia Tech
  */
 
 #ifndef FUTEX_REMOTE_H_
@@ -156,9 +156,8 @@ struct kernel_robust_list_head {
 //#define FUTEX_STAT
 #undef FUTEX_STAT
 extern struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr);
-int print_wait_perf();
-
-int print_wake_perf();
-int print_wakeop_perf();
-int print_requeue_perf();
+int print_wait_perf(void);
+int print_wake_perf(void);
+int print_wakeop_perf(void);
+int print_requeue_perf(void);
 #endif /* FUTEX_REMOTE_H_ */

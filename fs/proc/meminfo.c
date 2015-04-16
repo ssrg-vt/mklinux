@@ -57,6 +57,9 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	long cached;
 	unsigned long pages[NR_LRU_LISTS];
 	int lru;
+	struct task_struct *t;
+	int o;
+
 
 /*
  * display in kilobytes.
@@ -200,9 +203,7 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	arch_report_meminfo(m);
 
 	/*mklinux_akshay*/
-	struct task_struct *t;
 	t=current;
-	int o;
 	//printk("show: current comm: %s   pid:%d-%d",t->comm,strlen(t->comm),strlen("cat"));
 	if(!(o=strcmp (t->comm,"cat")))
 		remote_proc_meminfo_info(m);
