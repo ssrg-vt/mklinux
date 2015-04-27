@@ -115,15 +115,3 @@ struct x86_msi_ops x86_msi = {
 	.teardown_msi_irq = native_teardown_msi_irq,
 	.teardown_msi_irqs = default_teardown_msi_irqs,
 };
-//akshay
- struct x86_io_apic_ops x86_io_apic_ops = {
-         //.init                   = ioapic_and_gsi_init;//native_io_apic_init_mappings,
- /*        .read                   = io_apic_read,
-         .write                  = io_apic_write,
-         .modify                 = io_apic_modify,
-         .disable                = disable_io_apic,
-         .print_entries          = io_apic_print_entries,
-         .set_affinity           = ioapic_set_affinity,
-         .setup_entry            = setup_ioapic_entry,
-   */     // .eoi_ioapic_pin         = eoi_ioapic_pin,
- };

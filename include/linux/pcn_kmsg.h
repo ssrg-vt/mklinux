@@ -93,8 +93,10 @@ enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST,
 	PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE,
 	PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_TOKEN_REQUEST,
+        PCN_KMSG_TYPE_REMOTE_FUTEX_PERF,
+        PCN_KMSG_TYPE_REMOTE_FUTEX_PERF_RESP,
+	PCN_KMSG_TYPE_REMOTE_PROXY_DEV_REQUEST,
 	PCN_KMSG_TYPE_REMOTE_PROXY_DEV_RESPONSE,
-  	PCN_KMSG_TYPE_REMOTE_PROXY_DEV_REQUEST,
 	PCN_KMSG_TYPE_PROC_SRV_CLONE_REQUEST,
     PCN_KMSG_TYPE_PROC_SRV_CREATE_PROCESS_PAIRING,
     PCN_KMSG_TYPE_PROC_SRV_EXIT_PROCESS,
@@ -244,9 +246,9 @@ typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);
 
 /* Register a callback function to handle a new message type.  Intended to
    be called when a kernel module is loaded. */
-extern int pcn_kmsg_register_callback(enum pcn_kmsg_type type,
+int pcn_kmsg_register_callback(enum pcn_kmsg_type type,
 			       pcn_kmsg_cbftn callback);
-//EXPORT_SYMBOL_GPL(pcn_kmsg_register_callback);
+
 /* Unregister a callback function for a message type.  Intended to
    be called when a kernel module is unloaded. */
 int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type);
@@ -257,13 +259,12 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type);
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg);
 
 /* Send a long message to the specified destination CPU. */
-extern int pcn_kmsg_send_long(unsigned int dest_cpu,
+int pcn_kmsg_send_long(unsigned int dest_cpu,
 		       struct pcn_kmsg_long_message *lmsg,
 		       unsigned int payload_size);
-//EXPORT_SYMBOL_GPL(pcn_kmsg_send_long);
+
 /* Free a received message (called at the end of the callback function) */
-extern void pcn_kmsg_free_msg(void *msg);
-//EXPORT_SYMBOL_GPL(pcn_kmsg_free_msg);
+inline void pcn_kmsg_free_msg(void *msg);
 
 /* MULTICAST GROUPS */
 

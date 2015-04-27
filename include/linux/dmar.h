@@ -135,7 +135,6 @@ extern struct intel_iommu *map_hpet_to_ir(u8 id);
 extern int set_ioapic_sid(struct irte *irte, int apic);
 extern int set_hpet_sid(struct irte *irte, u8 id);
 extern int set_msi_sid(struct irte *irte, struct pci_dev *dev);
-
 #else
 static inline int alloc_irte(struct intel_iommu *iommu, int irq, u16 count)
 {

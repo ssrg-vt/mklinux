@@ -996,12 +996,21 @@ NORET_TYPE void do_exit(long code)
 	
     process_server_do_exit(code);
 #ifdef FUTEX_STAT
-    if(current->tgroup_distributed && current->pid == current->tgroup_home_id){
-    print_wait_perf();
-    print_wake_perf();
-    print_wakeop_perf();
-    print_requeue_perf();
-    }
+    if(current->tgroup_distributed && ((current->pid == current->tgroup_home_id))){
+    unsigned long stat_a= 0, stat_b = 0;
+    stat_a = native_read_tsc();
+    //if(current->tgroup_distributed){
+    //print_wait_perf();
+    //print_wake_perf();
+    //print_wakeop_perf();
+    //print_requeue_perf();
+    //print_msg_perf();
+    print_local_perf();
+    //else if(current->tgroup_distributed && smp_processor_id() !=0){
+    ask_remote_perf();
+    stat_b = native_read_tsc();
+    printk(KERN_ALERT"Bnechmark time %ld\n",stat_b - stat_a);
+}
 #endif
 	/*
 	 * tsk->flags are checked in the futex code to protect against

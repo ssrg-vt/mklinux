@@ -31,8 +31,8 @@
 #include <asm/cacheflush.h>
 #include <asm/sizes.h>
 
-#include "msm_iommu_hw-8xxx.h"
-#include "msm_iommu.h"
+#include <mach/iommu_hw-8xxx.h>
+#include <mach/iommu.h>
 
 #define MRC(reg, processor, op1, crn, crm, op2)				\
 __asm__ __volatile__ (							\
@@ -41,9 +41,6 @@ __asm__ __volatile__ (							\
 
 #define RCP15_PRRR(reg)		MRC(reg, p15, 0, c10, c2, 0)
 #define RCP15_NMRR(reg)		MRC(reg, p15, 0, c10, c2, 1)
-
-/* bitmap of the page sizes currently supported */
-#define MSM_IOMMU_PGSIZES	(SZ_4K | SZ_64K | SZ_1M | SZ_16M)
 
 static int msm_iommu_tex_class[4];
 
@@ -226,11 +223,6 @@ static int msm_iommu_domain_init(struct iommu_domain *domain)
 
 	memset(priv->pgtable, 0, SZ_16K);
 	domain->priv = priv;
-
-	domain->geometry.aperture_start = 0;
-	domain->geometry.aperture_end   = (1ULL << 32) - 1;
-	domain->geometry.force_aperture = true;
-
 	return 0;
 
 fail_nomem:
@@ -360,7 +352,7 @@ fail:
 }
 
 static int msm_iommu_map(struct iommu_domain *domain, unsigned long va,
-			 phys_addr_t pa, size_t len, int prot)
+			 phys_addr_t pa, int order, int prot)
 {
 	struct msm_priv *priv;
 	unsigned long flags;
@@ -371,6 +363,7 @@ static int msm_iommu_map(struct iommu_domain *domain, unsigned long va,
 	unsigned long *sl_pte;
 	unsigned long sl_offset;
 	unsigned int pgprot;
+	size_t len = 0x1000UL << order;
 	int ret = 0, tex, sh;
 
 	spin_lock_irqsave(&msm_iommu_lock, flags);
@@ -470,8 +463,8 @@ fail:
 	return ret;
 }
 
-static size_t msm_iommu_unmap(struct iommu_domain *domain, unsigned long va,
-			    size_t len)
+static int msm_iommu_unmap(struct iommu_domain *domain, unsigned long va,
+			    int order)
 {
 	struct msm_priv *priv;
 	unsigned long flags;
@@ -481,6 +474,7 @@ static size_t msm_iommu_unmap(struct iommu_domain *domain, unsigned long va,
 	unsigned long *sl_table;
 	unsigned long *sl_pte;
 	unsigned long sl_offset;
+	size_t len = 0x1000UL << order;
 	int i, ret = 0;
 
 	spin_lock_irqsave(&msm_iommu_lock, flags);
@@ -545,16 +539,19 @@ static size_t msm_iommu_unmap(struct iommu_domain *domain, unsigned long va,
 
 	ret = __flush_iotlb(domain);
 
+	/*
+	 * the IOMMU API requires us to return the order of the unmapped
+	 * page (on success).
+	 */
+	if (!ret)
+		ret = order;
 fail:
 	spin_unlock_irqrestore(&msm_iommu_lock, flags);
-
-	/* the IOMMU API requires us to return how many bytes were unmapped */
-	len = ret ? 0 : len;
-	return len;
+	return ret;
 }
 
 static phys_addr_t msm_iommu_iova_to_phys(struct iommu_domain *domain,
-					  dma_addr_t va)
+					  unsigned long va)
 {
 	struct msm_priv *priv;
 	struct msm_iommu_drvdata *iommu_drvdata;
@@ -682,8 +679,7 @@ static struct iommu_ops msm_iommu_ops = {
 	.map = msm_iommu_map,
 	.unmap = msm_iommu_unmap,
 	.iova_to_phys = msm_iommu_iova_to_phys,
-	.domain_has_cap = msm_iommu_domain_has_cap,
-	.pgsize_bitmap = MSM_IOMMU_PGSIZES,
+	.domain_has_cap = msm_iommu_domain_has_cap
 };
 
 static int __init get_tex_class(int icp, int ocp, int mt, int nos)

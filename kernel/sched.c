@@ -4434,8 +4434,10 @@ need_resched:
 	switch_count = &prev->nivcsw;
 	if (prev->state && !(preempt_count() & PREEMPT_ACTIVE)) {
 		if (unlikely(signal_pending_state(prev->state, prev))) {
-			if(prev->tgroup_distributed)
+			if(prev->tgroup_distributed){
 				printk(KERN_ALERT" unlilikely signal pending state \n");
+			}	
+	
 			prev->state = TASK_RUNNING;
 		} else {
 			deactivate_task(rq, prev, DEQUEUE_SLEEP);
@@ -5576,6 +5578,7 @@ int spin =0;
                      if(current->return_disposition == RETURN_DISPOSITION_NONE) {
                           __set_task_state(current,TASK_UNINTERRUPTIBLE);
                            spin = 1;
+			   printk("RETURN DISP NONE\n");
                        }
                   } while (spin);
             // We are here because of either the task is exiting,
@@ -5584,7 +5587,6 @@ int spin =0;
             // will return.  If we're exiting, we now die an honorable
             // death and this function will not return.
             process_server_do_return_disposition();
-
             return 0;
  }
  else
@@ -5607,16 +5609,11 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 		put_online_cpus();
 		return -ESRCH;
 	}
-	spin_lock_irq(&(p->mig_lock));
-	p->migration_state=1;
-        spin_unlock_irq(&(p->mig_lock));
-	smp_mb();
 	pid = current->pid;
-if(current->tgroup_distributed == 1 || strcmp(current->comm,"is-gomp") == 0)
-   {	dump_stack();
-printk(KERN_ALERT"inside sched affinity pid{%d} c{%s} p{%d} state{%d}\n",current->pid,current->comm,p->pid,p->futex_state);
+//if(current->tgroup_distributed == 1 || strcmp(current->comm,"is-gomp") == 0)
+//printk(KERN_ALERT"inside sched affinity pid{%d} c{%s} p{%d} state{%d}\n",current->pid,current->comm,p->pid,p->futex_state);
 
-}// TODO migration must be removed from here
+// TODO migration must be removed from here
     /*
      * Multikernel
      */
@@ -5650,21 +5647,18 @@ extern struct list_head rlist_head;
         pcpum = &(objPtr->_data._cpumask);
         if ( cpumask_intersects(in_mask, pcpum) ) {
 #endif
-        // TODO ask the global scheduler if there are multiple affinities    
+                 // TODO ask the global scheduler if there are multiple affinities    
 	// do the migration
             get_task_struct(p);
             rcu_read_unlock();
-printk(KERN_ALERT"before proce server {%d} i{%d} cpu{%d}\n",p->pid,i,current_cpu);
+	    //printk(KERN_ALERT"before proce server {%d} i{%d} cpu{%d}\n",p->pid,i,current_cpu);
             ret =process_server_do_migration(p,i);
             put_task_struct(p);
             put_online_cpus();
-            printk(KERN_ALERT"sched_setaffinity tsk{%d} state{%d} on run q{%d} RET{%d} current{%s} \n",p->pid,p->state,p->on_rq,ret,current->comm);
-	    spin_lock_irq(&(p->mig_lock));
-	        p->migration_state=0;
-            spin_unlock_irq(&(p->mig_lock));
- 
-	   if(ret != PROCESS_SERVER_CLONE_FAIL)
+           // printk(KERN_ALERT"sched_setaffinity tsk{%d} state{%d} on run q{%d} RET{%d} current{%s} \n",p->pid,p->state,p->on_rq,ret,current->comm);
+	   if(ret == PROCESS_SERVER_CLONE_FAIL){
 		return 0;
+	   }
 	    	
 	    if(shadow_return_check(p) == -1){
 		retval = 0;

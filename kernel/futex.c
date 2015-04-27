@@ -66,6 +66,7 @@
 
 #include "futex_remote.h"
 #include <popcorn/global_spinlock.h>
+#include <popcorn/pid.h>
 
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
@@ -78,7 +79,7 @@
 #else
 #define FPRINTK(...) ;
 #endif
-#define WAIT_MAIN 99
+#define WAIT_BY_CLIENT_IN_SRVKRN 99
 #define ENOTINKRN 999
 static void printPTE(u32 __user *uaddr);
 int __read_mostly futex_cmpxchg_enabled;
@@ -94,11 +95,13 @@ static int _cpu=0;
 #define FLAGS_HAS_TIMEOUT	0x04
 
 
-static unsigned long long _wait=0,_wake=0,_wakeop=0,_requeue=0;
-static unsigned int _wait_cnt=0,_wake_cnt=0,_wakeop_cnt=0,_requeue_cnt=0;
-static unsigned int _wait_err=0,_wake_err=0,_wakeop_err=0,_requeue_err=0;
-static unsigned long long perf_aa,perf_bb,perf_cc;
-
+#ifdef FUTEX_STAT
+atomic64_t  _wait=ATOMIC64_INIT(0),_wake=ATOMIC64_INIT(0),_wakeop=ATOMIC64_INIT(0),_requeue=ATOMIC64_INIT(0);
+atomic64_t _wait_cnt=ATOMIC64_INIT(0),_wake_cnt=ATOMIC64_INIT(0),_wakeop_cnt=ATOMIC64_INIT(0),_requeue_cnt=ATOMIC64_INIT(0);
+atomic64_t _wait_err=ATOMIC64_INIT(0),_wake_err=ATOMIC64_INIT(0),_wakeop_err=ATOMIC64_INIT(0),_requeue_err=ATOMIC64_INIT(0);
+atomic64_t wait_msg = ATOMIC64_INIT(0),wake_msg = ATOMIC64_INIT(0),req_msg = ATOMIC64_INIT(0),  wakeop_msg = ATOMIC64_INIT(0);
+atomic64_t _page_fault = ATOMIC_INIT(0);
+#endif
 
 //static
 const struct futex_q futex_q_init = {
@@ -993,7 +996,7 @@ __acquires(&value->_sp)
 
 	//Get the request id
 	spin_lock(&value->_sp);
-	localticket_value = xadd_sync(&value->_ticket, 1);
+//	localticket_value = xadd_sync(&value->_ticket, 1);
 
 	_local_rq_t *rq_ptr= add_request_node(localticket_value,current->pid,&value->_lrq_head);
 	rq_ptr->_pid = current->pid;
@@ -1023,18 +1026,19 @@ __acquires(&value->_sp)
 	smp_mb();
 
 	if(ret){
-		if(rq_ptr->wake_st == 1) //no need to queue it.
+		if(rq_ptr->wake_st == 1) 
 		{
+			//No need to queue as its woken up already
 			ret = 0;
 		}
 	}
 	else if (!ret){
-		if(rq_ptr->wake_st == 1)//no neew to queue
+		if(rq_ptr->wake_st == 1)
 		{
+			//No need to queue as its returned with error
 			ret = -EWOULDBLOCK;
 		}
 	}
-	//find_and_delete_request(localticket_value, &value->_lrq_head);
 
 	return ret;
 }
@@ -1088,7 +1092,7 @@ __acquires(&value->_sp)
 
 	//Get the request id
 	spin_lock(&value->_sp);
-	localticket_value = xadd_sync(&value->_ticket, 1);
+//	localticket_value = xadd_sync(&value->_ticket, 1);
 
 	_local_rq_t *rq_ptr= add_request_node(localticket_value,current->pid,&value->_lrq_head);
 	rq_ptr->_pid = current->pid;
@@ -1127,9 +1131,9 @@ __acquires(&value->_sp)
 futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset,unsigned int fn_flags,struct task_struct *_tsk)
 {
 #ifdef FUTEX_STAT
-	unsigned long long wake_aa=0,wake_bb=0;
-	if(!_tsk && current->tgroup_distributed){
-		_wake_cnt++;
+	unsigned long long wake_aa=0,wake_bb=0,wake_perf_a=0,wake_perf_b=0;
+	if(!_tsk && ((current->tgroup_distributed || strcmp(current->comm,"is-bomp") == 0 || strcmp(current->comm,"cg-bomp") == 0 || strcmp(current->comm,"ft-bomp") == 0 || strcmp(current->comm,"is-bomp") == 0 || strcmp(current->comm,"mut") == 0 ||  strcmp(current->comm,"cond") == 0 ||  strcmp(current->comm,"bar") == 0 || strcmp(current->comm,"pbzip2") == 0 ))){
+
 		wake_aa = native_read_tsc();
 	}
 #endif
@@ -1146,7 +1150,6 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset,unsign
 	_local_rq_t *l =NULL;
 	struct spin_key sk;
 	__spin_key_init(&sk);
-
 
 
 	FPRINTK(KERN_ALERT " FUTEX_WAKE:current{%d} uaddr {%lx} get_user{%d} comm{%s}  lockval{%d} fn_flags{%d} cpu{%d} \n",current->pid,uaddr,x,current->comm,y,fn_flags,smp_processor_id());
@@ -1166,8 +1169,16 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset,unsign
 cont:
 	hb = hash_futex(&key);
 	if( !_tsk && !(flags & FLAGS_SHARED) && current->tgroup_distributed  && !(fn_flags & FLAGS_REMOTECALL) ){
-		g_errno= global_queue_wake_lock(&key,uaddr, flags & FLAGS_SHARED, nr_wake, bitset,
+#ifdef FUTEX_STAT	
+		wake_perf_a = 0;wake_perf_b = 0;
+		wake_perf_a =native_read_tsc();
+#endif
+	g_errno= global_queue_wake_lock(&key,uaddr, flags & FLAGS_SHARED, nr_wake, bitset,
 				0, fn_flags, 0,0,0);
+#ifdef FUTEX_STAT
+		wake_perf_b =native_read_tsc();
+		atomic64_add((wake_perf_b-wake_perf_a),&wake_msg);
+#endif		
 		FPRINTK(KERN_ALERT " %s: err {%d}\n",__func__,g_errno);
 		ret = g_errno;
 		goto out;
@@ -1229,7 +1240,8 @@ out:
 #ifdef FUTEX_STAT
 	if(!_tsk && current->tgroup_distributed){
 		wake_bb = native_read_tsc();
-		_wake += wake_bb - wake_aa;
+		atomic64_inc(&_wake_cnt);//++;
+		atomic64_add((wake_bb -wake_aa),&_wake);// += wake_bb - wake_aa;
 	}
 #endif
 	FPRINTK(KERN_ALERT "%s: exit {%d}\n",__func__,current->pid);
@@ -1388,8 +1400,10 @@ int futex_wake_op(u32 __user *uaddr1, unsigned int flags, u32 __user *uaddr2,
 
 #ifdef FUTEX_STAT
 	unsigned long long wakeop_aa=0,wakeop_bb=0;
-	if(!or_task && current->tgroup_distributed){
-		_wakeop_cnt++;
+	unsigned long wakeop_perf_a = 0,wakeop_perf_b = 0;
+	if(!or_task  && ((current->tgroup_distributed || strcmp(current->comm,"is-bomp") == 0 || strcmp(current->comm,"cg-bomp") == 0 || strcmp(current->comm,"ft-bomp") == 0 || strcmp(current->comm,"is-bomp") == 0 || strcmp(current->comm,"mut") == 0 ||  strcmp(current->comm,"cond") == 0 ||  strcmp(current->comm,"bar") == 0 || strcmp(current->comm,"pbzip2") == 0 ))){
+
+		//_wakeop_cnt++;
 		wakeop_aa = native_read_tsc();
 	}
 #endif
@@ -1407,8 +1421,8 @@ int futex_wake_op(u32 __user *uaddr1, unsigned int flags, u32 __user *uaddr2,
 	_local_rq_t *l =NULL;
 	struct spin_key sk;
 	__spin_key_init(&sk);
-
 	fn_flags |= FLAGS_WAKEOPCALL;
+	
 	FPRINTK(KERN_ALERT " FUTEX_WAKE_OP: entry{%pB} pid {%d} comm{%s} uaddr1{%lx} uaddr2{%lx}  op(%d} \n",(void*) &bp,current->pid,current->comm,uaddr1,uaddr2,op);
 retry:
 	ret = (or_task == NULL) ? get_futex_key(uaddr1, flags & FLAGS_SHARED, &key1, VERIFY_READ) :
@@ -1435,13 +1449,24 @@ retry_private:
 	}
 
 	if( !or_task && current->tgroup_distributed  && !(fn_flags & FLAGS_REMOTECALL) && !(flags & FLAGS_SHARED)){
+	
+#ifdef FUTEX_STAT
+		wakeop_perf_a = 0;wakeop_perf_b = 0;
+		wakeop_perf_a =native_read_tsc();
+#endif	
 		//find_page(uaddr2,current);
 		g_errno= global_queue_wake_lock(&key1,uaddr1, flags & FLAGS_SHARED, nr_wake, 1,
 				0, fn_flags,uaddr2,nr_wake2,op);
+
+#ifdef FUTEX_STAT
+		wakeop_perf_b =native_read_tsc();
+		atomic64_add((wakeop_perf_b-wakeop_perf_a),&wakeop_msg);
+#endif
 		ret = g_errno;
 		FPRINTK(KERN_ALERT " %s: err {%d}\n",__func__,g_errno);
 #ifdef FUTEX_STAT
-		_wakeop_err++;
+		atomic64_inc(&_wakeop_err);
+		//_wakeop_err++;
 #endif
 		goto out;
 	}
@@ -1574,7 +1599,8 @@ out:
 #ifdef FUTEX_STAT
 	if(!or_task && current->tgroup_distributed){
 		wakeop_bb = native_read_tsc();
-		_wakeop += wakeop_bb - wakeop_aa;
+		atomic64_inc(&_wakeop_cnt);
+		atomic64_add((wakeop_bb - wakeop_aa),&_wakeop);
 	}
 #endif
 	return ret;
@@ -1587,7 +1613,7 @@ out:
  * @hb2:	the target hash_bucket
  * @key2:	the new key for the requeued futex_q
  */
-	static inline
+static inline
 void requeue_futex(struct futex_q *q, struct futex_hash_bucket *hb1,
 		struct futex_hash_bucket *hb2, union futex_key *key2)
 {
@@ -1605,7 +1631,7 @@ void requeue_futex(struct futex_q *q, struct futex_hash_bucket *hb1,
 	q->key = *key2;
 }
 
-	static inline
+static inline
 void rem_requeue_futex(struct futex_q *q, union futex_key *key2, unsigned long uaddr)
 {
 	q->req_addr = uaddr;
@@ -1628,7 +1654,7 @@ void rem_requeue_futex(struct futex_q *q, union futex_key *key2, unsigned long u
  * to protect access to the pi_state to fixup the owner later.  Must be called
  * with both q->lock_ptr and hb->lock held.
  */
-	static inline
+static inline
 void requeue_pi_wake_futex(struct futex_q *q, union futex_key *key,
 		struct futex_hash_bucket *hb)
 {
@@ -1735,8 +1761,10 @@ int futex_requeue(u32 __user *uaddr1, unsigned int flags,
 
 #ifdef FUTEX_STAT
 	unsigned long long requeue_aa=0,requeue_bb=0;
-	if(!re_task && current->tgroup_distributed){
-		_requeue_cnt++;
+	unsigned long req_perf_a = 0,req_perf_b = 0;
+	if(!re_task && ((current->tgroup_distributed || strcmp(current->comm,"is-bomp") == 0 || strcmp(current->comm,"cg-bomp") == 0 || strcmp(current->comm,"ft-bomp") == 0 || strcmp(current->comm,"is-bomp") == 0 || strcmp(current->comm,"mut") == 0 ||  strcmp(current->comm,"cond") == 0 ||  strcmp(current->comm,"bar") == 0 || strcmp(current->comm,"pbzip2") == 0 ))){
+ 
+		//_requeue_cnt++;
 		requeue_aa = native_read_tsc();
 	}
 #endif
@@ -1755,7 +1783,6 @@ int futex_requeue(u32 __user *uaddr1, unsigned int flags,
 	_local_rq_t *l =NULL;
 	struct spin_key sk;
 	__spin_key_init(&sk);
-
 	fn_flags |= FLAGS_REQCALL;
 
 	FPRINTK(KERN_ALERT " FUTEX_REQUEUE: cmp{%lx} nr_wake{%d} nr_requeue{%d} pid{%d} comm{%s} uaddr1{%lx} uaddr2{%lx} fn_flags{%lx} \n",*cmpval,nr_wake,nr_requeue,current->pid,current->comm,uaddr1,uaddr2,fn_flags);
@@ -1816,12 +1843,22 @@ retry_private:
 	}
 
 	if( !re_task && current->tgroup_distributed  && !(fn_flags & FLAGS_REMOTECALL) && !(flags & FLAGS_SHARED)){
+
+#ifdef FUTEX_STAT
+		req_perf_a = 0;req_perf_b = 0;
+		req_perf_a =native_read_tsc();
+#endif
 		g_errno= global_queue_wake_lock(&key1,uaddr1, flags & FLAGS_SHARED, nr_wake, 1,
 				0, fn_flags,uaddr2,nr_requeue,(int)*cmpval);
+#ifdef FUTEX_STAT
+		req_perf_b =native_read_tsc();
+		atomic64_add((req_perf_b-req_perf_a),&req_msg);
+#endif
 		FPRINTK(KERN_ALERT " %s: err {%d}\n",__func__,g_errno);
 		ret = g_errno;
 #ifdef FUTEX_STAT
-		_requeue_err++;
+		atomic64_inc(&_requeue_err);
+		//_requeue_err++;
 #endif
 		goto out;
 	}
@@ -1957,10 +1994,12 @@ retry_private:
 				}
 				else
 				{	u32 bitset=1;
-					if(!requeued)
+					if(!requeued){
 						ret = remote_futex_wakeup(uaddr1, flags & FLAGS_SHARED,nr_wake, bitset,&key1,this->rem_pid, fn_flags,0,0,0);
-					else
+					}
+					else{
 						ret = remote_futex_wakeup(uaddr2, flags & FLAGS_SHARED,nr_wake, bitset,&key2,this->rem_pid, fn_flags, 0,0,0);
+					}	
 					this->rem_pid=NULL;
 					__unqueue_futex(this);
 					smp_wmb();
@@ -2031,7 +2070,9 @@ out:
 #ifdef FUTEX_STAT
 	if(!re_task && current->tgroup_distributed){
 		requeue_bb = native_read_tsc();
-		_requeue += requeue_bb - requeue_aa;
+		atomic64_inc(&_requeue_cnt);
+		atomic64_add((requeue_bb-requeue_aa),&_requeue);
+		// += requeue_bb - requeue_aa;
 	}
 #endif
 	return ret ? ret : task_count;
@@ -2373,7 +2414,7 @@ static int futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 	 */
 	if(current->tgroup_distributed == 1 && l && l->wake_st == 1){
 		ret = 1;
-		FPRINTK(KERN_ALERT"unlock 1\n");
+		//printk(KERN_ALERT"unlock 1\n");
 		if (q->lock_ptr != NULL && spin_is_locked(q->lock_ptr)) {
 			spin_unlock(&hb->lock);
 		}
@@ -2381,7 +2422,7 @@ static int futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 	else{
 		set_current_state(TASK_INTERRUPTIBLE);
 		//server queued it for me if i am the main
-		if(ops != WAIT_MAIN)
+		if(ops != WAIT_BY_CLIENT_IN_SRVKRN)
 			queue_me(q, hb);
 		else{
 			FPRINTK(KERN_ALERT"unlock 2 ops{%d} \n",ops);
@@ -2410,8 +2451,15 @@ static int futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 			 * is no timeout, or if it has yet to expire.
 			 */
 			if (!timeout || timeout->task){
-				if(current->tgroup_distributed == 1 && l && l->wake_st == 1){	
-					ret = 1;
+				if(current->tgroup_distributed == 1 && l){
+					if(l->wake_st == 1){//Woken up
+						ret = 1;
+					}
+					else {//Put to sleep
+						l->status = SLEEP;
+						current->futex_state = 1;
+						schedule();
+					}
 				}
 				else{
 					current->futex_state = 1;
@@ -2452,7 +2500,7 @@ static int futex_wait_setup(u32 __user *uaddr, u32 val, unsigned int flags,
 	int ret;
 	int g_errno;
 	int kind=0;
-
+	unsigned long perf_wait_a = 0,perf_wait_b = 0;
 	/*
 	 * Access the page AFTER the hash-bucket is locked.
 	 * Order is important:
@@ -2478,31 +2526,37 @@ retry:
 		return ret;
 
 retry_private:
-
+	// For Distibted Threads
 	if(current->tgroup_distributed  && !(fn_flag & FLAGS_REMOTECALL) && !(flags & FLAGS_SHARED)){
 #ifdef FUTEX_STAT
-		perf_bb = native_read_tsc();
+		perf_wait_a = 0;perf_wait_b = 0;
+		perf_wait_a =native_read_tsc();
 #endif
 		current->uaddr = (unsigned long) uaddr;
 		g_errno = global_queue_wait_lock(q, uaddr, *hb, fn_flag, val,
 				flags & FLAGS_SHARED, VERIFY_READ, bitset);
 #ifdef FUTEX_STAT
-		perf_cc = native_read_tsc();
+		perf_wait_b = native_read_tsc();
+		atomic64_add((perf_wait_b-perf_wait_a),&wait_msg) ;
 #endif
 		FPRINTK(KERN_ALERT " %s: spinlock  futex_wait_setup err {%d}\n",__func__,g_errno);
-		if (g_errno) {	//error due to val change
+		if (g_errno) {	
+			//Error due to val change
+			//Return the error to userspace
 #ifdef FUTEX_STAT
-			_wait_err++;
+			atomic64_inc(&_wait_err);
+			//_wait_err++;
 #endif
 			ret = g_errno;
 			if( ret == -EFAULT)
 			{
 				FPRINTK(KERN_ALERT" client side efault fix up {%d} \n",fault_in_user_writeable(uaddr));
-
 			}
 
-		} else if (!g_errno) {	//no error => just queue it acquiring spinlock
-			//get the actual spinlock : Not necessary as we are alone
+		} else if (!g_errno) {	
+			//No Error => just queue it acquiring spinlock
+			//Get the actual spinlock 
+			//TODO: Not necessary as we are alone
 			*hb = queue_lock(q);
 			ret = g_errno;
 		}
@@ -2620,10 +2674,9 @@ int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 {
 
 #ifdef FUTEX_STAT
-	unsigned long long wait_aa,wait_bb,wait_cc;
-	if(current->tgroup_distributed){
+	unsigned long long wait_aa = 0,wait_bb = 0,wait_cc = 0;
+	if(current->tgroup_distributed || strcmp(current->comm,"is-bomp") == 0 || strcmp(current->comm,"cg-bomp") == 0 || strcmp(current->comm,"ft-bomp") == 0 || strcmp(current->comm,"is-bomp") == 0 || strcmp(current->comm,"mut") == 0 ||  strcmp(current->comm,"cond") == 0 ||  strcmp(current->comm,"bar") == 0 || strcmp(current->comm,"pbzip2") == 0 ){
 		wait_aa = native_read_tsc();
-		_wait_cnt++;
 	}
 #endif
 	struct hrtimer_sleeper timeout, *to = NULL;
@@ -2667,7 +2720,7 @@ retry:
 	 */
 	ret = futex_wait_setup(uaddr, val, flags, &q, &hb,fn_flag,bitset);
 
-	if (ret !=0 && ret != WAIT_MAIN)
+	if (ret !=0 && ret != WAIT_BY_CLIENT_IN_SRVKRN)
 		goto out;
 
 
@@ -2675,7 +2728,10 @@ retry:
 	retf = futex_wait_queue_me(hb, &q, to, ret);
 	/* If we were woken (and unqueued), we succeeded, whatever. */
 	/* unqueue_me() drops q.key ref */
-	if(ret != WAIT_MAIN  ){
+	/*
+	* For Distributed Threads: If it is a request by client existing on a server kernel do not unqueue
+	*/
+	if(ret != WAIT_BY_CLIENT_IN_SRVKRN ){
 		if(retf == 0 ){
 			if (!unqueue_me(&q))
 				goto out;
@@ -2716,69 +2772,98 @@ out:
 #ifdef FUTEX_STAT
 	if(current->tgroup_distributed){
 		wait_bb = native_read_tsc();
-		_wait += wait_bb - wait_aa ;
+		atomic64_inc(&_wait_cnt);
+		atomic64_add((wait_bb-wait_aa),&_wait) ;
 	}
 #endif
 	FPRINTK(KERN_DEBUG " %s:exit {%d}\n",__func__,current->pid);
 	return ret;
 }
-int print_wait_perf(){
-	printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} counter{%d} errors{%d} wait time {%llu}",
+int print_msg_perf(){
+	printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} wake_msg{%ld} wait_msg{%ld} req_msg {%llu} wakeop_msg {%lu}",
 			__func__,
 			smp_processor_id(),
 			current->pid,
 			current->tgroup_home_id,
-			_wait_cnt,
-			_wait_err,
-			_wait);
-	_wait_err = 0;
-	_wait = 0;
-	_wait_cnt = 0;
+			atomic64_read(&wake_msg),
+			atomic64_read(&wait_msg),
+			atomic64_read(&req_msg),
+			atomic64_read(&wakeop_msg));
+}
+int print_wait_perf(){
+	printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} counter{%ld} errors{%ld} wait time {%llu}",
+			__func__,
+			smp_processor_id(),
+			current->pid,
+			current->tgroup_home_id,
+			atomic64_read(&_wait_cnt),
+			atomic64_read(&_wait_err),
+			atomic64_read(&_wait));
 }
 
 int print_wake_perf(){
-	printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} counter{%d} errors{%d} wake time {%llu}",
+	printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} counter{%ld} errors{%ld} wake time {%llu}",
 			__func__,
 			smp_processor_id(),
 			current->pid,
 			current->tgroup_home_id,
-			_wake_cnt,
-			_wake_err,
-			_wake);
-	_wake_err = 0;
-	_wake = 0;
-	_wake_cnt = 0;
+			atomic64_read(&_wake_cnt),
+			atomic64_read(&_wake_err),
+			atomic64_read(&_wake));
+		
 }
 
 
 int print_wakeop_perf(){
-	printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} counter{%d} errors{%d} wakeop time {%llu}",
+	printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} counter{%ld} errors{%ld} wakeop time {%llu}",
 			__func__,
 			smp_processor_id(),
 			current->pid,
 			current->tgroup_home_id,
-			_wakeop_cnt,
-			_wakeop_err,
-			_wakeop);
-	_wakeop_err = 0;
-	_wakeop = 0;
-	_wakeop_cnt = 0;
+			atomic64_read(&_wakeop_cnt),
+			atomic64_read(&_wakeop_err),
+			atomic64_read(&_wakeop));
+
 }
 
 int print_requeue_perf(){
-	printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} counter{%d} errors{%d} requeue time {%llu}",
+	printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} counter{%ld} errors{%ld} requeue time {%llu}",
 			__func__,
 			smp_processor_id(),
 			current->pid,
 			current->tgroup_home_id,
-			_requeue_cnt,
-			_requeue_err,
-			_requeue);
-	_requeue_err = 0;
-	_requeue = 0;
-	_requeue_cnt = 0;
-}
+			atomic64_read(&_requeue_cnt),
+			atomic64_read(&_requeue_err),
+			atomic64_read(&_requeue));
 
+}
+int print_local_perf(){
+	printk(KERN_ALERT"%s: Count: %ld Time: %ld Error: %ld Message: %ld\n",
+			__func__,
+			(atomic64_read(&_requeue_cnt) + atomic64_read(&_wakeop_cnt) + atomic64_read(&_wake_cnt) +  atomic64_read(&_wait_cnt)),
+			(atomic64_read(&_requeue) + atomic64_read(&_wakeop) + atomic64_read(&_wake) +  atomic64_read(&_wait)),
+			(atomic64_read(&_requeue_err) + atomic64_read(&_wakeop_err) + atomic64_read(&_wake_err) +  atomic64_read(&_wait_err)),
+			(atomic64_read(&req_msg) + atomic64_read(&wakeop_msg) + atomic64_read(&wake_msg) +  atomic64_read(&wait_msg)));
+
+	atomic64_set(&_requeue_err,0);
+	atomic64_set(&_requeue,0);
+	atomic64_set(&_requeue_cnt,0);
+	atomic64_set(&wait_msg,0);
+	atomic64_set(&wake_msg,0);
+	atomic64_set(&wakeop_msg,0);
+	atomic64_set(&req_msg,0);
+	atomic64_set(&_wakeop_err,0);
+	atomic64_set(&_wakeop,0);
+	atomic64_set(&_wakeop_cnt,0);
+	atomic64_set(&_wake_err,0);
+	atomic64_set(&_wake,0);
+	atomic64_set(&_wake_cnt,0);
+	atomic64_set(&_wait_err,0);
+	atomic64_set(&_wait,0);
+	atomic64_set(&_wait_cnt,0);
+
+
+}
 static long futex_wait_restart(struct restart_block *restart)
 {
 	u32 __user *uaddr = restart->futex.uaddr;
@@ -3542,7 +3627,11 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 	u32 val2 = 0;
 	int cmd = op & FUTEX_CMD_MASK;
 	int retn=0;
-	
+/*
+        if((strcmp(current->comm,"cond")==0) || (strcmp(current->comm,"mut")==0)){
+                         printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id());
+                         }	
+*/
 	rcu_read_lock();
 	current->futex_state = 1;
 	rcu_read_unlock();
@@ -3567,6 +3656,7 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 
 	 __set_task_state(current,TASK_UNINTERRUPTIBLE);
 	  int (*ip_func) (struct task_struct*);
+	  printk(KERN_ALERT"futex calls shadow_return_check \n");
 	  shadow_return_check(current);
 	  //current->thread.ip = (unsigned long) ip_func;
 	}
@@ -3593,14 +3683,24 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 		val2 = (u32) (unsigned long) utime;
 
 	retn = do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
+#ifdef FUTEX_STAT
+	if(current->tgroup_distributed && retn == -EFAULT)
+		atomic64_inc(&_page_fault);
+#endif
 
-	
+/*	
+	if( (strcmp(current->comm,"cond")==0) || (strcmp(current->comm,"mut")==0)){
+                    printk(KERN_ALERT"%s: END +++++++++++++pid{%d} retn{%d} uaddr{%lx}\n",__func__,current->pid,retn,uaddr);
+                  //             dump_regs(task_pt_regs(current));
+                  }
+*/
 	rcu_read_lock();
         current->futex_state = 0;
 	rcu_read_unlock();
 
 	return retn;	
 }
+
 static int __init futex_init(void)
 {
 	u32 curval;

@@ -53,7 +53,7 @@ struct local_request_queue {
 	unsigned int wake_st; //token status
 	wait_queue_head_t _wq; //to wait until the server responds
 	enum {
-		DONE, IDLE, INPROG
+		DONE, IDLE, INPROG, SLEEP
 	} status;
 	int errno;
 	int ops;
@@ -111,6 +111,7 @@ struct global_value {
 	//	volatile struct plist_head _grq_head; // TODO for storing mutiple wq
 	struct workqueue_struct *global_wq;
 	struct task_struct *thread_group_leader;
+	pid_t thread_group_pid;
 	global_request_work_t *worker_task;
 	unsigned int free :1;
 	char name[32];

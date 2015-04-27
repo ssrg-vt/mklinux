@@ -6771,6 +6771,23 @@ int process_server_import_address_space(unsigned long* ip,
     current->self_exec_id++;
         
     flush_signal_handlers(current,0);
+   
+    int cnt=0,flags;
+    lock_task_sighand(current, &flags);
+    current->origin_pid = clone_data->origin_pid;
+    sigorsets(&current->blocked,&current->blocked,&clone_data->remote_blocked) ;
+    sigorsets(&current->real_blocked,&current->real_blocked,&clone_data->remote_real_blocked);
+    sigorsets(&current->saved_sigmask,&current->saved_sigmask,&clone_data->remote_saved_sigmask);
+
+
+    current->sas_ss_sp = clone_data->sas_ss_sp;
+    current->sas_ss_size = clone_data->sas_ss_size;
+
+    for(cnt=0;cnt<_NSIG;cnt++)
+         current->sighand->action[cnt] = clone_data->action[cnt];
+    unlock_task_sighand(current, &flags);
+
+
     flush_old_files(current->files);
     }
     start_remote_thread(regs);
@@ -6822,10 +6839,13 @@ int process_server_import_address_space(unsigned long* ip,
     struct sockaddr_in serv_addr, cli_addr;
  
     if(clone_data->skt_flag == 1){
-	    switch(1){
+	   
+	    current->migrated_socket = 1;
+	    
+	 switch(1){
 	    case MIG_SOCKET:
 		  tempfd = sys_socket(AF_INET,clone_data->skt_type,IPPROTO_IP);
-
+		  current->surrogate_fd = tempfd;
 		  if(clone_data->skt_level == MIG_SOCKET) break;
 	    case MIG_BIND:
 		  serv_addr.sin_family = AF_INET;
@@ -8097,8 +8117,14 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
     task->uaddr = 0;
     task->futex_state = 0;
     task->migration_state = 0;
+    task->migrated_socket = 0;
+    task->surrogate_fd = -1;
     spin_lock_init(&(task->mig_lock));
-    // If this is pid 1 or 2, the parent cannot have been migrated
+    task->signal_state = 0;
+    task->dest_cpu = smp_processor_id();
+    task->remote_hb = NULL;
+    
+// If this is pid 1 or 2, the parent cannot have been migrated
     // so it is safe to take on all local thread info.
     if(unlikely(orig->pid == 1 || orig->pid == 2)) {
         task->tgroup_home_cpu = home_kernel;
@@ -8162,12 +8188,17 @@ int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     int lclone_request_id;
     int perf = -1;
     int sock_fd;
+    unsigned long flags=0;
     //printk("process_server_do_migration pid{%d} cpu {%d}\n",task->pid,cpu);
 
     // Nothing to do if we're migrating to the current cpu
     if(dst_cpu == _cpu) {
         return PROCESS_SERVER_CLONE_FAIL;
     }
+    spin_lock_irq(&(task->mig_lock));
+         task->migration_state = 1;
+    spin_unlock_irq(&(task->mig_lock));
+    smp_mb();
 
     perf = PERF_MEASURE_START(&perf_process_server_do_migration);
 
@@ -8335,6 +8366,9 @@ int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     	request->origin_pid = task->pid;
     else
     	request->origin_pid = task->origin_pid;
+    
+    lock_task_sighand(task, &flags);
+
     request->remote_blocked = task->blocked;
     request->remote_real_blocked = task->real_blocked;
     request->remote_saved_sigmask = task->saved_sigmask;
@@ -8344,6 +8378,10 @@ int do_migration_to_new_cpu(struct task_struct* task, int cpu) {
     int cnt = 0;
     for (cnt = 0; cnt < _NSIG; cnt++)
     	request->action[cnt] = task->sighand->action[cnt];
+
+     unlock_task_sighand(task, &flags);
+
+
     // socket informationi
     if(request->skt_flag == 1){
     request->skt_level = MIG_BIND;
@@ -8446,12 +8484,16 @@ PSPRINTK(KERN_ERR"%s: task flags %x fpu_counter %x has_fpu %x [%d:%d] %d:%d %x\n
 
     // Remember that now, that cpu has a mm for this tgroup
     //set_cpu_has_known_tgroup_mm(dst_cpu);
+    spin_lock_irq(&(task->mig_lock));
 
     // Send request
     DO_UNTIL_SUCCESS(pcn_kmsg_send_long(dst_cpu, 
                         (struct pcn_kmsg_long_message*)request, 
                         sizeof(clone_request_t) - sizeof(request->header)));
-
+    
+    task->migration_state = 0;
+    task->dest_cpu = dst_cpu;
+    spin_unlock_irq(&(task->mig_lock));
     kfree(request);
 
   //  printk(KERN_ALERT"Migration done\n");
@@ -9611,7 +9653,6 @@ static void init_shared_counter(void) {
     }
 }
 
-
 /**
  * @brief Initialize this module
  */
@@ -9621,10 +9662,15 @@ static int __init process_server_init(void) {
      * Cache some local information.
      */
 //#ifndef SUPPORT_FOR_CLUSTERING
-           _cpu= smp_processor_id();
+
+//           _cpu= smp_processor_id();
 //#else
-//	   _cpu = cpumask_first(cpu_present_mask);
+	   _cpu = cpumask_first(cpu_present_mask);
 //#endif
+
+
+
+
     /*
      * Init global semaphores
      */

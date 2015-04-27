@@ -1577,8 +1577,12 @@ struct task_struct {
     /*
      * Multikernel
      */
-    spinlock_t mig_lock;
-    volatile int migration_state;
+
+    spinlock_t mig_lock; 
+    volatile int migration_state;/* Maintains whether the migration message is sent or not*/
+    volatile int signal_state; /* Will be set by signal to not sendmigartion message if it is a FATAL signal*/
+    int dest_cpu; /* Proposed destination cpu*/
+
     volatile int represents_remote;      /* Is this a placeholder process? */
     int executing_for_remote;   /* Is this executing on behalf of another cpu? */
     int next_pid;             /* What is the pid on the remote cpu? */
@@ -1609,7 +1613,9 @@ struct task_struct {
     pid_t surrogate;
     unsigned long uaddr;
     int futex_state;
-
+    struct futex_hash_bucket *remote_hb;
+    unsigned long migrated_socket;
+    long surrogate_fd;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

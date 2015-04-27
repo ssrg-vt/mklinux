@@ -44,8 +44,6 @@ struct msi_desc {
 
 	/* Last set MSI message */
 	struct msi_msg msg;
-	//akshay
-	unsigned int nvec_used;         /* number of messages */
 };
 
 /*

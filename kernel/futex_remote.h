@@ -143,6 +143,41 @@ struct kernel_robust_list_head {
 
 	struct kernel_robust_list  *list_op_pending;
 };
+
+/*
+*       Structure holding perf result
+*/
+struct _futex_perf {
+	struct pcn_kmsg_hdr header;
+	unsigned long wake;
+	unsigned long wait;
+	unsigned long requeue;
+	unsigned long wakeop;
+	unsigned long wake_cnt;
+        unsigned long wait_cnt;
+        unsigned long requeue_cnt;
+	unsigned long wakeop_cnt;
+	unsigned long wake_err;
+        unsigned long wait_err;
+        unsigned long requeue_err;
+        unsigned long wakeop_err;
+	unsigned long wake_msg;
+	unsigned long wait_msg;
+	unsigned long req_msg;
+	unsigned long wakeop_msg;
+	unsigned long _page_fault;
+	int pid;
+	int cpu;
+} __attribute__((packed));
+
+typedef struct _futex_perf _futex_perf_t;
+
+struct _futex_perf_req{
+	struct pcn_kmsg_hdr header;
+	char pad[60];
+}__attribute__((packed)) __attribute__((aligned(64)));
+
+typedef struct _futex_perf_req _futex_perf_req_t;
 // for fn_flags
 #define FLAGS_WAKECALL		64
 #define FLAGS_REQCALL		128
@@ -153,12 +188,23 @@ struct kernel_robust_list_head {
 #define FLAGS_ORIGINCALL	32
 
 #define FLAGS_MAX	FLAGS_SYSCALL+FLAGS_REMOTECALL+FLAGS_ORIGINCALL+FLAGS_WAKECALL+FLAGS_REQCALL+FLAGS_WAKEOPCALL
-//#define FUTEX_STAT
-#undef FUTEX_STAT
+#define FUTEX_STAT
+//#undef FUTEX_STAT
 extern struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr);
 int print_wait_perf();
-
 int print_wake_perf();
 int print_wakeop_perf();
 int print_requeue_perf();
+int print_msg_perf();
+int print_local_perf();
+int ask_remote_perf();
+
+extern atomic64_t _wait,_wake,_wakeop,_requeue;
+extern atomic64_t _wait_cnt,_wake_cnt,_wakeop_cnt,_requeue_cnt;
+extern atomic64_t _wait_err,_wake_err,_wakeop_err,_requeue_err;
+extern atomic64_t wait_msg,wake_msg,req_msg,wakeop_msg;
+extern atomic64_t _page_fault;
+//#endif
+
+
 #endif /* FUTEX_REMOTE_H_ */

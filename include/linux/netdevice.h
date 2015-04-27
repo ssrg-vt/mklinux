@@ -959,6 +959,7 @@ struct net_device_ops {
  *	FIXME: cleanup struct net_device such that network protocol info
  *	moves out.
  */
+#define CONFIG_REMOTE_REMAP 1
 
 struct net_device {
 
@@ -1317,6 +1318,11 @@ struct net_device {
 
 	/* group the device belongs to */
 	int group;
+#ifdef CONFIG_REMOTE_REMAP
+	unsigned long _master;
+	unsigned long _for_cpu;
+#endif
+
 };
 #define to_net_dev(d) container_of(d, struct net_device, dev)
 

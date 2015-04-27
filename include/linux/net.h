@@ -150,7 +150,7 @@ struct socket {
 	struct sock		*sk;
 	const struct proto_ops	*ops;
 };
-typedef struct socket socket;
+
 struct vm_area_struct;
 struct page;
 struct kiocb;

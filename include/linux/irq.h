@@ -499,11 +499,6 @@ static inline void irq_set_percpu_devid_flags(unsigned int irq)
 
 /* Handle dynamic irq creation and destruction */
 extern unsigned int create_irq_nr(unsigned int irq_want, int node);
-//akshay
-extern unsigned int __create_irqs(unsigned int from, unsigned int count,
-                                   int node);
-extern void destroy_irqs(unsigned int irq, unsigned int count);
-
 extern int create_irq(void);
 extern void destroy_irq(unsigned int irq);
 
@@ -584,11 +579,6 @@ int __irq_alloc_descs(int irq, unsigned int from, unsigned int cnt, int node,
 
 #define irq_alloc_desc_from(from, node)		\
 	irq_alloc_descs(-1, from, 1, node)
-
-
-//akshay
- #define irq_alloc_descs_from(from, cnt, node)   \
-         irq_alloc_descs(-1, from, cnt, node)
 
 void irq_free_descs(unsigned int irq, unsigned int cnt);
 int irq_reserve_irqs(unsigned int from, unsigned int cnt);

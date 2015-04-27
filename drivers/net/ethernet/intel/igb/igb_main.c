@@ -2068,7 +2068,7 @@ static int __devinit igb_probe(struct pci_dev *pdev,
 	/* let the f/w know that the h/w is now under the control of the
 	 * driver. */
 	igb_get_hw_control(adapter);
-
+	
 	strcpy(netdev->name, "eth%d");
 	err = register_netdev(netdev);
 	if (err)
@@ -2089,6 +2089,10 @@ static int __devinit igb_probe(struct pci_dev *pdev,
 	igb_init_hw_timer(adapter);
 
 	dev_info(&pdev->dev, "Intel(R) Gigabit Ethernet Network Connection\n");
+	
+	netdev->_master = 0;
+	netdev->_for_cpu = smp_processor_id();
+	
 	/* print bus type/speed/width info */
 	dev_info(&pdev->dev, "%s: (PCIe:%s:%s) %pM\n",
 		 netdev->name,

@@ -792,7 +792,11 @@ int pci_enable_msix(struct pci_dev *dev, struct msix_entry *entries, int nvec)
 				return -EINVAL;	/* duplicate entry */
 		}
 	}
-	WARN_ON(!!dev->msix_enabled);
+	if(dev->_master && dev->_for_cpu != smp_processor_id()){
+		//TODO: Do Nothing. Need a better way to deal with this
+	}
+	else
+		WARN_ON(!!dev->msix_enabled);
 
 	/* Check whether driver already requested for MSI irq */
 	if (dev->msi_enabled) {

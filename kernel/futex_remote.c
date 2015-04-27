@@ -26,8 +26,6 @@
 #include <linux/mmu_context.h>
 #include <linux/list.h>
 #include "futex_remote.h"
-#define ENOTINKRN 999
-#define MODULE "GRQ-"
 #include <popcorn/global_spinlock.h>
 
 #include <asm/tlbflush.h>
@@ -35,7 +33,6 @@
 
 #define STAT
 //#undef STAT
-#define WAIT_MAIN 99
 
 #define FUTEX_REMOTE_VERBOSE 0 
 #if FUTEX_REMOTE_VERBOSE
@@ -45,25 +42,48 @@
 #endif
 
 
-#define GENERAL_SPIN_LOCK(x) spin_lock(x)
-#define GENERAL_SPIN_UNLOCK(x) spin_unlock(x)
+#define GENERAL_SPIN_LOCK(x,y) spin_lock_irqsave(x,y)// spin_lock(x)
+#define GENERAL_SPIN_UNLOCK(x,y) spin_unlock_irqrestore(x,y)//spin_unlock(x)
 #define WAKE_OPS 1
 #define WAIT_OPS 0
+#define  NSIG 32
+#define POOLSIZE 15
+#define ENOTINKRN 999
+#define MODULE "GRQ-"
+#define WAIT_BY_CLIENT_IN_SRVKRN 99
 
-DEFINE_SPINLOCK(access_global_value_table);
+//TODO: Move these two into a structure
 
 static struct workqueue_struct *grq;
+
 static pid_t worker_pid;
 static volatile unsigned int free_work = 0;
 static volatile unsigned int finish_work = 0;
 
-static DECLARE_WAIT_QUEUE_HEAD(wait_);
-static DECLARE_WAIT_QUEUE_HEAD(resume_);
-
 #ifdef STAT
 static atomic_t progress = ATOMIC_INIT(0);
-static unsigned int counter = 0;
 #endif
+
+#ifdef FUTEX_STAT
+static unsigned  long counter = 0;
+static atomic64_t server_compute = ATOMIC64_INIT(0);
+static atomic64_t server_pagefault = ATOMIC64_INIT(0);
+static unsigned long wake_time = 0;
+static unsigned long wait_time = 0;
+static unsigned long wakeop_time = 0;
+static unsigned long requeue_time = 0;
+static unsigned long wake_cnt = 0;
+static unsigned long wait_cnt = 0;
+static unsigned long wakeop_cnt = 0;
+static unsigned long requeue_cnt = 0;
+static unsigned long error = 0;
+static unsigned long message_time = 0;
+static unsigned long pagefault = 0;
+#endif
+static int wait_perf = -1;
+static DECLARE_WAIT_QUEUE_HEAD( wq_perf);
+static DECLARE_WAIT_QUEUE_HEAD(wait_);
+static DECLARE_WAIT_QUEUE_HEAD(resume_);
 
 extern struct list_head pfn_list_head;
 
@@ -78,6 +98,7 @@ void _spin_key_init (struct spin_key *st) {
 }
 static const _global_value gvp_init = {
 	.thread_group_leader = NULL,
+	.thread_group_pid = 0,
 	.worker_task = NULL,
 	.free = 0,
 	.global_wq = NULL
@@ -86,7 +107,6 @@ static const _global_value gvp_init = {
 
 //void _spin_key_init (struct spin_key *st);
 extern int getKey(unsigned long uaddr, _spin_key *sk, pid_t tgid);
-#define  NSIG 32
 
 static struct list_head vm_head;
 
@@ -124,7 +144,14 @@ static void dump_regs(struct pt_regs* regs) {
 	FRPRINTK(KERN_ALERT"REGS DUMP COMPLETE\n");
 }
 
+int flush_perf_var() {
+	wait_perf -1;
+	return 0;
+}
 
+/*
+*       Structure holding the range of PFN each kernel is allocated to.
+*/
 struct _inc_remote_vm_pool {
 	unsigned long rflag;
 	int pid;
@@ -132,7 +159,11 @@ struct _inc_remote_vm_pool {
 	struct list_head list_member;
 };
 
+typedef struct _inc_remote_vm_pool _inc_remote_vm_pool_t;
 
+/*
+*	Function hooks for adding, deleteing and fetching the PFN range for a given Kernel
+*/
 
 int find_kernel_for_pfn(unsigned long addr, struct list_head *head) {
 	struct list_head *iter;
@@ -147,26 +178,6 @@ int find_kernel_for_pfn(unsigned long addr, struct list_head *head) {
 
 	return -1;
 }
-
-struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr) {
-
-	unsigned long address = (unsigned long) uaddr;
-	unsigned long offset = address % PAGE_SIZE;
-	if (unlikely((address % sizeof(u32)) != 0))
-		return NULL;
-	address -= offset;
-
-	struct vm_area_struct *vma;
-	struct vm_area_struct* curr = NULL;
-	curr = current->mm->mmap;
-	vma = find_extend_vma(current->mm, address);
-	if (!vma)
-		return NULL;
-	else
-		return vma;
-}
-
-typedef struct _inc_remote_vm_pool _inc_remote_vm_pool_t;
 
 _inc_remote_vm_pool_t * add_inc(int pid, int start, int end, int rflag,
 		int origin_pid, struct list_head *head) {
@@ -197,6 +208,29 @@ int find_and_delete_inc(int pid, struct list_head *head) {
 	}
 	return 0;
 }
+
+/*
+*	Get VMA associated with the given usersapce address
+*/
+struct vm_area_struct * getVMAfromUaddr(unsigned long uaddr) {
+
+	unsigned long address = (unsigned long) uaddr;
+	unsigned long offset = address % PAGE_SIZE;
+	if (unlikely((address % sizeof(u32)) != 0))
+		return NULL;
+	address -= offset;
+
+	struct vm_area_struct *vma;
+	struct vm_area_struct* curr = NULL;
+	curr = current->mm->mmap;
+	vma = find_extend_vma(current->mm, address);
+	if (!vma)
+		return NULL;
+	else
+		return vma;
+}
+
+
 
 pte_t *do_page_walk(unsigned long address) {
 	pgd_t *pgd = NULL;
@@ -230,7 +264,9 @@ pte_t *do_page_walk(unsigned long address) {
 exit: return NULL;
 }
 
-
+/*
+*	Called by
+*/
 void wake_futex_global(struct futex_q *q) {
 	struct task_struct *p = q->task;
 
@@ -245,6 +281,31 @@ void wake_futex_global(struct futex_q *q) {
 	put_task_struct(p);
 }
 
+/*
+*	Utility functions to get the asscoaited tasks
+*/
+struct task_struct* getshadow(struct task_struct *tghid, pid_t rem) {
+	struct task_struct *tsk = tghid;
+	struct task_struct *g, *task = NULL;
+	
+	if (tsk) {
+		get_task_struct(tsk);
+		FRPRINTK(KERN_ALERT "tghid shadow exists \n");
+		g = tsk;
+		do{
+			if (g->represents_remote == 1 && g->next_pid == rem) {
+				task = g;
+				goto mm_exit;
+			}
+		}while_each_thread(tsk,g);
+		
+	}
+mm_exit: 
+	if(tsk)
+	   put_task_struct(tsk);
+
+	return task;
+}
 struct task_struct* gettask(pid_t tghid) {
 	struct task_struct *tsk = NULL;
 	struct task_struct *g, *task = NULL;
@@ -265,7 +326,10 @@ struct task_struct* gettask(pid_t tghid) {
 mm_exit: 
 	return tsk;
 }
-
+/*
+*	Called by the Mailbox(kernel) thread to wake up remote threads only
+*	on the remote kernel	
+*/
 int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake,
 		u32 bitset, pid_t pid, unsigned long uaddr2) {
 	struct futex_hash_bucket *hb;
@@ -277,6 +341,7 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake,
 	struct task_struct *temp;
 	int ret;
 	int found = 0;
+	int exit_point = 0;
 	FRPRINTK(KERN_ALERT "%s: entry response {%d} uaddr{%lx} comm{%s} flags{%u} uaddr2{%lx} \n",__func__,pid,uaddr,current->comm,flags,uaddr2);
 	if (!bitset)
 		return -EINVAL;
@@ -286,7 +351,8 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake,
 
 	tsk = gettask(pid);
 
-	if(!tsk){	
+	if(!tsk){
+		exit_point = 1;	
 		goto out;
 	}
 	if(uaddr2 & (PAGE_SIZE-1)){
@@ -325,16 +391,18 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake,
 					//spin_unlock(&this->lock_ptr);
 				}
 				FRPRINTK(KERN_ALERT"%s:call wake futex \n",__func__);
-				//l->_st = 1;
 				found = 1;
 				wake_futex(this);
 			}
 		}
 
 	}
+	//Received the token but not scheduled or queued
 	if(!found && l &&  l->status == DONE){
+		l->wake_st = 1;
+		//printk(KERN_ALERT"task pid %d state %d\n", tsk->pid,tsk->state);
 		if(tsk && tsk->state != TASK_RUNNING) {
-			printk(KERN_ALERT"TASK_NOT RUN\n");
+		//	printk(KERN_ALERT"TASK_NOT RUN\n");
 			get_task_struct(tsk);	wake_up_state(tsk,TASK_NORMAL); put_task_struct(tsk);
 		}
 	}
@@ -346,29 +414,39 @@ int global_futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake,
 out:
 
 
-	FRPRINTK(KERN_ALERT "%s:exit \n",__func__);
+	FRPRINTK(KERN_ALERT "%s:exit point{%d} found{%d} status{%d}\n",__func__,exit_point,found,l->status);
 
 	return ret;
 }
 
-
+/*
+*	Used by the Server Kernel Thread to fix any page faults to the 
+	user space address (uaddr)
+*/
 int fix_user_page(u32 __user * uaddr,struct task_struct *tsk){
 	struct mm_struct *mm=tsk->mm;
 	int ret;
-
+#ifdef FUTEX_STAT
+	atomic64_inc(&server_pagefault);
+#endif
 	down_read(&mm->mmap_sem);
-	ret =fixup_user_fault(tsk,mm, (unsigned long) uaddr, FAULT_FLAG_WRITE| FAULT_FLAG_NONLINEAR | FAULT_FLAG_MKWRITE |FAULT_FLAG_KILLABLE );
+	ret = fixup_user_fault(tsk,mm, (unsigned long) uaddr, FAULT_FLAG_WRITE| FAULT_FLAG_NONLINEAR | FAULT_FLAG_MKWRITE |FAULT_FLAG_KILLABLE );
 	up_read(&mm->mmap_sem);
 
 	return ret < 0 ? ret :0;
 
 }
+
+/*
+*	Used by the Server Kernel Thread to queue the wait request in Global
+	Request Queue
+*/
 int global_futex_wait(unsigned long uaddr, unsigned int flags, u32 val,
 		ktime_t *abs_time, u32 bitset, pid_t rem, struct task_struct *origin,
 		unsigned int fn_flags) {
 	struct futex_hash_bucket *hb;
 	struct task_struct *tsk = origin;
-	struct task_struct *rem_struct = NULL;
+	struct task_struct *rem_struct = NULL, *shadow = NULL;
 	struct futex_q *q = (struct futex_q *) kmalloc(sizeof(struct futex_q),
 			GFP_ATOMIC);
 
@@ -451,12 +529,14 @@ fault:
 		q->task = NULL;
 		q->rem_pid = rem;
 		ret = 0;
+		shadow = getshadow(origin,rem);
+		if(shadow) shadow->remote_hb = hb;
 	}
 	else{
 		get_task_struct(rem_struct);
 		q->task = rem_struct;
 		q->rem_pid = -1;
-		ret = WAIT_MAIN;
+		ret = WAIT_BY_CLIENT_IN_SRVKRN;
 		put_task_struct(rem_struct);
 	}
 	plist_add(&q->list, &hb->chain);
@@ -478,10 +558,16 @@ out:
 	return ret;
 }
 
-
+/*
+*	Global Worker Thread generic funtion handler for Wait and Wake operations
+*/
 void global_worher_fn(struct work_struct* work) {
 	global_request_work_t* w = (global_request_work_t*) work;
 
+#ifdef FUTEX_STAT
+	unsigned long server_a =0, server_b = 0;
+	server_a = native_read_tsc();
+#endif
 	_global_rq *this, *next;
 	struct task_struct *tsk = current;
 	struct task_struct *task, *g;
@@ -537,7 +623,7 @@ void global_worher_fn(struct work_struct* work) {
 		}
 		FRPRINTK(KERN_ALERT "%s:after setting mm to NULL\n",__func__);
 
-		//send ticket
+		//Send Ticket(ACK) to the requested client
 		_remote_wakeup_response_t send_tkt;
 		send_tkt.header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_RESPONSE;
 		send_tkt.header.prio = PCN_KMSG_PRIO_NORMAL;
@@ -559,7 +645,6 @@ void global_worher_fn(struct work_struct* work) {
 		_spin_value *value = hashspinkey(&sk);
 		if(value->mig_st != NULL){
 			if(value->mig_st->uaddr == msg->uaddr){
-				printk(KERN_ALERT"mig value exist for wait ops");
 				if(value->mig_st->served && ((value->mig_st->response_time.tv_sec+value->mig_st->response_time.tv_nsec) > (value->mig_st->request_time.tv_sec+value->mig_st->request_time.tv_nsec))){
 					printk(KERN_ALERT"already woken up");
 					kfree(value->mig_st);
@@ -570,6 +655,7 @@ void global_worher_fn(struct work_struct* work) {
 		}
 		FRPRINTK(KERN_ALERT"%s:wait --current msg pid{%d} msg->ticket{%d} msg->uadr{%lx} \n", __func__,msg->pid,msg->ticket,msg->uaddr);
 
+		//This is needed for the Server thread to behave and use the mm_struct of the thread group when we resolve pagee faults
 		tsk = gettask(msg->tghid);
 		current->surrogate = msg->tghid;
 
@@ -582,7 +668,7 @@ void global_worher_fn(struct work_struct* work) {
 					msg->fn_flags);
 		}
 
-		//send response
+		//Send Response(ACK) to the client
 resp:		;
 		_remote_key_response_t send_tkt;
 		send_tkt.header.type = PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE;
@@ -600,8 +686,10 @@ resp:		;
 
 	}
 cleanup:
-#ifdef STAT
+#ifdef FUTEX_STAT
 	counter++;
+	server_b = native_read_tsc();
+	atomic64_add((server_b - server_a),&server_compute);
 	FRPRINTK(KERN_ALERT "done iteration moving the head cnt{%d} counter{%d} \n",this->cnt,counter);
 #endif
 	//Delete the entry
@@ -612,7 +700,9 @@ exit:
 	kfree(work);
 
 }
-
+/*
+*	Handles the Wake operation response both for requested clients
+*/
 static int handle_remote_futex_wake_response(struct pcn_kmsg_message* inc_msg) {
 	_remote_wakeup_response_t* msg = (_remote_wakeup_response_t*) inc_msg;
 	preempt_disable();
@@ -646,7 +736,9 @@ out:	pcn_kmsg_free_msg(inc_msg);
 
 	return 0;
 }
-
+/*
+*	Handles the wake operation request and delegates it to server/client
+*/
 static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 
 	_remote_wakeup_request_t* msg = (_remote_wakeup_request_t*) inc_msg;
@@ -656,6 +748,10 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 	_global_value * gvp,*this,*next;
 	struct list_head *hd;
 	int present =0;
+	unsigned long irq;
+	
+	//preempt_disable();
+        local_irq_disable();
 
 #ifdef STAT
 	atomic_inc(&progress);
@@ -675,14 +771,13 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 	}
 	get_task_struct(tsk);
 	if(( (msg->fn_flag < FLAGS_MAX) && (msg->fn_flag & FLAGS_ORIGINCALL)) || msg->rflag == 0){
-		//GENERAL_SPIN_LOCK(&access_global_value_table);
 
 		gbp = hashgroup(tsk);
 
-		GENERAL_SPIN_LOCK(&gbp->lock);
+		GENERAL_SPIN_LOCK(&gbp->lock,irq);
 		hd = &gbp->link;
 		list_for_each_entry_safe(this, next, hd, _link_head){
-			if(this->thread_group_leader->pid == tsk->pid){
+			if(this && tsk &&  ((pid_t)this->thread_group_pid) == tsk->pid){
 				present =1;
 				gvp = this; 
 				break;
@@ -703,6 +798,7 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 			FRPRINTK(KERN_ALERT"%s: wake gvp free \n", __func__);
 			gvp->global_wq = grq;// create_singlethread_workqueue(gvp->name);
 			gvp->thread_group_leader = tsk;
+			gvp->thread_group_pid = tsk->pid;
 			global_request_work_t* back_work = NULL;
 			// Spin up bottom half to process this event
 			back_work = (global_request_work_t*) kmalloc(sizeof(global_request_work_t),
@@ -734,15 +830,13 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 			}
 			gvp->worker_task = back_work;
 		}
-		GENERAL_SPIN_UNLOCK(&gbp->lock);
+		GENERAL_SPIN_UNLOCK(&gbp->lock,irq);
 
 
 		FRPRINTK(KERN_ALERT"%s: ERROR msg ticket{%d}\n", __func__,msg->ticket);
 
-		//Check whether the request is asking for ticket or holding the ticket?
-		//if not holding the ticket add to the tail of Global request queue.
-		//if not holding the ticket add to the tail of Global request queue.
 	}
+	// Issue remote Client wake
 	else {
 		global_futex_wake(msg->uaddr, msg->flags, msg->nr_wake, msg->bitset,
 				msg->rflag,(unsigned long) (msg->uaddr2 & (PAGE_SIZE-1)));
@@ -750,6 +844,8 @@ static int handle_remote_futex_wake_request(struct pcn_kmsg_message* inc_msg) {
 	put_task_struct(tsk);
 out:
 	pcn_kmsg_free_msg(inc_msg);
+	//preempt_enable();
+	local_irq_enable();
 
 	return 0;
 }
@@ -788,7 +884,7 @@ int remote_futex_wakeup(u32 __user *uaddr, unsigned int flags, int nr_wake,
 	FRPRINTK(KERN_ALERT" %s: pid{%d}  cpu{%d} rflag{%d} uaddr{%lx} uaddr2{%lx} fn_flags{%lx}\n ",__func__,
 			current->pid,smp_processor_id(),rflag,uaddr,uaddr2,fn_flags);
 
-	//	dump_regs(task_pt_regs(current));
+	//dump_regs(task_pt_regs(current));
 
 	// Send response
 	if (rflag) {
@@ -829,7 +925,6 @@ static int handle_remote_futex_key_response(struct pcn_kmsg_message* inc_msg) {
 
 	FRPRINTK(KERN_ALERT"%s:  value {%d}  p->tgroup_home_id{%d}  \n",
 			__func__, value->_st,p->tgroup_home_id);
-	//smp_wmb();
 
 	_local_rq_t *ptr = set_err_request(msg->request_id,msg->errno, &value->_lrq_head);
 
@@ -853,7 +948,8 @@ static int handle_remote_futex_key_request(struct pcn_kmsg_message* inc_msg) {
 	_global_value * gvp,*this,*next;
 	struct list_head *hd;
 	int present =0;
-	unsigned long flags;
+	unsigned long irq;
+	local_irq_disable();
 #ifdef STAT
 	atomic_inc(&progress);
 #endif
@@ -871,14 +967,12 @@ static int handle_remote_futex_key_request(struct pcn_kmsg_message* inc_msg) {
 		goto out;
 	}
 
-	//GENERAL_SPIN_LOCK(&access_global_value_table);
-	//gvp = hashgroup(tsk);
 	gbp = hashgroup(tsk);
 
-	GENERAL_SPIN_LOCK(&gbp->lock);
+	GENERAL_SPIN_LOCK(&gbp->lock,irq);
 	hd = &gbp->link;
 	list_for_each_entry_safe(this, next, hd, _link_head){
-		if(this->thread_group_leader->pid == tsk->pid){
+		if(this->thread_group_leader && ((pid_t)this->thread_group_pid) == tsk->pid){
 			present =1;
 			gvp = this;
 			break;
@@ -901,6 +995,7 @@ static int handle_remote_futex_key_request(struct pcn_kmsg_message* inc_msg) {
 
 		gvp->global_wq = grq;//create_singlethread_workqueue(gvp->name);
 		gvp->thread_group_leader = tsk;
+		gvp->thread_group_pid = tsk->pid;
 		global_request_work_t* back_work = NULL;
 
 		// Spin up bottom half to process this event
@@ -928,11 +1023,10 @@ static int handle_remote_futex_key_request(struct pcn_kmsg_message* inc_msg) {
 		}
 		gvp->worker_task = back_work;//pid_task(find_vpid(worker_pid), PIDTYPE_PID);
 	}
-	GENERAL_SPIN_UNLOCK(&gbp->lock);
-	//GENERAL_SPIN_UNLOCK(&access_global_value_table);
+	GENERAL_SPIN_UNLOCK(&gbp->lock,irq);
 out:
 	pcn_kmsg_free_msg(inc_msg);
-
+	local_irq_enable();
 	return 0;
 }
 
@@ -961,27 +1055,29 @@ int futex_global_worker_cleanup(struct task_struct *tsk){
 
 	if(tsk->tgroup_distributed && tsk->pid == tsk->tgroup_home_id){
 		if(tsk->return_disposition != 0) {
-			dump_stack();
 			printk(KERN_ALERT"remote zoombie kill needed\n");
 			zap_remote_threads(tsk); 
 		}
 
 		_global_bkt * gbp;
 		_global_value * gvp,*this,*next;
+		unsigned long irq;
 		struct list_head *hd;
 		gbp = hashgroup(tsk);
+		
 
-		GENERAL_SPIN_LOCK(&gbp->lock);
+		spin_lock(&gbp->lock);
 		hd = &gbp->link;
 		list_for_each_entry_safe(gvp, next, hd, _link_head){
-			if(gvp->thread_group_leader->pid == tsk->pid){
+			if(gvp->thread_group_leader && gvp->thread_group_pid == tsk->pid){
 
 				FRPRINTK(KERN_INFO "GVP EXISTS{%s} tgid{%d} pid{%d} \n",tsk->comm,tsk->tgroup_home_id,tsk->pid);
 
 				if(gvp != NULL){
 
-					FRPRINTK(KERN_INFO"Inside GVP");
+					FRPRINTK(KERN_INFO"GVP clean up start \n");
 					gvp->thread_group_leader = NULL;
+					gvp->thread_group_pid = 0;
 					gvp->free = 0;
 					gvp->global_wq = NULL;
 					gvp->worker_task =NULL;
@@ -990,36 +1086,223 @@ int futex_global_worker_cleanup(struct task_struct *tsk){
 				break;
 			}
 		}
-		GENERAL_SPIN_UNLOCK(&gbp->lock);
+		spin_unlock(&gbp->lock);
 
 	}
+	else if(tsk->tgroup_distributed && tsk->pid != tsk->tgroup_home_id){
+		struct futex_hash_bucket *hb;
+		struct plist_head *head;
 
-	return 0;
+		struct futex_q *this, *next;
+		if(tsk->remote_hb){
+		hb = tsk->remote_hb;
+		spin_lock(&hb->lock);
+		head = &hb->chain;
+
+		plist_for_each_entry_safe(this, next, head, list){
+		
+			FRPRINTK(KERN_INFO "shadow{%s} tgid{%d} pid{%d}-{%d} \n",tsk->comm,tsk->tgroup_home_id,tsk->pid,this->rem_pid);
+			if(this->rem_pid != -1){
+				this->rem_pid = NULL;
+				this->req_addr = 0;
+				__unqueue_futex(this);
+				smp_wmb();
+				this->lock_ptr = NULL;
+			}
+		}
+		spin_unlock(&hb->lock);
+		}
+	}
+
+		return 0;
 }
 
-static int __init futex_remote_init(void)
-{
+static int handle_remote_futex_perf(struct pcn_kmsg_message* inc_msg) {
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST,
-			handle_remote_futex_key_request);
+	int res = 0;
+       
+        _futex_perf_req_t * msg = (_futex_perf_req_t*) inc_msg;
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE,
-			handle_remote_futex_key_response);
+	_futex_perf_t * req = (_futex_perf_t*) kmalloc(sizeof(_remote_key_request_t),
+			GFP_ATOMIC);
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_REQUEST,
-			handle_remote_futex_wake_request);
-
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_RESPONSE,
-			handle_remote_futex_wake_response);
-
-	grq   =  alloc_workqueue(MODULE, WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_CPU_INTENSIVE ,1);//create_singlethread_workqueue(MODULE);
-	worker_pid=-1;
-
-	INIT_LIST_HEAD(&vm_head);
+	req->header.type = PCN_KMSG_TYPE_REMOTE_FUTEX_PERF_RESP;
+	req->header.prio = PCN_KMSG_PRIO_NORMAL;
 
 
+	/*printk(KERN_ALERT"%s: cpu{%d} pid{%d} tgid{%d} counter{%ld} errors{%ld} wait time {%llu}",
+			__func__,
+			smp_processor_id(),
+			current->pid,
+			current->tgroup_home_id,
+			atomic64_read(&_wait_cnt),
+			atomic64_read(&_wait_err),
+			atomic64_read(&_wait));
+	*/
+	req->wait = (unsigned long) atomic64_read(&_wait);
+	req->wait_cnt = (unsigned long) atomic64_read(&_wait_cnt);
+	req->wake = (unsigned long) atomic64_read(&_wake);
+	req->wake_cnt = (unsigned long) atomic64_read(&_wake_cnt);
+	req->wakeop = (unsigned long) atomic64_read(&_wakeop);
+	req->wakeop_cnt = (unsigned long)atomic64_read(&_wakeop_cnt);
+	req->requeue = (unsigned long) atomic64_read(&_requeue);
+	req->requeue_cnt = (unsigned long) atomic64_read(&_requeue_cnt);
+	req->wake_err = (unsigned long) atomic64_read(&_wake_err);
+        req->wakeop_err = (unsigned long)atomic64_read(&_wakeop_err);
+        req->requeue_err = (unsigned long) atomic64_read(&_requeue_err);
+        req->wait_err = (unsigned long) atomic64_read(&_requeue_err);
+	req->wake_msg = (unsigned long) atomic64_read(&wake_msg);
+	req->wait_msg = (unsigned long) atomic64_read(&wait_msg);
+	req->req_msg =	(unsigned long) atomic64_read(&req_msg);
+	req->wakeop_msg = (unsigned long) atomic64_read(&wakeop_msg);
+	req->_page_fault = (unsigned long) atomic64_read(&_page_fault);
+	req->cpu = smp_processor_id();
+	req->pid = current->pid;
+	
+	//Reset Values
+	atomic64_set(&_wait_err,0);
+	atomic64_set(&_wait,0);
+	atomic64_set(&_wait_cnt,0);
+	atomic64_set(&_wake_err,0);
+	atomic64_set(&_wake,0);
+	atomic64_set(&_wake_cnt,0);
+	atomic64_set(&_wakeop_err,0);
+	atomic64_set(&_wakeop,0);
+	atomic64_set(&_wakeop_cnt,0);
+	atomic64_set(&_requeue_err,0);
+	atomic64_set(&_requeue,0);
+	atomic64_set(&_requeue_cnt,0);
+	atomic64_set(&_page_fault,0);
+	atomic64_set(&wake_msg,0);
+	atomic64_set(&wake_msg,0);
+	atomic64_set(&wakeop_msg,0);
+	atomic64_set(&req_msg,0);
+
+	res = pcn_kmsg_send_long(0, (struct pcn_kmsg_long_message*) req ,sizeof(_futex_perf_t) - sizeof(req->header));	
+	
+	kfree(req);
+        pcn_kmsg_free_msg(msg);
 	return 0;
+
+
+}
+static int handle_remote_futex_perf_resp(struct pcn_kmsg_message* inc_msg) {
+
+        _futex_perf_t * msg = (_futex_perf_t*) inc_msg;
+
+        wake_time += msg->wake;
+        wait_time += msg->wait;
+        wakeop_time += msg->wakeop;
+        requeue_time += msg->requeue;
+        wake_cnt += msg->wake_cnt;
+        wait_cnt +=  msg->wait_cnt;
+        wakeop_cnt += msg->wakeop_cnt;
+        requeue_cnt += msg->requeue_cnt;
+        error += msg->wait_err + msg->wake_err + msg->wakeop_err + msg->requeue_err;
+        message_time += msg->wait_msg +  msg->wake_msg + msg->req_msg + msg->wakeop_msg;
+        pagefault += msg->_page_fault;
+	
+
+        wait_perf = 1;
+        wake_up_interruptible(&wq_perf);
+        pcn_kmsg_free_msg(msg);
+
+}
+
+int send_remote_perf( int i){
+
+	int res = 0;
+        _futex_perf_req_t * req = (_futex_perf_req_t*) kmalloc(sizeof(_futex_perf_req_t), GFP_ATOMIC);
+
+
+	req->header.type = PCN_KMSG_TYPE_REMOTE_FUTEX_PERF;
+	req->header.prio = PCN_KMSG_PRIO_NORMAL;
+
+	res = pcn_kmsg_send(i, (struct pcn_kmsg_message*) req);	
+	
+	kfree(req);
+	return res;
+}
+
+int ask_remote_perf(){
+
+#ifdef FUTEX_STAT	
+	printk(KERN_ALERT"%s: Server Counter%ld  compute %ld pagefault %ld\n",__func__,counter,atomic64_read(&server_compute),atomic64_read(&server_pagefault));
+	atomic64_set(&server_compute,0);
+	atomic64_set(&server_pagefault,0);
+#endif
+	unsigned int i;
+        flush_perf_var();
+	int res = 0;
+	int result = 0;
+	int retval;
+
+
+	 for (i = 0; i < NR_CPUS; i++) {
+        	flush_perf_var();
+		if(i == smp_processor_id())
+			continue;
+		result = send_remote_perf(i);
+		if (!result) {
+			wait_event_interruptible(wq_perf, wait_perf != -1);
+			wait_perf = -1;
+
+		}
+	}
+        printk(KERN_ALERT"%s:  wait_counter{%ld} wait_time {%ld}  wake_counter{%ld} wake_time {%ld} wakeop_counter{%ld} wakeop_time {%ld} req_counter{%ld} req_time {%ld}}",
+                        __func__,
+                        wait_cnt,
+                        wait_time,
+                        wake_cnt,
+                        wake_time,
+                        wakeop_cnt,
+                        wakeop_time,
+                        requeue_cnt,
+                        requeue_time);
+
+	printk(KERN_ALERT"%s: Time: %ld Count: %ld  Error: %ld Message: %ld PageFault: %ld\n",__func__,(wake_time+wait_time+wakeop_time+requeue_time),(wake_cnt+wait_cnt+wakeop_cnt+requeue_cnt),error, message_time, pagefault);
+ 	
+	wake_time = 0;
+        wait_time = 0;
+        wakeop_time = 0;
+        requeue_time = 0;
+        wake_cnt = 0;
+        wait_cnt =  0;
+        wakeop_cnt = 0;
+        requeue_cnt = 0;
+        error = 0;
+        message_time = 0;
+        pagefault = 0;
+}
+
+
+static int __init futex_remote_init(void){
+
+		pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_REQUEST,
+				handle_remote_futex_key_request);
+
+		pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_KEY_RESPONSE,
+				handle_remote_futex_key_response);
+
+		pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_REQUEST,
+				handle_remote_futex_wake_request);
+
+		pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_IPC_FUTEX_WAKE_RESPONSE,
+				handle_remote_futex_wake_response);
+
+		grq   =  alloc_workqueue(MODULE, WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_CPU_INTENSIVE ,1);//create_singlethread_workqueue(MODULE);
+		worker_pid=-1;
+
+		INIT_LIST_HEAD(&vm_head);
+
+		pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_FUTEX_PERF,
+				handle_remote_futex_perf);
+		pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_FUTEX_PERF_RESP,
+				handle_remote_futex_perf_resp);
+
+
+
+		return 0;
 }
 __initcall(futex_remote_init);
-
 /*mklinux_akshay*/

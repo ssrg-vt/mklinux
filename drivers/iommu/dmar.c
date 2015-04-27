@@ -457,6 +457,8 @@ fail:
 
 int __init dmar_table_init(void)
 {
+	if(smp_processor_id() == 0) {
+
 	static int dmar_table_initialized;
 	int ret;
 
@@ -476,7 +478,7 @@ int __init dmar_table_init(void)
 		printk(KERN_INFO PREFIX "No DMAR devices found\n");
 		return -ENODEV;
 	}
-
+	}
 	return 0;
 }
 

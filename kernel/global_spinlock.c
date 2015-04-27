@@ -241,7 +241,7 @@ _global_bkt *hashgroup(struct task_struct *group_pid)
 	return &global_bucket[hash];
 }
 // Perform global spin lock
-	int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value * value,_local_rq_t *rq_ptr,int localticket_value)
+int global_spinlock(unsigned long uaddr,futex_common_data_t *_data,_spin_value * value,_local_rq_t *rq_ptr,int localticket_value)
 __releases(&value->_sp)
 {
 	int res = 0;
@@ -386,7 +386,6 @@ static int __init global_spinlock_init(void)
 	for (i = 0; i < ARRAY_SIZE(global_bucket); i++) {
 		spin_lock_init(&global_bucket[i].lock);
 		INIT_LIST_HEAD(&global_bucket[i].link);
-		//		global_bucket[i].thread_group_leader = NULL;
 		//		global_bucket[i].worker_task=NULL;
 		//		global_bucket[i].global_wq = NULL;
 		//		global_bucket[i].free = 0;

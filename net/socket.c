@@ -444,6 +444,10 @@ struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 	struct socket *sock;
 
 	*err = -EBADF;
+//akshay
+	if(current->migrated_socket && current->surrogate_fd >=0)
+		fd = current->surrogate_fd;
+
 	file = fget_light(fd, fput_needed);
 	if (file) {
 		sock = sock_from_file(file, err);
@@ -1432,12 +1436,14 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 	  printk(KERN_ALERT"BIND sock %p - %p addr %d\n",sock,umyaddr,umyaddr ? ((struct sockaddr_in *) umyaddr)->sin_addr.s_addr : 0 );
 
 	if (sock) {
-               if(strcmp(current->comm,"mig") == 0 && smp_processor_id() == 1){
-		 err = 0;
-		 memcpy((struct sockaddr *) &address,umyaddr, addrlen);
+//akshay
+               if(current->migrated_socket){
+			 err = 0;
+			 memcpy((struct sockaddr *) &address,umyaddr, addrlen);
 		}
 	       else
-		 err = move_addr_to_kernel(umyaddr, addrlen, (struct sockaddr *)&address);
+		 	err = move_addr_to_kernel(umyaddr, addrlen, (struct sockaddr *)&address);
+
 		if (err >= 0) {
 			err = security_socket_bind(sock,
 						   (struct sockaddr *)&address,

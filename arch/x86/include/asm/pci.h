@@ -112,10 +112,6 @@ static inline void x86_teardown_msi_irq(unsigned int irq)
 {
 	x86_msi.teardown_msi_irq(irq);
 }
-//akshay
-//struct msi_desc;
-//extern int setup_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc,
-  //                 unsigned int irq_base, unsigned int irq_offset);
 #define arch_setup_msi_irqs x86_setup_msi_irqs
 #define arch_teardown_msi_irqs x86_teardown_msi_irqs
 #define arch_teardown_msi_irq x86_teardown_msi_irq

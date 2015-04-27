@@ -337,8 +337,10 @@ static int rtentry_to_fib_config(struct net *net, int cmd, struct rtentry *rt,
 				return -EAFNOSUPPORT;
 		}
 
-		if (bad_mask(mask, addr))
+		if (bad_mask(mask, addr)){
+			printk(KERN_ALERT"bad mask\n");
 			return -EINVAL;
+		}
 
 		plen = inet_mask_len(mask);
 	}
@@ -362,6 +364,7 @@ static int rtentry_to_fib_config(struct net *net, int cmd, struct rtentry *rt,
 
 	cfg->fc_scope = RT_SCOPE_NOWHERE;
 	cfg->fc_type = RTN_UNICAST;
+
 
 	if (rt->rt_dev) {
 		char *colon;
@@ -405,8 +408,10 @@ static int rtentry_to_fib_config(struct net *net, int cmd, struct rtentry *rt,
 	if (cmd == SIOCDELRT)
 		return 0;
 
-	if (rt->rt_flags & RTF_GATEWAY && !cfg->fc_gw)
+	if (rt->rt_flags & RTF_GATEWAY && !cfg->fc_gw){
+		printk(KERN_ALERT"bad igate %d  fc %d\n",rt->rt_flags & RTF_GATEWAY , cfg->fc_gw);
 		return -EINVAL;
+	}
 
 	if (cfg->fc_scope == RT_SCOPE_NOWHERE)
 		cfg->fc_scope = RT_SCOPE_LINK;
@@ -450,6 +455,8 @@ int __ip_rt_ioctl(struct net *net, unsigned int cmd, void  *arg)
                 memcpy(&rt, (struct rtentry*) arg,  sizeof(rt));
 
                 rtnl_lock();
+		
+		printk(KERN_ALERT"fib confit \n");
                 err = rtentry_to_fib_config(net, cmd, &rt, &cfg);
                 if (err == 0) {
                         struct fib_table *tb;
@@ -461,6 +468,7 @@ int __ip_rt_ioctl(struct net *net, unsigned int cmd, void  *arg)
                                 else
                                         err = -ESRCH;
                         } else {
+				printk(KERN_ALERT"fib table insert \n");
                                 tb = fib_new_table(net, cfg.fc_table);
                                 if (tb)
                                         err = fib_table_insert(tb, &cfg);
