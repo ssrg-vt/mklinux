@@ -159,6 +159,9 @@ struct pcn_kmsg_checkin_message {
 /* Typedef for function pointer to callback functions */
 typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);
 
+/* Typedef for function pointer to callback functions */
+typedef int (*send_cbftn)(unsigned int, struct pcn_kmsg_message *, unsigned int);
+
 /* SETUP */
 
 /* Register a callback function to handle a new message type.  Intended to

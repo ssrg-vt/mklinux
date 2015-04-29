@@ -2737,6 +2737,13 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 
 		  printk("In %s:%d vma_flags = %lx %lx %lx\n", __func__, __LINE__, vma->vm_flags, mm->start_code, mm->end_code);
 		  printk("In %s:%d vma file offset = %lx\n", __func__, __LINE__,vma->vm_pgoff);
+
+		  if(vma->vm_flags & MAP_PER_ARCH)
+		  {
+			  printk("%s:%d - MAP_PER_ARCH SET - Going to void response\n", __func__, __LINE__);
+			  goto out;
+		  }
+
 		  if((vma->vm_flags & VM_EXEC) &&(address >= mm->start_code) && (address <= mm->end_code))
 		  {
 			  printk("%s:%d going to void response\n", __func__, __LINE__);
