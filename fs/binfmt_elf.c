@@ -38,6 +38,8 @@
 #include <asm/param.h>
 #include <asm/page.h>
 
+#include <linux/mm_types.h>
+
 #ifndef user_long_t
 #define user_long_t long
 #endif
@@ -828,6 +830,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 		elf_flags = MAP_PRIVATE | MAP_DENYWRITE | MAP_EXECUTABLE;
 
+#if 0
 		/* Ajith - Read the elf sections */
 		int j;
 		for (j = 1; j < loc->elf_ex.e_shnum; j++) {
@@ -853,6 +856,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 					elf_flags |= MAP_PER_ARCH;
 			}
 		}
+#endif
 
 		vaddr = elf_ppnt->p_vaddr;
 		if (loc->elf_ex.e_type == ET_EXEC || load_addr_set) {
@@ -886,6 +890,36 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			retval = IS_ERR((void *)error) ?
 				PTR_ERR((void*)error) : -EINVAL;
 			goto out_free_dentry;
+		}
+
+		/* Ajith - Read the elf sections */
+		int j;
+		struct vm_area_struct * vma = NULL;
+
+		for (j = 1; j < loc->elf_ex.e_shnum; j++) {
+			struct elf_shdr *espnt = shdr + j;
+			if (espnt->sh_size > 0)
+			{
+				vma = current->mm->mmap;
+
+				for(vma;vma != NULL; vma = vma->vm_next)
+				{  
+					/* Compare allocated sections by VMA, unallocated sections by file offset.  */
+				   if(espnt->sh_flags & SHF_ALLOC) {
+				   		if(espnt->sh_addr >= vma->vm_start 
+						  && espnt->sh_addr + espnt->sh_size <= vma->vm_end)
+			   			{
+						 printk ("In %s:%d: [%s %d 0x%lx:0x%lx]\n", __func__, __LINE__,
+							 string_table ? &string_table[espnt->sh_name] : "?", espnt->sh_type,
+							 (unsigned long)espnt->sh_addr, (unsigned long)espnt->sh_addr + espnt->sh_size);
+										 if((!strcmp(".text", &string_table[espnt->sh_name])) || 
+											(!strcmp(".got", &string_table[espnt->sh_name])) ||
+											(!strcmp(".got.plt", &string_table[espnt->sh_name])))
+												vma->vm_flags |= VM_FETCH_LOCAL;
+						}
+					}
+				}
+			}
 		}
 
 		if (!load_addr_set) {
