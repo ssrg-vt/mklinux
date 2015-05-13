@@ -30,32 +30,32 @@
  */
 extern struct list_head rlist_head;
 
-void print_x86_cpuinfo(struct seq_file *m, _remote_cpu_info_list_t *objPtr){
-	seq_printf(m, "processor\t: %u\n"
+void print_x86_cpuinfo(struct seq_file *m, _remote_cpu_info_list_t *objPtr, int count){
+	seq_printf(m, "\nprocessor\t: %u\n"
 			"vendor_id\t: %s\n"
 			"cpu family\t: %d\n"
 			"model\t\t: %u\n"
-			"model name\t: %s\n", objPtr->_data._processor,
-	objPtr->_data.arch.x86._vendor_id, objPtr->_data.arch.x86._cpu_family,
-	objPtr->_data.arch.x86._model, objPtr->_data.arch.x86._model_name);
+			"model name\t: %s\n", objPtr->_data.arch.x86.cpu[count]._processor,
+	objPtr->_data.arch.x86.cpu[count]._vendor_id, objPtr->_data.arch.x86.cpu[count]._cpu_family,
+	objPtr->_data.arch.x86.cpu[count]._model, objPtr->_data.arch.x86.cpu[count]._model_name);
 
-	if (objPtr->_data.arch.x86._stepping != -1)
-		seq_printf(m, "stepping\t: %d\n", objPtr->_data.arch.x86._stepping);
+	if (objPtr->_data.arch.x86.cpu[count]._stepping != -1)
+		seq_printf(m, "stepping\t: %d\n", objPtr->_data.arch.x86.cpu[count]._stepping);
 	else
 		seq_printf(m, "stepping\t: unknown\n");
 
-	seq_printf(m, "microcode\t: 0x%x\n", objPtr->_data.arch.x86._microcode);
-	seq_printf(m, "cpu MHz\t\t: %u.%03u\n", objPtr->_data.arch.x86._cpu_freq);
-	seq_printf(m, "cache size\t: %d KB\n", objPtr->_data.arch.x86._cache_size);
+	seq_printf(m, "microcode\t: 0x%x\n", objPtr->_data.arch.x86.cpu[count]._microcode);
+	seq_printf(m, "cpu MHz\t\t: %u.%03u\n", objPtr->_data.arch.x86.cpu[count]._cpu_freq);
+	seq_printf(m, "cache size\t: %d KB\n", objPtr->_data.arch.x86.cpu[count]._cache_size);
 	seq_printf(m, "flags\t\t:");
-	seq_printf(m, " %s", objPtr->_data.arch.x86._flags);
-	seq_printf(m, "\nbogomips\t: %lu\n", objPtr->_data.arch.x86._nbogomips);
-	seq_printf(m, "TLB size\t: %d 4K pages\n", objPtr->_data.arch.x86._TLB_size);
-	seq_printf(m, "clflush size\t: %u\n", objPtr->_data.arch.x86._clflush_size);
-	seq_printf(m, "cache_alignment\t: %d\n", objPtr->_data.arch.x86._cache_alignment);
+	seq_printf(m, " %s", objPtr->_data.arch.x86.cpu[count]._flags);
+	seq_printf(m, "\nbogomips\t: %lu\n", objPtr->_data.arch.x86.cpu[count]._nbogomips);
+	seq_printf(m, "TLB size\t: %d 4K pages\n", objPtr->_data.arch.x86.cpu[count]._TLB_size);
+	seq_printf(m, "clflush size\t: %u\n", objPtr->_data.arch.x86.cpu[count]._clflush_size);
+	seq_printf(m, "cache_alignment\t: %d\n", objPtr->_data.arch.x86.cpu[count]._cache_alignment);
 	seq_printf(m, "address sizes\t: %u bits physical, %u bits virtual\n",
-			objPtr->_data.arch.x86._bits_physical,
-			objPtr->_data.arch.x86._bits_virtual);
+			objPtr->_data.arch.x86.cpu[count]._bits_physical,
+			objPtr->_data.arch.x86.cpu[count]._bits_virtual);
 }
 
 void print_arm_cpuinfo(struct seq_file *m, _remote_cpu_info_list_t *objPtr){
@@ -65,7 +65,7 @@ void print_arm_cpuinfo(struct seq_file *m, _remote_cpu_info_list_t *objPtr){
 	seq_printf(m, "processor\t: %s %s\n\n", objPtr->_data.arch.arm64.__processor,\
 					objPtr->_data.arch.arm64.per_core[i].model_name);
 
-	for(i=0;i<MAX_ARM_CORES;i++)
+	for(i=0;i<objPtr->_data.arch.arm64.num_cpus;i++)
 	{
 		seq_printf(m, "processor\t: %u\n", objPtr->_data.arch.arm64.per_core[i].processor_id);
 
@@ -105,10 +105,11 @@ int remote_proc_cpu_info(struct seq_file *m) {
 
 	list_for_each(iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-		seq_printf(m, "*********Remote CPU*****\n");
+		seq_printf(m, "\n*********Remote CPU*****\n");
 		switch(objPtr->_data.arch_type){
 			case arch_x86: {
-				print_x86_cpuinfo(m, objPtr);
+				for(i=0;i<objPtr->_data.arch.x86.num_cpus; i++)
+					print_x86_cpuinfo(m, objPtr, i);
 			}
 			break;
 

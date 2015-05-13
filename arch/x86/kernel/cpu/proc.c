@@ -6,7 +6,7 @@
 
 /*mklinux_akshay*/
 extern int remote_proc_cpu_info(struct seq_file *m);
-
+static int count = 0;
 
 /*
  *	Get CPU information for use by the procfs.
@@ -137,7 +137,14 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 	//append remote cpu info
 	/*mklinux_akshay*/
-	remote_proc_cpu_info(m);
+
+	count++;
+	printk("Value of count = %d\n", count);
+
+	if(count == NR_CPUS){
+		count = 0;
+		remote_proc_cpu_info(m);
+	}
 	/*mklinux_akshay*/
 
 	return 0;

@@ -116,14 +116,10 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	/*Ajith - for het migration */
 	if(task->migration_pc != 0){
 		arch->migration_pc = task->migration_pc;
-		printk("IN %s:%d migration PC = %lx %lx\n", __func__, __LINE__, arch->migration_pc, read_old_rsp());
+		PSPRINTK("IN %s:%d migration PC = %lx %lx\n", __func__, __LINE__, arch->migration_pc, read_old_rsp());
 	}
 
-	printk("IN %s:%d fs = %ld\n", __func__, __LINE__, arch->thread_fs);
-
 	ret = 0;
-	//dump_processor_regs(regs);
-	//__show_regs(regs, 1);
 
 	//printk("%s [-] TID: %d\n", __func__, task->pid);
 exit:
@@ -157,7 +153,7 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 {
 	int ret = -1;
 
-	printk("%s [+] TID: %d\n", __func__, task->pid);
+	PSPRINTK("%s [+] TID: %d\n", __func__, task->pid);
 	
 	if((task == NULL)  || (arch == NULL)){
 		printk(KERN_ERR"process_server: invalid params to restore_thread_info()");
@@ -182,24 +178,20 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	task->thread.gsindex = arch->thread_gsindex;
 #endif
 
-	printk("IN %s:%d migration PC = %lx %lx %lx\n", __func__, __LINE__, arch->migration_pc, task->saved_old_rsp, read_old_rsp());
     /*Ajith - for het migration */
     if(arch->migration_pc != 0)
 	{
-    	task_pt_regs(task)->ip=arch->migration_pc;
+    		task_pt_regs(task)->ip=arch->migration_pc;
 		task_pt_regs(task)->sp= task->saved_old_rsp;
 
-		printk("IN %s:%d migration PC = %lx %lx %lx %lx\n", __func__, __LINE__, task_pt_regs(task)->ip, arch->migration_pc, arch->regs.sp, task_pt_regs(task)->sp);
+		PSPRINTK("IN %s:%d migration values: IP: %lx PC:%lx SP:%lx SP:%lx\n", __func__, __LINE__, task_pt_regs(task)->ip, arch->migration_pc, arch->regs.sp, task_pt_regs(task)->sp);
 	}
 
 	task->thread.fs = arch->thread_fs;
-	printk("IN %s:%d migration fs = %ld\n", __func__, __LINE__, task->thread.fs);
-
-	dump_processor_regs(task_pt_regs(task));
-
+	//dump_processor_regs(task_pt_regs(task));
 	ret = 0;
 
-	printk("%s [-] TID: %d\n", __func__, task->pid);
+	PSPRINTK("%s [-] TID: %d\n", __func__, task->pid);
 exit:
 	return ret;
 }

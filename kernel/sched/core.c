@@ -3710,8 +3710,6 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	int i,ret;
 	struct pt_regs *regs = current_pt_regs(); 
 
-	printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
-
 	get_online_cpus();
 	rcu_read_lock();
 
@@ -3726,8 +3724,6 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 #define CONFIG_CPU_NAMESPACE
 #ifndef CONFIG_CPU_NAMESPACE
 
-
-	printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
 	/*
 	 * Multikernel
 	 */
@@ -3789,7 +3785,6 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	/* the following is similar to intersecting on local */
 
 	if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
-	printk(" coming to %s:%d %lx %lx\n", __func__, __LINE__, migration_pc, *cpumask_bits(in_mask));
 		struct list_head *iter;
 		_remote_cpu_info_list_t *objPtr;
 		struct cpumask *pcpum;
@@ -3833,18 +3828,14 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 			//bitmap_scnprintf(pippo,128,cpumask_bits(in_mask),len*8);
 			//  printk("in mask printed with len%s\n",pippo);
 
-			printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
-			printk(" values : %d, %d\n", p->nsproxy->cpu_ns->nr_cpu_ids, cbitmap);
 			if ( bitmap_intersects(cpumask_bits(in_mask), cbitmap, p->nsproxy->cpu_ns->nr_cpu_ids) ) {
 				// TODO ask the global scheduler if there are multiple affinities    
 				// do the migration
 				get_task_struct(p);
 				rcu_read_unlock();
 
-				printk("before writing to migration_pc = %lx\n",migration_pc);
                 /*Ajith - taking migration PC from syscall for het migration */
                 p->migration_pc = migration_pc;
-				printk("value of migration_pc = %lx\n",p->migration_pc);
 
 				ret= process_server_do_migration(p,i,regs);
 				printk("MIGRATED: PID %d \n", p->pid);
@@ -3930,7 +3921,6 @@ out_free_cpus_allowed:
 out_put_task:
 	put_task_struct(p);
 	put_online_cpus();
-	printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
 	return retval;
 }
 

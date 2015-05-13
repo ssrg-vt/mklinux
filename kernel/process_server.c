@@ -134,7 +134,7 @@ extern unsigned long mremap_to(unsigned long addr, unsigned long old_len,
 #else
 #define ELF_MIN_ALIGN   PAGE_SIZE
 #endif
-unsigned long get_file_offset(struct file* file);
+unsigned long get_file_offset(struct file* file, int start_addr);
 
 /* For timing measurements
  * */
@@ -2735,8 +2735,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 
 	      }
 
-		  printk("In %s:%d vma_flags = %lx\n", __func__, __LINE__, vma->vm_flags);
-		  printk("In %s:%d vma file offset = %lx\n", __func__, __LINE__,vma->vm_pgoff);
+		  PSPRINTK("In %s:%d vma_flags = %lx\n", __func__, __LINE__, vma->vm_flags);	
 
 		  if(vma->vm_flags & VM_FETCH_LOCAL)
 		  {
@@ -6938,9 +6937,9 @@ static int do_mapping_for_distributed_process(mapping_answers_t* fetching_page,
 #endif
 #endif
 
-						printk("%s:%d page offset = %d %lx\n", __func__, __LINE__, fetching_page->pgoff, mm->exe_file);
-						fetching_page->pgoff = get_file_offset(mm->exe_file);
-						printk("%s:%d page offset = %d\n", __func__, __LINE__, fetching_page->pgoff);
+						PSPRINTK("%s:%d page offset = %d %lx\n", __func__, __LINE__, fetching_page->pgoff, mm->exe_file);
+						fetching_page->pgoff = get_file_offset(mm->exe_file, fetching_page->vaddr_start);
+						PSPRINTK("%s:%d page offset = %d\n", __func__, __LINE__, fetching_page->pgoff);
 
 						/*map_difference should map in such a way that no unmap operations (the only nested operation that mmap can call) are nested called.
 						 * This is important both to not unmap pages that should not be unmapped
@@ -11047,12 +11046,11 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 }
 
 /* Ajith - adding file offset parsing */
-unsigned long get_file_offset(struct file *file)
+unsigned long get_file_offset(struct file *file, int start_addr)
 {
 	struct elfhdr elf_ex;
 	struct elf_phdr* elf_eppnt;
 	int size, retval, i;
-	printk("%s:%d\n", __func__, __LINE__);
 
 	retval = kernel_read(file, 0, (char *)&elf_ex, sizeof(elf_ex));
 	if (retval != sizeof(elf_ex)) {
@@ -11081,11 +11079,23 @@ unsigned long get_file_offset(struct file *file)
 
 	for (i = 0; i < elf_ex.e_phnum; i++, elf_eppnt++) {
 		if (elf_eppnt->p_type == PT_LOAD) {
+
+			PSPRINTK("CHECK: Page offset for %lx %lx %lx\n", start_addr, elf_eppnt->p_vaddr, elf_eppnt->p_memsz);
+
+			if((start_addr >= elf_eppnt->p_vaddr) && (start_addr <= (elf_eppnt->p_vaddr+elf_eppnt->p_memsz)))
+			{
+				PSPRINTK("Finding page offset for %lx %lx %lx\n", start_addr, elf_eppnt->p_vaddr, elf_eppnt->p_memsz);
+				retval = (elf_eppnt->p_offset - (elf_eppnt->p_vaddr & (ELF_MIN_ALIGN-1)));
+				goto out;
+			}
+
+/*
 			if ((elf_eppnt->p_flags & PF_R) && (elf_eppnt->p_flags & PF_X)) {
 				printk("Coming to executable program load section\n");
 				retval = (elf_eppnt->p_offset - (elf_eppnt->p_vaddr & (ELF_MIN_ALIGN-1)));
 				goto out;
 			}
+*/
 		}
 	}
 
