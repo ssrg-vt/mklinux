@@ -78,8 +78,6 @@
 
 static int _cpu = -1;
 
-int long my_pid = 0;
-
 data_header_t* _data_head = NULL; // General purpose data store
 fetching_t* _fetching_head = NULL;
 
@@ -1261,8 +1259,6 @@ static int exit_distributed_process(memory_t* mm_data, int flush,thread_pull_t *
 	int count = 0, i, status;
 	thread_group_exited_notification_t* exit_notification;
 
-	printk("IN %s:%d\n", __func__, __LINE__);
-
 	lock_task_sighand(current, &flags);
 	g = current;
 	while_each_thread(current, g)
@@ -1342,7 +1338,7 @@ find:
 			mmput(mm_data->mm);
 			kfree(mm_data);
 #if STATISTICS
-			printk("page_fault %i fetch %i local_fetch %i write %i read %i most_long_read %i invalid %i ack %i answer_request %i answer_request_void %i request_data %i most_written_page %i concurrent_writes %i most long write %i pages_allocated %i compressed_page_sent %i not_compressed_page %i not_compressed_diff_page %i\n",
+			PSPRINTK("page_fault %i fetch %i local_fetch %i write %i read %i most_long_read %i invalid %i ack %i answer_request %i answer_request_void %i request_data %i most_written_page %i concurrent_writes %i most long write %i pages_allocated %i compressed_page_sent %i not_compressed_page %i not_compressed_diff_page %i\n",
 				      page_fault_mio,fetch,local_fetch,write,read,most_long_read,invalid,ack,answer_request,answer_request_void, request_data,most_written_page, concurrent_write,most_long_write, pages_allocated,compressed_page_sent,not_compressed_page,not_compressed_diff_page);
 #endif
 
@@ -2739,7 +2735,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 
 		  if(vma->vm_flags & VM_FETCH_LOCAL)
 		  {
-			  printk("%s:%d - VM_FETCH_LOCAL flag set - Going to void response\n", __func__, __LINE__);
+			  PSPRINTK("%s:%d - VM_FETCH_LOCAL flag set - Going to void response\n", __func__, __LINE__);
 			  goto out;
 		  }
 
@@ -4665,7 +4661,7 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg){
 	//for synchronizing migratin threads
 	memory_t* memory = NULL;
 
-	printk(" IN %s:%d values - %d %d\n", __func__, __LINE__,request->tgroup_home_cpu, request->tgroup_home_id);
+	PSPRINTK(" IN %s:%d values - %d %d\n", __func__, __LINE__,request->tgroup_home_cpu, request->tgroup_home_id);
 	memory = find_memory_entry(request->tgroup_home_cpu,
 			request->tgroup_home_id);
 	if(memory){
@@ -4730,7 +4726,7 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 	memory_t* entry = NULL;
 	unsigned long flags;
 	
-	printk("MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
+	PSPRINTK("MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
 
 	if(tsk->distributed_exit==EXIT_ALIVE){
 
@@ -10687,7 +10683,6 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 
 	       wake_up_process(task);
 
-	       my_pid = task->prev_pid;
 	       printk("####### MIGRATED - PID: %ld to %ld\n", task->prev_pid, task->pid);
 
 	       kfree(my_shadow);

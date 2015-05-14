@@ -3935,7 +3935,6 @@ static int _get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
 		len = mask_len;
 
 	ret=copy_from_user(new_mask, user_mask_ptr, len);
-	printk("%s copy from user returned %d %d len is %d\n",__func__,*user_mask_ptr,*new_mask,len);
 	return ret ? -EFAULT : 0;
 }
 
@@ -4040,7 +4039,7 @@ asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
         int nr_cpus;
         struct cpu_namespace * ns = current->nsproxy->cpu_ns;
 
-		printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
+	//printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
 	
         // WARN the following maybe requires a per process lock
         if (ns !=  &init_cpu_ns) {
@@ -4050,7 +4049,7 @@ asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
         else
                 nr_cpus = nr_cpu_ids;
 
-		printk("nr_cpus = %d %d %d %d %d\n", nr_cpus, ns->nr_cpu_ids, nr_cpu_ids, ns->cpumask_size, cpumask_size());
+	//printk("nr_cpus = %d %d %d %d %d\n", nr_cpus, ns->nr_cpu_ids, nr_cpu_ids, ns->cpumask_size, cpumask_size());
 
         if ( !(nr_cpus > nr_cpu_ids) ) {
                  if (!alloc_cpumask_var(&new_mask, GFP_KERNEL))
@@ -4081,8 +4080,8 @@ asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
                         return -ESRCH;
                 }
 
-        	dump_processor_regs(task_pt_regs(p));
-	        printk("after dumping regs\n");
+        	//dump_processor_regs(task_pt_regs(p));
+	        //printk("after dumping regs\n");
 
                 if ( (p->cpus_allowed_map &&
                                         (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) )
@@ -4096,13 +4095,10 @@ asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
         else
                 kfree(pmask);
 
-		printk(" coming to %s:%d %lx\n", __func__, __LINE__, migration_pc);
 		struct task_struct * p = find_process_by_pid(pid);		
-		dump_processor_regs(task_pt_regs(p));
 
-
-		printk("Before syscall exit\n");
-		dump_processor_regs(task_pt_regs(p));
+		//printk("Before syscall exit\n");
+		//dump_processor_regs(task_pt_regs(p));
 
         return retval;
 }
