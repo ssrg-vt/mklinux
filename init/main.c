@@ -104,7 +104,6 @@ extern void tc_init(void);
 #endif
 
 extern void popcorn_init(void);
-extern int _init_RemoteCPUMask(void);
 
 /*
  * Debug helper: via this flag we know that we are in 'early bootup code'
@@ -822,8 +821,6 @@ static noinline void __init kernel_init_freeable(void);
 static int __ref kernel_init(void *unused)
 {
 	kernel_init_freeable();
-
-	_init_RemoteCPUMask();
 
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();

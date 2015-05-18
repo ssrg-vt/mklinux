@@ -26,7 +26,7 @@
 #define PRINTK(...) ;
 #endif
 
-#define SIZE 236  // PID array size
+#define SIZE 1024  // PID array size
 #define PROC_MAXPIDS 100
 
 //#define MAX_KERN NR_CPUS
@@ -130,6 +130,12 @@ int iterate_process(unsigned long *pid_arr) {
 					    	 continue;
 */		pid_arr[count] = p->pid;
 		count++;
+		
+		if(count == SIZE)
+		{
+			printk("Reached the size limit of array - %d\n", count);
+			break;
+		}
 	}
 	return count;
 
@@ -164,26 +170,46 @@ static int handle_remote_pid_response(struct pcn_kmsg_message* inc_msg) {
 static int handle_remote_pid_request(struct pcn_kmsg_message* inc_msg) {
 
 	_remote_pid_request_t* msg = (_remote_pid_request_t*) inc_msg;
-	_remote_pid_response_t response;
+	_remote_pid_response_t* response;
 
 	PRINTK("%s: Entered remote PID request \n", __func__);
 
+        response = kmalloc(sizeof(_remote_pid_response_t), GFP_KERNEL);
+        if(response == NULL)
+        {
+                printk("%s:%d Failed to alloc memory\n", __func__, __LINE__);
+        }
+
 	// Finish constructing response
-	response.header.type = PCN_KMSG_TYPE_REMOTE_PID_RESPONSE;
-	response.header.prio = PCN_KMSG_PRIO_NORMAL;
+	response->header.type = PCN_KMSG_TYPE_REMOTE_PID_RESPONSE;
+	response->header.prio = PCN_KMSG_PRIO_NORMAL;
 	flush_variables();
-	unsigned long pid_arr[SIZE];
+	unsigned long * pid_arr;
 
-	response.count = iterate_process(&pid_arr);
-	memcpy(&response.remote_pid, &pid_arr, SIZE * sizeof(long));
+	pid_arr = kmalloc(SIZE * sizeof(long), GFP_KERNEL);
+	if(pid_arr == NULL)
+	{
+		printk("%s:%d Failed to alloc memory\n", __func__, __LINE__);
+	}
 
-	PRINTK("%s: Remote:pid count : %d \n", __func__, response.count);
+	
+
+	response->count = iterate_process(pid_arr);
+	memcpy(response->remote_pid, pid_arr, SIZE * sizeof(long));
+
+	printk("%s: Remote:pid count : %d \n", __func__, response->count);
 	// Send response
 	pcn_kmsg_send_long(msg->header.from_cpu,
-			(struct pcn_kmsg_message*) (&response),
+			(struct pcn_kmsg_message*) (response),
 			sizeof(_remote_pid_response_t) - sizeof(struct pcn_kmsg_hdr));
 
 	pcn_kmsg_free_msg(inc_msg);
+
+	if(pid_arr != NULL)
+		kfree(pid_arr);
+	
+	if(response != NULL)
+		kfree(response);
 
 	return 0;
 }

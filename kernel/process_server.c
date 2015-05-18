@@ -56,7 +56,7 @@
 
 #include<linux/signal.h>
 #include <linux/fcntl.h>
-
+#include <linux/ktime.h>
 
 #include <linux/cpu_namespace.h>
 #include <linux/popcorn_cpuinfo.h>
@@ -133,6 +133,10 @@ extern unsigned long mremap_to(unsigned long addr, unsigned long old_len,
 #define ELF_MIN_ALIGN   PAGE_SIZE
 #endif
 unsigned long get_file_offset(struct file* file, int start_addr);
+
+#if MIGRATION_PROFILE
+ktime_t migration_start, migration_end;
+#endif
 
 /* For timing measurements
  * */
@@ -4658,6 +4662,9 @@ void process_back_migration(struct work_struct* work) {
 static int handle_back_migration(struct pcn_kmsg_message* inc_msg){
 	back_migration_request_t* request= (back_migration_request_t*) inc_msg;
 
+#if MIGRATION_PROFILE
+	migration_start = ktime_get();
+#endif
 	//for synchronizing migratin threads
 	memory_t* memory = NULL;
 
@@ -4702,6 +4709,12 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg){
 		task->executing_for_remote = 1;
 		task->represents_remote = 0;
 		wake_up_process(task);
+
+#if MIGRATION_PROFILE
+       migration_end = ktime_get();
+        printk(KERN_ERR "Time for arm->x86 back migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+#endif
+
 	#if TIMING
 		unsigned long long stop= native_read_tsc();
 		unsigned long long elapsed_time =stop-info_work->start;
@@ -8577,6 +8590,11 @@ int do_back_migration(struct task_struct* task, int dst_cpu,
 
        ret = pcn_kmsg_send_long(dst_cpu,(struct pcn_kmsg_long_message*) request,sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
 
+#if MIGRATION_PROFILE
+       migration_end = ktime_get();
+        printk(KERN_ERR "Time for x86->arm back migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+#endif
+
        if(strcmp(current->comm,"IS") == 0){
 	       trace_printk("e\n");
        }
@@ -8740,6 +8758,12 @@ int do_migration(struct task_struct* task, int dst_cpu,
        tx_ret = pcn_kmsg_send_long(dst_cpu,
 		       (struct pcn_kmsg_long_message*) request,
 		       sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
+
+#if MIGRATION_PROFILE
+       migration_end = ktime_get();
+        printk(KERN_ERR "Time for x86->arm migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+#endif
+
        if(strcmp(current->comm,"IS") == 0){
 	       trace_printk("e\n");
        }
@@ -10666,23 +10690,12 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 #endif
 	       //the task will be activated only when task->executing_for_remote==1
 	       task->executing_for_remote = 1;
-
-		   //Ajith
-			new_init_regs(task_pt_regs(task));
-
-			task->thread.es = 0;
-			task->thread.ds = 0;
-			task->thread.fsindex = 0;
-			task->thread.fs = 0xed2880;
-			task->thread.gs = 0xffff88027fc00000;
-			task->thread.gsindex = 0;
-
-			printk("After init\n");
-			printk("For init process\n");
-			dump_processor_regs(task_pt_regs(task));
-
 	       wake_up_process(task);
 
+#if MIGRATION_PROFILE
+       migration_end = ktime_get();
+	printk(KERN_ERR "Time for arm->x86 migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+#endif
 	       printk("####### MIGRATED - PID: %ld to %ld\n", task->prev_pid, task->pid);
 
 	       kfree(my_shadow);
@@ -11024,6 +11037,9 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
        clone_request_t* clone = (clone_request_t*) inc_msg;
        int ret;
 
+#if MIGRATION_PROFILE
+       migration_start = ktime_get();
+#endif
        ret = clone_remote_thread(clone, 1);
 
        if (ret != 0) {
@@ -11044,7 +11060,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 unsigned long get_file_offset(struct file *file, int start_addr)
 {
 	struct elfhdr elf_ex;
-	struct elf_phdr* elf_eppnt;
+	struct elf_phdr *elf_eppnt = NULL, *elf_eppnt_start = NULL;
 	int size, retval, i;
 
 	retval = kernel_read(file, 0, (char *)&elf_ex, sizeof(elf_ex));
@@ -11063,6 +11079,8 @@ unsigned long get_file_offset(struct file *file, int start_addr)
 		retval = -1;
 		goto out;
 	}
+
+	elf_eppnt_start = elf_eppnt;
 
 	retval = kernel_read(file, elf_ex.e_phoff,
                          (char *)elf_eppnt, size);
@@ -11095,7 +11113,9 @@ unsigned long get_file_offset(struct file *file, int start_addr)
 	}
 
 out:
-	kfree(elf_eppnt);
+	if(elf_eppnt_start != NULL)
+		kfree(elf_eppnt_start);
+
 	return retval >> PAGE_SHIFT;
 }
 

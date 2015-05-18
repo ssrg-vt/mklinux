@@ -6,7 +6,7 @@
 
 /*mklinux_akshay*/
 extern int remote_proc_cpu_info(struct seq_file *m);
-static int count = 0;
+volatile int cpuinfo_count = 0;
 
 /*
  *	Get CPU information for use by the procfs.
@@ -137,16 +137,17 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 	//append remote cpu info
 	/*mklinux_akshay*/
+#if 0
+	cpuinfo_count++;
+	printk("Value of count = %d %d %d\n", cpuinfo_count, NR_CPUS, num_online_cpus());
 
-	count++;
-	printk("Value of count = %d\n", count);
-
-	if(count == NR_CPUS){
-		count = 0;
+	if(cpuinfo_count == num_online_cpus()){
+		cpuinfo_count = 0;
+		printk("In remotecall: count = %d %d %d\n", cpuinfo_count, NR_CPUS, num_online_cpus());
 		remote_proc_cpu_info(m);
 	}
 	/*mklinux_akshay*/
-
+#endif
 	return 0;
 }
 
@@ -155,13 +156,23 @@ static void *c_start(struct seq_file *m, loff_t *pos)
 	*pos = cpumask_next(*pos - 1, cpu_online_mask);
 	if ((*pos) < nr_cpu_ids)
 		return &cpu_data(*pos);
+
 	return NULL;
 }
 
 static void *c_next(struct seq_file *m, void *v, loff_t *pos)
 {
+	void *ret = NULL;
+
 	(*pos)++;
-	return c_start(m, pos);
+	ret = c_start(m, pos);
+
+	if(ret == NULL){
+		printk("Before calling remote info display\n");	
+		remote_proc_cpu_info(m);
+	}
+
+	return ret;
 }
 
 static void c_stop(struct seq_file *m, void *v)

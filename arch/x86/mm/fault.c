@@ -1040,8 +1040,9 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	struct mm_struct *mm;
 	int fault, repl_ret,lock_aquired;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
-
+	int retrying = 0;
 	int cnt=0;
+
 	tsk = (current->surrogate == -1) ? current : 
 		pid_task(find_get_pid(current->surrogate), PIDTYPE_PID);
 	mm = tsk->mm;
@@ -1207,7 +1208,7 @@ retry:
 	// Multikernel
 	repl_ret= 0;
 	// Nothing to do for a thread group that's not distributed.
-	if(tsk->tgroup_distributed==1 && tsk->main==0) {
+	if(tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0)) {
 		repl_ret= process_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
 
 		if(repl_ret==0)
@@ -1301,21 +1302,6 @@ good_area:
 		goto out_distr;
 	}
 
-	if((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)){
-
-		repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
-
-		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
-			bad_area(regs, error_code, address);
-			goto out_distr;
-		}
-
-		if (unlikely(repl_ret & VM_FAULT_ERROR)) {
-			mm_fault_error(regs, error_code, address, repl_ret);
-			goto out_distr;
-		}
-	}
-
 	/*if(current->nsproxy->cpu_ns == popcorn_ns && (strcmp(current->comm,"cond") == 0)){
 	  if((address & PAGE_MASK) == 4222976){
 	  spinlock_t *ptl;
@@ -1361,9 +1347,28 @@ good_area:
 			 * of starvation. */
 			flags &= ~FAULT_FLAG_ALLOW_RETRY;
 			flags |= FAULT_FLAG_TRIED;
+
+			if(tsk->tgroup_distributed == 1)
+				retrying = 1;
+
 			goto retry;
 		}
 	}
+
+        if((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)){
+
+                repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
+
+                if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
+                        bad_area(regs, error_code, address);
+                        goto out_distr;
+                }
+
+                if (unlikely(repl_ret & VM_FAULT_ERROR)) {
+                        mm_fault_error(regs, error_code, address, repl_ret);
+                        goto out_distr;
+                }
+        }
 
 out:
 	check_v8086_mode(regs, address, tsk);

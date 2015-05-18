@@ -249,6 +249,7 @@ int _init_RemoteCPUMask(void)
 	 }
 	return 0;
 }
+EXPORT_SYMBOL(_init_RemoteCPUMask);
 
 /*
  * Called from init/main.c

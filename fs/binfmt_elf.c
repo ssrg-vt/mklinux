@@ -591,9 +591,9 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		struct elfhdr interp_elf_ex;
 	} *loc;
 
-	char* string_table = 0;
+	char *string_table = NULL;
 	long  string_table_length = 0; 
-	struct elf_shdr *shdr;
+	struct elf_shdr *shdr = NULL;
 
 	loc = kmalloc(sizeof(*loc), GFP_KERNEL);
 	if (!loc) {
@@ -650,8 +650,10 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	i = loc->elf_ex.e_shnum * sizeof(struct elf_shdr);
 
 	shdr = (struct elf_shdr *) kmalloc(i, GFP_KERNEL);
-	if(shdr == NULL)
+	if(shdr == NULL){
 		printk("%s:%d - Failed to allocate memory\n", __func__, __LINE__);
+		return -1;
+	}
 
 	retval = kernel_read(bprm->file, loc->elf_ex.e_shoff, shdr, i);
 	if (retval != i) {
@@ -664,6 +666,11 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		i = espnt->sh_size;
 
 		string_table = kmalloc(i, GFP_KERNEL);
+		if(string_table == NULL){
+               		printk("%s:%d - Failed to allocate memory\n", __func__, __LINE__);
+        	        return -1;
+	        }
+
 		retval = kernel_read(bprm->file, espnt->sh_offset, string_table, i);
 		if (retval != i) {
 		   printk("Error in load elf 2\n");//goto exit_read;//TODO
@@ -891,6 +898,15 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			}
 		}
 
+#if 0
+		/*Freeup allocated memory*/
+		if(shdr != NULL)
+			kfree(shdr);
+
+		if(string_table != NULL)
+			kfree(string_table);
+#endif
+
 		if (!load_addr_set) {
 			load_addr_set = 1;
 			load_addr = (elf_ppnt->p_vaddr - elf_ppnt->p_offset);
@@ -933,6 +949,15 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		if (k > elf_brk)
 			elf_brk = k;
 	}
+
+#if 1
+                /*Freeup allocated memory*/
+                if(shdr != NULL)
+                        kfree(shdr);
+
+                if(string_table != NULL)
+                        kfree(string_table);
+#endif
 
 	loc->elf_ex.e_entry += load_bias;
 	elf_bss += load_bias;

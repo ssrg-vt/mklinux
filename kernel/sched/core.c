@@ -99,6 +99,10 @@
 #define DEBUG_RATE 3000000
 //static char debug_buffer[128];
 
+#if MIGRATION_PROFILE
+extern ktime_t migration_start;
+#endif
+
 void start_bandwidth_timer(struct hrtimer *period_timer, ktime_t period)
 {
 	unsigned long delta;
@@ -3710,6 +3714,9 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	int i,ret;
 	struct pt_regs *regs = current_pt_regs(); 
 
+#if MIGRATION_PROFILE
+	migration_start = ktime_get();
+#endif
 	get_online_cpus();
 	rcu_read_lock();
 

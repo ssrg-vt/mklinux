@@ -14,7 +14,6 @@ enum pcn_connection_status{
 	PCN_CONN_TYPE_MAX
 };
 typedef unsigned long pcn_kmsg_mcast_id;
-int pcn_connection_staus(void);
 /* MESSAGING */
 
 /* Enum for message types.  Modules should add types after
@@ -87,6 +86,7 @@ enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_REMOTE_PROC_CPUINFO_REQUEST,
 	PCN_KMSG_TYPE_PROC_SRV_CREATE_THREAD_PULL,
 	PCN_KMSG_TERMINATE,
+	PCN_KMSG_TYPE_SELFIE_TEST,
 	PCN_KMSG_TYPE_MAX
 };
 
@@ -158,6 +158,9 @@ struct pcn_kmsg_checkin_message {
 
 /* Typedef for function pointer to callback functions */
 typedef int (*pcn_kmsg_cbftn)(struct pcn_kmsg_message *);
+
+/* Typedef for function pointer to callback functions */
+typedef int (*send_cbftn)(unsigned int, struct pcn_kmsg_message *, unsigned int);
 
 /* SETUP */
 
