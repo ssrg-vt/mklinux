@@ -1,0 +1,60 @@
+
+PCIe dolphin solution test application
+____________________________________________________________________________________
+
+a. Introduction
+_____________________________________________________
+
+This is a sample application to test PIO and DMA functionality of dolphin solution from ARM to x86 side.
+
+It establishes a channel and sends a message using DMA or PIO as set by MACROS. The TEST macros can be set only on ARM side.
+
+
+b. Folder Contents
+_____________________________________________________
+
+sample.c
+Makefile
+
+
+c. MACROS Description
+_____________________________________________________
+
+1. TARGET_NODE:
+	The dolphin solution's node ID for the target machine.
+	The node ID of a dolphin installation can be found by going to /opt/DIS/sbin and running ./dis_status. Look for Local Node ID.
+	In our setup, node ID currently for ARM is 8 and x86 is 4.
+ 
+2. TEST_DMA:
+	When set, DMA will be tested. Otherwise PIO write is tested from arm to x86 side.
+	If DMA_WRITE is also set, DMA write is tested. Else DMA read from the remote side is tested.
+
+3. DMA_WRITE:
+	Flag to set DMA direction
+
+
+
+d. BUILD
+_______________________________________________________
+
+Ensure that all the header files needed for dolphin APIs are available in place.
+The folders where necessary header files are kept can be found in EXTRA_FLAGS description in the current make file.
+The base folder in current makefile is - /home/ssrg_lab/dolphin/
+
+The above needed header files can be got from the dolphin installation script by getting tarball using the command -
+
+#./script.sh --get-tarball
+
+2. After Makefile is modified, Make the modules using -
+
+#make clean; make
+
+3. Then insert the application modules using -
+
+#insmod sample.ko
+
+4. while testing independently, you can remove module using -
+
+#rmmod sample.ko
+
+
