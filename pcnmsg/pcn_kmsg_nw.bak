@@ -133,11 +133,12 @@ int __init initialize()
 	sema_init(&rcv_connDone,0);
 	sema_init(&pcn_send_sem,1);
 
-	// Sharath: 
-	if(my_ipaddr == 0x0A0101B4)
-                my_cpu = 0;
-        else
-                my_cpu = 1;
+	// Sharath:
+#if CONFIG_ARM64 
+        my_cpu = 0;
+#else
+        my_cpu = 1;
+#endif
 
 	//TODO - check all nodes are available - cant be done on sockets ??
 
@@ -668,10 +669,12 @@ inline void pcn_kmsg_free_msg(void *msg){
 inline int pcn_kmsg_get_node_ids(uint16_t *nodes, int len, uint16_t *self){
 	//*self = cpumask_first(cpu_present_mask);
 
-	if(my_ipaddr == 0x0A0101B4)
+#if CONFIG_ARM64
 		*self = 0;
-	else 
+#else
 		*self = 1;
+#endif
+
 	return 0;
 }
 
