@@ -60,6 +60,9 @@ pcn_kmsg_cbftn callback_table[PCN_KMSG_TYPE_MAX];
 /* number of current kernel */
 int my_cpu = 0; // NOT CORRECT FOR CLUSTERING!!! STILL WE HAVE TO DECIDE HOW TO IMPLEMENT CLUSTERING
 
+/* set if the kernel is halting*/
+int shut_down_kmsg = 0;
+
 /* pointer to table with phys addresses for remote kernels' windows,
  * owned by kernel 0 */
 struct pcn_kmsg_rkinfo *rkinfo;
@@ -393,11 +396,12 @@ static int pcn_kmsg_checkin_callback(struct pcn_kmsg_message *message)
 
 static inline int pcn_kmsg_window_init(struct pcn_kmsg_window *window)
 {
+	int i;
+
 	window->head = 0;
 	window->tail = 0;
 	//memset(&window->buffer, 0,
 	     //  PCN_KMSG_RBUF_SIZE * sizeof(struct pcn_kmsg_reverse_message));
-	int i;
 	for(i=0;i<PCN_KMSG_RBUF_SIZE;i++){
 		window->buffer[i].last_ticket=i-PCN_KMSG_RBUF_SIZE;
 		window->buffer[i].ready=0;
@@ -647,6 +651,8 @@ static int __init pcn_kmsg_init(void)
 		return -1;
 	}
 
+	rkinfo->active[my_cpu]= 1;
+
 	/* If we're not the master kernel, we need to check in */
 	if (mklinux_boot) {
 		rc = do_checkin();
@@ -674,6 +680,15 @@ static int __init pcn_kmsg_init(void)
 }
 
 subsys_initcall(pcn_kmsg_init);
+
+static void wait_for_senders(void);
+
+void pcn_kmsg_exit(void){
+	wait_for_senders();
+	destroy_workqueue(messaging_wq);
+	destroy_workqueue(kmsg_wq);
+	kfree(rkvirt[my_cpu]);
+}
 
 /* Register a callback function when a kernel module is loaded */
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
@@ -705,14 +720,85 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 	return 0;
 }
 
+static void wait_for_senders(void){
+	long* active= &rkinfo->active[my_cpu];
+	long copy_active;
+        long res;
+again:
+        copy_active= *active;
+        
+        res= cmpxchg(active, copy_active, (-copy_active));
+        if(res==(copy_active)){
+        	copy_active= *active;
+		while(copy_active!=-1){
+			msleep(10);
+			copy_active= *active;
+		}
+        }
+        else{
+        	goto again;
+        }
+        
+}
 /* SENDING / MARSHALING */
+
+static int start_send_if_possible(int dest_cpu){
+	long* active= &rkinfo->active[dest_cpu];
+	long copy_active;
+	long res;
+again: 
+	copy_active= *active;
+	if(copy_active>0){
+		res= cmpxchg(active, copy_active, copy_active+1);	
+		if(res==(copy_active)){
+			return 0;
+		}
+		else{
+			goto again;
+		}
+	}
+	else{
+		return -1;
+	}
+}
+
+static void finish_send(int dest_cpu){
+	long* active= &rkinfo->active[dest_cpu];
+        long copy_active;
+        long res;
+again:
+        copy_active= *active;
+        if(copy_active<-1){
+                res= cmpxchg(active, copy_active, copy_active+1);
+                if(res==(copy_active)){
+                        return;
+                }
+                else{
+                        goto again;
+                }
+        }
+        else{
+        	if(copy_active>1){
+                	res= cmpxchg(active, copy_active, copy_active-1);
+                	if(res==(copy_active)){
+                        	return;
+                	}
+                	else{
+                        	goto again;
+            		}
+        	}
+		else{
+		   printk("ERROR: win active count of cpu %d is %ld\n",dest_cpu,copy_active);
+		}
+        }
+}
 
 unsigned long int_ts;
 
 static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 			   int no_block)
 {
-	int rc;
+	int rc= 0;
 	struct pcn_kmsg_window *dest_window;
 
 	if (unlikely(dest_cpu >= POPCORN_MAX_CPUS)) {
@@ -720,18 +806,26 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 		return -1;
 	}
 
+	if (unlikely(!msg)) {
+                KMSG_ERR("Passed in a null pointer to msg!\n");
+                return -1;
+
+        }
+
+	rc= start_send_if_possible(dest_cpu);
+	if(unlikely(rc==-1)){
+                return -1;
+	}
+
 	dest_window = rkvirt[dest_cpu];
 
 	if (unlikely(!rkvirt[dest_cpu])) {
 		//KMSG_ERR("Dest win for CPU %d not mapped!\n", dest_cpu);
-		return -1;
+		//return -1;
+		rc= -1;
+		goto exit;
 	}
-
-	if (unlikely(!msg)) {
-		KMSG_ERR("Passed in a null pointer to msg!\n");
-		return -1;
-	}
-
+		
 	/* set source CPU */
 	msg->hdr.from_cpu = my_cpu;
 
@@ -739,10 +833,13 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 
 	if (rc) {
 		if (no_block && (rc == EAGAIN)) {
-			return rc;
+		//	return rc;
+			goto exit;
 		}
 		KMSG_ERR("Failed to place message in dest win!\n");
-		return -1;
+		//return -1;
+		rc= -1;
+		goto exit;
 	}
 
 
@@ -755,8 +852,12 @@ static int __pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg,
 		KMSG_PRINTK("Interrupts not enabled; not sending IPI...\n");
 	}
 
-
-	return 0;
+	exit:
+		
+	finish_send(dest_cpu);
+	return rc;
+	
+	//return 0;
 }
 
 int pcn_kmsg_send(unsigned int dest_cpu, struct pcn_kmsg_message *msg)

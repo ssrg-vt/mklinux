@@ -29,6 +29,7 @@ struct pcn_kmsg_mcast_wininfo {
 };
 
 struct pcn_kmsg_rkinfo {
+	long active[POPCORN_MAX_CPUS];
 	unsigned long phys_addr[POPCORN_MAX_CPUS];
 	struct pcn_kmsg_mcast_wininfo mcast_wininfo[POPCORN_MAX_MCAST_CHANNELS];
 };
@@ -217,6 +218,7 @@ int pcn_kmsg_register_callback(enum pcn_kmsg_type type,
    be called when a kernel module is unloaded. */
 int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type);
 
+void pcn_kmsg_exit(void);
 /* MESSAGING */
 
 /* Send a message to the specified destination CPU. */

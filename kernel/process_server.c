@@ -9366,7 +9366,7 @@ static int __init process_server_init(void) {
     /*
      *  
      */
-   init_shared_counter(); 
+   //init_shared_counter(); 
 
     PERF_INIT(); 
     return 0;

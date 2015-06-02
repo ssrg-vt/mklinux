@@ -272,8 +272,8 @@ int send_cpu_info_request(int KernelId)
 	request->header.prio = PCN_KMSG_PRIO_NORMAL;
 //	request->_data._cpumask = kmalloc( sizeof(struct cpumask), GFP_KERNEL);
 	memcpy(&(request->_data._cpumask), cpu_present_mask, sizeof(cpu_present_mask));
-extern int my_cpu;
-request->_data._processor = my_cpu;
+	extern int my_cpu;
+	request->_data._processor = my_cpu;
 
 	// Send response
 	res = pcn_kmsg_send_long(KernelId, (struct pcn_kmsg_message*) (request),
@@ -303,9 +303,9 @@ int _init_RemoteCPUMask(void)
     // Skip the current cpu
     //if (i == _cpu)
     if (cpumask_test_cpu(i, cpu_present_mask)) {
-printk("%s: cpu already known %i continue.\n", __func__,  i);
-      continue;
-}
+	printk("%s: cpu already known %i continue.\n", __func__,  i);
+    	continue;
+    }
     printk("%s: checking cpu %d.\n", __func__, i);
     result = send_cpu_info_request(i);
     if (!result) {

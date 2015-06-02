@@ -1231,17 +1231,18 @@ struct pci_dev_blacklist_item {
        unsigned short vendor;
        unsigned short device;
        unsigned int flags;
+       unsigned int slot; 
 };
 #define BL 16
 static struct pci_dev_blacklist_item
-pci_dev_blacklist[BL] = { {0,0,0},{0,0,0},{0,0,0},{0,0,0},
-                                               {0,0,0},{0,0,0},{0,0,0},{0,0,0},
-                                               {0,0,0},{0,0,0},{0,0,0},{0,0,0},
-                                               {0,0,0},{0,0,0},{0,0,0},{0,0,0} };
+pci_dev_blacklist[BL] = { {0,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0},
+                                               {0,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0},
+                                               {0,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0},
+                                               {0,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0} };
 static int pci_dev_blacklist_elements = 0;
 
 int pci_dev_list_add(int compatible, char *vendor, char *model,
-               char *strflags, int flags)
+               char* slot, char *strflags, int flags)
 {
        int i;
 
@@ -1253,7 +1254,10 @@ int pci_dev_list_add(int compatible, char *vendor, char *model,
        pci_dev_blacklist[i].vendor = (unsigned short)simple_strtoul(vendor, NULL, 0);
        pci_dev_blacklist[i].device = (unsigned short)simple_strtoul(model, NULL, 0);
        pci_dev_blacklist[i].flags = (unsigned int)simple_strtoul(strflags, NULL, 0);
-
+  	if(slot){
+		pci_dev_blacklist[i].slot = (unsigned int)simple_strtoul(slot, NULL, 0);
+	}
+		
        printk(KERN_INFO "%s: [%x,%x] blacklisted with flags 0x%08x\n", __func__,
                        pci_dev_blacklist[i].vendor, pci_dev_blacklist[i].device, pci_dev_blacklist[i].flags);
        pci_dev_blacklist_elements++;
@@ -1268,7 +1272,7 @@ int pci_dev_list_add(int compatible, char *vendor, char *model,
  */
 static int pci_dev_add_str(char *dev_list)
 {
-	char *vendor, *device, *strflags;
+	char *vendor, *device, *slot, *strflags;
 	char *next, *next_check;
 	int res = 0;
 
@@ -1289,6 +1293,7 @@ static int pci_dev_add_str(char *dev_list)
 			vendor && (vendor[0] != '\0') && (res == 0);
 			vendor = strsep(&next, ":")) {
 		strflags = NULL;
+		slot= NULL;
 		device = strsep(&next, ":");
 		if (device)
 			strflags = strsep(&next, next_check);
@@ -1298,9 +1303,35 @@ static int pci_dev_add_str(char *dev_list)
 					strflags);
 			res = -EINVAL;
 		} else {
-			res = pci_dev_list_add(0 /* compatible */, vendor,
-					device, strflags, 0);
-			res = 0;
+			if(strflags[0]=='b'){
+				res = pci_dev_list_add(0 /* compatible */, vendor,
+					device, NULL, strflags, 0);
+				res = 0;
+			}
+			else{
+				slot= strsep(&strflags, ":");
+				if(slot){
+					strflags = strsep(&strflags, next_check);
+					if(strflags){
+						res = pci_dev_list_add(0 /* compatible */, vendor,
+                                        		device, slot, strflags, 0);
+                                		res = 0;
+					}
+					else{
+						printk(KERN_ERR "%s: bad dev info string '%s' '%s'"
+	                                                " '%s' '%s'\n", __func__, vendor, device, slot,
+        	                                        strflags);
+                                                res = -EINVAL;
+
+					}
+				}
+				else{
+					printk(KERN_ERR "%s: bad dev info string '%s' '%s'"
+                                	        " '%s' '%s'\n", __func__, vendor, device, slot,
+                                        	strflags);
+			                res = -EINVAL;
+				}
+			}
 		}
 	}
 
@@ -1321,8 +1352,14 @@ static int pci_device_blacklisted(struct pci_dev *dev)
 
 	for (i=0; i<pci_dev_blacklist_elements; i++)
 		if (dev->vendor == pci_dev_blacklist[i].vendor &&
-				dev->device == pci_dev_blacklist[i].device)
-			return (i +1);
+				dev->device == pci_dev_blacklist[i].device){
+			if(pci_dev_blacklist[i].slot!=0){
+				if(PCI_SLOT(dev->devfn) == pci_dev_blacklist[i].slot)
+					return (i+1);
+			}
+			else
+				return (i +1);
+		}
 	return 0;
 }
 
@@ -1341,6 +1378,7 @@ struct pci_dev *__ref pci_scan_single_device(struct pci_bus *bus, int devfn)
 		return NULL;
 
 	if (pci_device_blacklisted(dev)) {
+		printk("CHECK DEVICE vendor %x device %x slot %d fn %d",dev->vendor,dev->device,PCI_SLOT(dev->devfn),PCI_FUNC(dev->devfn));
 		printk(KERN_INFO "%s: [%x,%x] device blacklisted\n", __func__,
 				dev->vendor, dev->device);
 		return NULL;

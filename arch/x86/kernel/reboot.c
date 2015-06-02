@@ -652,7 +652,13 @@ void native_machine_shutdown(void)
 	lapic_shutdown();
 
 #ifdef CONFIG_X86_IO_APIC
-	disable_IO_APIC();
+	/*For ft_replication
+	* for now just prevent that cpus different from 0 disable IO_APIC when halting the kernel
+	* To be changed to shutdown also the kernel on cpu 0 
+	*/
+	if(cpu_online(0)){
+		disable_IO_APIC();
+	}
 #endif
 
 #ifdef CONFIG_HPET_TIMER
