@@ -29,7 +29,7 @@
 #define CLONE_NEWPID		0x20000000	/* New pid namespace */
 #define CLONE_NEWNET		0x40000000	/* New network namespace */
 #define CLONE_IO		0x80000000	/* Clone io context */
-
+#define CLONE_NEWPOPCORN	0x02000000
 /*
  * Scheduling policies
  */

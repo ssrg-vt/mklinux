@@ -9,7 +9,7 @@ struct uts_namespace;
 struct ipc_namespace;
 struct pid_namespace;
 struct fs_struct;
-
+struct popcorn_namespace;
 /*
  * A structure to contain pointers to all per-process
  * namespaces - fs (mount), uts, network, sysvipc, etc.
@@ -29,6 +29,7 @@ struct nsproxy {
 	struct mnt_namespace *mnt_ns;
 	struct pid_namespace *pid_ns;
 	struct net 	     *net_ns;
+	struct popcorn_namespace *pop_ns;
 };
 extern struct nsproxy init_nsproxy;
 

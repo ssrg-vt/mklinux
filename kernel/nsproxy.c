@@ -25,6 +25,7 @@
 #include <linux/proc_fs.h>
 #include <linux/file.h>
 #include <linux/syscalls.h>
+#include <linux/popcorn_namespace.h>
 
 static struct kmem_cache *nsproxy_cachep;
 
@@ -39,6 +40,7 @@ struct nsproxy init_nsproxy = {
 #ifdef CONFIG_NET
 	.net_ns	= &init_net,
 #endif
+	.pop_ns= &init_pop_ns,
 };
 
 static inline struct nsproxy *create_nsproxy(void)
@@ -96,8 +98,18 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 		goto out_net;
 	}
 
+	new_nsp->pop_ns = copy_pop_ns(flags, tsk->nsproxy->pop_ns);
+        if (IS_ERR(new_nsp->pop_ns)) {
+                err = PTR_ERR(new_nsp->pop_ns);
+                goto out_pop;
+        }
+
+
 	return new_nsp;
 
+out_pop:
+	if (new_nsp->net_ns) 
+		put_net(new_nsp->net_ns);
 out_net:
 	if (new_nsp->pid_ns)
 		put_pid_ns(new_nsp->pid_ns);
@@ -131,7 +143,7 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk)
 	get_nsproxy(old_ns);
 
 	if (!(flags & (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
-				CLONE_NEWPID | CLONE_NEWNET)))
+				CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWPOPCORN)))
 		return 0;
 
 	if (!capable(CAP_SYS_ADMIN)) {
@@ -175,6 +187,10 @@ void free_nsproxy(struct nsproxy *ns)
 	if (ns->pid_ns)
 		put_pid_ns(ns->pid_ns);
 	put_net(ns->net_ns);
+	
+	if (ns->pop_ns)
+		put_pop_ns(ns->pop_ns);
+
 	kmem_cache_free(nsproxy_cachep, ns);
 }
 
@@ -188,7 +204,7 @@ int unshare_nsproxy_namespaces(unsigned long unshare_flags,
 	int err = 0;
 
 	if (!(unshare_flags & (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
-			       CLONE_NEWNET)))
+			       CLONE_NEWNET | CLONE_NEWPOPCORN)))
 		return 0;
 
 	if (!capable(CAP_SYS_ADMIN))
