@@ -12,9 +12,12 @@
 #include <linux/module.h>
 #include <linux/namei.h>
 #include <linux/popcorn_namespace.h>
+#include <linux/spinlock.h>
+#include <linux/ft_replication.h>
 
 static struct kmem_cache *popcorn_ns_cachep;
 struct proc_dir_entry *res;
+DEFINE_SPINLOCK(ft_lock); 
 
 struct popcorn_namespace init_pop_ns = {
 	.kref = {
@@ -22,8 +25,19 @@ struct popcorn_namespace init_pop_ns = {
 	},
 	.activate= 0,
 	.root= 0,
+	.replication_degree= 0,
 };
 EXPORT_SYMBOL_GPL(init_pop_ns);
+
+int is_popcorn_namespace_active(struct popcorn_namespace* ns){
+	if(ns){
+		if(ns!=&init_pop_ns){
+			return ns->activate==1;
+		}
+	}
+
+	return 0;
+}
 
 static struct popcorn_namespace *create_popcorn_namespace(struct popcorn_namespace *parent_ns)
 {
@@ -92,7 +106,7 @@ int read_notify_popcorn_ns(char *page, char **start, off_t off, int count, int *
 		}
 		else{
 			if(ns->activate==1){
-				p += sprintf(p, "popcorn ns is %p. It is associate and root is pid %d\n", ns,ns->root);
+				p += sprintf(p, "popcorn ns is %p. It is associate root is pid %d and replication degree is %d\n", ns,ns->root,ns->replication_degree);
 			}
 			else{
 				 p += sprintf(p, "popcorn ns is %p. It is not associate\n", ns);
@@ -112,7 +126,7 @@ int read_notify_popcorn_ns(char *page, char **start, off_t off, int count, int *
 	return len;
 }
 
-int associate_to_popcorn_ns(struct task_struct * tsk)
+int associate_to_popcorn_ns(struct task_struct * tsk, int replication_degree)
 {
 	struct popcorn_namespace* pop;
 
@@ -132,8 +146,14 @@ int associate_to_popcorn_ns(struct task_struct * tsk)
                 return -1;
 	}
 
-	pop->activate=1;
-	pop->root= tsk->pid;
+	spin_lock(&ft_lock);
+	if(pop->activate==0){
+		pop->root= tsk->pid;
+		tsk->replica_type= ROOT_POT_HOT_REPLICA;
+		pop->replication_degree= replication_degree;
+		pop->activate=1;
+	}
+	spin_unlock(&ft_lock);
 
 	printk("%s: associated popcorn namespace %p with root %d\n",__func__,pop,pop->root);
 	return 0;
@@ -144,7 +164,8 @@ int write_notify_popcorn_ns(struct file *file, const char __user *buffer, unsign
 {
 	get_task_struct(current);
 
-	if((associate_to_popcorn_ns(current))==-1) {
+	//TODO write replication_degree on proc/popcorn_namespace? or counting runnign kernels?
+	if((associate_to_popcorn_ns(current, 2))==-1) {
 		printk("associate_to_popcorn_ns failed for pid %d\n", current->pid);
 	}
 	else{

@@ -33,6 +33,7 @@
 #include <linux/utsname.h>
 #include <linux/coredump.h>
 #include <linux/process_server.h>
+#include <linux/ft_replication.h>
 #include <asm/uaccess.h>
 #include <asm/param.h>
 #include <asm/page.h>
@@ -991,6 +992,13 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
     /*
      * Multikernel
      */
+
+#ifdef FT_POPCORN
+	retval= maybe_create_replicas();
+	if(retval!=0)
+		goto out;
+#endif
+
 #ifdef PROCESS_SERVER_USE_KMOD
     if(current->executing_for_remote) {
         process_server_import_address_space(&mk_ip, &mk_sp, regs);

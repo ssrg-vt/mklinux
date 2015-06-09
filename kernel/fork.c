@@ -73,6 +73,7 @@
  */
 #include <linux/process_server.h>
 #include <linux/sched.h>
+#include <linux/ft_replication.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -1246,6 +1247,11 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	retval = copy_namespaces(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_mm;
+#ifdef FT_POPCORN
+	retval = copy_replication(clone_flags, p);
+	if(retval)
+		goto bad_fork_cleanup_namespaces;
+#endif
 	retval = copy_io(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_namespaces;

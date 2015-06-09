@@ -91,6 +91,7 @@ struct sched_param {
 #include <linux/latencytop.h>
 #include <linux/cred.h>
 #include <linux/llist.h>
+#include <linux/ft_replication.h>
 
 #include <asm/processor.h>
 
@@ -1601,6 +1602,12 @@ struct task_struct {
                                       then enable when address space is fully formed. */
     unsigned long known_cpu_with_tgroup_mm; /* List of remote cpus that already have a mm for this tgroup  */
 
+#ifdef FT_POPCORN
+	int replica_type;
+	struct replica_id hot_replica;
+	struct list_head cold_replicas_head;
+	void* useful;
+#endif
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
