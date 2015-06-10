@@ -21,6 +21,9 @@
 
 #define WAIT_ANSWER_TIMEOUT_SECOND 5
 
+/*by seeing include/asm-generic/errno.h seems to be the next available...*/
+#define ENOFTREP 134
+
 struct replica_id{
         int kernel;
         pid_t pid;

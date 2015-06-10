@@ -17,7 +17,7 @@
 #include <linux/delay.h>
 #include <asm/atomic.h>
 
-#define FT_REPLICATION_VERBOSE 1
+#define FT_REPLICATION_VERBOSE 0
 #if FT_REPLICATION_VERBOSE
 #define FTPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -37,7 +37,7 @@ struct cold_replica_request{
                 -exe_path
                 -argv
                 -env
-        */
+         */
 
 	//NOTE: do not add fields after data
 	char data;
@@ -61,8 +61,8 @@ struct hot_replica_answer{
 	/*data is composed by:
                 -pid
 		-kernel
-	*of each cold_replica
-        */
+	 *of each cold_replica
+         */
 
         //NOTE: do not add fields after data
 	int data;
@@ -253,7 +253,7 @@ static int create_cold_replica_request_msg(struct task_struct* hot_replica_task,
 	int ret,i,argc,envc;
 
 	if(!hot_replica_task || !hot_replica_task->mm)
-		return -1;
+		return -EFAULT;
 
 	argv_size= hot_replica_task->mm->arg_end - hot_replica_task->mm->arg_start;
 	env_size= hot_replica_task->mm->env_end - hot_replica_task->mm->env_start;
@@ -358,7 +358,7 @@ static int create_cold_replica_answer_msg(struct replica_id* cold_replica_from, 
 	struct cold_replica_answer* msg;
 
 	if(!cold_replica_from||!hot_replica_to)
-		return -1;
+		return -EFAULT;
 
         msg= kmalloc(sizeof(*msg),GFP_KERNEL);
         if(!msg)
@@ -398,11 +398,11 @@ static int create_hot_replica_answer_msg(struct replica_id* hot_replica_from, st
 	int* datap;
 
 	if(!hot_replica_from || !cold_replica_to)
-                return -1;
+                return -EFAULT;
 
 	if(start){
 		if(!replicas_list){
-                        return -1;
+                        return -EFAULT;
                 }
 
 		list_for_each_safe(iter, n, replicas_list) {
@@ -617,6 +617,7 @@ static int exec_to_cold_replica(void *data){
         if(nr_pointers != msg->argc){
 		printk("ERROR at %s: nr_pointers is %d argc is %d\n", __func__, nr_pointers, msg->argc);
 		//BUG();
+		retval= -EFAULT;
 		goto out;
 	}
 	copy_argv[nr_pointers]= NULL;
@@ -640,6 +641,7 @@ static int exec_to_cold_replica(void *data){
         if(nr_pointers != msg->envc){
                 printk("ERROR at %s: nr_pointers is %d envc is %d\n", __func__, nr_pointers, msg->envc);
         	//BUG();
+		retval= -EFAULT;
 		goto out;
 	}
 	copy_env[nr_pointers]= NULL;
@@ -650,14 +652,39 @@ static int exec_to_cold_replica(void *data){
                                (const char *const *)copy_argv,
                                (const char *const *)copy_env);
 
+	/* Ok, if the kernel_execve succeded and only maybe_create_replicas failed,
+	 * the stack maybe a little mess up. 
+	 * I saw that parameters are not available any more => data is NULL.
+	 * Just try to retrive them again? Avoiding using them? Be careful there migth be more errors...
+	 */
+
+	kfree(copy_argv);
+        kfree(copy_env);
+
+        printk("%s failed retval{%d}\n",__func__, retval);
+
+        if(retval != -ENOFTREP){
+                send_error_to_hot_replica(&((struct cold_replica_request*) current->useful)->hot_replica, 1);
+        }
+
+        pcn_kmsg_free_msg(current->useful);
+
+        do_exit(0);
+
+	
 out:	kfree(copy_argv);
 	kfree(copy_env);
 
 fail:
 
     	printk("%s failed retval{%d}\n",__func__, retval);
-	send_error_to_hot_replica(&msg->hot_replica, 1);
+	
+	if(retval != -ENOFTREP){
+		send_error_to_hot_replica(&msg->hot_replica, 1);
+	}
+
 	pcn_kmsg_free_msg(msg);
+
 	do_exit(0);
 }
 
@@ -896,7 +923,7 @@ static int wait_for_hot_replica_answer(struct collect_hot_replica_answer * answe
 		if(!atomic_read(&answer_collection->num_answers)){
                         if(!timeout){
 				FTPRINTK("%s: timeout with %d answers\n", __func__, atomic_read(&answer_collection->num_answers));
-                                return -1;
+                                return -ETIME;
                         }
                 }
         }
@@ -916,7 +943,7 @@ static int wait_for_cold_replica_answers(struct collect_cold_replica_answers* an
 		if(cold_copies_requested != atomic_read(&answer_collection->num_answers)){
 			if(!timeout){
 				FTPRINTK("%s: timeout with %d answers\n",__func__,atomic_read(&answer_collection->num_answers));
-				return -1;
+				return -ETIME;
 			}
 		}
 	}
@@ -939,7 +966,8 @@ static int wait_for_cold_replica_answers(struct collect_cold_replica_answers* an
  * In case the replicas created are less then number_of_replicas requested, an error message is sent to the created
  * ones to discard them.
  *
- * In case of success it returns 0 and populate cold_replica_head with a list of the cold replicas created.
+ * In case of success it returns 0 and populate cold_replica_head with a list of the cold replicas created, a value <0 otherwise.
+ * If repication requirements are not met -ENOFTREP is returned.
  */
 static int send_cold_replica_requests(struct cold_replica_request* msg, int msg_size, struct replica_id* hot_replica_from, int number_of_replicas, struct list_head* cold_replica_head){
 	int i,ret= 0;
@@ -949,7 +977,7 @@ static int send_cold_replica_requests(struct cold_replica_request* msg, int msg_
 	struct collect_cold_replica_answers* answer_collection;
 
 	if(!msg || !hot_replica_from)
-		return -1;
+		return -EFAULT;
 
 	if(number_of_replicas == 0)
 		return 0;
@@ -1020,7 +1048,7 @@ next:	if(cold_copies_requested + cold_copy_collected != number_of_replicas){
 		}
 		
 		
-		ret= -1;
+		ret= -ENOFTREP;
 		goto out;
 	}
 	else{
@@ -1089,7 +1117,8 @@ static int create_replicas(struct task_struct* hot_replica_task, int replication
  * In case a "start" message is received list_cold_replicas is populated with 
  * the received list of cold replicas.
  * 
- * Return 0 if the cold copy can start, a different value otherwise.
+ * Return 0 if the cold copy can start, a value <0 otherwise.
+ * When replication requirements are not met,-ENOFTREP is returned.
  */
 static int notify_hot_replica(struct replica_id* hot_replica_to, struct replica_id* cold_replica_from, struct list_head* list_cold_replicas){
         struct collect_hot_replica_answer* answer_collection;
@@ -1117,10 +1146,25 @@ static int notify_hot_replica(struct replica_id* hot_replica_to, struct replica_
 	ret= send_ack_to_hot_replica(hot_replica_to,cold_replica_from);
 	if(ret)
 		goto out;
-	
+
+	/* From this point I already sent an ack message to the hot_replica, so if an error occurs that makes me fail the exec, mask it with -ENOFTREP,
+	 * such that the caller of the do_execve will not send another update message.
+	 */	
+
 	ret= wait_for_hot_replica_answer(answer_collection);
-	if(ret || answer_collection->start == 0){
-		ret= -1;
+	
+	remove_collect_hot_replica_answer(answer_collection);
+
+	if(ret){
+		if(!atomic_read(&answer_collection->num_answers)){
+			ret= -ENOFTREP;
+			FTPRINTK("%s: thread pid %d will not start as a cold replica\n",__func__, current->pid);
+                	goto out;
+		}
+	}
+
+	if(answer_collection->start == 0){
+		ret= -ENOFTREP;
 		FTPRINTK("%s: thread pid %d will not start as a cold replica\n",__func__, current->pid);
 		goto out;
 	}
@@ -1128,7 +1172,8 @@ static int notify_hot_replica(struct replica_id* hot_replica_to, struct replica_
 	for(i=0;i<answer_collection->num_cold_replicas;i++){
 		entry= kmalloc(sizeof(*entry), GFP_ATOMIC);
 		if(!entry){
-			ret= -ENOMEM;
+			//ret= -ENOMEM;
+			ret= -ENOFTREP;
 			goto out;
 		}
 
@@ -1143,7 +1188,6 @@ static int notify_hot_replica(struct replica_id* hot_replica_to, struct replica_
 out:	if(answer_collection->cold_replica_list)
 		kfree(answer_collection->cold_replica_list);
 
-	remove_collect_hot_replica_answer(answer_collection);
 	put_collect_hot_replica_answer(answer_collection);
         return ret;
 }
@@ -1152,7 +1196,8 @@ out:	if(answer_collection->cold_replica_list)
 /* Checks if the current newly execve thread needs to be replicated. 
  * Nothing will be done if not in an active Popcorn namespace.
  *
- * Returns 0 in case no errors occured.
+ * Returns 0 in case no errors occured, a value < 0 otherwise.
+ * When replication requirements are not met,-ENOFTREP is returned.
  * 
  * If replica_type is POTENTIAL_HOT_REPLICA, it tries to create n-1 cold replicas in other kernels, 
  * where n is the replication_degree of the namespace, and set the replica_type to HOT_REPLICA in
@@ -1186,13 +1231,13 @@ int maybe_create_replicas(void){
 				current->hot_replica.pid= current->pid;
 				current->hot_replica.kernel= _cpu;
 
-				FTPRINTK("%s: Replica list of hot replica pid %d\n", __func__, current->pid);
-				FTPRINTK("hot: {pid: %d, kernel %d}, cold: ", current->hot_replica.pid, current->hot_replica.kernel);
+				printk("%s: Replica list of %s pid %d\n", __func__, current->comm, current->pid);
+				printk("hot: {pid: %d, kernel %d}, cold: ", current->hot_replica.pid, current->hot_replica.kernel);
 				list_for_each(iter, &current->cold_replicas_head) {
                 			objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-					FTPRINTK("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
+					printk("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
 				}
-				FTPRINTK("\n");
+				printk("\n");
 				
 			}
 			
@@ -1211,16 +1256,17 @@ int maybe_create_replicas(void){
 					current->hot_replica.pid= msg->hot_replica.pid;
 	                                current->hot_replica.kernel= msg->hot_replica.kernel;
 
-					FTPRINTK("%s: Replica list of cold replica pid %d\n", __func__, current->pid);
-                                	FTPRINTK("hot: {pid: %d, kernel %d}, cold: ", current->hot_replica.pid, current->hot_replica.kernel);
+					printk("%s: Replica list of %s pid %d\n", __func__, current->comm, current->pid);
+                                	printk("hot: {pid: %d, kernel %d}, cold: ", current->hot_replica.pid, current->hot_replica.kernel);
 					list_for_each(iter, &current->cold_replicas_head) {
                                         	objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-                                        	FTPRINTK("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
+                                        	printk("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
                                 	}       
-                                	FTPRINTK("\n");
+                                	printk("\n");
+		
+					pcn_kmsg_free_msg(msg);
                 	        }
-				
-				pcn_kmsg_free_msg(msg);
+		
 			}
 		}		
 	}	

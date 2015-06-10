@@ -155,24 +155,34 @@ int associate_to_popcorn_ns(struct task_struct * tsk, int replication_degree)
 	}
 	spin_unlock(&ft_lock);
 
-	printk("%s: associated popcorn namespace %p with root %d\n",__func__,pop,pop->root);
+	printk("%s: associated popcorn namespace %p with root %d and replication_degree %d\n",__func__,pop,pop->root,pop->replication_degree);
 	return 0;
 }
 
 
 int write_notify_popcorn_ns(struct file *file, const char __user *buffer, unsigned long count, void *data)
 {
-	get_task_struct(current);
+	long replication_degree;
+	kstrtol_from_user(buffer, count, 0, &replication_degree);
 
-	//TODO write replication_degree on proc/popcorn_namespace? or counting runnign kernels?
-	if((associate_to_popcorn_ns(current, 2))==-1) {
-		printk("associate_to_popcorn_ns failed for pid %d\n", current->pid);
+	if(replication_degree > 0 && replication_degree < NR_CPUS){
+
+		get_task_struct(current);
+
+		if((associate_to_popcorn_ns(current, replication_degree))==-1) {
+			printk("associate_to_popcorn_ns failed for pid %d\n", current->pid);
+		}
+		else{
+			printk("task pid %d %s associated with popcorn\n",current->pid, current->comm);
+		}
+		 
+		put_task_struct(current);
+
 	}
 	else{
-		printk("task pid %d %s associated with popcorn\n",current->pid, current->comm);
+		printk("task pid %d requested an invalid replication degree (%ld)\n",current->pid, replication_degree);
 	}
-	 
-	put_task_struct(current);
+
 	return count;
 }
 
