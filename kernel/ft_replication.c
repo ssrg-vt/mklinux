@@ -16,6 +16,8 @@
 #include <linux/syscalls.h>
 #include <linux/delay.h>
 #include <asm/atomic.h>
+#include <linux/sched.h>
+#include <linux/spinlock.h>
 
 #define FT_REPLICATION_VERBOSE 0
 #if FT_REPLICATION_VERBOSE
@@ -28,6 +30,7 @@ struct cold_replica_request{
 	struct pcn_kmsg_hdr header;
 	struct replica_id hot_replica;
 	int replication_degree;
+	struct ft_pop_rep_id ft_rep_id;
 	int exe_path_size;
 	int argc;
 	int argv_size;
@@ -42,7 +45,7 @@ struct cold_replica_request{
 	//NOTE: do not add fields after data
 	char data;
 };
-static int create_cold_replica_request_msg(struct task_struct* hot_replica_task, int replication_degree, struct cold_replica_request** msg, int* msg_size);
+static int create_cold_replica_request_msg(struct task_struct* hot_replica_task, int replication_degree, struct ft_pop_rep_id* ft_rep_id, struct cold_replica_request** msg, int* msg_size);
 
 struct cold_replica_answer{
 	struct pcn_kmsg_hdr header;
@@ -74,11 +77,6 @@ struct ft_work{
 	void* data;
 };
 
-struct replica_id_list{
-        struct list_head replica_list_member;
-        struct replica_id replica;
-};
-
 struct collect_hot_replica_answer{
         struct kref kref;
 	struct list_head list_member;
@@ -105,6 +103,9 @@ struct collect_cold_replica_answers{
 };
 struct collect_cold_replica_answers collect_cold_replica_answers_head;
 DEFINE_SPINLOCK(collect_cold_replica_answers_lock);
+
+static struct workqueue_struct *cold_replica_generator_wq;
+extern int _cpu;
 
 static void release_collect_cold_replica_answers(struct kref *kref){
 	struct collect_cold_replica_answers* collection;
@@ -233,8 +234,52 @@ static void add_collect_cold_replica_answers(struct collect_cold_replica_answers
         return;
 }
 
-static struct workqueue_struct *cold_replica_generator_wq;
-extern int _cpu;
+atomic_t ft_pop_id_generator= ATOMIC_INIT(0);
+static int get_new_ft_pop_id(void){
+	return	atomic_inc_return(&ft_pop_id_generator);
+}
+
+static void release_ft_pop_rep(struct kref *kref){
+        struct ft_pop_rep* ft_pop;
+
+        ft_pop= container_of(kref, struct ft_pop_rep, kref);
+
+        if(ft_pop)
+                kfree(ft_pop);
+}
+
+void get_ft_pop_rep(struct ft_pop_rep* ft_pop){
+        kref_get(&ft_pop->kref);
+}
+
+void put_ft_pop_rep(struct ft_pop_rep* ft_pop){
+        kref_put(&ft_pop->kref, release_ft_pop_rep);
+}
+
+static struct ft_pop_rep* create_ft_pop_rep(int replication_degree, int new_id, struct ft_pop_rep_id* id){
+	struct ft_pop_rep *new_ft_pop= NULL;
+
+	new_ft_pop= kmalloc(sizeof(*new_ft_pop), GFP_KERNEL);
+	if(!new_ft_pop){	
+		return ERR_PTR(-ENOMEM);
+	}
+
+	atomic_set(&new_ft_pop->kref.refcount, 1);
+
+	if(new_id){
+		new_ft_pop->id.id = get_new_ft_pop_id();
+		new_ft_pop->id.kernel = _cpu; 
+	}
+	else{
+		new_ft_pop->id.id = id->id;
+                new_ft_pop->id.kernel = id->kernel;
+	}
+	new_ft_pop->replication_degree= replication_degree;
+
+	INIT_LIST_HEAD(&new_ft_pop->cold_replicas_head.replica_list_member);
+	
+	return new_ft_pop;
+}
 
 /* Creates and populates a struct cold_replica_request message with information taken from hot_replica_task.
  *
@@ -243,7 +288,7 @@ extern int _cpu;
  *
  * Message size is variable because the path, argv end env of hot_replica_task vary from task to task. 
  */
-static int create_cold_replica_request_msg(struct task_struct* hot_replica_task, int replication_degree, struct cold_replica_request** msg, int* msg_size){
+static int create_cold_replica_request_msg(struct task_struct* hot_replica_task, int replication_degree, struct ft_pop_rep_id* ft_rep_id, struct cold_replica_request** msg, int* msg_size){	
 	int argv_size= 0;
 	int env_size= 0;
 	int total_msg_size= 0;
@@ -331,7 +376,8 @@ path_again:
 	message->hot_replica.kernel= _cpu;
 	message->hot_replica.pid= hot_replica_task->pid;
 	message->replication_degree= replication_degree;
-	
+	message->ft_rep_id= *ft_rep_id;	
+		
 	message->header.type= PCN_KMSG_TYPE_FT_COLD_REPLICA_REQUEST;
 	message->header.prio= PCN_KMSG_PRIO_NORMAL;
 	
@@ -448,27 +494,124 @@ static int create_hot_replica_answer_msg(struct replica_id* hot_replica_from, st
 
 }
 
-/* Set the field replica_type of tsk.
- *
- * If tsk does not have an active Popcorn namespace, to NOT_REPLICATED.
+int are_ft_pid_equals(struct ft_pid* first, struct ft_pid* second){
+	int ret= 0;
+	int i;
+
+	/*Same ft_pop_rep_id??*/
+	if(first->ft_pop_id.kernel != second->ft_pop_id.kernel
+		|| first->ft_pop_id.kernel != second->ft_pop_id.kernel)
+		goto out;
+
+	/*Same level??*/
+	if(first->level != second->level)
+		goto out;
+	
+	if(first->level==0){
+		ret= 1;
+		goto out;
+	}
+
+	/*Same child??*/
+	for(i=0;i<first->level;i++){
+		if(first->id_array[i]!=second->id_array[i])
+			goto out;
+	}
+
+	ret= 1;
+		
+out:	return ret;
+}
+
+/* Set ft-popcorn fields of struct task_struct;
+ * If popcorn_namespace is active, replica_type and ft_pid are
  * 
- * If the current thread is both root of the namespace (it activated the namespace)
- * and allowed to create hot replicas (replica_type is ROOT_POT_HOT_REPLICA), 
- * to POTENTIAL_HOT_REPLICA.  
- *
  */
 int copy_replication(unsigned long flags, struct task_struct *tsk){
 	struct popcorn_namespace *pop;
+	struct task_struct* ancestor;
 
 	pop= tsk->nsproxy->pop_ns;
 	if(is_popcorn_namespace_active(pop)){
-		if(current->pid==pop->root && current->replica_type==ROOT_POT_HOT_REPLICA){
+		if(current->pid == pop->root && current->replica_type == ROOT_POT_HOT_REPLICA){
 			tsk->replica_type= POTENTIAL_HOT_REPLICA;
+			tsk->ft_popcorn= NULL;
+			tsk->ft_pid.level= 0;
+			tsk->next_pid_to_use= 0;
+			tsk->next_id_resources= 0;
+                	tsk->ft_pid.id_array= NULL;
 			return 0;
 		}
-	}
+		else{
+		
+			/* All forked threads should have the same ft_popcorn because all have as ancestor 
+			 * the same hot/cold replica.
+			 * The same shuould apply for new processes. However now the initial hot/cold 
+			 * replica can exit indipendently by this new process. Should we recompute all the 
+			 * replica ids for this new process???
+			 */
+			if(!current->ft_popcorn){
+				//BUG();
+				printk("%s: ERROR forking (pid %d replica_type %d) in popcorn namespace but ft_popcorn is NULL ",__func__, current->pid, current->replica_type);
+				return -1;
+			}
+	
+			tsk->ft_popcorn= current->ft_popcorn; 
+			if(current->tgid != tsk->tgid){
+				get_ft_pop_rep(tsk->ft_popcorn);
+				
+				ancestor= find_task_by_vpid(current->tgid);
+				if(ancestor->replica_type == HOT_REPLICA
+					|| ancestor->replica_type == NEW_HOT_REPLICA_DESCENDANT){
+					
+					tsk->replica_type= NEW_HOT_REPLICA_DESCENDANT;
+				}
+				else{
+					if(ancestor->replica_type == COLD_REPLICA
+                                        	|| ancestor->replica_type == NEW_COLD_REPLICA_DESCENDANT){
+                                        
+						tsk->replica_type= NEW_COLD_REPLICA_DESCENDANT;
+                                	}
+					else{
+						//BUG();
+						printk("%s: ERROR ancestor (pid %d) replica type is %d",__func__, ancestor->pid, ancestor->replica_type);
+						return -1;
+					}
+				}
+			}
+			else{
+				tsk->replica_type= REPLICA_DESCENDANT;
+			}
 
-	tsk->replica_type= NOT_REPLICATED;
+			/* Compute the ft_pid.
+			 * Note that same replicas in different kernel will end up with the same ft_pid.
+			 */
+			tsk->ft_pid.level= current->ft_pid.level+1;
+			tsk->ft_pid.ft_pop_id= tsk->ft_popcorn->id;
+			tsk->next_pid_to_use= 0;
+			tsk->ft_pid.id_array= kmalloc(sizeof(int)*(tsk->ft_pid.level),GFP_KERNEL);
+			if(!tsk->ft_pid.id_array){
+				return -ENOMEM;
+			}
+			
+			if(current->ft_pid.id_array){
+				memcpy(tsk->ft_pid.id_array,current->ft_pid.id_array,sizeof(int)*current->ft_pid.level);
+			}
+			
+			tsk->ft_pid.id_array[current->ft_pid.level]= current->next_pid_to_use++;
+
+			tsk->next_id_resources= 0;
+		}
+	}
+	else{
+		tsk->ft_pid.level= 0;
+		tsk->ft_pid.id_array= NULL;	
+		tsk->next_pid_to_use= 0;
+		tsk->next_id_resources= 0;
+		tsk->replica_type= NOT_REPLICATED;
+		tsk->ft_popcorn= NULL;
+	}
+	
 	return 0;
 }
 
@@ -1086,7 +1229,7 @@ out:	put_collect_cold_replica_answers(answer_collection);
  * to the same exec, with the same path, env and args of hot_replica_task.
  *
  */
-static int create_replicas(struct task_struct* hot_replica_task, int replication_degree, struct list_head* cold_replica_head){
+static int create_replicas(struct task_struct* hot_replica_task, int replication_degree, struct ft_pop_rep_id *ft_rep_id, struct list_head* cold_replica_head){
 	struct cold_replica_request* msg= NULL;
 	int msg_size= 0;
 	int ret= 0;
@@ -1094,7 +1237,7 @@ static int create_replicas(struct task_struct* hot_replica_task, int replication
 
 	FTPRINTK("%s: thread %d requested %d replicas\n", __func__, hot_replica_task->pid, replication_degree-1);
 
-	ret= create_cold_replica_request_msg(hot_replica_task, replication_degree, &msg, &msg_size);
+	ret= create_cold_replica_request_msg(hot_replica_task, replication_degree, ft_rep_id, &msg, &msg_size);
 	if(ret)
 		return ret;
 	
@@ -1206,9 +1349,8 @@ out:	if(answer_collection->cold_replica_list)
  * If replica_type is POTENTIAL_COLD_REPLICA, it notifies the correlated hot replica that a cold copy
  * was succesfully created, and set the replica_type to COLD_REPLICA in case of success.
  * 
- * In both above cases, in case of success, the current's cold_replicas_head is populated with a 
- * list of all cold replicas created on Popcorn, and current's hot_replica is set to the proper 
- * hot replica.
+ * In both above cases, in case of success, the current's ft_popcorn field is allocated and populated 
+ * with a list of all cold replicas and the current hot replica.
  */
 int maybe_create_replicas(void){
 	struct popcorn_namespace *pop;
@@ -1217,28 +1359,38 @@ int maybe_create_replicas(void){
 	struct cold_replica_request* msg;
 	struct list_head *iter= NULL;
         struct replica_id_list *objPtr= NULL;
-
+	struct ft_pop_rep* ft_popcorn;
 
 	pop= current->nsproxy->pop_ns;
 
 	if(is_popcorn_namespace_active(pop)){
 		if(current->replica_type == POTENTIAL_HOT_REPLICA){
-			INIT_LIST_HEAD(&current->cold_replicas_head);
 
-			ret= create_replicas(current, pop->replication_degree, &current->cold_replicas_head);			
+			ft_popcorn= create_ft_pop_rep(pop->replication_degree, 1, NULL);	
+				
+			if(IS_ERR(ft_popcorn)){
+				return PTR_ERR(ft_popcorn);
+			}
+
+			ret= create_replicas(current,pop->replication_degree, &ft_popcorn->id, &ft_popcorn->cold_replicas_head.replica_list_member);			
 			if(ret == 0){
 				current->replica_type= HOT_REPLICA;	
-				current->hot_replica.pid= current->pid;
-				current->hot_replica.kernel= _cpu;
-
+				ft_popcorn->hot_replica.pid= current->pid;
+				ft_popcorn->hot_replica.kernel= _cpu;
+				current->ft_popcorn= ft_popcorn;
+				current->ft_pid.ft_pop_id= ft_popcorn->id;
+				
 				printk("%s: Replica list of %s pid %d\n", __func__, current->comm, current->pid);
-				printk("hot: {pid: %d, kernel %d}, cold: ", current->hot_replica.pid, current->hot_replica.kernel);
-				list_for_each(iter, &current->cold_replicas_head) {
+				printk("hot: {pid: %d, kernel %d}, cold: ", ft_popcorn->hot_replica.pid, ft_popcorn->hot_replica.kernel);
+				list_for_each(iter, &ft_popcorn->cold_replicas_head.replica_list_member) {
                 			objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
 					printk("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
 				}
 				printk("\n");
 				
+			}
+			else{
+				put_ft_pop_rep(ft_popcorn);
 			}
 			
 		}
@@ -1248,17 +1400,24 @@ int maybe_create_replicas(void){
 				cold.kernel= _cpu;
 			
 				msg= (struct cold_replica_request*) current->useful;
-				INIT_LIST_HEAD(&current->cold_replicas_head);
 
-				ret= notify_hot_replica(&msg->hot_replica, &cold, &current->cold_replicas_head);
+				ft_popcorn= create_ft_pop_rep(pop->replication_degree, 0, &msg->ft_rep_id);
+
+	                        if(IS_ERR(ft_popcorn)){
+        	                        return PTR_ERR(ft_popcorn);
+                	        }
+
+				ret= notify_hot_replica(&msg->hot_replica, &cold, &ft_popcorn->cold_replicas_head.replica_list_member);
 	                        if(ret == 0){
         	                        current->replica_type= COLD_REPLICA;
-					current->hot_replica.pid= msg->hot_replica.pid;
-	                                current->hot_replica.kernel= msg->hot_replica.kernel;
+					ft_popcorn->hot_replica.pid= msg->hot_replica.pid;
+	                                ft_popcorn->hot_replica.kernel= msg->hot_replica.kernel;
+					current->ft_popcorn= ft_popcorn;
+					current->ft_pid.ft_pop_id= ft_popcorn->id;
 
 					printk("%s: Replica list of %s pid %d\n", __func__, current->comm, current->pid);
-                                	printk("hot: {pid: %d, kernel %d}, cold: ", current->hot_replica.pid, current->hot_replica.kernel);
-					list_for_each(iter, &current->cold_replicas_head) {
+                                	printk("hot: {pid: %d, kernel %d}, cold: ", ft_popcorn->hot_replica.pid, ft_popcorn->hot_replica.kernel);
+					list_for_each(iter, &ft_popcorn->cold_replicas_head.replica_list_member) {
                                         	objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
                                         	printk("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
                                 	}       
@@ -1266,6 +1425,10 @@ int maybe_create_replicas(void){
 		
 					pcn_kmsg_free_msg(msg);
                 	        }
+				else{
+        	                        put_ft_pop_rep(ft_popcorn);
+	                        }
+
 		
 			}
 		}		

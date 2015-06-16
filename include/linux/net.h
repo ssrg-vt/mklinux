@@ -20,6 +20,7 @@
 
 #include <linux/socket.h>
 #include <asm/socket.h>
+#include <linux/ft_replication.h>
 
 #define NPROTO		AF_MAX
 
@@ -149,6 +150,11 @@ struct socket {
 	struct file		*file;
 	struct sock		*sk;
 	const struct proto_ops	*ops;
+	
+#ifdef FT_POPCORN
+	int filter_type;
+	struct net_filter_info *filter;
+#endif
 };
 
 struct vm_area_struct;

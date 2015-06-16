@@ -1604,9 +1604,13 @@ struct task_struct {
 
 #ifdef FT_POPCORN
 	int replica_type;
-	struct replica_id hot_replica;
-	struct list_head cold_replicas_head;
-	void* useful;
+	/* NOTE that ft_pid is the identifier in Popcorn shared by all the replicas (same replica => same ft_pid)*/
+	struct ft_pid ft_pid;
+	int next_pid_to_use;
+	int next_id_resources;
+	void *useful;
+	
+	struct ft_pop_rep *ft_popcorn;
 #endif
 };
 

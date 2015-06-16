@@ -137,6 +137,7 @@
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
 #include <linux/net_tstamp.h>
+#include <linux/ft_replication.h>
 
 #include "net-sysfs.h"
 
@@ -2175,6 +2176,15 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 	int rc = NETDEV_TX_OK;
 	unsigned int skb_len;
 
+#ifdef FT_POPCORN
+	struct sock* sk= skb->sk;
+	if(sk){
+		sock_hold(sk);
+	}
+	else{
+		printk("WARNING: %s sending a skb without socket\n",__func__);
+	}
+#endif
 	if (likely(!skb->next)) {
 		u32 features;
 
@@ -2225,8 +2235,25 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 		}
 
 		skb_len = skb->len;
+
+#ifdef FT_POPCORN 
+		if(sk && net_ft_tx_filter(sk->sk_socket)){
+			rc = NETDEV_TX_OK;
+		}
+		else{
+			rc = ops->ndo_start_xmit(skb, dev);
+                	trace_net_dev_xmit(skb, rc, dev, skb_len);
+		}
+		
+		if(sk){
+			__sock_put(sk);
+		}				
+#else
+
 		rc = ops->ndo_start_xmit(skb, dev);
 		trace_net_dev_xmit(skb, rc, dev, skb_len);
+#endif
+
 		if (rc == NETDEV_TX_OK)
 			txq_trans_update(txq);
 		return rc;
