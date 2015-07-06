@@ -159,12 +159,12 @@ static struct rtnl_link_ops dummy_link_ops __read_mostly = {
 module_param(numdummies, int, 0);
 MODULE_PARM_DESC(numdummies, "Number of dummy pseudo devices");
 
-static int __init dummy_init_one(void)
+static int __init dummy_init_one(const char* name)
 {
 	struct net_device *dev_dummy;
 	int err;
 
-	dev_dummy = alloc_netdev(0, "dummy%d", dummy_setup);
+	dev_dummy = alloc_netdev(0, name, dummy_setup);
 	if (!dev_dummy)
 		return -ENOMEM;
 
@@ -187,7 +187,10 @@ static int __init dummy_init_module(void)
 	err = __rtnl_link_register(&dummy_link_ops);
 
 	for (i = 0; i < numdummies && !err; i++)
-		err = dummy_init_one();
+		err = dummy_init_one("dummy%d");
+#ifdef FT_POPCORN
+	err= dummy_init_one(DUMMY_DRIVER);
+#endif
 	if (err < 0)
 		__rtnl_link_unregister(&dummy_link_ops);
 	rtnl_unlock();

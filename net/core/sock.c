@@ -1067,6 +1067,9 @@ static struct sock *sk_prot_alloc(struct proto *prot, gfp_t priority,
 		sk_tx_queue_clear(sk);
 	}
 
+#ifdef FT_POPCORN
+	sk->sk_socket= NULL;
+#endif
 	return sk;
 
 out_free_sec:

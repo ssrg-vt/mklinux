@@ -256,6 +256,15 @@ void put_ft_pop_rep(struct ft_pop_rep* ft_pop){
         kref_put(&ft_pop->kref, release_ft_pop_rep);
 }
 
+/* Creates a new struct ft_pop_rep.
+ *
+ * If new_id is not 0, a new identificative is created, otherwise is used
+ * the one provided in id.
+ *
+ * NOTE: each struct ft_pop_rep is identified by the fields {id, kernel}. 
+ * Correspondig struct ft_pop_rep in other kernels (the ones created by the replicas)
+ * will have the same identificative.
+ */
 static struct ft_pop_rep* create_ft_pop_rep(int replication_degree, int new_id, struct ft_pop_rep_id* id){
 	struct ft_pop_rep *new_ft_pop= NULL;
 
@@ -494,13 +503,17 @@ static int create_hot_replica_answer_msg(struct replica_id* hot_replica_from, st
 
 }
 
+/* Checks if two struct ft_pid are equals.
+ *
+ * Returns 1 if they are equals, 0 otherwise.
+ */
 int are_ft_pid_equals(struct ft_pid* first, struct ft_pid* second){
 	int ret= 0;
 	int i;
 
 	/*Same ft_pop_rep_id??*/
 	if(first->ft_pop_id.kernel != second->ft_pop_id.kernel
-		|| first->ft_pop_id.kernel != second->ft_pop_id.kernel)
+		|| first->ft_pop_id.id != second->ft_pop_id.id)
 		goto out;
 
 	/*Same level??*/
@@ -512,7 +525,7 @@ int are_ft_pid_equals(struct ft_pid* first, struct ft_pid* second){
 		goto out;
 	}
 
-	/*Same child??*/
+	/*Same ancestors??*/
 	for(i=0;i<first->level;i++){
 		if(first->id_array[i]!=second->id_array[i])
 			goto out;
@@ -523,9 +536,59 @@ int are_ft_pid_equals(struct ft_pid* first, struct ft_pid* second){
 out:	return ret;
 }
 
+/* Converts a ft_pid struct in a string.
+ *
+ * Remember to kfree the returned string eventually.
+ */
+char* print_ft_pid(struct ft_pid* pid){
+	char *string;
+	const int size= 1024;
+	int i,pos;
+	
+	if(!pid)
+		return NULL;
+
+	string= kmalloc(size, GFP_ATOMIC);
+	if(!string)
+		return NULL;
+
+	pos= snprintf(string, size,"{ ft_pop_rep_id: {kernel %d, id %d}, level: %d", pid->ft_pop_id.kernel, pid->ft_pop_id.id, pid->level);
+	if(pos>=size)
+		goto out_clean;
+	
+	if(pid->level){
+		pos= pos+ snprintf(&string[pos], size-pos, ", id_array: [");
+		if(pos>=size)
+	                goto out_clean;
+
+		for(i=0;i<pid->level-1;i++){
+        		pos= pos+ snprintf(&string[pos], size-pos, " %d,",pid->id_array[i]);
+			if(pos>=size)
+                        	goto out_clean;
+		}
+
+		pos= pos+ snprintf(&string[pos], size-pos, " %d]}", pid->id_array[pid->level-1]);
+		if(pos>=size)
+                	goto out_clean;
+	}
+	else{
+		pos= pos+ snprintf(&string[pos], size-pos, "}");
+		if(pos>=size)
+                	goto out_clean;
+	}
+
+	return string;
+
+out_clean:
+	kfree(string);
+	printk("%s: buffer size too small\n", __func__);
+	return NULL;
+	
+}
+
 /* Set ft-popcorn fields of struct task_struct;
  * If popcorn_namespace is active, replica_type and ft_pid are
- * 
+ * defined here.
  */
 int copy_replication(unsigned long flags, struct task_struct *tsk){
 	struct popcorn_namespace *pop;

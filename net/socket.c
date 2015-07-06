@@ -1538,7 +1538,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	newsock->ops = sock->ops;
 
 #ifdef FT_POPCORN
-        err= create_filter_accept(newsock, sock);
+        err= create_filter_accept(current, newsock, sock);
         if (err)
                 goto out_put;
 #endif
@@ -3309,7 +3309,7 @@ int kernel_accept(struct socket *sock, struct socket **newsock, int flags)
 		goto done;
 
 #ifdef FT_POPCORN
-        err= create_filter_accept(*newsock, sock);
+        err= create_filter_accept(current, *newsock, sock);
         if (err)
                 goto done;
 #endif

@@ -58,6 +58,7 @@
 #include <linux/scatterlist.h>
 #include <linux/errqueue.h>
 #include <linux/prefetch.h>
+#include <linux/ft_replication.h>
 
 #include <net/protocol.h>
 #include <net/dst.h>
@@ -216,6 +217,9 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	skb->end = skb->tail + size;
 #ifdef NET_SKBUFF_DATA_USES_OFFSET
 	skb->mac_header = ~0U;
+#endif
+#ifdef FT_POPCORN
+	skb->sk= NULL;
 #endif
 
 	/* make sure we initialize shinfo sequentially */
@@ -418,6 +422,10 @@ static void skb_release_head_state(struct sk_buff *skb)
 #ifdef CONFIG_NET_CLS_ACT
 	skb->tc_verd = 0;
 #endif
+#endif
+
+#ifdef FT_POPCORN
+	skb->sk= NULL;
 #endif
 }
 

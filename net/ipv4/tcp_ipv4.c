@@ -83,6 +83,8 @@
 #include <linux/crypto.h>
 #include <linux/scatterlist.h>
 
+#include <linux/ft_replication.h>
+
 int sysctl_tcp_tw_reuse __read_mostly;
 int sysctl_tcp_low_latency __read_mostly;
 EXPORT_SYMBOL(sysctl_tcp_low_latency);
@@ -260,6 +262,10 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 							   usin->sin_port);
 
 	inet->inet_id = tp->write_seq ^ jiffies;
+
+#ifdef FT_POPCORN
+        ft_check_tcp_init_param(sk->sk_socket);
+#endif
 
 	err = tcp_connect(sk);
 	rt = NULL;
@@ -1651,6 +1657,12 @@ csum_err:
 	goto discard;
 }
 EXPORT_SYMBOL(tcp_v4_do_rcv);
+
+#ifdef FT_POPCORN
+struct sock* find_tcp_sock(struct sk_buff *skb, struct tcphdr *th){
+	return __inet_lookup_skb(&tcp_hashinfo, skb, th->source, th->dest);
+}
+#endif
 
 /*
  *	From tcp_input.c

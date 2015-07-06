@@ -72,6 +72,7 @@
 #include <linux/ipsec.h>
 #include <asm/unaligned.h>
 #include <net/netdma.h>
+#include <linux/ft_replication.h> 
 
 int sysctl_tcp_timestamps __read_mostly = 1;
 int sysctl_tcp_window_scaling __read_mostly = 1;
@@ -5556,13 +5557,25 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 		if (TCP_SKB_CB(skb)->ack_seq != tp->snd_nxt)
 			goto reset_and_undo;
 
+#ifdef FT_POPCORN
+		if(ft_check_tcp_timestamp(sk)){
+			if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr &&
+	                    !between(tp->rx_opt.rcv_tsecr, tp->retrans_stamp,
+        	                     tcp_time_stamp)) {
+                	        NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_PAWSACTIVEREJECTED);
+
+                        	goto reset_and_undo;
+                	}
+		}
+#else
 		if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr &&
 		    !between(tp->rx_opt.rcv_tsecr, tp->retrans_stamp,
 			     tcp_time_stamp)) {
 			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_PAWSACTIVEREJECTED);
+		
 			goto reset_and_undo;
 		}
-
+#endif
 		/* Now ACK is acceptable.
 		 *
 		 * "If the RST bit is set

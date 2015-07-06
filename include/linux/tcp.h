@@ -21,6 +21,8 @@
 #include <asm/byteorder.h>
 #include <linux/socket.h>
 
+#include <linux/ft_replication.h>
+
 struct tcphdr {
 	__be16	source;
 	__be16	dest;
@@ -494,6 +496,10 @@ static inline struct tcp_timewait_sock *tcp_twsk(const struct sock *sk)
 {
 	return (struct tcp_timewait_sock *)sk;
 }
+
+#ifdef FT_POPCORN
+struct sock* find_tcp_sock(struct sk_buff *skb, struct tcphdr *th);
+#endif
 
 #endif	/* __KERNEL__ */
 
