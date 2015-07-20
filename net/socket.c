@@ -480,10 +480,6 @@ static struct socket *sock_alloc(void)
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
 
-#ifdef FT_POPCORN
-	sock->filter_type= FT_FILTER_DISABLE;
-	sock->filter= NULL;
-#endif
 	percpu_add(sockets_in_use, 1);
 	return sock;
 }
@@ -533,14 +529,6 @@ void sock_release(struct socket *sock)
 		return;
 	}
 	sock->file = NULL;
-
-#ifdef FT_POPCORN
-	if(sock->filter){
-		put_ft_filter(sock->filter);
-		sock->filter= NULL;
-	}
-	sock->filter_type= FT_FILTER_DISABLE;
-#endif
 
 }
 EXPORT_SYMBOL(sock_release);
@@ -1075,11 +1063,11 @@ int sock_create_lite(int family, int type, int protocol, struct socket **res)
 	if (err)
 		goto out_release;
 
-#ifdef FT_POPCORN
+/*#ifdef FT_POPCORN
         err= create_filter(current, sock);
         if (err)
                 goto out_release;
-#endif
+#endif*/
 
 out:
 	*res = sock;
@@ -1290,11 +1278,11 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 	if (err)
 		goto out_sock_release;
 
-#ifdef FT_POPCORN
+/*#ifdef FT_POPCORN
 	err= create_filter(current, sock);
 	if (err)
 		goto out_sock_release;
-#endif
+#endif*/
 
 	*res = sock;
 
@@ -1537,12 +1525,12 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	newsock->type = sock->type;
 	newsock->ops = sock->ops;
 
-#ifdef FT_POPCORN
+/*#ifdef FT_POPCORN
         err= create_filter_accept(current, newsock, sock);
         if (err)
                 goto out_put;
 #endif
-
+*/
 	/*
 	 * We don't need try_module_get here, as the listening socket (sock)
 	 * has the protocol module (sock->ops->owner) held.
@@ -1575,6 +1563,12 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 		if (err < 0)
 			goto out_fd;
 	}
+
+/*#ifdef FT_POPCORN
+        err= create_filter_accept(current, newsock, sock);
+        if (err)
+                goto out_fd;
+#endif*/
 
 	/* File flags are not inherited via accept() unlike another OSes. */
 
@@ -3308,11 +3302,11 @@ int kernel_accept(struct socket *sock, struct socket **newsock, int flags)
 	if (err < 0)
 		goto done;
 
-#ifdef FT_POPCORN
+/*#ifdef FT_POPCORN
         err= create_filter_accept(current, *newsock, sock);
         if (err)
                 goto done;
-#endif
+#endif*/
 
 	err = sock->ops->accept(sock, *newsock, flags);
 	if (err < 0) {

@@ -26,6 +26,7 @@
 #include <net/tcp.h>
 #include <net/inet_common.h>
 #include <net/xfrm.h>
+#include <linux/ft_replication.h>
 
 int sysctl_tcp_syncookies __read_mostly = 1;
 EXPORT_SYMBOL(sysctl_tcp_syncookies);
@@ -737,10 +738,19 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
 	if (child == NULL)
 		goto listen_overflow;
 
+#ifdef FT_POPCORN
+	ft_grown_mini_filter(child, req);
+#endif
+
 	inet_csk_reqsk_queue_unlink(sk, req, prev);
 	inet_csk_reqsk_queue_removed(sk, req);
 
 	inet_csk_reqsk_queue_add(sk, req, child);
+
+#ifdef FT_POPCORN
+        ft_activate_grown_filter(child->ft_filter);
+#endif
+
 	return child;
 
 listen_overflow:

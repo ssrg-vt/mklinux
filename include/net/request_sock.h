@@ -21,6 +21,7 @@
 #include <linux/bug.h>
 
 #include <net/sock.h>
+#include <linux/ft_replication.h>
 
 struct request_sock;
 struct sk_buff;
@@ -65,20 +66,33 @@ struct request_sock {
 	struct sock			*sk;
 	u32				secid;
 	u32				peer_secid;
+#ifdef FT_POPCORN
+	struct net_filter_info*		ft_filter;
+#endif
 };
 
 static inline struct request_sock *reqsk_alloc(const struct request_sock_ops *ops)
 {
 	struct request_sock *req = kmem_cache_alloc(ops->slab, GFP_ATOMIC);
 
-	if (req != NULL)
+	if (req != NULL){
 		req->rsk_ops = ops;
-
+#ifdef FT_POPCORN               
+		req->ft_filter= NULL;
+#endif
+	}
 	return req;
 }
 
 static inline void __reqsk_free(struct request_sock *req)
 {
+#ifdef FT_POPCORN               
+	if(req->ft_filter){
+		put_ft_filter(req->ft_filter);
+		req->ft_filter= NULL;
+	}
+#endif
+
 	kmem_cache_free(req->rsk_ops->slab, req);
 }
 

@@ -127,7 +127,8 @@
 #include <net/cls_cgroup.h>
 
 #include <linux/filter.h>
-
+#include <linux/ft_replication.h>
+ 
 #include <trace/events/sock.h>
 
 #ifdef CONFIG_INET
@@ -1065,11 +1066,12 @@ static struct sock *sk_prot_alloc(struct proto *prot, gfp_t priority,
 		if (!try_module_get(prot->owner))
 			goto out_free_sec;
 		sk_tx_queue_clear(sk);
-	}
 
 #ifdef FT_POPCORN
-	sk->sk_socket= NULL;
+		sk->ft_filter= NULL;
 #endif
+	}
+
 	return sk;
 
 out_free_sec:
@@ -1157,6 +1159,12 @@ static void __sk_free(struct sock *sk)
 		RCU_INIT_POINTER(sk->sk_filter, NULL);
 	}
 
+#ifdef FT_POPCORN
+        if(sk->ft_filter){
+      		put_ft_filter(sk->ft_filter);
+		sk->ft_filter= NULL;                 
+        }
+#endif
 	sock_disable_timestamp(sk, SOCK_TIMESTAMP);
 	sock_disable_timestamp(sk, SOCK_TIMESTAMPING_RX_SOFTWARE);
 
@@ -2024,6 +2032,11 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 	smp_wmb();
 	atomic_set(&sk->sk_refcnt, 1);
 	atomic_set(&sk->sk_drops, 0);
+	
+#ifdef FT_POPCORN
+	create_filter(current, sk, GFP_KERNEL);	
+#endif
+
 }
 EXPORT_SYMBOL(sock_init_data);
 

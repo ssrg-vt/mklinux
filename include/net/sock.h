@@ -55,6 +55,7 @@
 #include <linux/uaccess.h>
 
 #include <linux/filter.h>
+#include <linux/ft_replication.h>
 #include <linux/rculist_nulls.h>
 #include <linux/poll.h>
 
@@ -282,6 +283,9 @@ struct sock {
 
 	struct sk_filter __rcu	*sk_filter;
 	struct socket_wq __rcu	*sk_wq;
+#ifdef FT_POPCORN
+        struct net_filter_info *ft_filter;
+#endif
 
 #ifdef CONFIG_NET_DMA
 	struct sk_buff_head	sk_async_wait_queue;

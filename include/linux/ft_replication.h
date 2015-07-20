@@ -30,6 +30,7 @@
 
 #define WAIT_ANSWER_TIMEOUT_SECOND 5
 #define WAIT_PCKT_MAX 5
+#define WAIT_CROSS_FILTER_MAX 1
 
 /*by seeing include/asm-generic/errno.h seems to be the next available...*/
 #define ENOFTREP 134
@@ -49,6 +50,7 @@
 #define FT_FILTER_HOT_REPLICA 0x4
 
 #define FT_FILTER_FAKE 0x8
+#define FT_FILTER_CHILD 0x10
 /****/
 
 /* Linux-like identifier for a replica.
@@ -115,7 +117,8 @@ struct sk_buff;
 struct ft_sk_buff_list{
 	struct list_head list_member;
 	struct sk_buff* skbuff;
-	unsigned long long pckt_id;
+	long long pckt_id;
+	__wsum csum;
 };
 
 struct socket;
@@ -129,8 +132,11 @@ struct tcp_init_param{
         __be32 daddr;
         __be32 saddr;
         __be32 rcv_saddr;
+	__u32 snt_isn;
+	__u32 snt_synack;
 };
 
+struct request_sock;
 /* struct used for networking filter on ft-popcorn.
  * 
  * If replicated, each socket will have its own reference to a filter
@@ -144,31 +150,38 @@ struct net_filter_info{
 	struct list_head list_member;
 	struct kref kref;
 	struct ft_pop_rep* ft_popcorn;
-	struct socket* ft_socket; 	
 	struct sock* ft_sock;
+	struct request_sock* ft_req; //to use only if it is still a minisocket at the place of ft_sock
+	
 	/* NOTE creator and id compose the identifier.
 	 * correspondig sockets between kernels will have the same 
 	 * idetifier.
+	 * In case the filter is a child filter, also daddr and dport 
+	 * of tcp param are part of the identifier.
 	 */
 	struct ft_pid creator;
 	int id;
 
 	volatile int type;
 	spinlock_t lock;
-	volatile unsigned long long local_tx;
-	volatile unsigned long long hot_tx;
-	unsigned long long local_rx;
-	unsigned long long hot_rx;
+	volatile long long local_tx;
+	volatile long long hot_tx;
+	long long local_rx;
+	long long hot_rx;
 	wait_queue_head_t* wait_queue;
 	struct workqueue_struct *rx_copy_wq;
 	struct ft_sk_buff_list skbuff_list;
 
 	volatile int hot_connect_id;
 	int local_connect_id;
+	volatile int hot_accept_id;
+        int local_accept_id;
 	struct tcp_init_param tcp_param;
 };
 void get_ft_filter(struct net_filter_info* filter);
 void put_ft_filter(struct net_filter_info* filter);
+char* print_filter_id(struct net_filter_info *filter);
+
 
 int maybe_create_replicas(void);
 struct task_struct;
@@ -176,13 +189,18 @@ int copy_replication(unsigned long flags, struct task_struct *tsk);
 
 #define DUMMY_DRIVER "ft_dummy_driver"
 
+struct tcp_request_sock;
+
 #define FT_TX_OK 0
 #define FT_TX_DROP 1
 int net_ft_tx_filter(struct sock* sk, struct sk_buff *skb);
 int net_ft_rx_filter(struct sk_buff *skb);
-int create_filter(struct task_struct *task, struct socket *sock);
-int create_filter_accept(struct task_struct *task, struct socket *newsock,struct socket *sock);
-void ft_check_tcp_init_param(struct socket* socket);
+int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority);
+//int create_filter_accept(struct task_struct *task, struct socket *newsock,struct socket *sock);
+void ft_grown_mini_filter(struct sock* sk, struct request_sock *req);
+int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_buff *skb);
+void ft_check_tcp_init_param(struct net_filter_info* filter, struct sock* sk, struct tcp_request_sock *req);
 int ft_check_tcp_timestamp(struct sock* sk);
+void ft_activate_grown_filter(struct net_filter_info* filter);
 
 #endif

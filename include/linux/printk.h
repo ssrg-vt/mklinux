@@ -148,6 +148,8 @@ static inline void setup_log_buf(int early)
 
 extern void dump_stack(void) __cold;
 
+void print_log_buf_info(void);
+
 #ifndef pr_fmt
 #define pr_fmt(fmt) fmt
 #endif

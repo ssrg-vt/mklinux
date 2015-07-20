@@ -296,6 +296,10 @@ int dmesg_restrict = 1;
 int dmesg_restrict;
 #endif
 
+void print_log_buf_info(){
+	printk("%s: LOG_BUF address: %p len: %d\n", __func__, log_buf, log_buf_len);
+}
+
 static int syslog_action_restricted(int type)
 {
 	if (dmesg_restrict)

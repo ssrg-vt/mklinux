@@ -27,6 +27,7 @@
 #include <net/tcp_states.h>
 #include <net/xfrm.h>
 #include <net/secure_seq.h>
+#include <linux/ft_replication.h>
 
 #include "ackvec.h"
 #include "ccid.h"

@@ -30,6 +30,7 @@
 #include <net/ip6_checksum.h>
 #include <net/xfrm.h>
 #include <net/secure_seq.h>
+#include <linux/ft_replication.h>
 
 #include "dccp.h"
 #include "ipv6.h"

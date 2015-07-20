@@ -264,7 +264,7 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	inet->inet_id = tp->write_seq ^ jiffies;
 
 #ifdef FT_POPCORN
-        ft_check_tcp_init_param(sk->sk_socket);
+        ft_check_tcp_init_param(sk->ft_filter, sk, NULL);
 #endif
 
 	err = tcp_connect(sk);
@@ -1298,6 +1298,11 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 	if (!req)
 		goto drop;
 
+#ifdef FT_POPCORN
+	if(ft_create_mini_filter(req, sk, skb))
+		goto drop_and_release;
+#endif
+
 #ifdef CONFIG_TCP_MD5SIG
 	tcp_rsk(req)->af_specific = &tcp_request_sock_ipv4_ops;
 #endif
@@ -1344,7 +1349,14 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 	if (want_cookie && !tmp_opt.saw_tstamp)
 		tcp_clear_options(&tmp_opt);
 
+#ifdef FT_POPCORN
+	if(req->ft_filter)
+		tmp_opt.tstamp_ok = 0;
+	else
+		tmp_opt.tstamp_ok = tmp_opt.saw_tstamp;
+#else
 	tmp_opt.tstamp_ok = tmp_opt.saw_tstamp;
+#endif
 	tcp_openreq_init(req, &tmp_opt, skb);
 
 	ireq = inet_rsk(req);
@@ -1407,9 +1419,15 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 		}
 
 		isn = tcp_v4_init_sequence(skb);
+
 	}
+
 	tcp_rsk(req)->snt_isn = isn;
 	tcp_rsk(req)->snt_synack = tcp_time_stamp;
+
+#ifdef FT_POPCORN
+	ft_check_tcp_init_param(req->ft_filter, NULL, tcp_rsk(req));
+#endif
 
 	if (tcp_v4_send_synack(sk, dst, req,
 			       (struct request_values *)&tmp_ext) ||
@@ -1417,6 +1435,7 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 		goto drop_and_free;
 
 	inet_csk_reqsk_queue_hash_add(sk, req, TCP_TIMEOUT_INIT);
+
 	return 0;
 
 drop_and_release:

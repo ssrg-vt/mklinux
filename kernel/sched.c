@@ -4344,7 +4344,7 @@ static noinline void __schedule_bug(struct task_struct *prev)
 
 	if (regs)
 		show_regs(regs);
-	else
+	//else
 		dump_stack();
 }
 
