@@ -199,7 +199,7 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority);
 //int create_filter_accept(struct task_struct *task, struct socket *newsock,struct socket *sock);
 void ft_grown_mini_filter(struct sock* sk, struct request_sock *req);
 int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_buff *skb);
-void ft_check_tcp_init_param(struct net_filter_info* filter, struct sock* sk, struct tcp_request_sock *req);
+void ft_check_tcp_init_param(struct net_filter_info* filter, struct sock* sk, struct request_sock *req);
 int ft_check_tcp_timestamp(struct sock* sk);
 void ft_activate_grown_filter(struct net_filter_info* filter);
 
