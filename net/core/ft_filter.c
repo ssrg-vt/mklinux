@@ -182,7 +182,7 @@ static struct workqueue_struct * add_wq_to_pool(struct workqueue_struct *wq, int
         if(!wq)
                 return ret;
         
-        new_entry= kmalloc(sizeof(*new_entry), GFP_KERNEL);
+        new_entry= kmalloc(sizeof(*new_entry), GFP_ATOMIC);
         if(!new_entry) 
                 return ret;
                 
@@ -813,8 +813,6 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority){
 
 		filter->id= task->next_id_resources++;
 
-		//filter_id_printed= print_filter_id(filter);
-                //filter->rx_copy_wq= create_singlethread_workqueue(filter_id_printed);
 		filter->rx_copy_wq= remove_wq_from_pool();
 	        if(filter->rx_copy_wq == NULL){
         	        printk("%s not enougth wq available\n", __func__);
@@ -955,7 +953,7 @@ static int check_msg(struct ft_sk_buff_list *copy, struct ft_sk_buff_list *copy2
 out:
         if(ret){
                 ft_filter_printed= print_filter_id(filter);
-                printk("%s ERROR in filter %s: csum of pckt id %lld does not match\n", __func__, ft_filter_printed, copy->pckt_id);
+                printk("%s ERROR in filter %s: csum of pckt id %lld does not match (tcp %d)\n", __func__, ft_filter_printed, copy->pckt_id, is_tcp);
                 if(ft_filter_printed)
                         kfree(ft_filter_printed);
 
@@ -1220,7 +1218,6 @@ static int tx_filter_cold(struct net_filter_info *filter, struct sk_buff *skb){
 	long long pckt_id;
 	struct ft_sk_buff_list *buff_entry, *old_buff_entry= NULL;
 	struct ft_sk_buff_tcp_list *buff_entry_tcp;
-	//unsigned long timeout = msecs_to_jiffies(WAIT_PCKT_MAX) + 1;
 	int sk_buff_added= 0;
 	__wsum csum;
 	char* filter_id_printed;
@@ -1237,12 +1234,6 @@ static int tx_filter_cold(struct net_filter_info *filter, struct sk_buff *skb){
 	spin_unlock(&filter->lock);
 
 	wake_up(filter->wait_queue);
-
-	/*if ( !in_atomic_preempt_off() && filter->hot_tx < pckt_id){
-		
-		wait_event_timeout(*filter->wait_queue, filter->hot_tx >= pckt_id, timeout);
-
-	}*/
 
 	if(filter->hot_tx < pckt_id){
 		if(filter->ft_sock->sk_protocol == IPPROTO_TCP){
@@ -1450,9 +1441,6 @@ static void fake_parameters(struct sk_buff *skb, struct net_filter_info *filter)
 
 		if(msg_changed){
 			 tcp_v4_send_check(filter->ft_sock, skb);
-                         /*tcp_header->check = csum_tcpudp_magic(network_header->saddr, network_header->daddr,
-                                           datalen, network_header->protocol,
-                                           csum_partial((char *)tcp_header, datalen, 0));*/
                          ip_send_check(network_header);
                  }
 
@@ -1627,8 +1615,14 @@ done:	spin_unlock(&filter->lock);
 		kfree(filter_id_printed);
 #endif
 
-	netif_receive_skb(skb);
+	/* the network stack rx path is thougth to be executed in softirq
+	 * context...
+	 */
 	
+	local_bh_disable();	
+	netif_receive_skb(skb);
+	local_bh_enable();
+
 	put_ft_filter(filter);
 
 out:	pcn_kmsg_free_msg(msg);
@@ -1895,232 +1889,6 @@ static void update_tcp_init_param(struct net_filter_info *filter, struct tcp_ini
 
 }
 
-/*static void update_tcp_init_param_accept(struct net_filter_info *filter, struct tcp_init_param *tcp_param){
-
-        filter->tcp_param.snt_isn = tcp_param->snt_isn;
-        filter->tcp_param.snt_synack = tcp_param->snt_synack;
-
-}
-
-static void update_tcp_init_param_connect(struct net_filter_info *filter, struct tcp_init_param *tcp_param){
-
-	filter->tcp_param.write_seq = tcp_param->write_seq;
-	filter->tcp_param.inet_id = tcp_param->inet_id;
- 	filter->tcp_param.sport = tcp_param->sport;
- 	filter->tcp_param.dport = tcp_param->dport;
- 	filter->tcp_param.daddr = tcp_param->daddr;
- 	filter->tcp_param.rcv_saddr = tcp_param->rcv_saddr;
-
-}*/
-
-/*static void update_init_parameters_from_work(struct work_struct* work){
-	struct tcp_param_work* my_work= (struct tcp_param_work*) work;
-	struct net_filter_info *filter= my_work->filter;
-	wait_queue_head_t *filter_wait_queue= NULL;
-	struct ft_pid creator;
-	int filter_id;
-	int is_child;
-	__be16 dport;
-	__be32 daddr;
-#if FT_FILTER_VERBOSE
-	char* filter_id_printed;
-#endif
-
-again:	spin_lock(&filter->lock);
-	if(filter->type & FT_FILTER_ENABLE){
-		
-		if(my_work->connect_id != -1){
-			if(filter->local_connect_id == my_work->connect_id-1
-					&& filter->hot_connect_id == my_work->connect_id-1){
-					
-					filter->hot_connect_id++;
-					update_tcp_init_param_connect(filter, &my_work->tcp_param);
-					filter_wait_queue= filter->wait_queue;
-#if FT_FILTER_VERBOSE
-                                        filter_id_printed= print_filter_id(filter);
-                                        FTPRINTK("%s: updating hot connect in filter %s\n\n", __func__, filter_id_printed);
-                                        if(filter_id_printed)
-                                                kfree(filter_id_printed);
-#endif
-
-			}
-			else{
-				spin_unlock(&filter->lock);
-				INIT_DELAYED_WORK( (struct delayed_work*)work, update_init_parameters_from_work);
-				queue_delayed_work(tx_notify_wq, (struct delayed_work*) work, 10);
-				return;
-			}
-		}
-		else{
-			if(filter->local_accept_id == my_work->accept_id-1
-                                        && filter->hot_accept_id == my_work->accept_id-1){
-                                        
-					filter->hot_accept_id++;
-					update_tcp_init_param_accept(filter, &my_work->tcp_param);
-                                        filter_wait_queue= filter->wait_queue;
-#if FT_FILTER_VERBOSE
-                                        filter_id_printed= print_filter_id(filter);
-                                        FTPRINTK("%s: updating hot accept in filter %s\n\n", __func__, filter_id_printed);
-                                        if(filter_id_printed)
-                                                kfree(filter_id_printed);
-#endif
-
-                        }
-                        else{
-                                spin_unlock(&filter->lock);
-				INIT_DELAYED_WORK( (struct delayed_work*)work, update_init_parameters_from_work);
-                                queue_delayed_work(tx_notify_wq, (struct delayed_work*) work, 10);
-                                return;
-                        }
-
-		}
-	}
-	else{
-		spin_unlock(&filter->lock);
-		if(!(filter->type & FT_FILTER_FAKE)){
-			printk("%s: ERROR filter is disabled but not fake\n", __func__);
-			goto out;
-		}
-		creator= filter->creator;
-		filter_id= filter->id;
-		is_child= filter->type & FT_FILTER_CHILD;
-		daddr= filter->tcp_param.daddr;
-		dport= filter->tcp_param.dport;
-		
-		put_ft_filter(filter);
-		filter= find_and_get_filter(&creator, filter_id, is_child, daddr, dport);
-		if(!filter || !(filter->type & FT_FILTER_ENABLE)){
-                        printk("%s: ERROR filter not available\n", __func__);
-        		if(filter)
-				put_ft_filter(filter);
-
-	                goto out;
-                }
-
-		goto again;
-
-	}
-	spin_unlock(&filter->lock);
-	
-	if(filter_wait_queue)
-		wake_up(filter_wait_queue);
-	
-	put_ft_filter(filter);
-
-out:	
-	kfree(work);
-}
-*/
-/*static int handle_tcp_init_param(struct pcn_kmsg_message* inc_msg){
-	struct tcp_init_param_msg* msg= (struct tcp_init_param_msg*) inc_msg;
-	struct net_filter_info *filter;
-	wait_queue_head_t *filter_wait_queue= NULL;
-        int err= 0;
-        int removing_fake= 0;
-#if FT_FILTER_VERBOSE
-        char* ft_pid_printed;
-	//char* filter_id_printed;
-#endif
-	struct tcp_param_work* work;
-
-again:  filter= find_and_get_filter(&msg->creator, msg->filter_id, msg->is_child, msg->daddr, msg->dport);
-        if(filter){
-
-                spin_lock(&filter->lock);
-                if(filter->type & FT_FILTER_ENABLE){
-			if(msg->connect_id != -1){
-				if(filter->local_connect_id == msg->connect_id-1
-					&& filter->hot_connect_id == msg->connect_id-1){
-					
-					update_tcp_init_param_connect(filter, &msg->tcp_param);
-					filter->hot_connect_id++;
-					filter_wait_queue= filter->wait_queue;
-
-				}
-				else{
-					spin_unlock(&filter->lock);
-
-					work= kmalloc(sizeof(*work), GFP_ATOMIC);
-					if(!work){
-						err= -ENOMEM;
-						put_ft_filter(filter);
-						goto out;
-					}
-					INIT_WORK( (struct work_struct*)work, update_init_parameters_from_work);
-					work->filter= filter;
-					work->connect_id= msg->connect_id;
-					work->accept_id= msg->accept_id;
-					work->tcp_param= msg->tcp_param;
-					
-					queue_work(tx_notify_wq, (struct work_struct*)work);
-					goto out;
-				}
-			}
-			else{
-				if(filter->local_accept_id == msg->accept_id-1
-                                        && filter->hot_accept_id == msg->accept_id-1){
-					
-					update_tcp_init_param_accept(filter, &msg->tcp_param);
-           				filter->hot_accept_id++;
-                                        filter_wait_queue= filter->wait_queue;
-
-	                        }
-        	                else{
-					spin_unlock(&filter->lock);
-
-                	                work= kmalloc(sizeof(*work), GFP_ATOMIC);
-                                        if(!work){
-                                                err= -ENOMEM;
-                                                put_ft_filter(filter);
-                                                goto out;
-                                        }
-                                        INIT_WORK( (struct work_struct*)work, update_init_parameters_from_work);
-                                        work->filter= filter;
-                                        work->connect_id= msg->connect_id;
-                                        work->accept_id= msg->accept_id;
-                                        work->tcp_param= msg->tcp_param;
-
-                                        queue_work(tx_notify_wq, (struct work_struct*)work);
-					goto out;
-                        	}
-
-			}
-                }
-                else{
-                        removing_fake= 1;
-                }
-                spin_unlock(&filter->lock);
-
-		if(filter_wait_queue){
-			wake_up(filter_wait_queue);
-			filter_wait_queue= NULL;
-		}
-
-                put_ft_filter(filter);
-
-                if(removing_fake){
-                        removing_fake= 0;
-                        goto again;
-                }
-        }
-        else{
-#if FT_FILTER_VERBOSE
-                ft_pid_printed= print_ft_pid(&msg->creator);
-                FTPRINTK("%s: creating fake filter for ft_pid %s id %d\n\n", __func__, ft_pid_printed, msg->filter_id);
-                if(ft_pid_printed)
-                        kfree(ft_pid_printed);
-#endif
-
-                err= create_fake_filter(&msg->creator, msg->filter_id, msg->is_child, msg->daddr, msg->dport);
-                if(!err)
-                        goto again;
-        }
-
-out:
-        pcn_kmsg_free_msg(msg);
-	return err;
-}
-*/
 static int handle_tcp_init_param(struct pcn_kmsg_message* inc_msg){
 	struct tcp_init_param_msg* msg= (struct tcp_init_param_msg*) inc_msg;
 	struct net_filter_info *filter;
@@ -2300,60 +2068,6 @@ static void send_tcp_init_param(struct net_filter_info* filter, struct sock* sk,
 	}
 }
 
-
-/*void wait_tcp_init_param_accept(struct net_filter_info* filter, struct tcp_request_sock *req){
-
-again:  spin_lock(&filter->lock);
-
-        if(filter->hot_accept_id == filter->local_accept_id+1){
-                req->snt_isn= filter->tcp_param.snt_isn;
-                req->snt_synack= filter->tcp_param.snt_synack;
-                filter->local_accept_id++;
-        }
-        else{
-                spin_unlock(&filter->lock);
-		
-                wait_event(*filter->wait_queue, filter->hot_accept_id== filter->local_accept_id+1);
-                goto again;
-        }
-
-        spin_unlock(&filter->lock);
-}*/
-
-/*void wait_tcp_init_param_connect(struct net_filter_info* filter, struct sock* sk){
-	struct inet_sock *inet = inet_sk(sk);
-	struct tcp_sock *tp = tcp_sk(sk);
-
-again:	spin_lock(&filter->lock);
-
-	if(filter->hot_connect_id == filter->local_connect_id+1){
-		tp->write_seq= filter->tcp_param.write_seq;
-		inet->inet_id= filter->tcp_param.inet_id;
-		filter->local_connect_id++;
-	} 
-	else{
-		spin_unlock(&filter->lock);
-		wait_event(*filter->wait_queue, filter->hot_connect_id == filter->local_connect_id+1);
-		goto again;
-	}
-
-	spin_unlock(&filter->lock);
-}*/
-
-/*void wait_tcp_init_param(struct net_filter_info* filter, struct sock* sk, struct request_sock *req){
-
-	if (req) {
-                wait_tcp_init_param_accept(filter, req);
-                return;
-        }
-
-        if (sk){
-                wait_tcp_init_param_connect(filter, sk);
-                return;
-        }
-
-}*/
-
 void ft_change_tcp_init_connect(struct sock* sk){
 	struct inet_sock *inet = inet_sk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -2382,9 +2096,6 @@ void ft_check_tcp_init_param(struct net_filter_info* filter, struct sock* sk, st
 		if(filter->type & FT_FILTER_HOT_REPLICA){
 			send_tcp_init_param(filter, sk, req);
 		}
-	/*	else{
-			wait_tcp_init_param(filter, sk, req);
-		}*/
 	}
 
 }
