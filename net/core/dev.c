@@ -2188,7 +2188,7 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
                 	sock_hold(sk);
         	}
         	else{
-                	printk("WARNING: %s sending a skb without sock struct from pid %d\n",__func__, current->pid);
+                	//printk("WARNING: %s sending a skb without sock struct from pid %d\n",__func__, current->pid);
         	}
 #endif
 		/*
@@ -2293,7 +2293,7 @@ gso:
                 	sock_hold(sk);
         	}
         	else{
-                	printk("WARNING: %s sending a skb without sock struct from pid %d\n",__func__, current->pid);
+                	//printk("WARNING: %s sending a skb without sock struct from pid %d\n",__func__, current->pid);
         		
 		}
 

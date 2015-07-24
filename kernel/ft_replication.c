@@ -607,20 +607,33 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 		}
 		else{
 		
-			/* All forked threads should have the same ft_popcorn because all have as ancestor 
-			 * the same hot/cold replica.
-			 * The same shuould apply for new processes. However now the initial hot/cold 
-			 * replica can exit indipendently by this new process. Should we recompute all the 
-			 * replica ids for this new process???
-			 */
 			if(!current->ft_popcorn){
-				//BUG();
-				printk("%s: ERROR forking (pid %d replica_type %d) in popcorn namespace but ft_popcorn is NULL ",__func__, current->pid, current->replica_type);
-				return -1;
+				/* assosiated to an active popcorn namespace (=>with a root)
+				 * but it is not the root that is forking me, and any of my ancestors
+				 * exeve on a new program (otherwise ft_popcorn would be != NULL)...
+				 * not sure what to do about them.
+				 * we can let them be not_replicated to avoid explosion of replica, but this can be changed
+				 */	
+	
+				tsk->ft_pid.level= 0;
+		                tsk->ft_pid.id_array= NULL;
+                		tsk->next_pid_to_use= 0;
+                		tsk->next_id_resources= 0;
+                		tsk->replica_type= NOT_REPLICATED;
+                		tsk->ft_popcorn= NULL;
+
+				return 0;
 			}
+
+			/* All forked threads should have the same ft_popcorn because all have as ancestor 
+                         * the same hot/cold replica.
+                         * The same shuould apply for new processes. However now the initial hot/cold 
+                         * replica can exit indipendently by this new process. Should we recompute all the 
+                         * replica ids for this new process???
+                         */
 	
 			tsk->ft_popcorn= current->ft_popcorn; 
-			if(current->tgid != tsk->tgid){
+			if(!(flags & CLONE_THREAD)){
 				get_ft_pop_rep(tsk->ft_popcorn);
 				
 				ancestor= find_task_by_vpid(current->tgid);
@@ -628,12 +641,14 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 					|| ancestor->replica_type == NEW_HOT_REPLICA_DESCENDANT){
 					
 					tsk->replica_type= NEW_HOT_REPLICA_DESCENDANT;
+					printk("%s: created NEW_HOT_REPLICA_DESCENDANT from (pid %d tgid %d)\n",__func__, tsk->pid, tsk->tgid);
 				}
 				else{
 					if(ancestor->replica_type == COLD_REPLICA
                                         	|| ancestor->replica_type == NEW_COLD_REPLICA_DESCENDANT){
                                         
 						tsk->replica_type= NEW_COLD_REPLICA_DESCENDANT;
+						printk("%s: created NEW_COLD_REPLICA_DESCENDANT from (pid %d tgid %d)\n", __func__, tsk->pid, tsk->tgid);
                                 	}
 					else{
 						//BUG();
@@ -644,6 +659,7 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			}
 			else{
 				tsk->replica_type= REPLICA_DESCENDANT;
+				printk("%s: created REPLICA_DESCENDANT from (pid %d tgid %d)\n", __func__, tsk->pid, tsk->tgid);
 			}
 
 			/* Compute the ft_pid.

@@ -30,6 +30,7 @@
 #include <linux/crypto.h>
 #include <linux/cryptohash.h>
 #include <linux/kref.h>
+#include <linux/ft_replication.h>
 
 #include <net/inet_connection_sock.h>
 #include <net/inet_timewait_sock.h>
@@ -119,15 +120,28 @@ extern void tcp_time_wait(struct sock *sk, int state, int timeo);
 #define TCP_DELACK_MIN	4U
 #define TCP_ATO_MIN	4U
 #endif
-#define TCP_RTO_MAX	((unsigned)(120*HZ))
-#define TCP_RTO_MIN	((unsigned)(HZ/5))
-#define TCP_TIMEOUT_INIT ((unsigned)(1*HZ))	/* RFC2988bis initial RTO value	*/
-#define TCP_TIMEOUT_FALLBACK ((unsigned)(3*HZ))	/* RFC 1122 initial RTO value, now
+#ifdef FT_POPCORN
+#define TCP_RTO_MAX	((unsigned)((120*HZ)*10))
+#define TCP_RTO_MIN	((unsigned)((HZ/5)*10))
+#define TCP_TIMEOUT_INIT ((unsigned)((1*HZ)*10))	/* RFC2988bis initial RTO value	*/
+#define TCP_TIMEOUT_FALLBACK ((unsigned)((3*HZ)*10))	/* RFC 1122 initial RTO value, now
 						 * used as a fallback RTO for the
 						 * initial data transmission if no
 						 * valid RTT sample has been acquired,
 						 * most likely due to retrans in 3WHS.
 						 */
+#else
+#define TCP_RTO_MAX     ((unsigned)(120*HZ))
+#define TCP_RTO_MIN     ((unsigned)(HZ/5))
+#define TCP_TIMEOUT_INIT ((unsigned)(1*HZ))     /* RFC2988bis initial RTO value */
+#define TCP_TIMEOUT_FALLBACK ((unsigned)(3*HZ)) /* RFC 1122 initial RTO value, now
+                                                 * used as a fallback RTO for the
+                                                 * initial data transmission if no
+                                                 * valid RTT sample has been acquired,
+                                                 * most likely due to retrans in 3WHS.
+                                                 */
+
+#endif
 
 #define TCP_RESOURCE_PROBE_INTERVAL ((unsigned)(HZ/2U)) /* Maximal interval between probes
 					                 * for local resources.

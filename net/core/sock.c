@@ -1161,7 +1161,7 @@ static void __sk_free(struct sock *sk)
 
 #ifdef FT_POPCORN
         if(sk->ft_filter){
-      		put_ft_filter(sk->ft_filter);
+		put_ft_filter(sk->ft_filter);
 		sk->ft_filter= NULL;                 
         }
 #endif
