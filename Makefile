@@ -1,7 +1,7 @@
 VERSION = 3
 PATCHLEVEL = 2
 SUBLEVEL = 14
-EXTRAVERSION = popcorn_ben
+EXTRAVERSION = 
 NAME = Saber-toothed Squirrel
 
 # *DOCUMENTATION*

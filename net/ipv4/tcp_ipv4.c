@@ -1426,7 +1426,7 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 	tcp_rsk(req)->snt_synack = tcp_time_stamp;
 
 #ifdef FT_POPCORN
-	ft_check_tcp_init_param(req->ft_filter, NULL, tcp_rsk(req));
+	ft_check_tcp_init_param(req->ft_filter, NULL, req);
 #endif
 
 	if (tcp_v4_send_synack(sk, dst, req,
