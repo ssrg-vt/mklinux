@@ -480,6 +480,17 @@ ENTRY(system_call_after_swapgs)
 	movq  %rcx,RIP-ARGOFFSET(%rsp)
 	CFI_REL_OFFSET rip,RIP-ARGOFFSET
 	GET_THREAD_INFO(%rcx)
+
+	movq  %rdx,TI_task(%rcx)
+	testl $1,task_hooksys(%rdx)
+	jz system_call_continue
+	SAVE_REST
+	FIXUP_TOP_OF_STACK %rdi
+	movq %rsp,%rdi
+	call syscall_hook_enter
+	RESTORE_REST
+system_call_continue:
+
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
 	jnz tracesys
 system_call_fastpath:
