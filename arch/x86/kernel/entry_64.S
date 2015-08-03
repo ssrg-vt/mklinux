@@ -481,8 +481,10 @@ ENTRY(system_call_after_swapgs)
 	CFI_REL_OFFSET rip,RIP-ARGOFFSET
 	GET_THREAD_INFO(%rcx)
 
-	movq  %rdx,TI_task(%rcx)
+	push %rdx
+	movq TI_task(%rcx),%rdx
 	testl $1,task_hooksys(%rdx)
+	pop %rdx
 	jz system_call_continue
 	SAVE_REST
 	FIXUP_TOP_OF_STACK %rdi
