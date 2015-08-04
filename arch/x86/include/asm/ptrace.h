@@ -150,7 +150,7 @@ void signal_fault(struct pt_regs *regs, void __user *frame, char *where);
 extern long syscall_trace_enter(struct pt_regs *);
 extern void syscall_trace_leave(struct pt_regs *);
 
-extern void syscall_hook_enter(struct pt_regs *);
+extern long syscall_hook_enter(struct pt_regs *);
 extern void syscall_hook_leave(struct pt_regs *);
 
 static inline unsigned long regs_return_value(struct pt_regs *regs)

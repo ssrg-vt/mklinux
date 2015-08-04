@@ -1535,9 +1535,12 @@ static int __init ft_replication_init(void) {
 
 late_initcall(ft_replication_init);
 
-void syscall_hook_enter(struct pt_regs *regs)
+long syscall_hook_enter(struct pt_regs *regs)
 {
-	trace_printk("task %p syscall %ld[%ld]\n", current, regs->ax, regs->orig_ax);
+	//printk(KERN_EMERG
+	trace_printk(
+		"task %p %s %ld[%ld]\n", current, current->comm, regs->ax, regs->orig_ax);
+	return regs->orig_ax;
 }
 void syscall_hook_exit(struct pt_regs *regs)
 {

@@ -486,11 +486,15 @@ ENTRY(system_call_after_swapgs)
 	testl $1,task_hooksys(%rdx)
 	pop %rdx
 	jz system_call_continue
+
 	SAVE_REST
+	movq $-ENOSYS,RAX(%rsp)
 	FIXUP_TOP_OF_STACK %rdi
 	movq %rsp,%rdi
 	call syscall_hook_enter
+	LOAD_ARGS ARGOFFSET,1
 	RESTORE_REST
+	GET_THREAD_INFO(%rcx)
 system_call_continue:
 
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
