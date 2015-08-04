@@ -29,10 +29,17 @@
 
 void common(void) {
 	BLANK();
+	OFFSET(TI_task, thread_info, task);
 	OFFSET(TI_flags, thread_info, flags);
 	OFFSET(TI_status, thread_info, status);
 	OFFSET(TI_addr_limit, thread_info, addr_limit);
 	OFFSET(TI_preempt_count, thread_info, preempt_count);
+
+//#ifdef FT_POPCORN
+#if 1
+	BLANK();
+	OFFSET(task_hooksys, task_struct, replica_type);
+#endif
 
 	BLANK();
 	OFFSET(crypto_tfm_ctx_offset, crypto_tfm, __crt_ctx);
