@@ -1514,6 +1514,8 @@ int maybe_create_replicas(void){
 		}		
 	}	
 
+	if(current->replica_type != NOT_REPLICATED)
+		printk("comm: %s pid %d\n", current->comm, current->pid);
 	return ret;
 }
 
