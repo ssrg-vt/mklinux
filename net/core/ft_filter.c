@@ -1245,6 +1245,16 @@ static int tx_filter_hot(struct net_filter_info *filter, struct sk_buff* skb){
 
         queue_work(tx_notify_wq, (struct work_struct*)work);
 
+	char* ft_pid_printed= print_ft_pid(&current->ft_pid);
+        char* filter_id_printed= print_filter_id(filter);
+        printk("%s: pid %d ft_pid %s tx packet %llu csum %d in filter %s\n", __func__, current->pid, ft_pid_printed, pckt_id, work->csum, filter_id_printed);
+        if(filter->ft_sock->sk_protocol == IPPROTO_TCP)
+                printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
+        if(ft_pid_printed)
+                kfree(ft_pid_printed);
+        if(filter_id_printed)
+                kfree(filter_id_printed);
+
 out:        
 	return ret;
 
@@ -1342,7 +1352,7 @@ static int tx_filter_cold(struct net_filter_info *filter, struct sk_buff *skb){
 
 	
 
-#if FT_FILTER_VERBOSE
+/*#if FT_FILTER_VERBOSE
         ft_pid_printed= print_ft_pid(&current->ft_pid);
         filter_id_printed= print_filter_id(filter);
         FTPRINTK("%s: pid %d ft_pid %s tx packet %llu csum %d in filter %s\n", __func__, current->pid, ft_pid_printed, pckt_id, csum, filter_id_printed);
@@ -1352,7 +1362,16 @@ static int tx_filter_cold(struct net_filter_info *filter, struct sk_buff *skb){
                 kfree(ft_pid_printed);
         if(filter_id_printed)
                 kfree(filter_id_printed);
-#endif
+#endif*/
+        char* ft_pid_printed= print_ft_pid(&current->ft_pid);
+        filter_id_printed= print_filter_id(filter);
+        printk("%s: pid %d ft_pid %s tx packet %llu csum %d in filter %s\n", __func__, current->pid, ft_pid_printed, pckt_id, csum, filter_id_printed);
+        if(filter->ft_sock->sk_protocol == IPPROTO_TCP)
+                printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
+        if(ft_pid_printed)
+                kfree(ft_pid_printed);
+        if(filter_id_printed)
+                kfree(filter_id_printed);
 
 	wake_up(filter->wait_queue);
 	return FT_TX_DROP;
