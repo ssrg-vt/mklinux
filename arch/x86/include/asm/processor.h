@@ -882,8 +882,9 @@ extern unsigned long thread_saved_pc(struct task_struct *tsk);
 /*
  * User space process size. 47bits minus one guard page.
  */
-#define TASK_SIZE_MAX	((1UL << 47) - PAGE_SIZE)
-
+//#define TASK_SIZE_MAX	((1UL << 47) - PAGE_SIZE)
+#define TASK_SIZE_MAX   ((1UL << 39) - PAGE_SIZE)
+ 
 /* This decides where the kernel will search for a free chunk of vm
  * space during mmap's.
  */
@@ -895,8 +896,8 @@ extern unsigned long thread_saved_pc(struct task_struct *tsk);
 #define TASK_SIZE_OF(child)	((test_tsk_thread_flag(child, TIF_ADDR32)) ? \
 					IA32_PAGE_OFFSET : TASK_SIZE_MAX)
 
-#define STACK_TOP		(1UL << 39) //TASK_SIZE
-#define STACK_TOP_MAX		(1UL << 39) //TASK_SIZE_MAX
+#define STACK_TOP		TASK_SIZE /*Ajith (1UL << 39) */
+#define STACK_TOP_MAX		TASK_SIZE_MAX /*Ajith (1UL << 39) */
 
 #define INIT_THREAD  { \
 	.sp0 = (unsigned long)&init_stack + sizeof(init_stack) \

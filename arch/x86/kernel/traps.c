@@ -303,14 +303,20 @@ do_general_protection(struct pt_regs *regs, long error_code)
 
 	tsk = current;
 	if (!user_mode(regs)) {
-		if (fixup_exception(regs))
+		if (fixup_exception(regs)) {
+printk(KERN_EMERG"%s: fixup exception\n", __func__);
+dump_stack();
 			goto exit;
+}
 
 		tsk->thread.error_code = error_code;
 		tsk->thread.trap_nr = X86_TRAP_GP;
 		if (notify_die(DIE_GPF, "general protection fault", regs, error_code,
-			       X86_TRAP_GP, SIGSEGV) != NOTIFY_STOP)
+			       X86_TRAP_GP, SIGSEGV) != NOTIFY_STOP) {
+printk(KERN_EMERG"%s: general protection fault %d\n", __func__, error_code);
 			die("general protection fault", regs, error_code);
+}
+printk(KERN_EMERG"%s: without notify\n", __func__);
 		goto exit;
 	}
 
@@ -325,9 +331,21 @@ do_general_protection(struct pt_regs *regs, long error_code)
 		print_vma_addr(" in ", regs->ip);
 		pr_cont("\n");
 	}
+else
+printk(KERN_EMERG"%s: segmentation fault\n", __func__);
 
 	force_sig(SIGSEGV, tsk);
 exit:
+
+{
+unsigned long fs, gs, fsindex, gsindex;
+rdmsrl(MSR_FS_BASE, fs);
+rdmsrl(MSR_GS_BASE, gs);
+savesegment(fs, fsindex);
+savesegment(gs, gsindex);
+printk(KERN_EMERG"%s: %s(%s) fs %lx %lx gs %lx %lx\n",
+        __func__, current->comm, tsk->comm, fs, fsindex, gs, gsindex);
+}
 	exception_exit(prev_state);
 }
 

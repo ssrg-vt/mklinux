@@ -3787,6 +3787,8 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 		}
 	}
 #else
+// THIS IS THE PATH CHOOSEN IN ARM-x86
+
 	// TODO if is migrating out of this core put cpus_allowed all to ->0 (or is not required?!)
 	// TODO if we are doing that maybe schedule will not schedule the task back anymore!!!
 	/* the following is similar to intersecting on local */
@@ -3872,6 +3874,15 @@ sleep_again:
 					}
 
 				//synchronize_migrations(current->tgroup_home_cpu,current->tgroup_home_id );
+
+unsigned long fs, gs, fsindex, gsindex;
+rdmsrl(MSR_FS_BASE, fs); 
+rdmsrl(MSR_GS_BASE, gs);
+savesegment(fs, fsindex);
+savesegment(gs, gsindex);
+printk(KERN_EMERG"%s: %s fs %lx %lx gs %lx %lx\n",
+	__func__, current->comm, fs, fsindex, gs, gsindex);
+
 
 				return task_pt_regs(current)->orig_ax;
 

@@ -595,9 +595,12 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	long  string_table_length = 0; 
 	struct elf_shdr *shdr = NULL;
 
+printk(KERN_EMERG"%s: IN\n", __func__);
+
 	loc = kmalloc(sizeof(*loc), GFP_KERNEL);
 	if (!loc) {
 		retval = -ENOMEM;
+printk(KERN_EMERG"%s: failed kmalloc\n", __func__);
 		goto out_ret;
 	}
 	
@@ -606,33 +609,48 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 	retval = -ENOEXEC;
 	/* First of all, some simple consistency checks */
-	if (memcmp(loc->elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
+	if (memcmp(loc->elf_ex.e_ident, ELFMAG, SELFMAG) != 0) {
+printk(KERN_EMERG"%s: failed memcmp elf_ex.e\n", __func__);
 		goto out;
+	}
 
-	if (loc->elf_ex.e_type != ET_EXEC && loc->elf_ex.e_type != ET_DYN)
+	if (loc->elf_ex.e_type != ET_EXEC && loc->elf_ex.e_type != ET_DYN) {	
+printk(KERN_EMERG"%s: failed loc->elf_ex.e\n", __func__);
 		goto out;
-	if (!elf_check_arch(&loc->elf_ex))
+	}
+	if (!elf_check_arch(&loc->elf_ex)) {	
+printk(KERN_EMERG"%s: failed elf_check_arch\n", __func__);
 		goto out;
-	if (!bprm->file->f_op || !bprm->file->f_op->mmap)
+	}
+	if (!bprm->file->f_op || !bprm->file->f_op->mmap) {
+printk(KERN_EMERG"%s: failed bprm->file->f_op\n", __func__);
 		goto out;
+	}
 
 	/* Now read in all of the header information */
-	if (loc->elf_ex.e_phentsize != sizeof(struct elf_phdr))
+	if (loc->elf_ex.e_phentsize != sizeof(struct elf_phdr)) {
+printk(KERN_EMERG"%s: failed e_phentsize\n", __func__);
 		goto out;
+	}
 	if (loc->elf_ex.e_phnum < 1 ||
-	 	loc->elf_ex.e_phnum > 65536U / sizeof(struct elf_phdr))
+	 	loc->elf_ex.e_phnum > 65536U / sizeof(struct elf_phdr)) {
+printk(KERN_EMERG"%s: failed e_phnum <1\n", __func__);
 		goto out;
+	}
 	size = loc->elf_ex.e_phnum * sizeof(struct elf_phdr);
 	retval = -ENOMEM;
 	elf_phdata = kmalloc(size, GFP_KERNEL);
-	if (!elf_phdata)
+	if (!elf_phdata) {
+printk(KERN_EMERG"%s: failed elf_phdata\n", __func__);
 		goto out;
+	}
 
 	retval = kernel_read(bprm->file, loc->elf_ex.e_phoff,
 			     (char *)elf_phdata, size);
 	if (retval != size) {
 		if (retval >= 0)
 			retval = -EIO;
+printk(KERN_EMERG"%s: failed kernel_read\n", __func__);
 		goto out_free_ph;
 	}
 
@@ -650,14 +668,14 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	i = loc->elf_ex.e_shnum * sizeof(struct elf_shdr);
 
 	shdr = (struct elf_shdr *) kmalloc(i, GFP_KERNEL);
-	if(shdr == NULL){
-		printk("%s:%d - Failed to allocate memory\n", __func__, __LINE__);
+	if(shdr == NULL) {
+printk(KERN_EMERG"%s:%d - Failed to allocate memory\n", __func__, __LINE__);
 		return -1;
 	}
 
 	retval = kernel_read(bprm->file, loc->elf_ex.e_shoff, shdr, i);
 	if (retval != i) {
-		   printk("Error in load elf 1\n");//goto exit_read;//TODO
+		   printk(KERN_EMERG"Error in load elf 1\n");//goto exit_read;//TODO
 	}
 
 	/* Ajith - Creating string table for elf sections */
@@ -666,14 +684,14 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		i = espnt->sh_size;
 
 		string_table = kmalloc(i, GFP_KERNEL);
-		if(string_table == NULL){
-               		printk("%s:%d - Failed to allocate memory\n", __func__, __LINE__);
+		if(string_table == NULL) {
+printk(KERN_EMERG"%s:%d - Failed to allocate memory string table\n", __func__, __LINE__);
         	        return -1;
 	        }
 
 		retval = kernel_read(bprm->file, espnt->sh_offset, string_table, i);
 		if (retval != i) {
-		   printk("Error in load elf 2\n");//goto exit_read;//TODO
+printk(KERN_EMERG"Error in load elf 2\n");//goto exit_read;//TODO
 		}    
 		string_table_length = string_table != NULL ? i : 0;
 	}
@@ -686,14 +704,18 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			 */
 			retval = -ENOEXEC;
 			if (elf_ppnt->p_filesz > PATH_MAX || 
-			    elf_ppnt->p_filesz < 2)
+			    elf_ppnt->p_filesz < 2) {
+printk(KERN_EMERG"%s: failed elf_ppnt->p_filesz\n",__func__);
 				goto out_free_ph;
+			}
 
 			retval = -ENOMEM;
 			elf_interpreter = kmalloc(elf_ppnt->p_filesz,
 						  GFP_KERNEL);
-			if (!elf_interpreter)
+			if (!elf_interpreter) {
+printk(KERN_EMERG"%s: failed elf_interpreter\n",__func__);
 				goto out_free_ph;
+			}
 
 			retval = kernel_read(bprm->file, elf_ppnt->p_offset,
 					     elf_interpreter,
@@ -701,17 +723,22 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			if (retval != elf_ppnt->p_filesz) {
 				if (retval >= 0)
 					retval = -EIO;
+printk(KERN_EMERG"%s: failed kernel_read elf_ppnt->p_filesz\n",__func__);
 				goto out_free_interp;
 			}
 			/* make sure path is NULL terminated */
 			retval = -ENOEXEC;
-			if (elf_interpreter[elf_ppnt->p_filesz - 1] != '\0')
+			if (elf_interpreter[elf_ppnt->p_filesz - 1] != '\0') {
+printk(KERN_EMERG"%s: failed elf_interpreter[elf_ppnt]\n",__func__);
 				goto out_free_interp;
+			}
 
 			interpreter = open_exec(elf_interpreter);
 			retval = PTR_ERR(interpreter);
-			if (IS_ERR(interpreter))
+			if (IS_ERR(interpreter)) {
+printk(KERN_EMERG"%s: failed IS_ERR(interpreter)\n",__func__);
 				goto out_free_interp;
+			}
 
 			/*
 			 * If the binary is not readable then enforce
@@ -725,6 +752,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			if (retval != BINPRM_BUF_SIZE) {
 				if (retval >= 0)
 					retval = -EIO;
+printk(KERN_EMERG"%s: failed BINPRM_BUF_SIZE\n",__func__);
 				goto out_free_dentry;
 			}
 
@@ -749,17 +777,23 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	if (elf_interpreter) {
 		retval = -ELIBBAD;
 		/* Not an ELF interpreter */
-		if (memcmp(loc->interp_elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
+		if (memcmp(loc->interp_elf_ex.e_ident, ELFMAG, SELFMAG) != 0) {
+printk(KERN_EMERG"%s: not an ELF interpreter\n", __func__);
 			goto out_free_dentry;
+}
 		/* Verify the interpreter has a valid arch */
-		if (!elf_check_arch(&loc->interp_elf_ex))
+		if (!elf_check_arch(&loc->interp_elf_ex)) {
+printk(KERN_EMERG"%s: elf check arch\n", __func__);
 			goto out_free_dentry;
+}
 	}
 
 	/* Flush all traces of the currently running executable */
 	retval = flush_old_exec(bprm);
-	if (retval)
+	if (retval) {
+printk(KERN_EMERG"%s: failed flush old exec\n", __func__);
 		goto out_free_dentry;
+}
 
 	/* OK, This is the point of no return */
 	current->mm->def_flags = def_flags;
@@ -781,6 +815,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				 executable_stack);
 	if (retval < 0) {
 		send_sig(SIGKILL, current, 0);
+printk(KERN_EMERG"%s: failed setup arg pages\n", __func__);
 		goto out_free_dentry;
 	}
 	
@@ -806,6 +841,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 					 elf_brk + load_bias);
 			if (retval) {
 				send_sig(SIGKILL, current, 0);
+printk(KERN_EMERG"%s: failed set_brk\n", __func__);
 				goto out_free_dentry;
 			}
 			nbyte = ELF_PAGEOFFSET(elf_bss);
@@ -864,6 +900,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			send_sig(SIGKILL, current, 0);
 			retval = IS_ERR((void *)error) ?
 				PTR_ERR((void*)error) : -EINVAL;
+printk(KERN_EMERG"%s: failed bad addr\n", __func__);
 			goto out_free_dentry;
 		}
 
@@ -934,6 +971,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			/* set_brk can never work. Avoid overflows. */
 			send_sig(SIGKILL, current, 0);
 			retval = -EINVAL;
+printk(KERN_EMERG"%s: after Ajith\n", __func__);
 			goto out_free_dentry;
 		}
 
@@ -975,11 +1013,13 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	retval = set_brk(elf_bss, elf_brk);
 	if (retval) {
 		send_sig(SIGKILL, current, 0);
+printk(KERN_EMERG"%s: failed in the most to the end set_brk\n", __func__);
 		goto out_free_dentry;
 	}
 	if (likely(elf_bss != elf_brk) && unlikely(padzero(elf_bss))) {
 		send_sig(SIGSEGV, current, 0);
 		retval = -EFAULT; /* Nobody gets to see this, but.. */
+printk(KERN_EMERG"%s: nobody gets to see this, but\n", __func__);
 		goto out_free_dentry;
 	}
 
@@ -1002,6 +1042,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			force_sig(SIGSEGV, current);
 			retval = IS_ERR((void *)elf_entry) ?
 					(int)elf_entry : -EINVAL;
+printk(KERN_EMERG"%s: elf interp bad addr\n", __func__);
 			goto out_free_dentry;
 		}
 		reloc_func_desc = interp_load_addr;
@@ -1014,6 +1055,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		if (BAD_ADDR(elf_entry)) {
 			force_sig(SIGSEGV, current);
 			retval = -EINVAL;
+printk(KERN_EMERG"%s: elf interp  bad addr out free dentr\n", __func__);
 			goto out_free_dentry;
 		}
 	}
@@ -1026,6 +1068,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	retval = arch_setup_additional_pages(bprm, !!elf_interpreter);
 	if (retval < 0) {
 		send_sig(SIGKILL, current, 0);
+printk(KERN_EMERG"%s: failed arch setup additional pages\n", __func__);
 		goto out;
 	}
 #endif /* ARCH_HAS_SETUP_ADDITIONAL_PAGES */
@@ -1035,6 +1078,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			  load_addr, interp_load_addr);
 	if (retval < 0) {
 		send_sig(SIGKILL, current, 0);
+printk(KERN_EMERG"%s: failed create elf tables\n", __func__);
 		goto out;
 	}
 	/* N.B. passed_fileno might not be initialized? */
@@ -1046,12 +1090,15 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 #ifdef arch_randomize_brk
 	if ((current->flags & PF_RANDOMIZE) && (randomize_va_space > 1)) {
+printk(KERN_EMERG"%s: RANDOMIZE ACTIVE\n", __func__);
 		current->mm->brk = current->mm->start_brk =
 			arch_randomize_brk(current->mm);
 #ifdef CONFIG_COMPAT_BRK
 		current->brk_randomized = 1;
 #endif
 	}
+	else
+printk(KERN_EMERG"%s: NO RANDOMIZATION\n", __func__);
 #endif
 
 	if (current->personality & MMAP_PAGE_ZERO) {

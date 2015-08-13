@@ -337,7 +337,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 * reload when it has changed.  When prev process used 64bit
 	 * base always reload to avoid an information leak.
 	 */
-	if (unlikely(fsindex | next->fsindex | prev->fs)) {
+//ab	if (unlikely(fsindex | next->fsindex | prev->fs)) {
 		loadsegment(fs, next->fsindex);
 		/*
 		 * Check if the user used a selector != 0; if yes
@@ -346,7 +346,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		 */
 		if (fsindex)
 			prev->fs = 0;
-	}
+//ab	}
 	/* when next process has a 64bit base use it */
 	if (next->fs)
 		wrmsrl(MSR_FS_BASE, next->fs);

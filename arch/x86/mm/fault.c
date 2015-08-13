@@ -44,7 +44,8 @@ enum x86_pf_error_code {
 extern unsigned long read_old_rsp(void);
 static void dump_regs(struct pt_regs* regs) {
 	unsigned long fs, gs;
-	printk(KERN_ALERT"DUMP REGS\n");
+dump_stack();
+	printk(KERN_ALERT"DUMP REGS %s\n", __func__);
 	if(NULL != regs) {
 		printk(KERN_ALERT"r15{%lx}\n",regs->r15);
 		printk(KERN_ALERT"r14{%lx}\n",regs->r14);
@@ -69,8 +70,15 @@ static void dump_regs(struct pt_regs* regs) {
 	}
 	rdmsrl(MSR_FS_BASE, fs);
 	rdmsrl(MSR_GS_BASE, gs);
-	printk(KERN_ALERT"fs{%lx}\n",fs);
-	printk(KERN_ALERT"gs{%lx}\n",gs);
+	printk(KERN_ALERT"fs{%lx} - %lx content %lx\n",fs, current->thread.fs, fs ? * (unsigned long*) fs : 0x1234567l);
+	printk(KERN_ALERT"gs{%lx} - %lx content %lx\n",gs, current->thread.gs, fs ? * (unsigned long*)gs : 0x1234567l);
+
+	unsigned long fsindex, gsindex;
+        savesegment(fs, fsindex);
+        savesegment(gs, gsindex);
+        printk(KERN_ALERT"fsindex{%lx} - %x\n",fsindex, current->thread.fsindex);
+        printk(KERN_ALERT"gsindex{%lx} - %x\n",gsindex, current->thread.gsindex);
+	
 	printk(KERN_ALERT"REGS DUMP COMPLETE\n");
 }
 
