@@ -790,12 +790,8 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority){
 	if(in_interrupt())
 		return 0;
 
-	if(task->replica_type == HOT_REPLICA 
-		|| task->replica_type == COLD_REPLICA
-		|| task->replica_type == NEW_HOT_REPLICA_DESCENDANT
-		|| task->replica_type == NEW_COLD_REPLICA_DESCENDANT
-		|| task->replica_type == REPLICA_DESCENDANT){
-		
+	if(ft_is_replicated(task)){
+
 		filter= kmalloc(sizeof(*filter), priority);
 		if(!filter)
 			return -ENOMEM;
@@ -1150,9 +1146,6 @@ static void send_tx_notification(struct work_struct* work){
 	struct tx_notify_msg* msg;
 	int msg_size;
 	int ret;
-	struct list_head *iter= NULL;
-	struct replica_id cold_replica;
-	struct replica_id_list* objPtr;
 #if FT_FILTER_VERBOSE
 	char *filter_id_printed;
 #endif
@@ -1169,20 +1162,7 @@ static void send_tx_notification(struct work_struct* work){
 
 #endif
 
-	/*char *filter_id_printed;
-	filter_id_printed= print_filter_id(filter);
-	printk("%s: reached send of packet %llu in filter %s \n", __func__, tx_n_work->pckt_id, filter_id_printed);
-	if(filter_id_printed)
-                kfree(filter_id_printed);
-	*/
-
-        list_for_each(iter, &filter->ft_popcorn->cold_replicas_head.replica_list_member) {
-                objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-                cold_replica= objPtr->replica;
-
-		pcn_kmsg_send_long(cold_replica.kernel, (struct pcn_kmsg_long_message*) msg, msg_size-sizeof(msg->header));
-	
-        }
+	send_to_all_cold_replicas(filter->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
 	
 	kfree(msg);
 
@@ -1245,13 +1225,10 @@ static int tx_filter_hot(struct net_filter_info *filter, struct sk_buff* skb){
 
         queue_work(tx_notify_wq, (struct work_struct*)work);
 
-	char* ft_pid_printed= print_ft_pid(&current->ft_pid);
         char* filter_id_printed= print_filter_id(filter);
-        printk("%s: pid %d ft_pid %s tx packet %llu csum %d in filter %s\n", __func__, current->pid, ft_pid_printed, pckt_id, work->csum, filter_id_printed);
+        printk("%s: pid %d tx packet %llu csum %d in filter %s\n", __func__, current->pid, pckt_id, work->csum, filter_id_printed);
         if(filter->ft_sock->sk_protocol == IPPROTO_TCP)
                 printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
-        if(ft_pid_printed)
-                kfree(ft_pid_printed);
         if(filter_id_printed)
                 kfree(filter_id_printed);
 
@@ -1363,13 +1340,11 @@ static int tx_filter_cold(struct net_filter_info *filter, struct sk_buff *skb){
         if(filter_id_printed)
                 kfree(filter_id_printed);
 #endif*/
-        char* ft_pid_printed= print_ft_pid(&current->ft_pid);
         filter_id_printed= print_filter_id(filter);
-        printk("%s: pid %d ft_pid %s tx packet %llu csum %d in filter %s\n", __func__, current->pid, ft_pid_printed, pckt_id, csum, filter_id_printed);
+        printk("%s: pid %d tx packet %llu csum %d in filter %s\n", __func__, current->pid, pckt_id, csum, filter_id_printed);
         if(filter->ft_sock->sk_protocol == IPPROTO_TCP)
-                printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
-        if(ft_pid_printed)
-                kfree(ft_pid_printed);
+                printk("syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
+   
         if(filter_id_printed)
                 kfree(filter_id_printed);
 
@@ -1598,11 +1573,10 @@ static void process_rx_copy_msg(struct work_struct* work){
 	struct sk_buff *skb;
 	wait_queue_head_t* where_to_wait;
 	unsigned long timeout;
-
 #if FT_FILTER_VERBOSE
-	//char* filter_id_printed;
-#endif
 	char* filter_id_printed;
+#endif
+
 again:	spin_lock(&filter->lock);
 	if(filter->type & FT_FILTER_ENABLE){
 
@@ -1615,11 +1589,6 @@ again:	spin_lock(&filter->lock);
 		}
 		
 		filter->hot_rx= msg->pckt_id;
-		filter_id_printed= print_filter_id(filter);
-        	if(filter_id_printed)
-                	kfree(filter_id_printed);
-
-		//FTPRINTK("%s: pid %d is going to wait for delivering packet %llu\n\n", __func__, current->pid, msg->pckt_id);
 
 		/* Wait to be aligned with the hot replica for the delivery of the packet.
 		 * => wait to reach the same number of sent pckts.
@@ -1695,10 +1664,6 @@ done:	spin_unlock(&filter->lock);
 		kfree(filter_id_printed);
 #endif
         
-        printk("%s: pid %d is going to deliver the packet %llu in filter %s\n\n", __func__, current->pid, msg->pckt_id, filter_id_printed);
-        if(filter_id_printed)
-                kfree(filter_id_printed);
-
 	/* the network stack rx path is thougth to be executed in softirq
 	 * context...
 	 */
@@ -1885,21 +1850,12 @@ static void send_skb_copy(struct net_filter_info *filter, long long pckt_id, lon
         struct rx_copy_msg* msg;
         int msg_size;
         int ret;
-        struct list_head *iter= NULL;
-        struct replica_id cold_replica;
-        struct replica_id_list* objPtr;
 
         ret= create_rx_skb_copy_msg(filter, pckt_id, local_tx, skb, &msg, &msg_size);
         if(ret)
                 return;
 
-        list_for_each(iter, &filter->ft_popcorn->cold_replicas_head.replica_list_member) {
-                objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-                cold_replica= objPtr->replica;
-
-                pcn_kmsg_send_long(cold_replica.kernel, (struct pcn_kmsg_long_message*) msg, msg_size-sizeof(msg->header));
-
-        }
+	send_to_all_cold_replicas(filter->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
 
         kfree(msg);
 }
@@ -1921,11 +1877,11 @@ static int rx_filter_hot(struct net_filter_info *filter, struct sk_buff *skb){
         if(filter_id_printed)
                 kfree(filter_id_printed);
 #endif
-	/*char* filter_id_printed;
+	char* filter_id_printed;
 	filter_id_printed= print_filter_id(filter);
         printk("%s: pid %d broadcasting packet %llu in filter %s\n\n", __func__, current->pid, pckt_id, filter_id_printed);
         if(filter_id_printed)
-                kfree(filter_id_printed);*/
+                kfree(filter_id_printed);
 
 	send_skb_copy(filter, pckt_id, local_tx, skb);
 	
@@ -1962,6 +1918,14 @@ static int rx_filter_cold(struct net_filter_info *filter){
 		filter_id_printed= NULL;
 	}
 #endif
+
+        filter_id_printed= print_filter_id(filter);
+        printk("%s: pid %d received pckt %llu in filter %s\n", __func__, current->pid, pckt_id, filter_id_printed);
+        if(filter_id_printed){
+                kfree(filter_id_printed);
+                filter_id_printed= NULL;
+        }
+
 
 	if(pckt_id > hot_rx){
 		filter_id_printed= print_filter_id(filter);
@@ -2060,22 +2024,13 @@ static void send_tcp_init_parameters_from_work(struct work_struct* work){
 	struct net_filter_info* filter= my_work->filter;
 	struct tcp_init_param_msg* msg;
 	int msg_size,ret;
-	struct list_head *iter= NULL;
-        struct replica_id cold_replica;
-        struct replica_id_list* objPtr;
 
 	ret= create_tcp_init_param_msg(filter, my_work->connect_id, my_work->accept_id, &my_work->tcp_param, &msg, &msg_size);
 	if(ret)
 		goto out;
 	
-	list_for_each(iter, &filter->ft_popcorn->cold_replicas_head.replica_list_member) {
-                objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-                cold_replica= objPtr->replica;
-
-                pcn_kmsg_send_long(cold_replica.kernel, (struct pcn_kmsg_long_message*) msg, msg_size-sizeof(msg->header));
-
-        }
-
+	send_to_all_cold_replicas(filter->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
+	
 	kfree(msg);
 out:
 	kfree(work);

@@ -37,6 +37,7 @@
 #include <linux/fs.h>
 #include <linux/math64.h>
 #include <linux/ptrace.h>
+#include <linux/ft_replication.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -101,6 +102,12 @@ SYSCALL_DEFINE1(stime, time_t __user *, tptr)
 SYSCALL_DEFINE2(gettimeofday, struct timeval __user *, tv,
 		struct timezone __user *, tz)
 {
+
+#ifdef FT_POPCORN
+	if(ft_is_replicated(current)){	
+       		return ft_gettimeofday(tv,tz);
+	}
+#endif
 	if (likely(tv != NULL)) {
 		struct timeval ktv;
 		do_gettimeofday(&ktv);
@@ -111,6 +118,7 @@ SYSCALL_DEFINE2(gettimeofday, struct timeval __user *, tv,
 		if (copy_to_user(tz, &sys_tz, sizeof(sys_tz)))
 			return -EFAULT;
 	}
+
 	return 0;
 }
 

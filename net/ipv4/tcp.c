@@ -936,11 +936,22 @@ int tcp_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	clear_bit(SOCK_ASYNC_NOSPACE, &sk->sk_socket->flags);
 
 	mss_now = tcp_send_mss(sk, &size_goal, flags);
-	printk("%s mss now %d\n", __func__, mss_now);
+
 	/* Ok commence sending. */
 	iovlen = msg->msg_iovlen;
 	iov = msg->msg_iov;
 	copied = 0;
+
+	if(sk->ft_filter){
+                int i;
+                int err;
+                for(i=0; i< iovlen; i++){
+                        char* app= kmalloc(iov[i].iov_len, GFP_ATOMIC);
+                        __wsum csum= csum_and_copy_from_user(iov[i].iov_base, (void*)app, iov[i].iov_len,0,&err);
+                        printk("%s process %d sending i %d size %d csum %u\n", __func__, current->pid, i, iov[i].iov_len, csum );
+                        kfree(app);
+                }
+        }
 
 	err = -EPIPE;
 	if (sk->sk_err || (sk->sk_shutdown & SEND_SHUTDOWN))

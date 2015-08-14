@@ -11,7 +11,7 @@ obj-y     = sched.o fork.o exec_domain.o panic.o printk.o \
 	    hrtimer.o rwsem.o nsproxy.o srcu.o semaphore.o \
 	    notifier.o ksysfs.o sched_clock.o cred.o \
 	    async.o range.o multikernel.o process_server.o \
-	    popcorn_namespace.o ft_replication.o
+	    popcorn_namespace.o ft_replication.o ft_time.o
 
 obj-y += groups.o
 

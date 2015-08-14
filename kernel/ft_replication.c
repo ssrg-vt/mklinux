@@ -504,6 +504,75 @@ static int create_hot_replica_answer_msg(struct replica_id* hot_replica_from, st
 
 }
 
+/* send msg to all cold replica listed in ft_popcorn.
+ *
+ */
+void send_to_all_cold_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_kmsg_long_message* msg, int msg_size){
+	struct list_head *iter= NULL;
+        struct replica_id cold_replica;
+        struct replica_id_list* objPtr;
+
+	list_for_each(iter, &ft_popcorn->cold_replicas_head.replica_list_member) {
+                objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
+                cold_replica= objPtr->replica;
+
+                pcn_kmsg_send_long(cold_replica.kernel, msg, msg_size-sizeof(msg->hdr));
+
+        }
+
+}
+
+/* Returns 1 in case task is a cold replica or cold replica descendant.
+ *
+ */
+int ft_is_cold_replica(struct task_struct *task){
+        struct task_struct *ancestor;
+
+        ancestor= find_task_by_vpid(task->tgid);
+
+        if(ancestor->replica_type == COLD_REPLICA
+                || ancestor->replica_type == NEW_COLD_REPLICA_DESCENDANT){
+
+                return 1;
+        }
+
+        return 0;
+}
+
+/* Returns 1 in case task is an hot replica or hot replica descendant.
+ *
+ */
+int ft_is_hot_replica(struct task_struct *task){
+	struct task_struct *ancestor;
+
+        ancestor= find_task_by_vpid(task->tgid);
+
+        if(ancestor->replica_type == HOT_REPLICA
+                || ancestor->replica_type == NEW_HOT_REPLICA_DESCENDANT){
+                
+                return 1;
+        }
+
+        return 0;
+}
+
+/* Returns 1 in cast task is ft replicated, 0 otherwise.
+ *
+ */
+int ft_is_replicated(struct task_struct *task){
+
+	if(task->replica_type == HOT_REPLICA
+                || task->replica_type == COLD_REPLICA
+                || task->replica_type == NEW_HOT_REPLICA_DESCENDANT
+                || task->replica_type == NEW_COLD_REPLICA_DESCENDANT
+                || task->replica_type == REPLICA_DESCENDANT){	
+		
+		return 1;
+	}
+
+	return 0;
+}
+
 /* Checks if two struct ft_pid are equals.
  *
  * Returns 1 if they are equals, 0 otherwise.
@@ -603,6 +672,7 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			tsk->ft_pid.level= 0;
 			tsk->next_pid_to_use= 0;
 			tsk->next_id_resources= 0;
+			tsk->next_id_kernel_requests= 0;
                 	tsk->ft_pid.id_array= NULL;
 			return 0;
 		}
@@ -620,7 +690,8 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 		                tsk->ft_pid.id_array= NULL;
                 		tsk->next_pid_to_use= 0;
                 		tsk->next_id_resources= 0;
-                		tsk->replica_type= NOT_REPLICATED;
+                		tsk->next_id_kernel_requests= 0;
+				tsk->replica_type= NOT_REPLICATED;
                 		tsk->ft_popcorn= NULL;
 
 				return 0;
@@ -681,6 +752,7 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			tsk->ft_pid.id_array[current->ft_pid.level]= current->next_pid_to_use++;
 
 			tsk->next_id_resources= 0;
+			tsk->next_id_kernel_requests= 0;
 		}
 	}
 	else{
@@ -1540,10 +1612,16 @@ late_initcall(ft_replication_init);
 long syscall_hook_enter(struct pt_regs *regs)
 {
 	//printk(KERN_EMERG
-	trace_printk(
-		"task %p %s %ld[%ld]\n", current, current->comm, regs->ax, regs->orig_ax);
+	if(ft_is_replicated(current)){
+		trace_printk(
+		"%s in[%ld] [%ld %ld %ld %ld]\n", current->comm, regs->orig_ax,  regs->di, regs->si, regs->dx, regs->r10);
+	}
 	return regs->orig_ax;
 }
 void syscall_hook_exit(struct pt_regs *regs)
 {
+	if(ft_is_replicated(current)){
+                trace_printk("%s out[%ld] [%ld]\n", current->comm, regs->orig_ax, regs->ax);
+	}
+
 }

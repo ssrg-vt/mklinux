@@ -483,7 +483,7 @@ ENTRY(system_call_after_swapgs)
 
 	push %rdx
 	movq TI_task(%rcx),%rdx
-	testl $1,task_hooksys(%rdx)
+	testl $0xF,task_hooksys(%rdx)
 	pop %rdx
 	jz system_call_continue
 

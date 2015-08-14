@@ -182,10 +182,18 @@ void get_ft_filter(struct net_filter_info* filter);
 void put_ft_filter(struct net_filter_info* filter);
 char* print_filter_id(struct net_filter_info *filter);
 
+int ft_is_replicated(struct task_struct *task);
+int ft_is_hot_replica(struct task_struct *task);
+int ft_is_cold_replica(struct task_struct *task);
+struct pcn_kmsg_long_message;
+void send_to_all_cold_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_kmsg_long_message* msg, int msg_size);
 
 int maybe_create_replicas(void);
 struct task_struct;
 int copy_replication(unsigned long flags, struct task_struct *tsk);
+struct timeval;
+struct timezone;
+long ft_gettimeofday(struct timeval __user * tv, struct timezone __user * tz);
 
 #define DUMMY_DRIVER "ft_dummy_driver"
 
