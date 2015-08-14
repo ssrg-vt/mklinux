@@ -12,8 +12,8 @@
 #include "sem_remote.h"
 #include "util.h"
 
-
-
+//#define DISABLE_SEM 0
+#undef DISABLE_SEM
 
 static int _cpu=-1;
 static int wait=-1;
@@ -163,9 +163,11 @@ int send_semget_req_to_remote(int KernelId,  struct ipc_params *params) {
 
 int remote_ipc_sem_getid(struct ipc_ids *ids, struct ipc_params *params)
 {
+	int ret=0;
+
+#ifdef DISABLE_SEM
 
 	reset_wait();
-	int ret=0;
 	/*
 	 * have to send message to remote kernels and fetch if the key is present
 	 */
@@ -183,6 +185,7 @@ int remote_ipc_sem_getid(struct ipc_ids *ids, struct ipc_params *params)
 	wait_event_interruptible(wq, wait != -1);
 
 	ret=errnum;
+#endif
 
 	return ret;
 }
@@ -316,6 +319,7 @@ int remote_ipc_sem_semctl(int semnum, int semid, int cmd, int version, union sem
 	reset_wait();
 	int ret=0;
 
+#ifdef DISABLE_SEM
 	long *key_index;
 	int id = -1;
 
@@ -330,6 +334,7 @@ int remote_ipc_sem_semctl(int semnum, int semid, int cmd, int version, union sem
 	wait_event_interruptible(wq, wait != -1);
 
 	ret=errnum;
+#endif
 
 	return ret;
 }

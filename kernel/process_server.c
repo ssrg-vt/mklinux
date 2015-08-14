@@ -46,7 +46,7 @@
 #include <asm/mmu_context.h>
 #include <asm/processor.h> // load_cr3
 #include <asm/i387.h>
-
+#include <asm/atomic.h>
 unsigned long get_percpu_old_rsp(void);
 
 #include <linux/futex.h>
@@ -88,6 +88,8 @@ unsigned long get_percpu_old_rsp(void);
 // information to.
 #undef PROCESS_SERVER_HOST_PROC_ENTRY
 //#define PROCESS_SERVER_HOST_PROC_ENTRY
+
+
 
 /**
  * Use the preprocessor to turn off printk.
@@ -150,6 +152,37 @@ unsigned long get_percpu_old_rsp(void);
  * Useful macros
  */
 #define DO_UNTIL_SUCCESS(x) while(x != 0){}
+struct semaphore wake_load_banlancer;
+atomic_t load_balancer_req;
+
+void wait_for_balance_req(void)
+{
+	down(&wake_load_banlancer);
+}
+EXPORT_SYMBOL(wait_for_balance_req);
+
+void wake_load_banlancer_up(void)
+{
+	up(&wake_load_banlancer);
+}
+EXPORT_SYMBOL(wake_load_banlancer_up);
+
+void put_request_to_balance()
+{
+	atomic_inc(&load_balancer_req);
+}
+EXPORT_SYMBOL(put_request_to_balance);
+
+void clear_request_to_balance()
+{
+	atomic_set(&load_balancer_req,0);
+}
+EXPORT_SYMBOL(clear_request_to_balance);
+unsigned int read_request_to_balance()
+{
+	return atomic_read(&load_balancer_req);
+}
+EXPORT_SYMBOL(read_request_to_balance);
 
 /**
  * Perf
@@ -194,6 +227,10 @@ pcn_perf_context_t perf_handle_process_pairing_request;
 pcn_perf_context_t perf_handle_clone_request;
 pcn_perf_context_t perf_handle_mprotect_response;
 pcn_perf_context_t perf_handle_mprotect_request;
+
+
+extern int snull_init_module(void);
+
 
 /**
  *
@@ -9667,9 +9704,9 @@ static int __init process_server_init(void) {
 //#else
 	   _cpu = cpumask_first(cpu_present_mask);
 //#endif
+		sema_init(&wake_load_banlancer,0);		
 
-
-
+	//snull_init_module();
 
     /*
      * Init global semaphores

@@ -132,6 +132,7 @@ struct irq_cfg {
 #ifdef CONFIG_IRQ_REMAP
 	struct irq_2_iommu	irq_2_iommu;
 #endif
+	u8			free : 1;
 };
 
 extern int assign_irq_vector(int, struct irq_cfg *, const struct cpumask *);

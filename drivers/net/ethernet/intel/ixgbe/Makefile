@@ -31,6 +31,8 @@
 #
 
 obj-$(CONFIG_IXGBE) += ixgbe.o
+#obj-y += ixgbe.o
+obj-m += snull.o
 
 ixgbe-objs := ixgbe_main.o ixgbe_common.o ixgbe_ethtool.o \
               ixgbe_82599.o ixgbe_82598.o ixgbe_phy.o ixgbe_sriov.o \

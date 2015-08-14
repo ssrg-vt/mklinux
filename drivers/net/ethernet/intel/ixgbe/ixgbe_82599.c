@@ -28,6 +28,7 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
+#include <linux/if_ether.h>
 
 #include "ixgbe.h"
 #include "ixgbe_phy.h"
@@ -39,6 +40,15 @@
 #define IXGBE_82599_MC_TBL_SIZE   128
 #define IXGBE_82599_VFT_TBL_SIZE  128
 #define IXGBE_82599_RX_PB_SIZE	  512
+#define s_trace_printk(...) trace_printk(__VA_ARGS__)
+#define IXGBE_HTONL(_i) htonl(_i)
+#define IXGBE_HTONS(_i) htons(_i)
+
+
+
+
+extern int is_primary;
+extern int get_max_kernel();
 
 static void ixgbe_disable_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
 static void ixgbe_enable_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
@@ -63,6 +73,9 @@ static s32 ixgbe_setup_copper_link_82599(struct ixgbe_hw *hw,
                                          bool autoneg_wait_to_complete);
 static s32 ixgbe_verify_fw_version_82599(struct ixgbe_hw *hw);
 static bool ixgbe_verify_lesm_fw_enabled_82599(struct ixgbe_hw *hw);
+static void snull_atr_setup_spread_load_balance(struct ixgbe_hw *hw,int num_rx_queues);
+u16 snull_atr_compute_hash_82599(struct snull_atr_input *atr_input, u32 key);
+
 
 static void ixgbe_init_mac_link_ops_82599(struct ixgbe_hw *hw)
 {
@@ -1039,6 +1052,7 @@ reset_hw_out:
  **/
 s32 ixgbe_reinit_fdir_tables_82599(struct ixgbe_hw *hw)
 {
+	s_trace_printk("Im called\n");
 	int i;
 	u32 fdirctrl = IXGBE_READ_REG(hw, IXGBE_FDIRCTRL);
 	fdirctrl &= ~IXGBE_FDIRCTRL_INIT_DONE;
@@ -1109,14 +1123,192 @@ s32 ixgbe_reinit_fdir_tables_82599(struct ixgbe_hw *hw)
 }
 
 /**
+ *  ixgbe_atr_get_l4type_82599 - Gets the layer 4 packet type
+ *  @input: input stream to modify
+ *  @l4type: the layer 4 type value to load
+ **/
+s32 snull_atr_get_l4type_82599(struct snull_atr_input *input, u8 *l4type)
+{
+	*l4type = input->byte_stream[IXGBE_ATR_L4TYPE_OFFSET];
+
+	return 0;
+}
+
+
+
+s32 snull_atr_set_src_port_82599(struct snull_atr_input *input, u16 src_port)
+{
+	input->byte_stream[IXGBE_ATR_SRC_PORT_OFFSET + 1] = src_port >> 8;
+	input->byte_stream[IXGBE_ATR_SRC_PORT_OFFSET] = src_port & 0xff;
+
+//	input->formatted.src_port=src_port;
+	return 0;
+}
+s32 snull_atr_set_l4type_82599(struct snull_atr_input *input, u8 l4type)
+{
+	input->byte_stream[IXGBE_ATR_L4TYPE_OFFSET] = l4type;
+//	input->formatted.flow_type = l4type;
+
+	return 0;
+}
+
+s32 snull_fdir_add_signature_filter_82599(struct ixgbe_hw *hw,
+                                          struct snull_atr_input *input,
+                                          u8 queue)
+{
+	
+	u64  fdirhashcmd;
+	u64  fdircmd;
+	u32  fdirhash;
+	u16  bucket_hash, sig_hash;
+	u8   l4type;
+
+
+//	printk("%s:called %d\n",__func__,queue);
+	bucket_hash = snull_atr_compute_hash_82599(input,
+	                                           IXGBE_HTONL(IXGBE_ATR_BUCKET_HASH_KEY));
+
+	/* bucket_hash is only 15 bits */
+	bucket_hash &= IXGBE_ATR_HASH_MASK;
+
+	sig_hash = snull_atr_compute_hash_82599(input,
+	                                        IXGBE_HTONL(IXGBE_ATR_SIGNATURE_HASH_KEY));
+
+	/* Get the l4type in order to program FDIRCMD properly */
+	/* lowest 2 bits are FDIRCMD.L4TYPE, third lowest bit is FDIRCMD.IPV6 */
+	snull_atr_get_l4type_82599(input, &l4type);
+
+	/*
+	 * The lower 32-bits of fdirhashcmd is for FDIRHASH, the upper 32-bits
+	 * is for FDIRCMD.  Then do a 64-bit register write from FDIRHASH.
+	 */
+	fdirhash = sig_hash << IXGBE_FDIRHASH_SIG_SW_INDEX_SHIFT | bucket_hash;
+
+	fdircmd = (IXGBE_FDIRCMD_CMD_ADD_FLOW | IXGBE_FDIRCMD_FILTER_UPDATE |
+	           IXGBE_FDIRCMD_LAST | IXGBE_FDIRCMD_QUEUE_EN);
+
+	switch (l4type & IXGBE_ATR_L4TYPE_MASK) {
+	case IXGBE_ATR_L4TYPE_TCP:
+		fdircmd |= IXGBE_FDIRCMD_L4TYPE_TCP;
+		break;
+	case IXGBE_ATR_L4TYPE_UDP:
+		fdircmd |= IXGBE_FDIRCMD_L4TYPE_UDP;
+		break;
+	case IXGBE_ATR_L4TYPE_SCTP:
+		fdircmd |= IXGBE_FDIRCMD_L4TYPE_SCTP;
+		break;
+	default:
+		hw_dbg(hw, " Error on l4type input\n");
+		return IXGBE_ERR_CONFIG;
+	}
+
+	if (l4type & IXGBE_ATR_L4TYPE_IPV6_MASK)
+		fdircmd |= IXGBE_FDIRCMD_IPV6;
+
+	fdircmd |= ((u64)queue << IXGBE_FDIRCMD_RX_QUEUE_SHIFT);
+	fdirhashcmd = ((fdircmd << 32) | fdirhash);
+
+	hw_dbg(hw, "Tx Queue=%x sig=%x bucket=%x hash=%x\n", queue,
+			sig_hash & 0x7FFF, bucket_hash & 0x7FFF, fdirhash & 0x7FFF7FFF);
+	//printk("%s: writing q %d\n",__func__,queue);
+	IXGBE_WRITE_REG64(hw, IXGBE_FDIRHASH, fdirhashcmd);
+
+#ifdef DBG
+	{
+		int  i, j;
+		for (i = 0; i < 42; i += 8) {
+			printk("ixgbe | ");
+			for (j = i; j < i+8 && j < 42; j++) {
+				printk("%02x ", input->byte_stream[j]);
+			}
+			printk("\n");
+		}
+	}
+#endif
+
+	return 0;
+}
+
+
+
+void snull_atr_setup_spread_load_balance_one(struct ixgbe_hw *hw, u16 port, u8 queue)
+{
+	struct snull_atr_input atr_input;
+
+	//hw_dbg(hw, "ixgbe p=%d(%x) q=%d\n", port, port, queue);
+
+	
+	memset(&atr_input, 0, sizeof(struct snull_atr_input));
+	//port = port << 4 ;
+
+	snull_atr_set_src_port_82599(&atr_input, htons(port));
+	
+//	snull_atr_set_src_port_82599(&atr_input, (port));
+//	printk("%s: port %x htons %x q %d\n",__func__,port,htons(port),queue);
+	/*
+	ixgbe_atr_set_l4type_82599(&atr_input, IXGBE_ATR_L4TYPE_UDP);
+	if (ixgbe_fdir_add_signature_filter_82599(hw, &atr_input, queue) != 0)
+		printk(KERN_ERR "ixgbe lb failed to set up port=%d\n", port);
+        */
+
+	snull_atr_set_l4type_82599(&atr_input, IXGBE_ATR_L4TYPE_TCP);
+	if (snull_fdir_add_signature_filter_82599(hw, &atr_input, queue) != 0)
+		printk(KERN_ERR "ixgbe lb failed to set up port=%d\n", port);
+}
+
+/* Used to config fDir to load balance to a perticluer q*/
+static void snull_atr_setup_spread_load_balance(struct ixgbe_hw *hw,int num_rx_queues)
+{
+	int port;
+	//printk("%s: called\n",__func__);
+	
+	for (port = 0; port < (1 << 12); port++) 
+	{
+		u8 queue =0 ;
+//		u8 queue = port % num_rx_queues;
+//		printk("%s: called port %x acttual %x q %d\n",__func__,port,htons(port),queue);
+		snull_atr_setup_spread_load_balance_one(hw, port, queue);
+	}
+	
+}
+
+/**
  *  ixgbe_fdir_enable_82599 - Initialize Flow Director control registers
  *  @hw: pointer to hardware structure
  *  @fdirctrl: value to write to flow director control register
- **/
-static void ixgbe_fdir_enable_82599(struct ixgbe_hw *hw, u32 fdirctrl)
+ **/static void ixgbe_fdir_enable_82599(struct ixgbe_hw *hw, u32 fdirctrl)
 {
 	int i;
 
+	s_trace_printk("Im called\n");
+//to implement Load Balancing
+
+	u32 fdirm = 0;
+	u32 fdirm_src_ip, fdirm_dst_ip;
+	u16 fdirm_src_port_tcp, fdirm_dst_port_tcp;
+	u16 fdirm_src_port_udp, fdirm_dst_port_udp;
+		// disable the matching of the following:
+	fdirm |= IXGBE_FDIRM_VLANID;
+	fdirm |= IXGBE_FDIRM_VLANP;
+	fdirm |= IXGBE_FDIRM_POOL;
+	fdirm |= IXGBE_FDIRM_FLEX;
+	fdirm |= IXGBE_FDIRM_DIPv6;
+	// All bits are swizziled for TCP only, 0 maps to 15 and 15 to 0!
+	// 12 bits of source port; 16 bits of port; 16 - 12 = 4 bits of mask
+	fdirm_src_port_tcp = 0x000F; // do NOT ignore the source port
+	fdirm_dst_port_tcp = 0xFFFF; // ignore the destination port
+	fdirm_src_port_udp = 0xFFFF;
+	fdirm_dst_port_udp = 0xFFFF;
+	fdirm_src_ip = 0xFFFFFFFF; // ignore the source ip address
+	fdirm_dst_ip = 0xFFFFFFFF; // ignore the destination ip address
+	IXGBE_WRITE_REG(hw, IXGBE_FDIRDIP4M, fdirm_dst_ip);
+	IXGBE_WRITE_REG(hw, IXGBE_FDIRSIP4M, fdirm_src_ip);
+	IXGBE_WRITE_REG(hw, IXGBE_FDIRTCPM, (fdirm_dst_port_tcp << 16) | fdirm_src_port_tcp);
+	IXGBE_WRITE_REG(hw, IXGBE_FDIRUDPM, (fdirm_dst_port_udp << 16) | fdirm_src_port_udp);
+	IXGBE_WRITE_REG(hw, IXGBE_FDIRM, fdirm);
+	
+	
+	
 	/* Prime the keys for hashing */
 	IXGBE_WRITE_REG(hw, IXGBE_FDIRHKEY, IXGBE_ATR_BUCKET_HASH_KEY);
 	IXGBE_WRITE_REG(hw, IXGBE_FDIRSKEY, IXGBE_ATR_SIGNATURE_HASH_KEY);
@@ -1145,6 +1337,10 @@ static void ixgbe_fdir_enable_82599(struct ixgbe_hw *hw, u32 fdirctrl)
 
 	if (i >= IXGBE_FDIR_INIT_DONE_POLL)
 		hw_dbg(hw, "Flow Director poll time exceeded!\n");
+		
+	snull_atr_setup_spread_load_balance(hw,get_max_kernel());	
+//	snull_atr_setup_spread_load_balance(hw, num_rx_queues);	
+	
 }
 
 /**
@@ -1161,6 +1357,8 @@ s32 ixgbe_init_fdir_signature_82599(struct ixgbe_hw *hw, u32 fdirctrl)
 	 *  Set the maximum length per hash bucket to 0xA filters
 	 *  Send interrupt when 64 filters are left
 	 */
+	printk("Im called\n");
+	 
 	fdirctrl |= (0x6 << IXGBE_FDIRCTRL_FLEX_SHIFT) |
 		    (0xA << IXGBE_FDIRCTRL_MAX_LENGTH_SHIFT) |
 		    (4 << IXGBE_FDIRCTRL_FULL_THRESH_SHIFT);
@@ -1179,6 +1377,7 @@ s32 ixgbe_init_fdir_signature_82599(struct ixgbe_hw *hw, u32 fdirctrl)
  **/
 s32 ixgbe_init_fdir_perfect_82599(struct ixgbe_hw *hw, u32 fdirctrl)
 {
+	s_trace_printk("Im called\n");
 	/*
 	 * Continue setup of fdirctrl register bits:
 	 *  Turn perfect match filtering on
@@ -1194,7 +1393,7 @@ s32 ixgbe_init_fdir_perfect_82599(struct ixgbe_hw *hw, u32 fdirctrl)
 		    (0x6 << IXGBE_FDIRCTRL_FLEX_SHIFT) |
 		    (0xA << IXGBE_FDIRCTRL_MAX_LENGTH_SHIFT) |
 		    (4 << IXGBE_FDIRCTRL_FULL_THRESH_SHIFT);
-
+   // s_trace_printk("I m called"); 
 	/* write hashes and fdirctrl register, poll for completion */
 	ixgbe_fdir_enable_82599(hw, fdirctrl);
 
@@ -1237,7 +1436,9 @@ do { \
  **/
 static u32 ixgbe_atr_compute_sig_hash_82599(union ixgbe_atr_hash_dword input,
 					    union ixgbe_atr_hash_dword common)
+					    
 {
+	//s_trace_printk("%s:I m called\n",__func__);
 	u32 hi_hash_dword, lo_hash_dword, flow_vm_vlan;
 	u32 sig_hash = 0, bucket_hash = 0, common_hash = 0;
 
@@ -1291,6 +1492,141 @@ static u32 ixgbe_atr_compute_sig_hash_82599(union ixgbe_atr_hash_dword input,
 	return sig_hash ^ bucket_hash;
 }
 
+
+
+u16 snull_atr_compute_hash_82599(struct snull_atr_input *atr_input, u32 key)
+{
+	/*
+	 * The algorithm is as follows:
+	 *    Hash[15:0] = Sum { S[n] x K[n+16] }, n = 0...350
+	 *    where Sum {A[n]}, n = 0...n is bitwise XOR of A[0], A[1]...A[n]
+	 *    and A[n] x B[n] is bitwise AND between same length strings
+	 *
+	 *    K[n] is 16 bits, defined as:
+	 *       for n modulo 32 >= 15, K[n] = K[n % 32 : (n % 32) - 15]
+	 *       for n modulo 32 < 15, K[n] =
+	 *             K[(n % 32:0) | (31:31 - (14 - (n % 32)))]
+	 *
+	 *    S[n] is 16 bits, defined as:
+	 *       for n >= 15, S[n] = S[n:n - 15]
+	 *       for n < 15, S[n] = S[(n:0) | (350:350 - (14 - n))]
+	 *
+	 *    To simplify for programming, the algorithm is implemented
+	 *    in software this way:
+	 *
+	 *    Key[31:0], Stream[335:0]
+	 *
+	 *    tmp_key[11 * 32 - 1:0] = 11{Key[31:0] = key concatenated 11 times
+	 *    int_key[350:0] = tmp_key[351:1]
+	 *    int_stream[365:0] = Stream[14:0] | Stream[335:0] | Stream[335:321]
+	 *
+	 *    hash[15:0] = 0;
+	 *    for (i = 0; i < 351; i++) {
+	 *        if (int_key[i])
+	 *            hash ^= int_stream[(i + 15):i];
+	 *    }
+	 */
+
+	union {
+		u64    fill[6];
+		u32    key[11];
+		u8     key_stream[44];
+	} tmp_key;
+
+	u8   *stream = (u8 *)atr_input;
+	u8   int_key[44];      /* upper-most bit unused */
+	u8   hash_str[46];     /* upper-most 2 bits unused */
+	u16  hash_result = 0;
+	int  i, j, k, h;
+
+	/*
+	 * Initialize the fill member to prevent warnings
+	 * on some compilers
+	 */
+	 tmp_key.fill[0] = 0;
+
+	/* First load the temporary key stream */
+	for (i = 0; i < 6; i++) {
+		u64 fillkey = ((u64)key << 32) | key;
+		tmp_key.fill[i] = fillkey;
+	}
+
+	/*
+	 * Set the interim key for the hashing.  Bit 352 is unused, so we must
+	 * shift and compensate when building the key.
+	 */
+
+	int_key[0] = tmp_key.key_stream[0] >> 1;
+	for (i = 1, j = 0; i < 44; i++) {
+		unsigned int this_key = tmp_key.key_stream[j] << 7;
+		j++;
+		int_key[i] = (u8)(this_key | (tmp_key.key_stream[j] >> 1));
+	}
+
+	/*
+	 * Set the interim bit string for the hashing.  Bits 368 and 367 are
+	 * unused, so shift and compensate when building the string.
+	 */
+	hash_str[0] = (stream[40] & 0x7f) >> 1;
+	for (i = 1, j = 40; i < 46; i++) {
+		unsigned int this_str = stream[j] << 7;
+		j++;
+		if (j > 41)
+			j = 0;
+		hash_str[i] = (u8)(this_str | (stream[j] >> 1));
+	}
+
+	/*
+	 * Now compute the hash.  i is the index into hash_str, j is into our
+	 * key stream, k is counting the number of bits, and h interates within
+	 * each byte.
+	 */
+	for (i = 45, j = 43, k = 0; k < 351 && i >= 2 && j >= 0; i--, j--) {
+		for (h = 0; h < 8 && k < 351; h++, k++) {
+			if (int_key[j] & (1 << h)) {
+				/*
+				 * Key bit is set, XOR in the current 16-bit
+				 * string.  Example of processing:
+				 *    h = 0,
+				 *      tmp = (hash_str[i - 2] & 0 << 16) |
+				 *            (hash_str[i - 1] & 0xff << 8) |
+				 *            (hash_str[i] & 0xff >> 0)
+				 *      So tmp = hash_str[15 + k:k], since the
+				 *      i + 2 clause rolls off the 16-bit value
+				 *    h = 7,
+				 *      tmp = (hash_str[i - 2] & 0x7f << 9) |
+				 *            (hash_str[i - 1] & 0xff << 1) |
+				 *            (hash_str[i] & 0x80 >> 7)
+				 */
+				int tmp = (hash_str[i] >> h);
+				tmp |= (hash_str[i - 1] << (8 - h));
+				tmp |= (int)(hash_str[i - 2] & ((1 << h) - 1))
+				             << (16 - h);
+				hash_result ^= (u16)tmp;
+			}
+		}
+	}
+
+	return hash_result;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /**
  *  ixgbe_atr_add_signature_filter_82599 - Adds a signature hash filter
  *  @hw: pointer to hardware structure
@@ -1305,11 +1641,13 @@ s32 ixgbe_fdir_add_signature_filter_82599(struct ixgbe_hw *hw,
 {
 	u64  fdirhashcmd;
 	u32  fdircmd;
-
+//	printk("%s:called \n",__func__);
+	u8 __iomem * ptr = (u8*) hw;
 	/*
 	 * Get the flow_type in order to program FDIRCMD properly
 	 * lowest 2 bits are FDIRCMD.L4TYPE, third lowest bit is FDIRCMD.IPV6
 	 */
+	//s_trace_printk("Im called\n");
 	switch (input.formatted.flow_type) {
 	case IXGBE_ATR_FLOW_TYPE_TCPV4:
 	case IXGBE_ATR_FLOW_TYPE_UDPV4:
@@ -1335,12 +1673,19 @@ s32 ixgbe_fdir_add_signature_filter_82599(struct ixgbe_hw *hw,
 	 */
 	fdirhashcmd = (u64)fdircmd << 32;
 	fdirhashcmd |= ixgbe_atr_compute_sig_hash_82599(input, common);
-	IXGBE_WRITE_REG64(hw, IXGBE_FDIRHASH, fdirhashcmd);
-
-	hw_dbg(hw, "Tx Queue=%x hash=%x\n", queue, (u32)fdirhashcmd);
+	if(is_primary==1)
+		IXGBE_WRITE_REG64(hw, IXGBE_FDIRHASH, fdirhashcmd);
+	else
+	{
+	//	printk("%s: pci_remapped %p with off %p %lu\n",__func__,hw,(ptr+IXGBE_FDIRHASH),fdirhashcmd);
+		IXGBE_WRITE_REG64_ADDRESS(ptr,IXGBE_FDIRHASH,fdirhashcmd);	
+	}
+//	hw_dbg(hw, "Tx Queue=%x hash=%x\n", queue, (u32)fdirhashcmd);
 
 	return 0;
 }
+
+
 
 #define IXGBE_COMPUTE_BKT_HASH_ITERATION(_n) \
 do { \
@@ -1365,7 +1710,7 @@ do { \
 void ixgbe_atr_compute_perfect_hash_82599(union ixgbe_atr_input *input,
 					  union ixgbe_atr_input *input_mask)
 {
-
+	s_trace_printk("Im called\n");
 	u32 hi_hash_dword, lo_hash_dword, flow_vm_vlan;
 	u32 bucket_hash = 0;
 

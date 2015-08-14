@@ -73,6 +73,7 @@
 #include <asm/unaligned.h>
 #include <net/netdma.h>
 
+
 int sysctl_tcp_timestamps __read_mostly = 1;
 int sysctl_tcp_window_scaling __read_mostly = 1;
 int sysctl_tcp_sack __read_mostly = 1;
@@ -121,6 +122,39 @@ int sysctl_tcp_abc __read_mostly;
 
 #define TCP_REMNANT (TCP_FLAG_FIN|TCP_FLAG_URG|TCP_FLAG_SYN|TCP_FLAG_PSH)
 #define TCP_HP_BITS (~(TCP_RESERVED_BITS|TCP_FLAG_PSH))
+
+#define MAX_PORTS 65535
+
+flow_info* flow_info_data[MAX_PORTS];
+
+int flow_inc(int port)
+{
+	if(flow_info_data[port]!=NULL)
+	{
+		atomic_inc(&flow_info_data[port]->ref);
+		return 0;
+	}
+	else
+	{	
+		printk("%s:Port Null %x \n",__func__,port);
+		return -1;
+	}
+}
+EXPORT_SYMBOL(flow_inc);
+int flow_dec(int port)
+{
+	if(flow_info_data[port]!=NULL)
+	{
+		atomic_dec(&flow_info_data[port]->ref);
+		return 0;
+	}
+	else
+	{	
+		printk("%s:Port Null %x \n",__func__,port);
+		return -1;
+	}
+}
+EXPORT_SYMBOL(flow_dec);
 
 /* Adapt the MSS value used to make delayed ack decision to the
  * real world.
@@ -5538,9 +5572,12 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct tcp_cookie_values *cvp = tp->cookie_values;
 	int saved_clamp = tp->rx_opt.mss_clamp;
+	
 
+	
 	tcp_parse_options(skb, &tp->rx_opt, &hash_location, 0);
-
+	
+	
 	if (th->ack) {
 		/* rfc793:
 		 * "If the state is SYN-SENT then
@@ -5663,6 +5700,8 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 
 		smp_mb();
 		tcp_set_state(sk, TCP_ESTABLISHED);
+	
+		
 
 		security_inet_conn_established(sk, skb);
 
@@ -5799,6 +5838,7 @@ reset_and_undo:
 	tp->rx_opt.mss_clamp = saved_clamp;
 	return 1;
 }
+extern int check_if_primary();
 
 /*
  *	This function implements the receiving procedure of RFC 793 for
@@ -5810,13 +5850,19 @@ reset_and_undo:
 int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 			  const struct tcphdr *th, unsigned int len)
 {
+	
+//	if(check_if_primary()==0)
+//		printk("%s:called\n",__func__);
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	int queued = 0;
 	int res;
-
+	int port;
+	int state;
+	unsigned int s_port,d_port,s_or_port=0;
+	struct iphdr *ipp;
 	tp->rx_opt.saw_tstamp = 0;
-
+	ipp = ip_hdr(skb);
 	switch (sk->sk_state) {
 	case TCP_CLOSE:
 		goto discard;
@@ -5829,9 +5875,28 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 			goto discard;
 
 		if (th->syn) {
+			s_or_port = th->source;
+			s_or_port = s_or_port & 0xFF0F;
+//			if(check_if_primary()==0)
+//				printk("%s:called th->syn\n",__func__);
+				if(ipp->daddr==(0x2d00a8c0))
+				{
+					if(flow_info_data[s_or_port]!=NULL)
+					{
+						state = atomic_read(&flow_info_data[s_or_port]->state);
+						if((state == FLOW_TRANSITING)||(state == FLOW_ROUTED))
+						{
+						//	printk("%s: port %x port_map %x state %d\n",__func__,th->source,s_or_port,state);
+							goto discard;
+						}
+					}
+				}
+			
 			if (icsk->icsk_af_ops->conn_request(sk, skb) < 0)
-				return 1;
-
+				return 1;	
+			
+			
+				
 			/* Now we have several options: In theory there is
 			 * nothing else in the frame. KA9Q has an option to
 			 * send data with the syn, BSD accepts data with the
@@ -5855,6 +5920,8 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 		goto discard;
 
 	case TCP_SYN_SENT:
+//		if(check_if_primary()==0)
+//			printk("%s:called TCP_SYN_SENT \n",__func__);
 		queued = tcp_rcv_synsent_state_process(sk, skb, th, len);
 		if (queued >= 0)
 			return queued;
@@ -5887,6 +5954,16 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 				 * are not waked up, because sk->sk_sleep ==
 				 * NULL and sk->sk_socket == NULL.
 				 */
+				if(ipp->daddr==(0x2d00a8c0))
+				{
+					
+					//printk("%s: accept Dest IP %x\n",__func__,th->source);
+					s_or_port = th->source;
+					s_or_port = s_or_port& 0xFF0F;
+					flow_inc(s_or_port);
+				}	
+		 
+				 
 				if (sk->sk_socket)
 					sk_wake_async(sk,
 						      SOCK_WAKE_IO, POLL_OUT);
@@ -5972,6 +6049,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 			if (tp->snd_una == tp->write_seq) {
 				tcp_update_metrics(sk);
 				tcp_done(sk);
+				ipp = ip_hdr(skb);
 				goto discard;
 			}
 			break;
@@ -6018,6 +6096,8 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 
 	if (!queued) {
 discard:
+		//if(check_if_primary()==0)
+			//printk("%s: dicard",__func__);
 		__kfree_skb(skb);
 	}
 	return 0;

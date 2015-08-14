@@ -206,7 +206,8 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 
 	if (!handle_irq(irq, regs)) {
 		ack_APIC_irq();
-
+		
+		printk("%s:Interrupt has no handler irq %d\n",__func__,irq);
 		if (printk_ratelimit())
 			pr_emerg("%s: %d.%d No irq handler for vector (irq %d)\n",
 				__func__, smp_processor_id(), vector, irq);

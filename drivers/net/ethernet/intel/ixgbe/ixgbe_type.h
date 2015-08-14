@@ -2387,6 +2387,20 @@ typedef u32 ixgbe_physical_layer;
 #define IXGBE_ATR_BUCKET_HASH_KEY    0x3DAD14E2
 #define IXGBE_ATR_SIGNATURE_HASH_KEY 0x174D3614
 
+
+/* Software ATR input stream offsets and masks */
+#define IXGBE_ATR_VLAN_OFFSET       0
+#define IXGBE_ATR_SRC_IPV6_OFFSET   2
+#define IXGBE_ATR_SRC_IPV4_OFFSET  14
+#define IXGBE_ATR_DST_IPV6_OFFSET  18
+#define IXGBE_ATR_DST_IPV4_OFFSET  30
+#define IXGBE_ATR_SRC_PORT_OFFSET  34
+#define IXGBE_ATR_DST_PORT_OFFSET  36
+#define IXGBE_ATR_FLEX_BYTE_OFFSET 38
+#define IXGBE_ATR_VM_POOL_OFFSET   40
+#define IXGBE_ATR_L4TYPE_OFFSET    41
+
+
 /* Software ATR input stream values and masks */
 #define IXGBE_ATR_HASH_MASK     0x7fff
 #define IXGBE_ATR_L4TYPE_MASK      0x3
@@ -2404,6 +2418,24 @@ enum ixgbe_atr_flow_type {
 	IXGBE_ATR_FLOW_TYPE_TCPV6  = 0x6,
 	IXGBE_ATR_FLOW_TYPE_SCTPV6 = 0x7,
 };
+
+/* Flow Director ATR input struct. */
+struct snull_atr_input {
+	/* Byte layout in order, all values with MSB first:
+	 *
+	 * vlan_id    - 2 bytes
+	 * src_ip     - 16 bytes
+	 * dst_ip     - 16 bytes
+	 * src_port   - 2 bytes
+	 * dst_port   - 2 bytes
+	 * flex_bytes - 2 bytes
+	 * vm_pool    - 1 byte
+	 * l4type     - 1 byte
+	 */
+	u8 byte_stream[42];
+};
+
+
 
 /* Flow Director ATR input struct. */
 union ixgbe_atr_input {

@@ -262,19 +262,28 @@ void get_cached_msi_msg(unsigned int irq, struct msi_msg *msg)
 void __write_msi_msg(struct msi_desc *entry, struct msi_msg *msg)
 {
 	if (entry->dev->current_state != PCI_D0) {
+		printk("%s: inside entry->dev->current_state != PCI_D0\n",__func__);
 		/* Don't touch the hardware now */
 	} else if (entry->msi_attrib.is_msix) {
+		
+		
 		void __iomem *base;
 		base = entry->mask_base +
 			entry->msi_attrib.entry_nr * PCI_MSIX_ENTRY_SIZE;
-
+		printk("%s: entry->msi_attrib.is_msix irq %d base %p mask %d\n",__func__,entry->irq,entry->mask_base,entry->masked);
 		writel(msg->address_lo, base + PCI_MSIX_ENTRY_LOWER_ADDR);
 		writel(msg->address_hi, base + PCI_MSIX_ENTRY_UPPER_ADDR);
 		writel(msg->data, base + PCI_MSIX_ENTRY_DATA);
+		
+		
 	} else {
+		
+		printk("%s: else\n",__func__);
 		struct pci_dev *dev = entry->dev;
 		int pos = entry->msi_attrib.pos;
 		u16 msgctl;
+
+		printk("%s: entry->msi_attrib.pos\n",__func__,pos);
 
 		pci_read_config_word(dev, msi_control_reg(pos), &msgctl);
 		msgctl &= ~PCI_MSI_FLAGS_QSIZE;

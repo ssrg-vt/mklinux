@@ -1598,7 +1598,7 @@ static int ixgbe_setup_desc_rings(struct ixgbe_adapter *adapter)
 		break;
 	}
 
-	ixgbe_configure_tx_ring(adapter, tx_ring);
+	ixgbe_configure_tx_ring(adapter, tx_ring,0); //saif changed
 
 	/* Setup Rx Descriptor ring and Rx buffers */
 	rx_ring->count = IXGBE_DEFAULT_RXD;

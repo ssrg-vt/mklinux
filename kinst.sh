@@ -80,5 +80,11 @@ elif [ "$DISTRO" == "arch" ]; then
 else
 	echo "Error: Could not figure out how to generate ramfs or update bootloader on your distribution: $DISTRO"  
 	echo "Please do this manually"
+	echo "creating initramfs"
+	dracut -f initramfs-"$VER".img $VER
+	check_errors $? "dracut failed"
+	cp -f initramfs-"$VER".img /boot/initramfs-"$VER".img
+	rm initramfs-"$VER".img
+
 
 fi

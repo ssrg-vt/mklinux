@@ -1120,7 +1120,7 @@ SYSCALL_DEFINE3(shmat, int, shmid, char __user *, shmaddr, int, shmflg)
 	}
 	else
 	{
-	err = remote_ipc_shm_shmat(shmid, shmaddr, shmflg, &ret);
+	err = 0;//remote_ipc_shm_shmat(shmid, shmaddr, shmflg, &ret);
 	}
 	if (err)
 		return err;

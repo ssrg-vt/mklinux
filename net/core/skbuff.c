@@ -437,8 +437,12 @@ static void skb_release_all(struct sk_buff *skb)
  *	always call kfree_skb
  */
 
+extern int check_if_primary();
+
 void __kfree_skb(struct sk_buff *skb)
 {
+//	if(check_if_primary()==0)
+//		return;
 	skb_release_all(skb);
 	kfree_skbmem(skb);
 }

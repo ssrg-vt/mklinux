@@ -51,6 +51,13 @@ SYSCALL_DEFINE2(multikernel_boot, int, cpu, unsigned long, kernel_start_address)
 	return mkbsp_boot_cpu(apicid, cpu, kernel_start_address);
 }
 
+int get_apic_id(int cpu)
+{
+	 return per_cpu(x86_bios_cpu_apicid, cpu);
+}
+EXPORT_SYMBOL(get_apic_id);
+
+
 SYSCALL_DEFINE0(get_boot_params_addr)
 {
 	printk("POPCORN: syscall to return phys addr of boot_params structure\n");

@@ -346,7 +346,9 @@ struct pci_dev {
 	struct pci_ats	*ats;	/* Address Translation Service */
 #endif
 #ifdef CONFIG_REMOTE_REMAP
-        unsigned long _master;
+        unsigned int _master;
+	//TODO:struct list_head free_irq_list;
+        unsigned int _free_irq;
         unsigned long _for_cpu;
 #endif
 };

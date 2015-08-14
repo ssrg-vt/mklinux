@@ -72,6 +72,7 @@
  *      -1 = don't know, 0 = no, 1 = yes
  */
 int sis_apic_bug = -1;
+extern int get_apic_id(int cpu);
 
 static DEFINE_RAW_SPINLOCK(ioapic_lock);
 static DEFINE_RAW_SPINLOCK(vector_lock);
@@ -612,6 +613,7 @@ static void eoi_ioapic_irq(unsigned int irq, struct irq_cfg *cfg)
 	struct irq_pin_list *entry;
 	unsigned long flags;
 
+	//printk("%s:called\n",__func__);
 	raw_spin_lock_irqsave(&ioapic_lock, flags);
 	for_each_irq_pin(entry, cfg->irq_2_pin)
 		__eoi_ioapic_pin(entry->apic, entry->pin, cfg->vector, cfg);
@@ -1109,6 +1111,38 @@ void unlock_vector_lock(void)
 	raw_spin_unlock(&vector_lock);
 }
 
+
+int get_vector(int irq)
+{
+	int i;
+	//printk("%s: %d\n",__func__,irq);
+	
+	for(i=0;i<NR_VECTORS;i++)
+	{
+		if(per_cpu(vector_irq, smp_processor_id())[i] == irq)
+		{
+			//printk("%s:vector %d\n",__func__,i);
+			return i;
+		}
+	}
+	return -1;
+}
+EXPORT_SYMBOL(get_vector);
+
+int get_irq_from_vector(int vector,int cpu)
+{
+	return per_cpu(vector_irq, cpu)[vector];
+}
+EXPORT_SYMBOL(get_irq_from_vector);
+
+
+void print_irq_from_vector(int vector,int cpu)
+{
+	printk("%s:irq %d\n",__func__,per_cpu(vector_irq, cpu)[vector]);
+}
+
+EXPORT_SYMBOL(print_irq_from_vector);
+
 static int
 __assign_irq_vector(int irq, struct irq_cfg *cfg, const struct cpumask *mask)
 {
@@ -1136,6 +1170,8 @@ __assign_irq_vector(int irq, struct irq_cfg *cfg, const struct cpumask *mask)
 		return -ENOMEM;
 
 	old_vector = cfg->vector;
+	
+	printk("%s:cfg->vector %x  online mask %x\n",cfg->vector,cpu_online_mask);
 	if (old_vector) {
 		cpumask_and(tmp_mask, mask, cpu_online_mask);
 		cpumask_and(tmp_mask, cfg->domain, tmp_mask);
@@ -1144,7 +1180,7 @@ __assign_irq_vector(int irq, struct irq_cfg *cfg, const struct cpumask *mask)
 			return 0;
 		}
 	}
-
+	printk("%s:temp_mask %x  online mask %x\n",tmp_mask,cpu_online_mask);
 	/* Only try and allocate irqs on cpus that are present */
 	err = -ENOSPC;
 	for_each_cpu_and(cpu, mask, cpu_online_mask) {
@@ -2337,8 +2373,10 @@ static void __target_IO_APIC_irq(unsigned int irq, unsigned int dest, struct irq
 int __ioapic_set_affinity(struct irq_data *data, const struct cpumask *mask,
 			  unsigned int *dest_id)
 {
+	
+	printk("%s:called\n",__func__);
 	struct irq_cfg *cfg = data->chip_data;
-
+	
 	if (!cpumask_intersects(mask, cpu_online_mask))
 		return -1;
 
@@ -2348,8 +2386,35 @@ int __ioapic_set_affinity(struct irq_data *data, const struct cpumask *mask,
 	cpumask_copy(data->affinity, mask);
 
 	*dest_id = apic->cpu_mask_to_apicid_and(mask, cfg->domain);
+	
+	printk("%s:id %x\n",__func__,*dest_id);
 	return 0;
 }
+
+int __pop_ioapic_set_affinity(struct irq_data *data, const struct cpumask *mask)
+{
+	
+	printk("%s:called mask %x\n",__func__,*mask);
+	struct irq_cfg *cfg = data->chip_data;
+	
+/*	if (!cpumask_intersects(mask, cpu_online_mask))
+	{
+		printk("%s:cpumask_intersects\n",__func__);
+		return -1;
+	}
+*/ 
+/*	if (assign_irq_vector(data->irq, data->chip_data, mask))
+	{
+		printk("%s:assign vector failed\n",__func__);
+		return -1;
+	}
+*/
+	printk("%s:before data->affinity %x mask %x\n",__func__,*data->affinity,*mask);
+	cpumask_copy(data->affinity, mask);
+	printk("%s:after data->affinity %x mask %x\n",__func__,*data->affinity,*mask);
+	return 0;
+}
+
 
 static int
 ioapic_set_affinity(struct irq_data *data, const struct cpumask *mask,
@@ -2537,6 +2602,8 @@ static void ack_apic_level(struct irq_data *data)
 	int i, do_unmask_irq = 0, irq = data->irq;
 	unsigned long v;
 
+
+	
 	irq_complete_move(cfg);
 #ifdef CONFIG_GENERIC_PENDING_IRQ
 	/* If we are moving the irq we need to mask it */
@@ -2595,6 +2662,9 @@ static void ack_apic_level(struct irq_data *data)
 	 * at the cpu.
 	 */
 	if (!(v & (1 << (i & 0x1f)))) {
+		
+		//dump_stack();
+		//printk("%s: v irq %d\n",__func__,data->irq);
 		atomic_inc(&irq_mis_count);
 
 		eoi_ioapic_irq(irq, cfg);
@@ -3100,6 +3170,7 @@ unsigned int create_irq_nr(unsigned int from, int node)
 	}
 	return ret;
 }
+EXPORT_SYMBOL(create_irq_nr);
 
 int create_irq(void)
 {
@@ -3146,12 +3217,21 @@ static int msi_compose_msg(struct pci_dev *pdev, unsigned int irq,
 		return -ENXIO;
 
 	cfg = irq_cfg(irq);
-	err = assign_irq_vector(irq, cfg, apic->target_cpus());
+	if(pdev && pdev->_master == 1 && pdev->_free_irq == 1){
+		err= 0;//cfg->vector = 0;
+	}
+	else	{
+		err = assign_irq_vector(irq, cfg, apic->target_cpus());
+	}
 	if (err)
 		return err;
 
-	dest = apic->cpu_mask_to_apicid_and(cfg->domain, apic->target_cpus());
-
+	if(pdev && pdev->_master == 1 && pdev->_free_irq == 1){
+		dest = 2;// dev->_for_cpu
+	}
+	else{
+		dest = apic->cpu_mask_to_apicid_and(cfg->domain, apic->target_cpus());
+	}
 	if (irq_remapped(cfg)) {
 		struct irte irte;
 		int ir_index;
@@ -3170,6 +3250,8 @@ static int msi_compose_msg(struct pci_dev *pdev, unsigned int irq,
 
 		modify_irte(irq, &irte);
 
+ 		printk(KERN_ALERT"irq %d vector %d addr %lx sub %lx dest %d\n",irq,cfg->vector,MSI_ADDR_BASE_HI,sub_handle,dest);
+
 		msg->address_hi = MSI_ADDR_BASE_HI;
 		msg->data = sub_handle;
 		msg->address_lo = MSI_ADDR_BASE_LO | MSI_ADDR_IR_EXT_INT |
@@ -3178,8 +3260,11 @@ static int msi_compose_msg(struct pci_dev *pdev, unsigned int irq,
 				  MSI_ADDR_IR_INDEX2(ir_index);
 	} else {
 		if (x2apic_enabled())
+		{
 			msg->address_hi = MSI_ADDR_BASE_HI |
 					  MSI_ADDR_EXT_DEST_ID(dest);
+			printk("%s: x2apic_enalbed\n");
+		}
 		else
 			msg->address_hi = MSI_ADDR_BASE_HI;
 
@@ -3208,13 +3293,16 @@ static int msi_compose_msg(struct pci_dev *pdev, unsigned int irq,
 static int
 msi_set_affinity(struct irq_data *data, const struct cpumask *mask, bool force)
 {
+
+	printk("%s:called mask %x\n",__func__,*mask);
+	//dump_stack();
 	struct irq_cfg *cfg = data->chip_data;
 	struct msi_msg msg;
 	unsigned int dest;
 
 	if (__ioapic_set_affinity(data, mask, &dest))
 		return -1;
-
+	printk("%s:dest %x\n",__func__,dest);
 	__get_cached_msi_msg(data->msi_desc, &msg);
 
 	msg.data &= ~MSI_DATA_VECTOR_MASK;
@@ -3226,6 +3314,41 @@ msi_set_affinity(struct irq_data *data, const struct cpumask *mask, bool force)
 
 	return 0;
 }
+
+int
+pop_msi_set_affinity(unsigned int irq,unsigned int dest_cpu,unsigned int vector)
+{
+
+	struct irq_desc *desc = irq_to_desc(irq);
+	struct irq_data *data = &desc->irq_data;
+	struct cpumask mask;
+	
+	cpumask_clear(&mask);
+	cpumask_set_cpu(dest_cpu,&mask);
+
+
+	printk("%s:called mask %x irq %d\n",__func__,mask,irq);
+	struct irq_cfg *cfg = data->chip_data;
+	struct msi_msg msg;
+	unsigned int dest;
+
+	if (__pop_ioapic_set_affinity(data, &mask))
+		return -1;
+	dest=get_apic_id(dest_cpu);
+	__get_cached_msi_msg(data->msi_desc, &msg);
+	printk("%s:dest %x  cfg->vector %x vector %x data\n",__func__,dest,cfg->vector,vector,msg.data);
+	msg.data &= ~MSI_DATA_VECTOR_MASK;
+	msg.data |= MSI_DATA_VECTOR(vector);
+	msg.address_lo &= ~MSI_ADDR_DEST_ID_MASK;
+	msg.address_lo |= MSI_ADDR_DEST_ID(dest);
+	printk("%s: msi data %x dest id %x \n",__func__,msg.data,MSI_ADDR_DEST_ID(dest));
+	__write_msi_msg(data->msi_desc, &msg);
+
+	return 0;
+}
+EXPORT_SYMBOL(pop_msi_set_affinity);
+
+
 #endif /* CONFIG_SMP */
 
 /*
@@ -3303,7 +3426,9 @@ int native_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 	unsigned int irq, irq_want;
 	struct msi_desc *msidesc;
 	struct intel_iommu *iommu = NULL;
-
+	unsigned int cnt = 0;
+	//printk(KERN_ALERT"+++intr_remapping_enabled: %d nvec %d free %d\n",intr_remapping_enabled,nvec,dev->_alloc_free_irq);
+		
 	/* x86 doesn't support multiple MSI yet */
 	if (type == PCI_CAP_ID_MSI && nvec > 1)
 		return 1;
@@ -3312,6 +3437,12 @@ int native_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 	irq_want = nr_irqs_gsi;
 	sub_handle = 0;
 	list_for_each_entry(msidesc, &dev->msi_list, list) {
+		
+		if(dev->_master== 1 && cnt > 0) 
+			dev->_free_irq = 1;
+		else 
+			dev->_free_irq = 0;
+
 		irq = create_irq_nr(irq_want, node);
 		if (irq == 0)
 			return -1;
@@ -3324,12 +3455,14 @@ int native_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 			 * allocate the consecutive block of IRTE's
 			 * for 'nvec'
 			 */
+			printk(KERN_ALERT"IRTE with dev");
 			index = msi_alloc_irte(dev, irq, nvec);
 			if (index < 0) {
 				ret = index;
 				goto error;
 			}
 		} else {
+
 			iommu = map_dev_to_ir(dev);
 			if (!iommu) {
 				ret = -ENOENT;
@@ -3344,9 +3477,11 @@ int native_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 		}
 no_ir:
 		ret = setup_msi_irq(dev, msidesc, irq);
+		printk(KERN_ALERT"IRTE without dev irq %d  want %d ind %d sub %d array %d ret %d cnt %d",irq,irq_want,index,sub_handle, ARRAY_SIZE(irq_cfgx),ret,cnt);
 		if (ret < 0)
 			goto error;
 		sub_handle++;
+		cnt++;
 	}
 	return 0;
 

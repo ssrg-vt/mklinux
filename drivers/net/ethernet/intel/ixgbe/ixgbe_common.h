@@ -30,6 +30,7 @@
 
 #include "ixgbe_type.h"
 #include "ixgbe.h"
+#include <linux/if_ether.h>
 
 u32 ixgbe_get_pcie_msix_count_generic(struct ixgbe_hw *hw);
 s32 ixgbe_init_ops_generic(struct ixgbe_hw *hw);
@@ -116,11 +117,29 @@ void ixgbe_set_rxpba_generic(struct ixgbe_hw *hw, int num_pb,
 
 #define IXGBE_READ_REG(a, reg) readl((a)->hw_addr + (reg))
 
+#define IXGBE_WRITE_REG64_ADDRESS(a, reg, value) writeq((value), (a + reg))
+
+#define IXGBE_READ_REG_ADDRESS(a, reg) readl((a) + (reg))
+
+
+
+
 #define IXGBE_WRITE_REG_ARRAY(a, reg, offset, value) (\
     writel((value), ((a)->hw_addr + (reg) + ((offset) << 2))))
 
 #define IXGBE_READ_REG_ARRAY(a, reg, offset) (\
     readl((a)->hw_addr + (reg) + ((offset) << 2)))
+    
+
+#define IXGBE_WRITE_REG_ARRAY_ADDRESS(a, reg, offset, value) (\
+    writel((value), ((a)->hw_addr + ((offset) << 2))))
+
+#define IXGBE_READ_REG_ARRAY_ADRESS(a, reg, offset) (\
+    readl((a) + (reg) + ((offset) << 2)))    
+    
+#define IXGBE_HTONL(_i) htonl(_i)
+#define IXGBE_HTONS(_i) htons(_i)
+
 
 #define IXGBE_WRITE_FLUSH(a) IXGBE_READ_REG(a, IXGBE_STATUS)
 

@@ -34,6 +34,9 @@ struct msi_desc {
 
 	u32 masked;			/* mask bits */
 	unsigned int irq;
+	unsigned int free : 1;
+	unsigned int slave_alloc : 1;
+	unsigned int dummy : 1;
 	struct list_head list;
 
 	union {

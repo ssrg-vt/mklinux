@@ -25,6 +25,8 @@ static int errnum = 0;
 static unsigned long resptr;
 
 static DECLARE_WAIT_QUEUE_HEAD( wq);
+//#define DISABLE_SHM 
+#undef DISABLE_SHM 
 
 /*
  ******************************************************** common functions*******************************************************************
@@ -164,6 +166,7 @@ int remote_ipc_shm_getid(struct ipc_ids *ids, struct ipc_params *params) {
 
 	reset_wait_shm();
 	int ret = 0, i;
+#ifdef DISABLE_SHM
 	/*
 	 * have to send message to remote kernels and fetch if the key is present
 	 */
@@ -188,7 +191,7 @@ int remote_ipc_shm_getid(struct ipc_ids *ids, struct ipc_params *params) {
 				break;
 		}
 	}
-
+#endif
 	return ret;
 }
 
@@ -428,6 +431,7 @@ int remote_ipc_shm_shmat(int shmid, char *shmaddr, int shmflg, ulong *raddr) {
 
 	reset_wait_shm();
 	int ret = 0, i;
+#ifdef DISABLE_SHM
 
 	long *key_index;
 	int id = -1;
@@ -441,7 +445,7 @@ int remote_ipc_shm_shmat(int shmid, char *shmaddr, int shmflg, ulong *raddr) {
 			wait_event_interruptible(wq, wait != -1);
 			ret = errnum;
 			raddr = &resptr;
-		}
+#endif		}
 
 	return ret;
 }

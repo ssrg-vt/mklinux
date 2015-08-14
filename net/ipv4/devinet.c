@@ -465,19 +465,19 @@ static int __inet_insert_ifa(struct in_ifaddr *ifa, struct nlmsghdr *nlh,
 	struct in_device *in_dev = ifa->ifa_dev;
 	struct in_ifaddr *ifa1, **ifap, **last_primary;
 	printk(KERN_ALERT"%s: is remote{%d} \n",__func__,ifa->remote);	
-	if(ifa->remote == 1)
-		printk(KERN_ALERT "%s: do not assert \n",__func__);
-	else
+//	if(ifa->remote == 1)
+//		printk(KERN_ALERT "%s: do not assert \n",__func__);
+//	else
 		ASSERT_RTNL();
 
 	if (!ifa->ifa_local) {
 		inet_free_ifa(ifa);
-		printk(KERN_ALERT "%s: ifa is not local \n",__func__);
+//		printk(KERN_ALERT "%s: ifa is not local \n",__func__);
 		return 0;
 	}
 	
-	if(ifa->remote == 1)
-		printk(KERN_ALERT "%s: flags are set\n",__func__);
+//	if(ifa->remote == 1)
+//		printk(KERN_ALERT "%s: flags are set\n",__func__);
 	
 
 	ifa->ifa_flags &= ~IFA_F_SECONDARY;
@@ -509,8 +509,8 @@ static int __inet_insert_ifa(struct in_ifaddr *ifa, struct nlmsghdr *nlh,
 
 	ifa->ifa_next = *ifap;
 	*ifap = ifa;
-	if(ifa->remote == 1)
-		printk(KERN_ALERT "%s: before inet_hash \n",__func__);
+//	if(ifa->remote == 1)
+//		printk(KERN_ALERT "%s: before inet_hash \n",__func__);
 	
 	inet_hash_insert(dev_net(in_dev->dev), ifa);
 	

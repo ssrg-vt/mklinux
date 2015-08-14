@@ -267,6 +267,7 @@
 #include <linux/time.h>
 #include <linux/slab.h>
 
+
 #include <net/icmp.h>
 #include <net/tcp.h>
 #include <net/xfrm.h>
@@ -281,6 +282,8 @@ int sysctl_tcp_fin_timeout __read_mostly = TCP_FIN_TIMEOUT;
 
 struct percpu_counter tcp_orphan_count;
 EXPORT_SYMBOL_GPL(tcp_orphan_count);
+
+extern int flow_dec(int port);
 
 long sysctl_tcp_mem[3] __read_mostly;
 int sysctl_tcp_wmem[3] __read_mostly;
@@ -3185,11 +3188,17 @@ EXPORT_SYMBOL(tcp_cookie_generator);
 
 void tcp_done(struct sock *sk)
 {
+	
+	
+//	printk("%s: called port %d s_add %x dest %x dest_port %x\n",__func__,isk->inet_sport,isk->inet_saddr,isk->inet_daddr,isk->inet_dport);
+	
+	
 	if (sk->sk_state == TCP_SYN_SENT || sk->sk_state == TCP_SYN_RECV)
 		TCP_INC_STATS_BH(sock_net(sk), TCP_MIB_ATTEMPTFAILS);
 
 	tcp_set_state(sk, TCP_CLOSE);
 	tcp_clear_xmit_timers(sk);
+	
 
 	sk->sk_shutdown = SHUTDOWN_MASK;
 
@@ -3197,6 +3206,8 @@ void tcp_done(struct sock *sk)
 		sk->sk_state_change(sk);
 	else
 		inet_csk_destroy_sock(sk);
+		
+	
 }
 EXPORT_SYMBOL_GPL(tcp_done);
 

@@ -227,6 +227,9 @@ struct ixgbe_ring {
 		struct ixgbe_tx_buffer *tx_buffer_info;
 		struct ixgbe_rx_buffer *rx_buffer_info;
 	};
+	dma_addr_t tx_rx_buffer_info_phys;
+	u8 __iomem * pci_base_adress;
+	
 	unsigned long state;
 	u8 __iomem *tail;
 
@@ -257,6 +260,7 @@ struct ixgbe_ring {
 	dma_addr_t dma;			/* phys. address of descriptor ring */
 	struct rcu_head rcu;
 	struct ixgbe_q_vector *q_vector; /* back-pointer to host q_vector */
+	
 } ____cacheline_internodealigned_in_smp;
 
 enum ixgbe_ring_f_enum {
@@ -413,7 +417,7 @@ struct ixgbe_adapter {
 	unsigned long active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 	u16 bd_number;
 	struct ixgbe_q_vector *q_vector[MAX_MSIX_Q_VECTORS];
-
+	unsigned long q_vec_phy[MAX_MSIX_Q_VECTORS];
 	/* DCB parameters */
 	struct ieee_pfc *ixgbe_ieee_pfc;
 	struct ieee_ets *ixgbe_ieee_ets;
@@ -434,6 +438,7 @@ struct ixgbe_adapter {
 
 	/* TX */
 	struct ixgbe_ring *tx_ring[MAX_TX_QUEUES] ____cacheline_aligned_in_smp;
+	unsigned long tx_ring_phys[MAX_TX_QUEUES];
 	int num_tx_queues;
 	u32 tx_timeout_count;
 	bool detect_tx_hung;
@@ -443,6 +448,7 @@ struct ixgbe_adapter {
 
 	/* RX */
 	struct ixgbe_ring *rx_ring[MAX_RX_QUEUES] ____cacheline_aligned_in_smp;
+	unsigned long rx_ring_phys[MAX_TX_QUEUES];
 	int num_rx_queues;
 	int num_rx_pools;		/* == num_rx_queues in 82598 */
 	int num_rx_queues_per_pool;	/* 1 if 82598, can be many if 82599 */
@@ -571,7 +577,7 @@ extern int ixgbe_setup_tx_resources(struct ixgbe_ring *);
 extern void ixgbe_free_rx_resources(struct ixgbe_ring *);
 extern void ixgbe_free_tx_resources(struct ixgbe_ring *);
 extern void ixgbe_configure_rx_ring(struct ixgbe_adapter *,struct ixgbe_ring *);
-extern void ixgbe_configure_tx_ring(struct ixgbe_adapter *,struct ixgbe_ring *);
+extern void ixgbe_configure_tx_ring(struct ixgbe_adapter *,struct ixgbe_ring *,int);
 extern void ixgbe_disable_rx_queue(struct ixgbe_adapter *adapter,
 				   struct ixgbe_ring *);
 extern void ixgbe_update_stats(struct ixgbe_adapter *adapter);

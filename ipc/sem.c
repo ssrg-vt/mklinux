@@ -1123,7 +1123,7 @@ SYSCALL_DEFINE(semctl)(int semid, int semnum, int cmd, union semun arg)
 		}
 		else
 		{
-			err = remote_ipc_sem_semctl(semnum,semid, cmd, version, arg);
+			err = 0;//remote_ipc_sem_semctl(semnum,semid, cmd, version, arg);
 		}
 		return err;
 	}
@@ -1141,7 +1141,7 @@ SYSCALL_DEFINE(semctl)(int semid, int semnum, int cmd, union semun arg)
 		}
 		else
 		{
-			err = remote_ipc_sem_semctl(semnum,semid, cmd, version, arg);
+			err = 0;// remote_ipc_sem_semctl(semnum,semid, cmd, version, arg);
 		}
 		return err;
 	}
@@ -1154,7 +1154,7 @@ SYSCALL_DEFINE(semctl)(int semid, int semnum, int cmd, union semun arg)
 		}
 		else
 		{
-			err = remote_ipc_sem_semctl(semnum,semid, cmd, version, arg);
+			err = 0;//remote_ipc_sem_semctl(semnum,semid, cmd, version, arg);
 		}
 		return err;
 	}

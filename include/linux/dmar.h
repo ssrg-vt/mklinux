@@ -114,6 +114,7 @@ struct irte {
 	};
 };
 
+
 #ifdef CONFIG_IRQ_REMAP
 extern int intr_remapping_enabled;
 extern int intr_remapping_supported(void);

@@ -623,8 +623,11 @@ EXPORT_SYMBOL_GPL(inet_csk_clone);
  * can assume the socket waitqueue is inactive and nobody will
  * try to jump onto it.
  */
+ 
+extern int flow_dec(int port); 
 void inet_csk_destroy_sock(struct sock *sk)
 {
+	u16 s_or_port;
 	WARN_ON(sk->sk_state != TCP_CLOSE);
 	WARN_ON(!sock_flag(sk, SOCK_DEAD));
 
@@ -633,6 +636,14 @@ void inet_csk_destroy_sock(struct sock *sk)
 
 	/* If it has not 0 inet_sk(sk)->inet_num, it must be bound */
 	WARN_ON(inet_sk(sk)->inet_num && !inet_csk(sk)->icsk_bind_hash);
+	struct inet_sock* isk = inet_sk(sk);
+	if(isk->inet_saddr==(0x2d00a8c0))
+	{
+	//	printk("%s: close dport %x n",__func__,isk->inet_dport);
+		s_or_port = (isk->inet_dport);
+		s_or_port = s_or_port & 0xFF0F;
+		flow_dec(s_or_port);
+	}	
 
 	sk->sk_prot->destroy(sk);
 

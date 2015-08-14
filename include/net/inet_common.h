@@ -1,6 +1,7 @@
 #ifndef _INET_COMMON_H
 #define _INET_COMMON_H
 
+#include <asm/atomic.h>
 extern const struct proto_ops inet_stream_ops;
 extern const struct proto_ops inet_dgram_ops;
 
@@ -40,5 +41,23 @@ static inline void inet_ctl_sock_destroy(struct sock *sk)
 {
 	sk_release_kernel(sk);
 }
+#define MAX_FLOW_COUNT 4096
+typedef enum _flow_state
+{
+	FLOW_ACTIVE,
+	FLOW_TRANSITING,
+	FLOW_ROUTED
+	
+}flow_state;
+
+typedef struct _flow_info
+{
+	u16 port;
+	u16 queue;
+	atomic_t ref;
+	atomic_t state;
+	u64 conn_serviced;
+}flow_info;
+
 
 #endif

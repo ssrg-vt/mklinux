@@ -2150,7 +2150,8 @@ static void lapic_resume(void)
 		return;
 
 	local_irq_save(flags);
-	if (intr_remapping_enabled) {
+	if (intr_remapping_enabled) 
+	{
 		/*
 		 * IO-APIC and PIC have their own resume routines.
 		 * We just mask them here to make sure the interrupt

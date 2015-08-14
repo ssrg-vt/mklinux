@@ -968,6 +968,8 @@ static int igb_request_msix(struct igb_adapter *adapter)
 		err = request_irq(adapter->msix_entries[vector].vector,
 		                  igb_msix_ring, 0, q_vector->name,
 		                  q_vector);
+		                  
+		printk("%s: vector %d entry %d\n",__func__,adapter->msix_entries[vector].vector,adapter->msix_entries[vector].entry);
 		if (err)
 			goto out;
 		vector++;
@@ -2090,7 +2092,6 @@ static int __devinit igb_probe(struct pci_dev *pdev,
 
 	dev_info(&pdev->dev, "Intel(R) Gigabit Ethernet Network Connection\n");
 	
-	netdev->_master = 0;
 	netdev->_for_cpu = smp_processor_id();
 	
 	/* print bus type/speed/width info */
@@ -2433,7 +2434,15 @@ static int __devinit igb_sw_init(struct igb_adapter *adapter)
 		break;
 	}
 #endif /* CONFIG_PCI_IOV */
+
+#ifdef CONFIG_REMOTE_REMAP
+	adapter->rss_queues = IGB_MAX_RX_QUEUES;
+//	adapter->pdev->_alloc_free_irq = 1;
+#else
 	adapter->rss_queues = min_t(u32, IGB_MAX_RX_QUEUES, num_online_cpus());
+	adapter->pdev->_alloc_free_irq = 0;
+#endif
+
 	/* i350 cannot do RSS and SR-IOV at the same time */
 	if (hw->mac.type == e1000_i350 && adapter->vfs_allocated_count)
 		adapter->rss_queues = 1;
@@ -2452,6 +2461,7 @@ static int __devinit igb_sw_init(struct igb_adapter *adapter)
 				E1000_VLAN_FILTER_TBL_SIZE,
 				GFP_ATOMIC);
 
+	pdev->_master = 1;
 	/* This call may decrease the number of queues */
 	if (igb_init_interrupt_scheme(adapter)) {
 		dev_err(&pdev->dev, "Unable to allocate memory for queues\n");
