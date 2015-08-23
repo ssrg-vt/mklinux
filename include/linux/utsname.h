@@ -51,6 +51,7 @@ extern struct user_namespace init_user_ns;
 struct uts_namespace {
 	struct kref kref;
 	struct new_utsname name;
+	struct new_utsname ft_name;
 	struct user_namespace *user_ns;
 };
 extern struct uts_namespace init_uts_ns;
@@ -98,7 +99,11 @@ static inline void uts_proc_notify(enum uts_proc proc)
 
 static inline struct new_utsname *utsname(void)
 {
-	return &current->nsproxy->uts_ns->name;
+	if (current->nsproxy->pop_ns) {
+		return &current->nsproxy->uts_ns->ft_name;
+	} else {
+		return &current->nsproxy->uts_ns->name;
+	}
 }
 
 static inline struct new_utsname *init_utsname(void)

@@ -68,6 +68,14 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 	if (!new_nsp)
 		return ERR_PTR(-ENOMEM);
 
+	// popcorn ns has to be created first, then we can decide whether the rest
+	// can be compatiable with the popcorn ns.
+	new_nsp->pop_ns = copy_pop_ns(flags, tsk->nsproxy->pop_ns);
+	if (IS_ERR(new_nsp->pop_ns)) {
+		err = PTR_ERR(new_nsp->pop_ns);
+		goto out_pop;
+	}
+
 	new_nsp->mnt_ns = copy_mnt_ns(flags, tsk->nsproxy->mnt_ns, new_fs);
 	if (IS_ERR(new_nsp->mnt_ns)) {
 		err = PTR_ERR(new_nsp->mnt_ns);
@@ -97,13 +105,6 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 		err = PTR_ERR(new_nsp->net_ns);
 		goto out_net;
 	}
-
-	new_nsp->pop_ns = copy_pop_ns(flags, tsk->nsproxy->pop_ns);
-        if (IS_ERR(new_nsp->pop_ns)) {
-                err = PTR_ERR(new_nsp->pop_ns);
-                goto out_pop;
-        }
-
 
 	return new_nsp;
 

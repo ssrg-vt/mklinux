@@ -55,6 +55,9 @@
 #include <asm/io.h>
 #include <asm/unistd.h>
 
+/* FT synchronization for uts */
+#include <linux/ft_uts.h>
+
 #ifndef SET_UNALIGN_CTL
 # define SET_UNALIGN_CTL(a,b)	(-EINVAL)
 #endif
@@ -1291,6 +1294,8 @@ SYSCALL_DEFINE2(sethostname, char __user *, name, int, len)
 
 		memcpy(u->nodename, tmp, len);
 		memset(u->nodename + len, 0, sizeof(u->nodename) - len);
+		/* Notify any possible replica that the name has changed */
+		sync_uts(current);
 		errno = 0;
 	}
 	uts_proc_notify(UTS_PROC_HOSTNAME);
@@ -1342,6 +1347,8 @@ SYSCALL_DEFINE2(setdomainname, char __user *, name, int, len)
 
 		memcpy(u->domainname, tmp, len);
 		memset(u->domainname + len, 0, sizeof(u->domainname) - len);
+		/* Notify any possible replica that the name has changed */
+		sync_uts(current);
 		errno = 0;
 	}
 	uts_proc_notify(UTS_PROC_DOMAINNAME);

@@ -43,6 +43,7 @@ static struct uts_namespace *clone_uts_ns(struct task_struct *tsk,
 
 	down_read(&uts_sem);
 	memcpy(&ns->name, &old_ns->name, sizeof(ns->name));
+	memcpy(&ns->ft_name, &old_ns->name, sizeof(ns->ft_name));
 	ns->user_ns = get_user_ns(task_cred_xxx(tsk, user)->user_ns);
 	up_read(&uts_sem);
 	return ns;
