@@ -53,10 +53,8 @@ static int proc_do_uts_string(ctl_table *table, int write,
 	r = proc_dostring(&uts_table,write,buffer,lenp, ppos);
 	put_uts(table, write, uts_table.data);
 
-	if (write) {
-		sync_uts(current);
+	if (write)
 		proc_sys_poll_notify(table->poll);
-	}
 
 	return r;
 }
