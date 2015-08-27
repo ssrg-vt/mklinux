@@ -22,7 +22,9 @@ static int load_script(struct linux_binprm *bprm)
 	char interp[BINPRM_BUF_SIZE];
 	int retval;
 
-printk(KERN_EMERG"%s: IN\n", __func__);
+#if 0
+	printk(KERN_EMERG"%s: IN\n", __func__);
+#endif
 
 	if ((bprm->buf[0] != '#') || (bprm->buf[1] != '!'))
 		return -ENOEXEC;
