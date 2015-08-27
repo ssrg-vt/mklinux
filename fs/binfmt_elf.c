@@ -40,6 +40,8 @@
 
 #include <linux/mm_types.h>
 
+#define POPCORN_DEBUG_ELF 0
+
 #ifndef user_long_t
 #define user_long_t long
 #endif
@@ -592,56 +594,74 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	} *loc;
 
 	char *string_table = NULL;
-	long  string_table_length = 0; 
+	long  string_table_length = 0;
 	struct elf_shdr *shdr = NULL;
 
-printk(KERN_EMERG"%s: IN\n", __func__);
+#if POPCORN_DEBUG_ELF
+	printk(KERN_EMERG"%s: IN\n", __func__);
+#endif
 
 	loc = kmalloc(sizeof(*loc), GFP_KERNEL);
 	if (!loc) {
 		retval = -ENOMEM;
-printk(KERN_EMERG"%s: failed kmalloc\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed kmalloc\n", __func__);
+#endif
 		goto out_ret;
 	}
-	
+
 	/* Get the exec-header */
 	loc->elf_ex = *((struct elfhdr *)bprm->buf);
 
 	retval = -ENOEXEC;
 	/* First of all, some simple consistency checks */
 	if (memcmp(loc->elf_ex.e_ident, ELFMAG, SELFMAG) != 0) {
-printk(KERN_EMERG"%s: failed memcmp elf_ex.e\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed memcmp elf_ex.e\n", __func__);
+#endif
 		goto out;
 	}
 
-	if (loc->elf_ex.e_type != ET_EXEC && loc->elf_ex.e_type != ET_DYN) {	
-printk(KERN_EMERG"%s: failed loc->elf_ex.e\n", __func__);
+	if (loc->elf_ex.e_type != ET_EXEC && loc->elf_ex.e_type != ET_DYN) {
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed loc->elf_ex.e\n", __func__);
+#endif
 		goto out;
 	}
-	if (!elf_check_arch(&loc->elf_ex)) {	
-printk(KERN_EMERG"%s: failed elf_check_arch\n", __func__);
+	if (!elf_check_arch(&loc->elf_ex)) {
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed elf_check_arch\n", __func__);
+#endif
 		goto out;
 	}
 	if (!bprm->file->f_op || !bprm->file->f_op->mmap) {
-printk(KERN_EMERG"%s: failed bprm->file->f_op\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed bprm->file->f_op\n", __func__);
+#endif
 		goto out;
 	}
 
 	/* Now read in all of the header information */
 	if (loc->elf_ex.e_phentsize != sizeof(struct elf_phdr)) {
-printk(KERN_EMERG"%s: failed e_phentsize\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed e_phentsize\n", __func__);
+#endif
 		goto out;
 	}
 	if (loc->elf_ex.e_phnum < 1 ||
 	 	loc->elf_ex.e_phnum > 65536U / sizeof(struct elf_phdr)) {
-printk(KERN_EMERG"%s: failed e_phnum <1\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed e_phnum <1\n", __func__);
+#endif
 		goto out;
 	}
 	size = loc->elf_ex.e_phnum * sizeof(struct elf_phdr);
 	retval = -ENOMEM;
 	elf_phdata = kmalloc(size, GFP_KERNEL);
 	if (!elf_phdata) {
-printk(KERN_EMERG"%s: failed elf_phdata\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed elf_phdata\n", __func__);
+#endif
 		goto out;
 	}
 
@@ -650,7 +670,9 @@ printk(KERN_EMERG"%s: failed elf_phdata\n", __func__);
 	if (retval != size) {
 		if (retval >= 0)
 			retval = -EIO;
-printk(KERN_EMERG"%s: failed kernel_read\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed kernel_read\n", __func__);
+#endif
 		goto out_free_ph;
 	}
 
@@ -669,13 +691,17 @@ printk(KERN_EMERG"%s: failed kernel_read\n", __func__);
 
 	shdr = (struct elf_shdr *) kmalloc(i, GFP_KERNEL);
 	if(shdr == NULL) {
-printk(KERN_EMERG"%s:%d - Failed to allocate memory\n", __func__, __LINE__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s:%d - Failed to allocate memory\n", __func__, __LINE__);
+#endif
 		return -1;
 	}
 
 	retval = kernel_read(bprm->file, loc->elf_ex.e_shoff, shdr, i);
 	if (retval != i) {
+#if POPCORN_DEBUG_ELF
 		   printk(KERN_EMERG"Error in load elf 1\n");//goto exit_read;//TODO
+#endif
 	}
 
 	/* Ajith - Creating string table for elf sections */
@@ -685,14 +711,18 @@ printk(KERN_EMERG"%s:%d - Failed to allocate memory\n", __func__, __LINE__);
 
 		string_table = kmalloc(i, GFP_KERNEL);
 		if(string_table == NULL) {
-printk(KERN_EMERG"%s:%d - Failed to allocate memory string table\n", __func__, __LINE__);
-        	        return -1;
+#if POPCORN_DEBUG_ELF
+			printk(KERN_EMERG"%s:%d - Failed to allocate memory string table\n", __func__, __LINE__);
+#endif
+         	        return -1;
 	        }
 
 		retval = kernel_read(bprm->file, espnt->sh_offset, string_table, i);
 		if (retval != i) {
-printk(KERN_EMERG"Error in load elf 2\n");//goto exit_read;//TODO
-		}    
+#if POPCORN_DEBUG_ELF
+			printk(KERN_EMERG"Error in load elf 2\n");//goto exit_read;//TODO
+#endif
+		}
 		string_table_length = string_table != NULL ? i : 0;
 	}
 
@@ -705,7 +735,9 @@ printk(KERN_EMERG"Error in load elf 2\n");//goto exit_read;//TODO
 			retval = -ENOEXEC;
 			if (elf_ppnt->p_filesz > PATH_MAX || 
 			    elf_ppnt->p_filesz < 2) {
-printk(KERN_EMERG"%s: failed elf_ppnt->p_filesz\n",__func__);
+#if POPCORN_DEBUG_ELF
+				printk(KERN_EMERG"%s: failed elf_ppnt->p_filesz\n",__func__);
+#endif
 				goto out_free_ph;
 			}
 
@@ -713,7 +745,9 @@ printk(KERN_EMERG"%s: failed elf_ppnt->p_filesz\n",__func__);
 			elf_interpreter = kmalloc(elf_ppnt->p_filesz,
 						  GFP_KERNEL);
 			if (!elf_interpreter) {
-printk(KERN_EMERG"%s: failed elf_interpreter\n",__func__);
+#if POPCORN_DEBUG_ELF
+				printk(KERN_EMERG"%s: failed elf_interpreter\n",__func__);
+#endif
 				goto out_free_ph;
 			}
 
@@ -723,20 +757,26 @@ printk(KERN_EMERG"%s: failed elf_interpreter\n",__func__);
 			if (retval != elf_ppnt->p_filesz) {
 				if (retval >= 0)
 					retval = -EIO;
-printk(KERN_EMERG"%s: failed kernel_read elf_ppnt->p_filesz\n",__func__);
+#if POPCORN_DEBUG_ELF
+				printk(KERN_EMERG"%s: failed kernel_read elf_ppnt->p_filesz\n",__func__);
+#endif
 				goto out_free_interp;
 			}
 			/* make sure path is NULL terminated */
 			retval = -ENOEXEC;
 			if (elf_interpreter[elf_ppnt->p_filesz - 1] != '\0') {
-printk(KERN_EMERG"%s: failed elf_interpreter[elf_ppnt]\n",__func__);
+#if POPCORN_DEBUG_ELF
+				printk(KERN_EMERG"%s: failed elf_interpreter[elf_ppnt]\n",__func__);
+#endif
 				goto out_free_interp;
 			}
 
 			interpreter = open_exec(elf_interpreter);
 			retval = PTR_ERR(interpreter);
 			if (IS_ERR(interpreter)) {
-printk(KERN_EMERG"%s: failed IS_ERR(interpreter)\n",__func__);
+#if POPCORN_DEBUG_ELF
+				printk(KERN_EMERG"%s: failed IS_ERR(interpreter)\n",__func__);
+#endif
 				goto out_free_interp;
 			}
 
@@ -752,7 +792,9 @@ printk(KERN_EMERG"%s: failed IS_ERR(interpreter)\n",__func__);
 			if (retval != BINPRM_BUF_SIZE) {
 				if (retval >= 0)
 					retval = -EIO;
-printk(KERN_EMERG"%s: failed BINPRM_BUF_SIZE\n",__func__);
+#if POPCORN_DEBUG_ELF
+				printk(KERN_EMERG"%s: failed BINPRM_BUF_SIZE\n",__func__);
+#endif
 				goto out_free_dentry;
 			}
 
@@ -778,12 +820,16 @@ printk(KERN_EMERG"%s: failed BINPRM_BUF_SIZE\n",__func__);
 		retval = -ELIBBAD;
 		/* Not an ELF interpreter */
 		if (memcmp(loc->interp_elf_ex.e_ident, ELFMAG, SELFMAG) != 0) {
-printk(KERN_EMERG"%s: not an ELF interpreter\n", __func__);
+#if POPCORN_DEBUG_ELF
+			printk(KERN_EMERG"%s: not an ELF interpreter\n", __func__);
+#endif
 			goto out_free_dentry;
 }
 		/* Verify the interpreter has a valid arch */
 		if (!elf_check_arch(&loc->interp_elf_ex)) {
-printk(KERN_EMERG"%s: elf check arch\n", __func__);
+#if POPCORN_DEBUG_ELF
+			printk(KERN_EMERG"%s: elf check arch\n", __func__);
+#endif
 			goto out_free_dentry;
 }
 	}
@@ -791,7 +837,9 @@ printk(KERN_EMERG"%s: elf check arch\n", __func__);
 	/* Flush all traces of the currently running executable */
 	retval = flush_old_exec(bprm);
 	if (retval) {
-printk(KERN_EMERG"%s: failed flush old exec\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed flush old exec\n", __func__);
+#endif
 		goto out_free_dentry;
 }
 
@@ -815,10 +863,12 @@ printk(KERN_EMERG"%s: failed flush old exec\n", __func__);
 				 executable_stack);
 	if (retval < 0) {
 		send_sig(SIGKILL, current, 0);
-printk(KERN_EMERG"%s: failed setup arg pages\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed setup arg pages\n", __func__);
+#endif
 		goto out_free_dentry;
 	}
-	
+
 	current->mm->start_stack = bprm->p;
 
 	/* Now we do a little grungy work by mmapping the ELF image into
@@ -833,7 +883,7 @@ printk(KERN_EMERG"%s: failed setup arg pages\n", __func__);
 
 		if (unlikely (elf_brk > elf_bss)) {
 			unsigned long nbyte;
-	            
+
 			/* There was a PT_LOAD segment with p_memsz > p_filesz
 			   before this one. Map anonymous pages, if needed,
 			   and clear the area.  */
@@ -841,7 +891,9 @@ printk(KERN_EMERG"%s: failed setup arg pages\n", __func__);
 					 elf_brk + load_bias);
 			if (retval) {
 				send_sig(SIGKILL, current, 0);
-printk(KERN_EMERG"%s: failed set_brk\n", __func__);
+#if POPCORN_DEBUG_ELF
+	            printk(KERN_EMERG"%s: failed set_brk\n", __func__);
+#endif
 				goto out_free_dentry;
 			}
 			nbyte = ELF_PAGEOFFSET(elf_bss);
@@ -900,7 +952,9 @@ printk(KERN_EMERG"%s: failed set_brk\n", __func__);
 			send_sig(SIGKILL, current, 0);
 			retval = IS_ERR((void *)error) ?
 				PTR_ERR((void*)error) : -EINVAL;
-printk(KERN_EMERG"%s: failed bad addr\n", __func__);
+#if POPCORN_DEBUG_ELF
+			printk(KERN_EMERG"%s: failed bad addr\n", __func__);
+#endif
 			goto out_free_dentry;
 		}
 
@@ -971,7 +1025,9 @@ printk(KERN_EMERG"%s: failed bad addr\n", __func__);
 			/* set_brk can never work. Avoid overflows. */
 			send_sig(SIGKILL, current, 0);
 			retval = -EINVAL;
-printk(KERN_EMERG"%s: after Ajith\n", __func__);
+#if POPCORN_DEBUG_ELF
+			printk(KERN_EMERG"%s: after Ajith\n", __func__);
+#endif
 			goto out_free_dentry;
 		}
 
@@ -1013,13 +1069,17 @@ printk(KERN_EMERG"%s: after Ajith\n", __func__);
 	retval = set_brk(elf_bss, elf_brk);
 	if (retval) {
 		send_sig(SIGKILL, current, 0);
-printk(KERN_EMERG"%s: failed in the most to the end set_brk\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed in the most to the end set_brk\n", __func__);
+#endif
 		goto out_free_dentry;
 	}
 	if (likely(elf_bss != elf_brk) && unlikely(padzero(elf_bss))) {
 		send_sig(SIGSEGV, current, 0);
 		retval = -EFAULT; /* Nobody gets to see this, but.. */
-printk(KERN_EMERG"%s: nobody gets to see this, but\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: nobody gets to see this, but\n", __func__);
+#endif
 		goto out_free_dentry;
 	}
 
@@ -1042,7 +1102,9 @@ printk(KERN_EMERG"%s: nobody gets to see this, but\n", __func__);
 			force_sig(SIGSEGV, current);
 			retval = IS_ERR((void *)elf_entry) ?
 					(int)elf_entry : -EINVAL;
-printk(KERN_EMERG"%s: elf interp bad addr\n", __func__);
+#if POPCORN_DEBUG_ELF
+			printk(KERN_EMERG"%s: elf interp bad addr\n", __func__);
+#endif
 			goto out_free_dentry;
 		}
 		reloc_func_desc = interp_load_addr;
@@ -1055,7 +1117,9 @@ printk(KERN_EMERG"%s: elf interp bad addr\n", __func__);
 		if (BAD_ADDR(elf_entry)) {
 			force_sig(SIGSEGV, current);
 			retval = -EINVAL;
-printk(KERN_EMERG"%s: elf interp  bad addr out free dentr\n", __func__);
+#if POPCORN_DEBUG_ELF
+			printk(KERN_EMERG"%s: elf interp  bad addr out free dentr\n", __func__);
+#endif
 			goto out_free_dentry;
 		}
 	}
@@ -1068,7 +1132,9 @@ printk(KERN_EMERG"%s: elf interp  bad addr out free dentr\n", __func__);
 	retval = arch_setup_additional_pages(bprm, !!elf_interpreter);
 	if (retval < 0) {
 		send_sig(SIGKILL, current, 0);
-printk(KERN_EMERG"%s: failed arch setup additional pages\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed arch setup additional pages\n", __func__);
+#endif
 		goto out;
 	}
 #endif /* ARCH_HAS_SETUP_ADDITIONAL_PAGES */
@@ -1078,7 +1144,9 @@ printk(KERN_EMERG"%s: failed arch setup additional pages\n", __func__);
 			  load_addr, interp_load_addr);
 	if (retval < 0) {
 		send_sig(SIGKILL, current, 0);
-printk(KERN_EMERG"%s: failed create elf tables\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: failed create elf tables\n", __func__);
+#endif
 		goto out;
 	}
 	/* N.B. passed_fileno might not be initialized? */
@@ -1090,15 +1158,18 @@ printk(KERN_EMERG"%s: failed create elf tables\n", __func__);
 
 #ifdef arch_randomize_brk
 	if ((current->flags & PF_RANDOMIZE) && (randomize_va_space > 1)) {
-printk(KERN_EMERG"%s: RANDOMIZE ACTIVE\n", __func__);
-		current->mm->brk = current->mm->start_brk =
-			arch_randomize_brk(current->mm);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: RANDOMIZE ACTIVE\n", __func__);
+#endif
+		current->mm->brk = current->mm->start_brk = arch_randomize_brk(current->mm);
 #ifdef CONFIG_COMPAT_BRK
 		current->brk_randomized = 1;
 #endif
 	}
 	else
-printk(KERN_EMERG"%s: NO RANDOMIZATION\n", __func__);
+#if POPCORN_DEBUG_ELF
+		printk(KERN_EMERG"%s: NO RANDOMIZATION\n", __func__);
+#endif
 #endif
 
 	if (current->personality & MMAP_PAGE_ZERO) {
