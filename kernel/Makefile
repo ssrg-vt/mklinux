@@ -30,7 +30,9 @@ obj-y += irq/
 
 obj-$(CONFIG_POPCORN) += kinit.o cpu_namespace.o \
 			 WKdmCompress.o WKdmDecompress.o futex_remote.o \
-			 process_server.o global_spinlock.o proc_remote.o
+			 global_spinlock.o proc_remote.o
+obj-$(CONFIG_POPCORN) += popcorn/
+
 obj-$(CONFIG_CHECKPOINT_RESTORE) += kcmp.o
 obj-$(CONFIG_FREEZER) += freezer.o
 obj-$(CONFIG_PROFILING) += profile.o

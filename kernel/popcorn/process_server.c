@@ -67,8 +67,8 @@
 #include <linux/binfmts.h>
 #include <asm/elf.h>
 
-#include "WKdm.h"
-#include "futex_remote.h"
+#include "../WKdm.h"
+#include "../futex_remote.h"
 /*akshay*/
 #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 
