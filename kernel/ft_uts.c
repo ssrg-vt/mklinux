@@ -15,7 +15,7 @@
 #include <linux/time.h>
 #include <linux/sched.h>
 
-#define FT_UTS_VERBOSE 0
+#define FT_UTS_VERBOSE 1
 #if FT_UTS_VERBOSE
 #define FTPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -77,9 +77,9 @@ int sync_uts(struct task_struct *task)
 		msg->header.type = PCN_KMSG_TYPE_FT_UTS_SYNC;
 		msg->header.prio = PCN_KMSG_PRIO_NORMAL;
 		msg->uts_id = task->next_id_kernel_requests ++;
-		msg->ft_pop_id = task->ft_pid.ft_pop_id;
+		memcpy(&msg->ft_pop_id, &task->ft_pid.ft_pop_id, sizeof(struct ft_pop_rep_id));
 		msg->level = task->ft_pid.level;
-		memcpy(&msg->info.utsname, &task->nsproxy->uts_ns->name, sizeof(struct new_utsname));
+		memcpy(&msg->info.utsname, &task->nsproxy->uts_ns->ft_name, sizeof(struct new_utsname));
 		send_to_all_cold_replicas(task->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
 		FTPRINTK("FT UTS sync out on %d\n", task->ft_pid);
 	} else if (ancestor->replica_type == COLD_REPLICA ||
@@ -96,6 +96,7 @@ static int handle_uts_sync_req(struct pcn_kmsg_message* inc_msg)
 	 */
 	struct task_struct *task, *g;
 	struct uts_msg *msg = (struct uts_msg *) inc_msg;
+	FTPRINTK("FT UTS request on %d\n", msg->ft_pop_id.id);
 	do_each_thread (g, task) {
 		if (task->ft_pid.ft_pop_id.id == msg->ft_pop_id.id &&
 				task->ft_pid.level == msg->level) {
