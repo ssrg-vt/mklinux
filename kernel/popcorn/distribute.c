@@ -4,6 +4,11 @@
 void end_distribute_operation(int operation, long start_ret, unsigned long addr, int _cpu, wait_queue_head_t *request_distributed_vma_op) {
 	int i;
 
+	memory_t* entry;
+
+	struct list_head *iter;
+	_remote_cpu_info_list_t *objPtr;
+
 	if (current->mm->distribute_unmap == 0) {
 		return;
 	}
@@ -25,8 +30,8 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr,
 		current->mm->was_not_pushed--;
 	}
 
-	memory_t* entry = find_memory_entry(current->tgroup_home_cpu,
-			current->tgroup_home_id);
+	entry = find_memory_entry(current->tgroup_home_cpu,
+				  current->tgroup_home_id);
 	if (entry == NULL) {
 		printk("ERROR: Cannot find message to send in exit operation\n");
 	}
@@ -77,8 +82,10 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr,
 
 #else
 					// the list does not include the current processor group descirptor (TODO)
+					/*
 					struct list_head *iter;
 					_remote_cpu_info_list_t *objPtr;
+					*/
 					list_for_each(iter, &rlist_head) {
 						objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 						i = objPtr->_data._processor;
@@ -171,8 +178,20 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 		unsigned long flags, struct file *file, unsigned long pgoff,
 		int _cpu, wait_queue_head_t *request_distributed_vma_op) {
 
+	int i, index;
+	int error;
+
 	long ret;
 	int server;
+
+	vma_lock_t *lock_message;
+	vma_op_answers_t *acks;
+	vma_operation_t* operation_to_send;
+
+	memory_t *entry;
+
+	struct list_head *iter;
+	_remote_cpu_info_list_t *objPtr;
 
 	if (current->tgroup_home_cpu != _cpu)
 		server = 0;
@@ -321,7 +340,7 @@ start: current->mm->distr_vma_op_counter++;
 
 		       up_write(&current->mm->mmap_sem);
 
-		       memory_t* entry = find_memory_entry(current->tgroup_home_cpu,
+		       entry = find_memory_entry(current->tgroup_home_cpu,
 				       current->tgroup_home_id);
 		       if (entry == NULL || entry->message_push_operation == NULL) {
 			       printk("ERROR: Mapping disappeared or cannot find message to update \n");
@@ -331,7 +350,7 @@ start: current->mm->distr_vma_op_counter++;
 		       }
 
 		       /*First: send a message to everybody to acquire the lock to block page faults*/
-		       vma_lock_t* lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t),
+		       lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t),
 				       GFP_ATOMIC);
 		       if (lock_message == NULL) {
 			       down_write(&current->mm->mmap_sem);
@@ -345,8 +364,8 @@ start: current->mm->distr_vma_op_counter++;
 		       lock_message->from_cpu = entry->message_push_operation->from_cpu;
 		       lock_message->vma_operation_index = index;
 
-		       vma_op_answers_t* acks = (vma_op_answers_t*) kmalloc(
-				       sizeof(vma_op_answers_t), GFP_ATOMIC);
+		       acks = (vma_op_answers_t*) kmalloc(sizeof(vma_op_answers_t),
+							  GFP_ATOMIC);
 		       if (acks == NULL) {
 			       kfree(lock_message);
 			       down_write(&current->mm->mmap_sem);
@@ -362,8 +381,6 @@ start: current->mm->distr_vma_op_counter++;
 		       raw_spin_lock_init(&(acks->lock));
 
 		       add_vma_ack_entry(acks);
-
-		       int i, error;
 
 		       /*Partial replication: mmap and brk need to communicate only between server and one client
 			* */
@@ -388,8 +405,10 @@ start: current->mm->distr_vma_op_counter++;
 
 #else
 				       // the list does not include the current processor group descirptor (TODO)
+				       /*
 				       struct list_head *iter;
 				       _remote_cpu_info_list_t *objPtr;
+				       */
 				       list_for_each(iter, &rlist_head) {
 					       objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 					       i = objPtr->_data._processor;
@@ -422,7 +441,6 @@ start: current->mm->distr_vma_op_counter++;
 
 			       PSVMAPRINTK("SERVER MAIN: Received all ack to lock\n");
 
-			       unsigned long flags;
 			       raw_spin_lock_irqsave(&(acks->lock), flags);
 			       raw_spin_unlock_irqrestore(&(acks->lock), flags);
 
@@ -453,8 +471,10 @@ start: current->mm->distr_vma_op_counter++;
 					       if(i == _cpu) continue;
 #else
 					       // the list does not include the current processor group descirptor (TODO)
+					       /*
 					       struct list_head *iter;
 					       _remote_cpu_info_list_t *objPtr;
+					       */
 					       list_for_each(iter, &rlist_head) {
 						       objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 						       i = objPtr->_data._processor;
@@ -513,7 +533,7 @@ start: current->mm->distr_vma_op_counter++;
 				       PSVMAPRINTK("%s push operation!\n",__func__);
 
 				       //(current->mm->vma_operation_index)++;
-				       int index = current->mm->vma_operation_index;
+				       index = current->mm->vma_operation_index;
 				       PSVMAPRINTK("current index is %d\n", index);
 
 				       /*Important: while I am waiting for the acks to the LOCK message
@@ -521,8 +541,8 @@ start: current->mm->distr_vma_op_counter++;
 				       up_write(&current->mm->mmap_sem);
 
 				       /*First: send a message to everybody to acquire the lock to block page faults*/
-				       vma_lock_t* lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t),
-						       GFP_ATOMIC);
+				       lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t),
+									    GFP_ATOMIC);
 				       if (lock_message == NULL) {
 					       down_write(&current->mm->mmap_sem);
 					       ret = -ENOMEM;
@@ -535,8 +555,8 @@ start: current->mm->distr_vma_op_counter++;
 				       lock_message->from_cpu = _cpu;
 				       lock_message->vma_operation_index = index;
 
-				       vma_op_answers_t* acks = (vma_op_answers_t*) kmalloc(
-						       sizeof(vma_op_answers_t), GFP_ATOMIC);
+				       acks = (vma_op_answers_t*) kmalloc(sizeof(vma_op_answers_t),
+									  GFP_ATOMIC);
 				       if (acks == NULL) {
 					       kfree(lock_message);
 					       down_write(&current->mm->mmap_sem);
@@ -550,10 +570,9 @@ start: current->mm->distr_vma_op_counter++;
 				       acks->responses = 0;
 				       acks->expected_responses = 0;
 				       raw_spin_lock_init(&(acks->lock));
-				       int i, error;
 
-				       memory_t* entry = find_memory_entry(current->tgroup_home_cpu,
-						       current->tgroup_home_id);
+				       entry = find_memory_entry(current->tgroup_home_cpu,
+								 current->tgroup_home_id);
 				       if (entry==NULL) {
 					       printk("ERROR: Mapping disappeared, cannot save message to update by exit_distribute_operation\n");
 					       kfree(lock_message);
@@ -573,8 +592,10 @@ start: current->mm->distr_vma_op_counter++;
 					       if(i == _cpu) continue;
 #else
 					       // the list does not include the current processor group descirptor (TODO)
+					       /*
 					       struct list_head *iter;
 					       _remote_cpu_info_list_t *objPtr;
+					       */
 					       list_for_each(iter, &rlist_head) {
 						       objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 						       i = objPtr->_data._processor;
@@ -604,14 +625,13 @@ start: current->mm->distr_vma_op_counter++;
 
 					       PSVMAPRINTK("SERVER NOT MAIN: Received all ack to lock\n");
 
-					       unsigned long flags;
 					       raw_spin_lock_irqsave(&(acks->lock), flags);
 					       raw_spin_unlock_irqrestore(&(acks->lock), flags);
 
 					       remove_vma_ack_entry(acks);
 
-					       vma_operation_t* operation_to_send = (vma_operation_t*) kmalloc(
-							       sizeof(vma_operation_t), GFP_ATOMIC);
+					       operation_to_send = (vma_operation_t*) kmalloc(sizeof(vma_operation_t),
+											      GFP_ATOMIC);
 					       if (operation_to_send == NULL) {
 						       down_write(&current->mm->mmap_sem);
 						       up_read(&entry->kernel_set_sem);
@@ -659,8 +679,10 @@ start: current->mm->distr_vma_op_counter++;
 							       if(i == _cpu) continue;
 #else
 							       // the list does not include the current processor group descirptor (TODO)
+							       /*
 							       struct list_head *iter;
 							       _remote_cpu_info_list_t * objPtr;
+							       */
 							       list_for_each(iter, &rlist_head) {
 								       objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 								       i = objPtr->_data._processor;
@@ -699,8 +721,8 @@ start: current->mm->distr_vma_op_counter++;
 
 
 					       /*First: send the operation to the server*/
-					       vma_operation_t* operation_to_send = (vma_operation_t*) kmalloc(
-							       sizeof(vma_operation_t), GFP_ATOMIC);
+					       operation_to_send = (vma_operation_t*) kmalloc(sizeof(vma_operation_t),
+											      GFP_ATOMIC);
 					       if (operation_to_send == NULL) {
 						       ret = -ENOMEM;
 						       goto out;
@@ -732,8 +754,8 @@ start: current->mm->distr_vma_op_counter++;
 						*Differently from a not-started-by-me push operation, it is not the main thread that has to execute it,
 						*but this thread has.
 						*/
-					       memory_t* entry = find_memory_entry(current->tgroup_home_cpu,
-							       current->tgroup_home_id);
+					       entry = find_memory_entry(current->tgroup_home_cpu,
+									 current->tgroup_home_id);
 					       if (entry) {
 
 						       if (entry->waiting_for_op != NULL) {
@@ -755,7 +777,6 @@ start: current->mm->distr_vma_op_counter++;
 
 					       up_write(&current->mm->mmap_sem);
 
-					       int error;
 					       //send the operation to the server
 					       error = pcn_kmsg_send_long(current->tgroup_home_cpu,
 							       (struct pcn_kmsg_long_message*) (operation_to_send),
