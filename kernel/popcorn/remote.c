@@ -230,6 +230,16 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		spinlock_t* ptl, struct page* page, int _cpu) {
 	pte_t value_pte;
 	int ret=0,i;
+	int sent;
+
+	data_request_for_2_kernels_t* read_message;
+	mapping_answers_for_2_kernels_t* reading_page;
+
+	struct list_head *iter;
+	_remote_cpu_info_list_t *objPtr;
+
+	void *vto;
+	void *vfrom;
 
 	if(strcmp(current->comm,"IS") == 0){
 		trace_printk("s\n");
@@ -244,8 +254,8 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	page->reading= 1;
 
 	//message to ask for a copy
-	data_request_for_2_kernels_t* read_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
-			GFP_ATOMIC);
+	read_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
+							       GFP_ATOMIC);
 	if (read_message == NULL) {
 		ret = VM_FAULT_OOM;
 		goto exit;
@@ -262,8 +272,8 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	read_message->vma_operation_index= current->mm->vma_operation_index;
 
 	//object to held responses
-	mapping_answers_for_2_kernels_t* reading_page = (mapping_answers_for_2_kernels_t*) kmalloc(sizeof(mapping_answers_for_2_kernels_t),
-			GFP_ATOMIC);
+	reading_page = (mapping_answers_for_2_kernels_t*) kmalloc(sizeof(mapping_answers_for_2_kernels_t),
+								  GFP_ATOMIC);
 	if (reading_page == NULL) {
 		ret = VM_FAULT_OOM;
 		goto exit_read_message;
@@ -296,7 +306,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	spin_unlock(ptl);
 	up_read(&mm->mmap_sem);
 	/*PTE UNLOCKED*/
-	int sent= 0;
+	sent= 0;
 	reading_page->arrived_response=0;
 
 #ifndef SUPPORT_FOR_CLUSTERING
@@ -306,8 +316,10 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 #else
 		// the list does not include the current processor group descirptor (TODO)
+		/*
 		struct list_head *iter;
 		_remote_cpu_info_list_t *objPtr;
+		*/
 
 		list_for_each(iter, &rlist_head) {
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
@@ -390,8 +402,6 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				goto exit_reading_page;
 			}
 
-			void *vto;
-			void *vfrom;
 			// Ported to Linux 3.12
 			//vto = kmap_atomic(page, KM_USER0);
 			vto = kmap_atomic(page);
@@ -826,7 +836,20 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 	int  i;
 	int ret= 0;
+	int sent;
 	pte_t value_pte;
+
+	ack_answers_for_2_kernels_t* answers;
+	invalid_data_for_2_kernels_t* invalid_message;
+
+	struct list_head *iter;
+	_remote_cpu_info_list_t *objPtr;
+
+	data_request_for_2_kernels_t* write_message;
+	mapping_answers_for_2_kernels_t* writing_page;
+
+	void *vto;
+	void *vfrom;
 
 	if(strcmp(current->comm,"IS") == 0){
 		trace_printk("s\n");
@@ -848,7 +871,8 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			goto exit;
 		}
 		//object to store the acks (nacks) sent by other kernels
-		ack_answers_for_2_kernels_t* answers = (ack_answers_for_2_kernels_t*) kmalloc(sizeof(ack_answers_for_2_kernels_t), GFP_ATOMIC);
+		answers = (ack_answers_for_2_kernels_t*) kmalloc(sizeof(ack_answers_for_2_kernels_t),
+								 GFP_ATOMIC);
 		if (answers == NULL) {
 			ret = VM_FAULT_OOM;
 			goto exit;
@@ -859,8 +883,8 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		answers->waiting = current;
 
 		//message to invalidate the other copies
-		invalid_data_for_2_kernels_t* invalid_message = (invalid_data_for_2_kernels_t*) kmalloc(sizeof(invalid_data_for_2_kernels_t),
-				GFP_ATOMIC);
+		invalid_message = (invalid_data_for_2_kernels_t*) kmalloc(sizeof(invalid_data_for_2_kernels_t),
+									  GFP_ATOMIC);
 		if (invalid_message == NULL) {
 			ret = VM_FAULT_OOM;
 			goto exit_answers;
@@ -879,7 +903,7 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 		answers->response_arrived= 0;
 
-		int sent= 0;
+		sent= 0;
 
 		spin_unlock(ptl);
 		up_read(&mm->mmap_sem);
@@ -891,8 +915,10 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 #else
 			// the list does not include the current processor group descirptor (TODO)
+			/*
 			struct list_head *iter;
 			_remote_cpu_info_list_t *objPtr;
+			*/
 			list_for_each(iter, &rlist_head) {
 				objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 				i = objPtr->_data._processor;
@@ -957,8 +983,8 @@ exit_answers:
 			//in this case I send a mapping request with write flag set
 
 			//message to ask for a copy
-			data_request_for_2_kernels_t* write_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
-					GFP_ATOMIC);
+			write_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
+										GFP_ATOMIC);
 			if (write_message == NULL) {
 				ret = VM_FAULT_OOM;
 				goto exit;
@@ -975,8 +1001,8 @@ exit_answers:
 			write_message->vma_operation_index= current->mm->vma_operation_index;
 
 			//object to held responses
-			mapping_answers_for_2_kernels_t* writing_page = (mapping_answers_for_2_kernels_t*) kmalloc(sizeof(mapping_answers_for_2_kernels_t),
-					GFP_ATOMIC);
+			writing_page = (mapping_answers_for_2_kernels_t*) kmalloc(sizeof(mapping_answers_for_2_kernels_t),
+										  GFP_ATOMIC);
 			if (writing_page == NULL) {
 				ret = VM_FAULT_OOM;
 				goto exit_write_message;
@@ -1012,7 +1038,7 @@ exit_answers:
 			spin_unlock(ptl);
 			up_read(&mm->mmap_sem);
 			/*PTE UNLOCKED*/
-			int sent= 0;
+			sent= 0;
 			writing_page->arrived_response=0;
 
 #ifndef SUPPORT_FOR_CLUSTERING
@@ -1022,8 +1048,10 @@ exit_answers:
 
 #else
 				// the list does not include the current processor group descirptor (TODO)
+				/*
 				struct list_head *iter;
 				_remote_cpu_info_list_t *objPtr;
+				*/
 				list_for_each(iter, &rlist_head) {
 					objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 					i = objPtr->_data._processor;
@@ -1106,8 +1134,6 @@ exit_answers:
 					else
 						page->last_write= writing_page->last_write;
 
-					void *vto;
-					void *vfrom;
 					// Ported to Linux 3.12 
 					//vto = kmap_atomic(page, KM_USER0);
 					vto = kmap_atomic(page);
@@ -1666,6 +1692,17 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	data_request_for_2_kernels_t* fetch_message;
 	int ret= 0,i,reachable,other_cpu=-1;
 
+	memory_t* memory;
+
+	struct list_head *iter;
+	_remote_cpu_info_list_t *objPtr;
+
+	int status;
+	void *vto;
+	void *vfrom;
+
+	pte_t entry;
+
 	if(strcmp(current->comm,"IS") == 0){
 		trace_printk("s\n");
 	}
@@ -1748,8 +1785,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	fetching_page->arrived_response= 0;
 	reachable= 0;
 
-	memory_t* memory= find_memory_entry(current->tgroup_home_cpu,
-			current->tgroup_home_id);
+	memory= find_memory_entry(current->tgroup_home_cpu, current->tgroup_home_id);
 
 	down_read(&memory->kernel_set_sem);
 
@@ -1760,8 +1796,10 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 #else
 		// the list does not include the current processor group descirptor (TODO)
+		/*
 		struct list_head *iter;
 		_remote_cpu_info_list_t *objPtr;
+		*/
 		list_for_each(iter, &rlist_head) {
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
@@ -1889,10 +1927,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			spin_lock(ptl);
 			/*PTE LOCKED*/
 
-			int status;
-			void *vto;
-			void *vfrom;
-
 			//if nobody changed the pte
 			if (likely(pte_same(*pte, value_pte))) {
 
@@ -2018,7 +2052,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 			pcn_kmsg_free_msg(fetching_page->data);
 
-			pte_t entry = mk_pte(page, vma->vm_page_prot);
+			entry = mk_pte(page, vma->vm_page_prot);
 
 			//if the page is read only no need to keep replicas coherent
 			if (vma->vm_flags & VM_WRITE) {
