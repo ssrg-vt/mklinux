@@ -67,6 +67,8 @@
 #include <trace/events/sched.h>
 #include <linux/process_server.h>
 
+#define POPCORN_DEBUG_EXEC 0
+
 int suid_dumpable = 0;
 
 static LIST_HEAD(formats);
@@ -433,23 +435,31 @@ static int count(struct user_arg_ptr argv, int max)
 			const char __user *p = get_user_arg_ptr(argv, i);
 
 			if (!p) {
-printk(KERN_EMERG"%s: p is ZERO\n", __func__);
+#if POPCORN_DEBUG_EXEC
+				printk(KERN_EMERG"%s: p is ZERO\n", __func__);
+#endif
 				break;
 }
 
 			if (IS_ERR(p)) {
-printk(KERN_EMERG"%s: p is ERR\n", __func__);
+#if POPCORN_DEBUG_EXEC
+				printk(KERN_EMERG"%s: p is ERR\n", __func__);
+#endif
 				return -EFAULT;
 }
 
 			if (i >= max) {
-printk(KERN_EMERG"%s: i=%d max=%d\n", __func__, i, max);
+#if POPCORN_DEBUG_EXEC
+				printk(KERN_EMERG"%s: i=%d max=%d\n", __func__, i, max);
+#endif
 				return -E2BIG;
 }
 			++i;
 
 			if (fatal_signal_pending(current)) {
-printk(KERN_EMERG"%s: fatal signal pending\n", __func__);
+#if POPCORN_DEBUG_EXEC
+				printk(KERN_EMERG"%s: fatal signal pending\n", __func__);
+#endif
 				return -ERESTARTNOHAND;
 }
 			cond_resched();
@@ -1392,15 +1402,19 @@ int search_binary_handler(struct linux_binprm *bprm)
 
 	retval = security_bprm_check(bprm);
 	if (retval) {
-printk(KERN_EMERG"%s: failed in security_bprm_check\n", __func__);
+#if POPCORN_DEBUG_EXEC
+		printk(KERN_EMERG"%s: failed in security_bprm_check\n", __func__);
+#endif
 		return retval;
-}
+	}
 
-	retval = audit_bprm(bprm); 
+	retval = audit_bprm(bprm);
 	if (retval) {
-printk(KERN_EMERG"%s: failed in audit_bprm\n", __func__);
+#if POPCORN_DEBUG_EXEC
+		printk(KERN_EMERG"%s: failed in audit_bprm\n", __func__);
+#endif
 		return retval;
-}
+	}
 
 	retval = -ENOENT;
  retry:
@@ -1415,7 +1429,9 @@ printk(KERN_EMERG"%s: failed in audit_bprm\n", __func__);
 		if (retval >= 0 || retval != -ENOEXEC ||
 		    bprm->mm == NULL || bprm->file == NULL) {
 			put_binfmt(fmt);
-printk(KERN_EMERG"%s: failed in load_binary\n", __func__);
+#if POPCORN_DEBUG_EXEC
+			printk(KERN_EMERG"%s: failed in load_binary\n", __func__);
+#endif
 			return retval;
 		}
 		read_lock(&binfmt_lock);
@@ -1426,11 +1442,15 @@ printk(KERN_EMERG"%s: failed in load_binary\n", __func__);
 	if (need_retry && retval == -ENOEXEC) {
 		if (printable(bprm->buf[0]) && printable(bprm->buf[1]) &&
 		    printable(bprm->buf[2]) && printable(bprm->buf[3])) {
-printk(KERN_EMERG"%s: failed in need_retry && ENOEXEC\n", __func__);
+#if POPCORN_DEBUG_EXEC
+			printk(KERN_EMERG"%s: failed in need_retry && ENOEXEC\n", __func__);
+#endif
 			return retval;
 }
 		if (request_module("binfmt-%04x", *(ushort *)(bprm->buf + 2)) < 0) {
-printk(KERN_EMERG"%s: failed in request_module\n", __func__);
+#if POPCORN_DEBUG_EXEC
+			printk(KERN_EMERG"%s: failed in request_module\n", __func__);
+#endif
 			return retval;
 }
 		need_retry = false;
@@ -1500,26 +1520,34 @@ static int do_execve_common(const char *filename,
 
 	retval = unshare_files(&displaced);
 	if (retval) {
+#if POPCORN_DEBUG_EXEC
 		printk(KERN_EMERG"%s: failed in unshare_files\n", __func__);
+#endif
 		goto out_ret;
 	}
 
 	retval = -ENOMEM;
 	bprm = kzalloc(sizeof(*bprm), GFP_KERNEL);
 	if (!bprm) {
+#if POPCORN_DEBUG_EXEC
                 printk(KERN_EMERG"%s: failed in kzalloc\n", __func__);
+#endif
 		goto out_files;
 	}
 
 	retval = prepare_bprm_creds(bprm);
 	if (retval) {
+#if POPCORN_DEBUG_EXEC
                 printk(KERN_EMERG"%s: failed in prepare_bprm_creds\n", __func__);
+#endif
 		goto out_free;
 	}
 
 	retval = check_unsafe_exec(bprm);
 	if (retval < 0) {
+#if POPCORN_DEBUG_EXEC
                 printk(KERN_EMERG"%s: failed in check_unsafe_exec\n", __func__);
+#endif
 		goto out_free;
 	}
 	clear_in_exec = retval;
@@ -1528,7 +1556,9 @@ static int do_execve_common(const char *filename,
 	file = open_exec(filename);
 	retval = PTR_ERR(file);
 	if (IS_ERR(file)) {
+#if POPCORN_DEBUG_EXEC
                 printk(KERN_EMERG"%s: failed in open_exec\n", __func__);
+#endif
 		goto out_unmark;
 	}
 
@@ -1540,49 +1570,65 @@ static int do_execve_common(const char *filename,
 
 	retval = bprm_mm_init(bprm);
 	if (retval) {
+#if POPCORN_DEBUG_EXEC
                 printk(KERN_EMERG"%s: failed in bprm_mm_init\n", __func__);
+#endif
 		goto out_file;
 	}
 
 	bprm->argc = count(argv, MAX_ARG_STRINGS);
 	if ((retval = bprm->argc) < 0) {
+#if POPCORN_DEBUG_EXEC
                 printk(KERN_EMERG"%s: failed in count argv\n", __func__);
+#endif
 		goto out;
 	}
 
 	bprm->envc = count(envp, MAX_ARG_STRINGS);
 	if ((retval = bprm->envc) < 0) {
+#if POPCORN_DEBUG_EXEC
                 printk(KERN_EMERG"%s: failed in count envp\n", __func__);
+#endif
 		goto out;
 	}
 
 	retval = prepare_binprm(bprm);
 	if (retval < 0) {
+#if POPCORN_DEBUG_EXEC
                 printk(KERN_EMERG"%s: failed in prepare_binprm\n", __func__);
+#endif
 		goto out;
 	}
 
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
 	if (retval < 0) {
+#if POPCORN_DEBUG_EXEC
                 printk(KERN_EMERG"%s: failed in copy_strings_kernel filename\n", __func__);
+#endif
 		goto out;
 	}
 
 	bprm->exec = bprm->p;
 	retval = copy_strings(bprm->envc, envp, bprm);
 	if (retval < 0) {
+#if POPCORN_DEBUG_EXEC
 		printk(KERN_EMERG"%s: failed in copy_strings envc\n", __func__);
+#endif
 		goto out;
 	}
 
 	retval = copy_strings(bprm->argc, argv, bprm);
 	if (retval < 0) {
+#if POPCORN_DEBUG_EXEC
 		printk(KERN_EMERG"%s: failed in copy_strings argc\n", __func__);
+#endif
 		goto out;
 	}
 	retval = exec_binprm(bprm);
 	if (retval < 0) {
+#if POPCORN_DEBUG_EXEC
 		printk(KERN_EMERG"%s: failed in exec_binprm\n", __func__);
+#endif
 		goto out;
 	}
 
