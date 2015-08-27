@@ -16,6 +16,8 @@
 #include <linux/popcorn_cpuinfo.h>
 #include <linux/process_server.h>
 
+#define PRINT_PAGE 0
+
 void add_memory_entry(memory_t* entry);
 int add_memory_entry_with_check(memory_t* entry);
 memory_t* find_memory_entry(int cpu, int id);

@@ -2766,7 +2766,7 @@ resolved:
        //kunmap_atomic(vfrom, KM_USER0);
        kunmap_atomic(vfrom);
 
-#ifdef PRINT_PAGE
+#if PRINT_PAGE
 	unsigned char *print_ptr = vto;
 	int i = 0;
 	printk("\n================================================");
