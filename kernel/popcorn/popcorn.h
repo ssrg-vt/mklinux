@@ -94,6 +94,15 @@ int do_mapping_for_distributed_process(mapping_answers_t* fetching_page,
 void process_mapping_request_for_2_kernels(struct work_struct* work, int _cpu,
 					   struct workqueue_struct *message_request_wq);
 
+void push_data(data_header_t** phead, raw_spinlock_t* spinlock,
+	       data_header_t* entry);
+data_header_t* pop_data(data_header_t** phead, raw_spinlock_t* spinlock);
+int count_data(data_header_t** phead, raw_spinlock_t* spinlock);
+
+void add_count_entry(count_answers_t* entry);
+count_answers_t* find_count_entry(int cpu, int id);
+void remove_count_entry(count_answers_t* entry);
+
 extern int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *vma,
 				  unsigned long address, pte_t *page_table, pmd_t *pmd,
 				  spinlock_t *ptl, pte_t orig_pte);
