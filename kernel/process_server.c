@@ -2799,7 +2799,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work) {
 
 	      }
 
-retry: pte = pte_offset_map_lock(mm, pmd, address, &ptl);
+       pte = pte_offset_map_lock(mm, pmd, address, &ptl);
        /*PTE LOCKED*/
 
        entry = *pte;
@@ -4853,7 +4853,7 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 	pte_t* pte;
 	pte_t entry;
 	spinlock_t* ptl = NULL;
-	struct page* page, *old_page;
+	struct page* page;
 	int ret = 0;
 
 	if(strcmp(current->comm,"IS") == 0){
@@ -10579,7 +10579,6 @@ void sleep_shadow() {
 
 int new_init_regs(struct pt_regs* regs) {
 	int ret = -1;
-	unsigned long fs, gs;
 
 	if(regs == NULL){
 		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
