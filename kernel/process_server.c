@@ -132,7 +132,7 @@ extern unsigned long mremap_to(unsigned long addr, unsigned long old_len,
 #else
 #define ELF_MIN_ALIGN   PAGE_SIZE
 #endif
-unsigned long get_file_offset(struct file* file, int start_addr);
+static unsigned long get_file_offset(struct file* file, int start_addr);
 
 #if MIGRATION_PROFILE
 ktime_t migration_start, migration_end;
@@ -11057,7 +11057,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
 }
 
 /* Ajith - adding file offset parsing */
-unsigned long get_file_offset(struct file *file, int start_addr)
+static unsigned long get_file_offset(struct file *file, int start_addr)
 {
 	struct elfhdr elf_ex;
 	struct elf_phdr *elf_eppnt = NULL, *elf_eppnt_start = NULL;
