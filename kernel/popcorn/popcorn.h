@@ -91,4 +91,12 @@ int do_mapping_for_distributed_process(mapping_answers_t* fetching_page,
 				       spinlock_t* ptl);
 #endif
 
+void process_mapping_request_for_2_kernels(struct work_struct* work, int _cpu,
+					   struct workqueue_struct *message_request_wq);
+
+extern int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *vma,
+				  unsigned long address, pte_t *page_table, pmd_t *pmd,
+				  spinlock_t *ptl, pte_t orig_pte);
+
+
 #endif /* _KERNEL_POPCORN_H */

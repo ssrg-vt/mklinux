@@ -1,2 +1,2 @@
 
-obj-$(CONFIG_POPCORN) += distribute.o memory.o process_server.o remote.o \
+obj-$(CONFIG_POPCORN) += distribute.o mapping.o memory.o process_server.o remote.o \
