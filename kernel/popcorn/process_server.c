@@ -4275,21 +4275,23 @@ int do_migration(struct task_struct* task, int dst_cpu,
 * PROCESS_SERVER_CLONE_SUCCESS otherwise.
 */
 int process_server_do_migration(struct task_struct* task, int dst_cpu,
-	       struct pt_regs * regs) {
+				struct pt_regs * regs) {
 
-       int first = 0;
-       int back= 0;
-       int ret= 0;
+	int first = 0;
+	int back = 0;
+	int ret = 0;
 
-       printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
-       if(strcmp(current->comm,"IS") == 0){
-	       trace_printk("s\n");
-       }
+	printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",
+	       __func__, current->pid, current->tgid, task->tgroup_home_id,
+	       task->tgroup_home_cpu);
+
+	if (strcmp(current->comm,"IS") == 0){
+		trace_printk("s\n");
+	}
 
 #if TIMING
-       unsigned long long start= native_read_tsc();
+	unsigned long long start= native_read_tsc();
 #endif
-
 
        /*	sched.c changed so this is not needed anymore
 	*
@@ -4320,34 +4322,33 @@ return -EBUSY;
        }
 #endif*/
 
-
-       if(task->prev_cpu==dst_cpu){
-	       back= 1;
-	       ret= do_back_migration(task, dst_cpu, regs);
-	       if(ret==-1)
-		       return PROCESS_SERVER_CLONE_FAIL;
-       } else{
-		ret= do_migration(task, dst_cpu, regs,&first);
+	if (task->prev_cpu == dst_cpu) {
+		back = 1;
+		ret = do_back_migration(task, dst_cpu, regs);
+		if (ret == -1)
+			return PROCESS_SERVER_CLONE_FAIL;
+	} else {
+		ret = do_migration(task, dst_cpu, regs,&first);
 	}
-
 
 #if TIMING
 	if(ret!=-1){
-		unsigned long long stop= native_read_tsc();
-		unsigned long long elapsed_time =stop-start;
+		unsigned long long stop = native_read_tsc();
+		unsigned long long elapsed_time = stop-start;
 
 		if(first)
-			update_time_migration(elapsed_time,FIRST_MIG_WITH_FORK);
+			update_time_migration(elapsed_time, FIRST_MIG_WITH_FORK);
 		else
 			if(back)
-				update_time_migration(elapsed_time,BACK_MIG);
+				update_time_migration(elapsed_time, BACK_MIG);
 			else
-				update_time_migration(elapsed_time,NORMAL_MIG);
+				update_time_migration(elapsed_time, NORMAL_MIG);
 	}
 	else
-	printk("WARNING in timing for migration ret is %d\n",ret);
+		printk("WARNING in timing for migration ret is %d\n", ret);
 #endif
-	if(strcmp(current->comm,"IS") == 0){
+
+	if (strcmp(current->comm,"IS") == 0){
 		trace_printk("e\n");
 	}
 
