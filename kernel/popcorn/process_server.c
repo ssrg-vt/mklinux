@@ -4414,7 +4414,7 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 			goto out_not_locked;
 		}
 
-retry:			pte = pte_offset_map_lock(mm, pmd, address, &ptl);
+			pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 			entry= *pte;
 
 			page = pte_page(entry);
@@ -7183,7 +7183,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 
        push_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock, (data_header_t *)my_thread_pull);
 
-       int count= count_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock);
+       /* int count= count_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock); */
 
        // Sharath: Increased the thread pool size
        for (i = 0; i < THREAD_POOL_SIZE; i++) {
