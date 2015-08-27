@@ -4,6 +4,8 @@
 #ifndef _LINUX_PROC_NS_H
 #define _LINUX_PROC_NS_H
 
+#include <linux/path.h>
+
 struct pid_namespace;
 struct nsproxy;
 
@@ -67,7 +69,6 @@ static inline int proc_alloc_inum(unsigned int *inum)
 	*inum = 1;
 	return 0;
 }
-
 static inline void proc_free_inum(unsigned int inum) {}
 static inline bool proc_ns_inode(struct inode *inode) { return false; }
 
