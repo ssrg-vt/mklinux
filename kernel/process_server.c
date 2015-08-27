@@ -234,7 +234,7 @@ static void print_migration_time(){
 #endif
 
 
-void push_data(data_header_t** phead, raw_spinlock_t* spinlock,
+static void push_data(data_header_t** phead, raw_spinlock_t* spinlock,
 		data_header_t* entry) {
 	unsigned long flags;
 	data_header_t* head;
@@ -260,7 +260,7 @@ void push_data(data_header_t** phead, raw_spinlock_t* spinlock,
 	raw_spin_unlock_irqrestore(spinlock, flags);
 }
 
-data_header_t* pop_data(data_header_t** phead, raw_spinlock_t* spinlock) {
+static data_header_t* pop_data(data_header_t** phead, raw_spinlock_t* spinlock) {
 	data_header_t* ret = NULL;
 	data_header_t* head;
 	unsigned long flags;
@@ -283,7 +283,7 @@ data_header_t* pop_data(data_header_t** phead, raw_spinlock_t* spinlock) {
 	return ret;
 }
 
-int count_data(data_header_t** phead, raw_spinlock_t* spinlock) {
+static int count_data(data_header_t** phead, raw_spinlock_t* spinlock) {
 	int ret = 0;
 	unsigned long flags;
 	data_header_t* head;
@@ -308,13 +308,13 @@ int count_data(data_header_t** phead, raw_spinlock_t* spinlock) {
  */
 #if FOR_2_KERNELS
 
-void add_mapping_entry(mapping_answers_for_2_kernels_t* entry) {
+static void add_mapping_entry(mapping_answers_for_2_kernels_t* entry) {
 
 	mapping_answers_for_2_kernels_t* curr;
 
 #else
 
-	void add_mapping_entry(mapping_answers_t* entry) {
+static void add_mapping_entry(mapping_answers_t* entry) {
 
 		mapping_answers_t* curr;
 
@@ -349,11 +349,11 @@ void add_mapping_entry(mapping_answers_for_2_kernels_t* entry) {
 
 #if FOR_2_KERNELS
 
-mapping_answers_for_2_kernels_t* find_mapping_entry(int cpu, int id, unsigned long address) {
+static mapping_answers_for_2_kernels_t* find_mapping_entry(int cpu, int id, unsigned long address) {
 	mapping_answers_for_2_kernels_t* curr = NULL;
 	mapping_answers_for_2_kernels_t* ret = NULL;
 #else
-mapping_answers_t* find_mapping_entry(int cpu, int id, unsigned long address) {
+static mapping_answers_t* find_mapping_entry(int cpu, int id, unsigned long address) {
 	mapping_answers_t* curr = NULL;
 	mapping_answers_t* ret = NULL;
 #endif
@@ -379,9 +379,9 @@ mapping_answers_t* find_mapping_entry(int cpu, int id, unsigned long address) {
 }
 
 #if FOR_2_KERNELS
-void remove_mapping_entry(mapping_answers_for_2_kernels_t* entry) {
+static void remove_mapping_entry(mapping_answers_for_2_kernels_t* entry) {
 #else
-void remove_mapping_entry(mapping_answers_t* entry) {
+static void remove_mapping_entry(mapping_answers_t* entry) {
 #endif
 	unsigned long flags;
 
@@ -413,10 +413,10 @@ void remove_mapping_entry(mapping_answers_t* entry) {
 /* Functions to add,find and remove an entry from the ack list (head:_ack_head , lock:_ack_head_lock)
  */
 #if FOR_2_KERNELS
-void add_ack_entry(ack_answers_for_2_kernels_t* entry) {
+static void add_ack_entry(ack_answers_for_2_kernels_t* entry) {
 	ack_answers_for_2_kernels_t* curr;
 #else
-void add_ack_entry(ack_answers_t* entry) {
+static void add_ack_entry(ack_answers_t* entry) {
 	ack_answers_t* curr;
 #endif
 	unsigned long flags;
@@ -446,12 +446,12 @@ void add_ack_entry(ack_answers_t* entry) {
 	raw_spin_unlock_irqrestore(&_ack_head_lock, flags);
 }
 #if FOR_2_KERNELS
-ack_answers_for_2_kernels_t* find_ack_entry(int cpu, int id, unsigned long address) {
+static ack_answers_for_2_kernels_t* find_ack_entry(int cpu, int id, unsigned long address) {
 	ack_answers_for_2_kernels_t* curr = NULL;
 	ack_answers_for_2_kernels_t* ret = NULL;
 #else
 
-ack_answers_t* find_ack_entry(int cpu, int id, unsigned long address) {
+static ack_answers_t* find_ack_entry(int cpu, int id, unsigned long address) {
 	ack_answers_t* curr = NULL;
 	ack_answers_t* ret = NULL;
 #endif
@@ -475,9 +475,9 @@ ack_answers_t* find_ack_entry(int cpu, int id, unsigned long address) {
 }
 
 #if FOR_2_KERNELS
-void remove_ack_entry(ack_answers_for_2_kernels_t* entry) {
+static void remove_ack_entry(ack_answers_for_2_kernels_t* entry) {
 #else
-void remove_ack_entry(ack_answers_t* entry) {
+static void remove_ack_entry(ack_answers_t* entry) {
 #endif
 
 	unsigned long flags;
@@ -510,7 +510,7 @@ void remove_ack_entry(ack_answers_t* entry) {
 /* Functions to add,find and remove an entry from the memory list (head:_memory_head , lock:_memory_head_lock)
  */
 
-void add_memory_entry(memory_t* entry) {
+static void add_memory_entry(memory_t* entry) {
 	memory_t* curr;
 	unsigned long flags;
 
@@ -539,7 +539,7 @@ void add_memory_entry(memory_t* entry) {
 	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 }
 
-int add_memory_entry_with_check(memory_t* entry) {
+static int add_memory_entry_with_check(memory_t* entry) {
 	memory_t* curr;
 	memory_t* prev;
 	unsigned long flags;
@@ -581,7 +581,7 @@ int add_memory_entry_with_check(memory_t* entry) {
 	return 0;
 }
 
-memory_t* find_memory_entry(int cpu, int id) {
+static memory_t* find_memory_entry(int cpu, int id) {
 	memory_t* curr = NULL;
 	memory_t* ret = NULL;
 	unsigned long flags;
@@ -600,7 +600,7 @@ memory_t* find_memory_entry(int cpu, int id) {
 	return ret;
 }
 
-struct mm_struct* find_dead_mapping(int cpu, int id) {
+static struct mm_struct* find_dead_mapping(int cpu, int id) {
 	memory_t* curr = NULL;
 	struct mm_struct* ret = NULL;
 	unsigned long flags;
@@ -621,7 +621,7 @@ struct mm_struct* find_dead_mapping(int cpu, int id) {
 	return ret;
 }
 
-memory_t* find_and_remove_memory_entry(int cpu, int id) {
+static memory_t* find_and_remove_memory_entry(int cpu, int id) {
 	memory_t* curr = NULL;
 	memory_t* ret = NULL;
 	unsigned long flags;
@@ -659,7 +659,7 @@ memory_t* find_and_remove_memory_entry(int cpu, int id) {
 	return ret;
 }
 
-void remove_memory_entry(memory_t* entry) {
+static void remove_memory_entry(memory_t* entry) {
 	unsigned long flags;
 
 	if (!entry) {
@@ -689,7 +689,7 @@ void remove_memory_entry(memory_t* entry) {
 /* Functions to add,find and remove an entry from the count list (head:_count_head , lock:_count_head_lock)
  */
 
-void add_count_entry(count_answers_t* entry) {
+static void add_count_entry(count_answers_t* entry) {
 	count_answers_t* curr;
 	unsigned long flags;
 
@@ -718,7 +718,7 @@ void add_count_entry(count_answers_t* entry) {
 	raw_spin_unlock_irqrestore(&_count_head_lock, flags);
 }
 
-count_answers_t* find_count_entry(int cpu, int id) {
+static count_answers_t* find_count_entry(int cpu, int id) {
 	count_answers_t* curr = NULL;
 	count_answers_t* ret = NULL;
 	unsigned long flags;
@@ -739,7 +739,7 @@ count_answers_t* find_count_entry(int cpu, int id) {
 	return ret;
 }
 
-void remove_count_entry(count_answers_t* entry) {
+static void remove_count_entry(count_answers_t* entry) {
 
 	unsigned long flags;
 
@@ -767,7 +767,7 @@ void remove_count_entry(count_answers_t* entry) {
 	raw_spin_unlock_irqrestore(&_count_head_lock, flags);
 }
 
-void add_vma_ack_entry(vma_op_answers_t* entry) {
+static void add_vma_ack_entry(vma_op_answers_t* entry) {
 	vma_op_answers_t* curr;
 	unsigned long flags;
 
@@ -796,7 +796,7 @@ void add_vma_ack_entry(vma_op_answers_t* entry) {
 	raw_spin_unlock_irqrestore(&_vma_ack_head_lock, flags);
 }
 
-vma_op_answers_t* find_vma_ack_entry(int cpu, int id) {
+static vma_op_answers_t* find_vma_ack_entry(int cpu, int id) {
 	vma_op_answers_t* curr = NULL;
 	vma_op_answers_t* ret = NULL;
 
@@ -819,7 +819,7 @@ vma_op_answers_t* find_vma_ack_entry(int cpu, int id) {
 	return ret;
 }
 
-void remove_vma_ack_entry(vma_op_answers_t* entry) {
+static void remove_vma_ack_entry(vma_op_answers_t* entry) {
 	unsigned long flags;
 
 	if (!entry) {
