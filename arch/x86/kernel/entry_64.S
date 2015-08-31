@@ -495,8 +495,8 @@ ENTRY(system_call_after_swapgs)
 	LOAD_ARGS ARGOFFSET,1
 	RESTORE_REST
 	GET_THREAD_INFO(%rcx)
-system_call_continue:
 
+system_call_continue:
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
 	jnz tracesys
 system_call_fastpath:
@@ -505,6 +505,23 @@ system_call_fastpath:
 	movq %r10,%rcx
 	call *sys_call_table(,%rax,8)  # XXX:	 rip relative
 	movq %rax,RAX-ARGOFFSET(%rsp)
+
+	push %rdx
+	push %rcx
+	GET_THREAD_INFO(%rcx)
+	movq TI_task(%rcx),%rdx
+	testl $0xF,task_hooksys(%rdx)
+	pop %rcx
+	pop %rdx
+	jz system_call_exit_continue
+	push %rax
+	pushq_cfi %rdi
+	leaq 8(%rsp),%rdi
+	call syscall_hook_exit
+	popq_cfi %rdi
+	pop %rax
+
+system_call_exit_continue:
 /*
  * Syscall return path ending with SYSRET (fast path)
  * Has incomplete stack frame and undefined top of stack.

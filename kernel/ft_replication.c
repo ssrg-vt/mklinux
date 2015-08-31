@@ -1611,17 +1611,17 @@ late_initcall(ft_replication_init);
 
 long syscall_hook_enter(struct pt_regs *regs)
 {
-	//printk(KERN_EMERG
+	// System call number is in orig_ax
 	if(ft_is_replicated(current)){
-		trace_printk(
-		"%s in[%ld] [%ld %ld %ld %ld]\n", current->comm, regs->orig_ax,  regs->di, regs->si, regs->dx, regs->r10);
+		printk("%s in system call [%ld]\n", current->comm, regs->orig_ax, regs->ax);
 	}
 	return regs->orig_ax;
 }
+
 void syscall_hook_exit(struct pt_regs *regs)
 {
+	// System call number is in ax
 	if(ft_is_replicated(current)){
-                trace_printk("%s out[%ld] [%ld]\n", current->comm, regs->orig_ax, regs->ax);
+                printk("%s out[%ld] [%ld]\n", current->comm, regs->orig_ax, regs->ax);
 	}
-
 }
