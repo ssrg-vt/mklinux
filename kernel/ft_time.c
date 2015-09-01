@@ -248,7 +248,7 @@ static int create_gettime_msg(struct get_time_info *info, int level, struct ft_p
 	return 0;
 }
 
-static void send_gettimeofday_to_cold_replicas( struct get_time_info *info, struct ft_pop_rep *ft_popcorn, int level, struct ft_pop_rep_id* ft_pop_id, int* id_array, int id){
+static void send_gettimeofday_to_secondary_replicas( struct get_time_info *info, struct ft_pop_rep *ft_popcorn, int level, struct ft_pop_rep_id* ft_pop_id, int* id_array, int id){
 	struct gettime_msg* msg;
 	int msg_size;
 	int ret;
@@ -259,22 +259,22 @@ static void send_gettimeofday_to_cold_replicas( struct get_time_info *info, stru
 	if(ret)
 		return;
 
-	send_to_all_cold_replicas(ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
+	send_to_all_secondary_replicas(ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
 
 	kfree(msg);
 }
 
-static void send_gettimeofday_to_cold_replicas_from_work(struct work_struct* work){
+static void send_gettimeofday_to_secondary_replicas_from_work(struct work_struct* work){
 	struct gettime_work* my_work= (struct gettime_work*) work;
 
-	send_gettimeofday_to_cold_replicas(&my_work->info, my_work->ft_popcorn, my_work->level, &my_work->ft_pop_id, (int*) &my_work->id_array, my_work->get_time_id);
+	send_gettimeofday_to_secondary_replicas(&my_work->info, my_work->ft_popcorn, my_work->level, &my_work->ft_pop_id, (int*) &my_work->id_array, my_work->get_time_id);
 
 	put_ft_pop_rep(my_work->ft_popcorn);
 	kfree(work);
 
 }
 
-static long ft_gettimeofday_hot(struct timeval __user * tv, struct timezone __user * tz){
+static long ft_gettimeofday_primary(struct timeval __user * tv, struct timezone __user * tz){
 	long ret= 0;
 	struct timeval *ktv= NULL;
 	struct timezone *ktz= NULL;
@@ -329,7 +329,7 @@ static long ft_gettimeofday_hot(struct timeval __user * tv, struct timezone __us
 	my_work->ft_popcorn= current->ft_popcorn;
 	get_ft_pop_rep(current->ft_popcorn);
 	
-	INIT_WORK( (struct work_struct*)my_work, send_gettimeofday_to_cold_replicas_from_work);
+	INIT_WORK( (struct work_struct*)my_work, send_gettimeofday_to_secondary_replicas_from_work);
 
 	queue_work(ft_time_wq, (struct work_struct*)my_work);
 
@@ -380,7 +380,7 @@ out_clean:
 
 }
 
-static long ft_gettimeofday_cold(struct timeval __user * tv, struct timezone __user * tz){
+static long ft_gettimeofday_secondary(struct timeval __user * tv, struct timezone __user * tz){
         struct wait_time_info* wait_info;
         struct wait_time_info* present_info= NULL;
         char* key;
@@ -457,12 +457,12 @@ long ft_gettimeofday(struct timeval __user * tv, struct timezone __user * tz){
 
 	ancestor= find_task_by_vpid(current->tgid);
 
-	if(ancestor->replica_type == HOT_REPLICA || ancestor->replica_type == NEW_HOT_REPLICA_DESCENDANT){
-		return ft_gettimeofday_hot(tv, tz);	
+	if(ancestor->replica_type == PRIMARY_REPLICA || ancestor->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT){
+		return ft_gettimeofday_primary(tv, tz);	
 	}
 	else{
-		if(ancestor->replica_type == COLD_REPLICA || ancestor->replica_type == NEW_COLD_REPLICA_DESCENDANT){
-			return ft_gettimeofday_cold(tv, tz);
+		if(ancestor->replica_type == SECONDARY_REPLICA || ancestor->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT){
+			return ft_gettimeofday_secondary(tv, tz);
 		}
 		else{
 			//BUG();

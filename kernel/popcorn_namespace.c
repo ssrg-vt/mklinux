@@ -149,7 +149,7 @@ int associate_to_popcorn_ns(struct task_struct * tsk, int replication_degree)
 	spin_lock(&ft_lock);
 	if(pop->activate==0){
 		pop->root= tsk->pid;
-		tsk->replica_type= ROOT_POT_HOT_REPLICA;
+		tsk->replica_type= ROOT_POT_PRIMARY_REPLICA;
 		pop->replication_degree= replication_degree;
 		pop->activate=1;
 	}

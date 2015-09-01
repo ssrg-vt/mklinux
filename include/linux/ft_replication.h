@@ -18,14 +18,14 @@
  * following:
  */
 #define NOT_REPLICATED 0
-#define HOT_REPLICA 1
-#define COLD_REPLICA 2
-#define POTENTIAL_HOT_REPLICA 3
-#define POTENTIAL_COLD_REPLICA 4
-#define ROOT_POT_HOT_REPLICA 5
+#define PRIMARY_REPLICA 1
+#define SECONDARY_REPLICA 2
+#define POTENTIAL_PRIMARY_REPLICA 3
+#define POTENTIAL_SECONDARY_REPLICA 4
+#define ROOT_POT_PRIMARY_REPLICA 5
 #define REPLICA_DESCENDANT 6
-#define NEW_HOT_REPLICA_DESCENDANT 7
-#define NEW_COLD_REPLICA_DESCENDANT 8
+#define NEW_PRIMARY_REPLICA_DESCENDANT 7
+#define NEW_SECONDARY_REPLICA_DESCENDANT 8
 /****/
 
 #define WAIT_ANSWER_TIMEOUT_SECOND 5
@@ -46,8 +46,8 @@
  * of the previous used for struct socket,
  * masked with one of the following:
  */
-#define FT_FILTER_COLD_REPLICA 0x2
-#define FT_FILTER_HOT_REPLICA 0x4
+#define FT_FILTER_SECONDARY_REPLICA 0x2
+#define FT_FILTER_PRIMARY_REPLICA 0x4
 
 #define FT_FILTER_FAKE 0x8
 #define FT_FILTER_CHILD 0x10
@@ -84,7 +84,7 @@ struct ft_pop_rep_id{
 /* Identifier for replicas in ft-popcorn.
  * The same replica in different kernels will have the same ft_pid.
  * It is a one-to-one mapping for each replicated thread in popcorn
- * (the same replicated thread will have the same pid_t in all kernels).
+ * (the same replicated thread will have the same ft_pid in all kernels).
  */
 struct ft_pid{
         int level;
@@ -97,7 +97,7 @@ char* print_ft_pid(struct ft_pid* pid);
 /* This is a struct with all replication info need by a group of replica.
  * 
  * The struct is supposed to be created by the first thread that is replicated
- * on a kernel (the hot or cold replicas) and shared after with all its descendants
+ * on a kernel (the primary or secondary replicas) and shared after with all its descendants
  * (which compose the replica group on a kernel)
  * 
  * The corresponding replica groups in different kernels will have the same
@@ -107,8 +107,8 @@ struct ft_pop_rep{
 	struct kref kref;
 	struct ft_pop_rep_id id;
 	int replication_degree;
-	struct replica_id hot_replica;
-	struct replica_id_list cold_replicas_head;
+	struct replica_id primary_replica;
+	struct replica_id_list secondary_replicas_head;
 };
 void get_ft_pop_rep(struct ft_pop_rep* ft_pop);
 void put_ft_pop_rep(struct ft_pop_rep* ft_pop);
@@ -165,16 +165,16 @@ struct net_filter_info{
 	volatile int type;
 	spinlock_t lock;
 	volatile long long local_tx;
-	volatile long long hot_tx;
+	volatile long long primary_tx;
 	long long local_rx;
-	long long hot_rx;
+	long long primary_rx;
 	wait_queue_head_t* wait_queue;
 	struct workqueue_struct *rx_copy_wq;
 	struct ft_sk_buff_list skbuff_list;
 
-	volatile int hot_connect_id;
+	volatile int primary_connect_id;
 	int local_connect_id;
-	volatile int hot_accept_id;
+	volatile int primary_accept_id;
         int local_accept_id;
 	struct tcp_init_param tcp_param;
 };
@@ -183,10 +183,10 @@ void put_ft_filter(struct net_filter_info* filter);
 char* print_filter_id(struct net_filter_info *filter);
 
 int ft_is_replicated(struct task_struct *task);
-int ft_is_hot_replica(struct task_struct *task);
-int ft_is_cold_replica(struct task_struct *task);
+int ft_is_primary_replica(struct task_struct *task);
+int ft_is_secondary_replica(struct task_struct *task);
 struct pcn_kmsg_long_message;
-void send_to_all_cold_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_kmsg_long_message* msg, int msg_size);
+void send_to_all_secondary_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_kmsg_long_message* msg, int msg_size);
 
 int maybe_create_replicas(void);
 struct task_struct;

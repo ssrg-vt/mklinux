@@ -27,9 +27,9 @@
 #define FTPRINTK(...) ;
 #endif
 
-struct cold_replica_request{
+struct secondary_replica_request{
 	struct pcn_kmsg_hdr header;
-	struct replica_id hot_replica;
+	struct replica_id primary_replica;
 	int replication_degree;
 	struct ft_pop_rep_id ft_rep_id;
 	int exe_path_size;
@@ -46,191 +46,191 @@ struct cold_replica_request{
 	//NOTE: do not add fields after data
 	char data;
 };
-static int create_cold_replica_request_msg(struct task_struct* hot_replica_task, int replication_degree, struct ft_pop_rep_id* ft_rep_id, struct cold_replica_request** msg, int* msg_size);
+static int create_secondary_replica_request_msg(struct task_struct* primary_replica_task, int replication_degree, struct ft_pop_rep_id* ft_rep_id, struct secondary_replica_request** msg, int* msg_size);
 
-struct cold_replica_answer{
+struct secondary_replica_answer{
 	struct pcn_kmsg_hdr header;
-	struct replica_id hot_replica;
-	struct replica_id cold_replica;
-	int cold_replica_created;
+	struct replica_id primary_replica;
+	struct replica_id secondary_replica;
+	int secondary_replica_created;
 };
-static int create_cold_replica_answer_msg(struct replica_id* cold_replica_from, struct replica_id* hot_replica_to, int error, struct cold_replica_answer** message, int *msg_size);
+static int create_secondary_replica_answer_msg(struct replica_id* secondary_replica_from, struct replica_id* primary_replica_to, int error, struct secondary_replica_answer** message, int *msg_size);
 
-struct hot_replica_answer{
+struct primary_replica_answer{
         struct pcn_kmsg_hdr header;
-        struct replica_id hot_replica;
-        struct replica_id cold_replica;
+        struct replica_id primary_replica;
+        struct replica_id secondary_replica;
         int start;
-	int cold_replicas;
+	int secondary_replicas;
 	/*data is composed by:
                 -pid
 		-kernel
-	 *of each cold_replica
+	 *of each secondary_replica
          */
 
         //NOTE: do not add fields after data
 	int data;
 };
-static int create_hot_replica_answer_msg(struct replica_id* hot_replica_from, struct replica_id* cold_replica_to, int start, struct list_head *replicas_list, struct hot_replica_answer** message, int *msg_size);
+static int create_primary_replica_answer_msg(struct replica_id* primary_replica_from, struct replica_id* secondary_replica_to, int start, struct list_head *replicas_list, struct primary_replica_answer** message, int *msg_size);
 
 struct ft_work{
 	struct work_struct work;
 	void* data;
 };
 
-struct collect_hot_replica_answer{
+struct collect_primary_replica_answer{
         struct kref kref;
 	struct list_head list_member;
 	atomic_t num_answers;
 	int start;
-	int num_cold_replicas;
-	int* cold_replica_list;
-        struct replica_id cold_replica;
-        struct replica_id hot_replica;
+	int num_secondary_replicas;
+	int* secondary_replica_list;
+        struct replica_id secondary_replica;
+        struct replica_id primary_replica;
         struct task_struct* waiting;
 };
-struct collect_hot_replica_answer collect_hot_replica_answer_head;
-DEFINE_SPINLOCK(collect_hot_replica_answer_lock);
+struct collect_primary_replica_answer collect_primary_replica_answer_head;
+DEFINE_SPINLOCK(collect_primary_replica_answer_lock);
 
-struct collect_cold_replica_answers{
+struct collect_secondary_replica_answers{
        	struct kref kref; 
 	struct list_head list_member;
 	atomic_t num_answers;
         atomic_t num_replicas;
 	spinlock_t lock;
-        struct list_head* cold_replica_head_list;
-        struct replica_id hot_replica;
+        struct list_head* secondary_replica_head_list;
+        struct replica_id primary_replica;
         struct task_struct* waiting;
 };
-struct collect_cold_replica_answers collect_cold_replica_answers_head;
-DEFINE_SPINLOCK(collect_cold_replica_answers_lock);
+struct collect_secondary_replica_answers collect_secondary_replica_answers_head;
+DEFINE_SPINLOCK(collect_secondary_replica_answers_lock);
 
-static struct workqueue_struct *cold_replica_generator_wq;
+static struct workqueue_struct *secondary_replica_generator_wq;
 extern int _cpu;
 
-static void release_collect_cold_replica_answers(struct kref *kref){
-	struct collect_cold_replica_answers* collection;
+static void release_collect_secondary_replica_answers(struct kref *kref){
+	struct collect_secondary_replica_answers* collection;
 
-	collection= container_of(kref, struct collect_cold_replica_answers, kref);
+	collection= container_of(kref, struct collect_secondary_replica_answers, kref);
 
 	if(collection)
 		kfree(collection);
 }
 
-static void release_collect_hot_replica_answer(struct kref *kref){
-        struct collect_hot_replica_answer* collection;
+static void release_collect_primary_replica_answer(struct kref *kref){
+        struct collect_primary_replica_answer* collection;
 
-        collection= container_of(kref, struct collect_hot_replica_answer, kref);
+        collection= container_of(kref, struct collect_primary_replica_answer, kref);
 
         if(collection)
                 kfree(collection);
 }
 
 
-static void get_collect_hot_replica_answer(struct collect_hot_replica_answer *collection){
+static void get_collect_primary_replica_answer(struct collect_primary_replica_answer *collection){
 	kref_get(&collection->kref);
 }
 
-static void get_collect_cold_replica_answers(struct collect_cold_replica_answers *collection){
+static void get_collect_secondary_replica_answers(struct collect_secondary_replica_answers *collection){
         kref_get(&collection->kref);
 }
 
-static void put_collect_hot_replica_answer(struct collect_hot_replica_answer *collection){
-	kref_put(&collection->kref, release_collect_hot_replica_answer);
+static void put_collect_primary_replica_answer(struct collect_primary_replica_answer *collection){
+	kref_put(&collection->kref, release_collect_primary_replica_answer);
 }
 
-static void put_collect_cold_replica_answers(struct collect_cold_replica_answers *collection){
-        kref_put(&collection->kref, release_collect_cold_replica_answers);
+static void put_collect_secondary_replica_answers(struct collect_secondary_replica_answers *collection){
+        kref_put(&collection->kref, release_collect_secondary_replica_answers);
 }
 
-static struct collect_hot_replica_answer * find_and_get_collect_hot_replica_answer(struct replica_id *hot_replica, struct replica_id *cold_replica){
-	struct collect_hot_replica_answer *collection= NULL;
+static struct collect_primary_replica_answer * find_and_get_collect_primary_replica_answer(struct replica_id *primary_replica, struct replica_id *secondary_replica){
+	struct collect_primary_replica_answer *collection= NULL;
 	struct list_head *iter= NULL;
-        struct collect_hot_replica_answer *objPtr= NULL;
+        struct collect_primary_replica_answer *objPtr= NULL;
 
-	spin_lock(&collect_hot_replica_answer_lock);	
+	spin_lock(&collect_primary_replica_answer_lock);	
 
-        list_for_each(iter, &collect_hot_replica_answer_head.list_member) {
-                objPtr = list_entry(iter, struct collect_hot_replica_answer, list_member);
-        	if(objPtr->hot_replica.kernel == hot_replica->kernel 
-			&& objPtr->hot_replica.pid == hot_replica->pid 
-			&& objPtr->cold_replica.kernel == cold_replica->kernel
-                        && objPtr->cold_replica.pid == cold_replica->pid){
+        list_for_each(iter, &collect_primary_replica_answer_head.list_member) {
+                objPtr = list_entry(iter, struct collect_primary_replica_answer, list_member);
+        	if(objPtr->primary_replica.kernel == primary_replica->kernel 
+			&& objPtr->primary_replica.pid == primary_replica->pid 
+			&& objPtr->secondary_replica.kernel == secondary_replica->kernel
+                        && objPtr->secondary_replica.pid == secondary_replica->pid){
 			
 			collection= objPtr;
-			get_collect_hot_replica_answer(collection);
+			get_collect_primary_replica_answer(collection);
 			goto out;
 		}        
 
         }
 	
-out:	spin_unlock(&collect_hot_replica_answer_lock);
+out:	spin_unlock(&collect_primary_replica_answer_lock);
 	return collection;
 }
 
-static struct collect_cold_replica_answers * find_and_get_collect_cold_replica_answers(struct replica_id *hot_replica){
-        struct collect_cold_replica_answers *collection= NULL;
+static struct collect_secondary_replica_answers * find_and_get_collect_secondary_replica_answers(struct replica_id *primary_replica){
+        struct collect_secondary_replica_answers *collection= NULL;
         struct list_head *iter= NULL;
-        struct collect_cold_replica_answers *objPtr= NULL;
+        struct collect_secondary_replica_answers *objPtr= NULL;
 
-        spin_lock(&collect_cold_replica_answers_lock);
+        spin_lock(&collect_secondary_replica_answers_lock);
 
-        list_for_each(iter, &collect_cold_replica_answers_head.list_member) {
-                objPtr = list_entry(iter, struct collect_cold_replica_answers, list_member);
-                if(objPtr->hot_replica.kernel == hot_replica->kernel
-                        && objPtr->hot_replica.pid == hot_replica->pid){
+        list_for_each(iter, &collect_secondary_replica_answers_head.list_member) {
+                objPtr = list_entry(iter, struct collect_secondary_replica_answers, list_member);
+                if(objPtr->primary_replica.kernel == primary_replica->kernel
+                        && objPtr->primary_replica.pid == primary_replica->pid){
 
                         collection= objPtr;
-                        get_collect_cold_replica_answers(collection);
+                        get_collect_secondary_replica_answers(collection);
                         goto out;
                 }
 
         }
 
-out:    spin_unlock(&collect_cold_replica_answers_lock);
+out:    spin_unlock(&collect_secondary_replica_answers_lock);
         return collection;
 }
 
-static void remove_collect_hot_replica_answer(struct collect_hot_replica_answer *collection){
+static void remove_collect_primary_replica_answer(struct collect_primary_replica_answer *collection){
 	if(!collection)
 		return;
 
-	spin_lock(&collect_hot_replica_answer_lock);
+	spin_lock(&collect_primary_replica_answer_lock);
 	list_del(&collection->list_member);
-	spin_unlock(&collect_hot_replica_answer_lock);
+	spin_unlock(&collect_primary_replica_answer_lock);
         
 	return;
 }
 
-static void remove_collect_cold_replica_answers(struct collect_cold_replica_answers *collection){
+static void remove_collect_secondary_replica_answers(struct collect_secondary_replica_answers *collection){
         if(!collection)
                 return;
 
-        spin_lock(&collect_cold_replica_answers_lock);
+        spin_lock(&collect_secondary_replica_answers_lock);
         list_del(&collection->list_member);
-        spin_unlock(&collect_cold_replica_answers_lock);
+        spin_unlock(&collect_secondary_replica_answers_lock);
 
         return;
 }
 
-static void add_collect_hot_replica_answer(struct collect_hot_replica_answer *collection){
+static void add_collect_primary_replica_answer(struct collect_primary_replica_answer *collection){
         if(!collection)
                 return;
 
-        spin_lock(&collect_hot_replica_answer_lock);
-        list_add(&collection->list_member,&collect_hot_replica_answer_head.list_member);
-        spin_unlock(&collect_hot_replica_answer_lock);
+        spin_lock(&collect_primary_replica_answer_lock);
+        list_add(&collection->list_member,&collect_primary_replica_answer_head.list_member);
+        spin_unlock(&collect_primary_replica_answer_lock);
 
         return;
 }
 
-static void add_collect_cold_replica_answers(struct collect_cold_replica_answers *collection){
+static void add_collect_secondary_replica_answers(struct collect_secondary_replica_answers *collection){
         if(!collection)
                 return;
 
-        spin_lock(&collect_cold_replica_answers_lock);
-        list_add(&collection->list_member,&collect_cold_replica_answers_head.list_member);
-        spin_unlock(&collect_cold_replica_answers_lock);
+        spin_lock(&collect_secondary_replica_answers_lock);
+        list_add(&collection->list_member,&collect_secondary_replica_answers_head.list_member);
+        spin_unlock(&collect_secondary_replica_answers_lock);
 
         return;
 }
@@ -286,32 +286,32 @@ static struct ft_pop_rep* create_ft_pop_rep(int replication_degree, int new_id, 
 	}
 	new_ft_pop->replication_degree= replication_degree;
 
-	INIT_LIST_HEAD(&new_ft_pop->cold_replicas_head.replica_list_member);
+	INIT_LIST_HEAD(&new_ft_pop->secondary_replicas_head.replica_list_member);
 	
 	return new_ft_pop;
 }
 
-/* Creates and populates a struct cold_replica_request message with information taken from hot_replica_task.
+/* Creates and populates a struct secondary_replica_request message with information taken from primary_replica_task.
  *
  * In case of success 0 is returned and a pointer to the message is saved in msg and the corresponding size is set in msg_size.
  * Remember to kfree the message allocated eventually!
  *
- * Message size is variable because the path, argv end env of hot_replica_task vary from task to task. 
+ * Message size is variable because the path, argv end env of primary_replica_task vary from task to task. 
  */
-static int create_cold_replica_request_msg(struct task_struct* hot_replica_task, int replication_degree, struct ft_pop_rep_id* ft_rep_id, struct cold_replica_request** msg, int* msg_size){	
+static int create_secondary_replica_request_msg(struct task_struct* primary_replica_task, int replication_degree, struct ft_pop_rep_id* ft_rep_id, struct secondary_replica_request** msg, int* msg_size){	
 	int argv_size= 0;
 	int env_size= 0;
 	int total_msg_size= 0;
-	struct cold_replica_request* message;
+	struct secondary_replica_request* message;
 	char *path, *rpath, *data;
 	int max_path_size= 256;
 	int ret,i,argc,envc;
 
-	if(!hot_replica_task || !hot_replica_task->mm)
+	if(!primary_replica_task || !primary_replica_task->mm)
 		return -EFAULT;
 
-	argv_size= hot_replica_task->mm->arg_end - hot_replica_task->mm->arg_start;
-	env_size= hot_replica_task->mm->env_end - hot_replica_task->mm->env_start;
+	argv_size= primary_replica_task->mm->arg_end - primary_replica_task->mm->arg_start;
+	env_size= primary_replica_task->mm->env_end - primary_replica_task->mm->env_start;
 	
 path_again:
 
@@ -320,7 +320,7 @@ path_again:
 		return -ENOMEM;
 	}
 
-    	rpath= d_path(&hot_replica_task->mm->exe_file->f_path, path, max_path_size);
+    	rpath= d_path(&primary_replica_task->mm->exe_file->f_path, path, max_path_size);
 	if(IS_ERR(rpath)){
 		kfree(path);
 		if(rpath == ERR_PTR(-ENAMETOOLONG)){
@@ -352,7 +352,7 @@ path_again:
 	FTPRINTK("%s: replicating %s\n", __func__, data);
 	
 	data= data+ max_path_size;
-	if (copy_from_user(data, (const void __user *)hot_replica_task->mm->arg_start, argv_size)) {
+	if (copy_from_user(data, (const void __user *)primary_replica_task->mm->arg_start, argv_size)) {
         	ret= -EFAULT;
 		goto out_msg;	
         }
@@ -368,7 +368,7 @@ path_again:
 	message->argc= argc;
 	
 	data= data+ argv_size;
-	if (copy_from_user(data, (const void __user *)hot_replica_task->mm->env_start, env_size)) {
+	if (copy_from_user(data, (const void __user *)primary_replica_task->mm->env_start, env_size)) {
                 ret= -EFAULT;
                 goto out_msg;
         }
@@ -383,12 +383,12 @@ path_again:
 	message->env_size= env_size;
 	message->envc= envc;
 
-	message->hot_replica.kernel= _cpu;
-	message->hot_replica.pid= hot_replica_task->pid;
+	message->primary_replica.kernel= _cpu;
+	message->primary_replica.pid= primary_replica_task->pid;
 	message->replication_degree= replication_degree;
 	message->ft_rep_id= *ft_rep_id;	
 		
-	message->header.type= PCN_KMSG_TYPE_FT_COLD_REPLICA_REQUEST;
+	message->header.type= PCN_KMSG_TYPE_FT_SECONDARY_REPLICA_REQUEST;
 	message->header.prio= PCN_KMSG_PRIO_NORMAL;
 	
 	*msg= message;
@@ -404,30 +404,30 @@ out:
 
 }
 
-/* Creates and populates a struct cold_replica_answer message.
+/* Creates and populates a struct secondary_replica_answer message.
  *
  * In case of success 0 is returned and a pointer to the message is saved in message and the corresponding size is set in msg_size.
  * Remember to kfree the message allocated eventually!
  *      
  */
-static int create_cold_replica_answer_msg(struct replica_id* cold_replica_from, struct replica_id* hot_replica_to, int error, struct cold_replica_answer** message, int *msg_size){
-	struct cold_replica_answer* msg;
+static int create_secondary_replica_answer_msg(struct replica_id* secondary_replica_from, struct replica_id* primary_replica_to, int error, struct secondary_replica_answer** message, int *msg_size){
+	struct secondary_replica_answer* msg;
 
-	if(!cold_replica_from||!hot_replica_to)
+	if(!secondary_replica_from||!primary_replica_to)
 		return -EFAULT;
 
         msg= kmalloc(sizeof(*msg),GFP_KERNEL);
         if(!msg)
                 return -ENOMEM;
 
-        msg->hot_replica= *hot_replica_to;
-        msg->cold_replica= *cold_replica_from;
+        msg->primary_replica= *primary_replica_to;
+        msg->secondary_replica= *secondary_replica_from;
 	if(error)
-        	msg->cold_replica_created= 0;
+        	msg->secondary_replica_created= 0;
 	else
-		msg->cold_replica_created= 1;
+		msg->secondary_replica_created= 1;
 
-        msg->header.type= PCN_KMSG_TYPE_FT_COLD_REPLICA_ANSWER;
+        msg->header.type= PCN_KMSG_TYPE_FT_SECONDARY_REPLICA_ANSWER;
         msg->header.prio= PCN_KMSG_PRIO_NORMAL;
 
 	*message= msg;
@@ -436,24 +436,24 @@ static int create_cold_replica_answer_msg(struct replica_id* cold_replica_from, 
 	return 0;
 }
 
-/* Creates and populates a struct hot_replica_answer message.
+/* Creates and populates a struct primary_replica_answer message.
  *
  * In case of success 0 is returned and a pointer to the message is saved in message and the corresponding size is set in msg_size.
  * Remember to kfree the message allocated eventually!
  *
- * Message size is variable because a list of the cold replicas copied from replicas_list is appended to it. 
+ * Message size is variable because a list of the secondary replicas copied from replicas_list is appended to it. 
  */
-static int create_hot_replica_answer_msg(struct replica_id* hot_replica_from, struct replica_id* cold_replica_to, int start, struct list_head *replicas_list, struct hot_replica_answer** message, int *msg_size){
-	struct hot_replica_answer* msg;
-	int cold_replicas= 0;
+static int create_primary_replica_answer_msg(struct replica_id* primary_replica_from, struct replica_id* secondary_replica_to, int start, struct list_head *replicas_list, struct primary_replica_answer** message, int *msg_size){
+	struct primary_replica_answer* msg;
+	int secondary_replicas= 0;
 	int message_size;
 	struct list_head *iter= NULL;
 	struct list_head *n= NULL;
 	struct replica_id_list *objPtr= NULL;
-	struct replica_id cold_replica;
+	struct replica_id secondary_replica;
 	int* datap;
 
-	if(!hot_replica_from || !cold_replica_to)
+	if(!primary_replica_from || !secondary_replica_to)
                 return -EFAULT;
 
 	if(start){
@@ -462,10 +462,10 @@ static int create_hot_replica_answer_msg(struct replica_id* hot_replica_from, st
                 }
 
 		list_for_each_safe(iter, n, replicas_list) {
-	                cold_replicas++;
+	                secondary_replicas++;
                 }
 		
-		message_size= sizeof(*msg)+ 2*sizeof(int)*cold_replicas;
+		message_size= sizeof(*msg)+ 2*sizeof(int)*secondary_replicas;
 	}
 	else{
 		message_size= sizeof(*msg);
@@ -475,26 +475,26 @@ static int create_hot_replica_answer_msg(struct replica_id* hot_replica_from, st
         if(!msg)
                 return -ENOMEM;
 
-        msg->hot_replica= *hot_replica_from;
-        msg->cold_replica= *cold_replica_to;
+        msg->primary_replica= *primary_replica_from;
+        msg->secondary_replica= *secondary_replica_to;
         if(start){
                 msg->start= 1;
-		msg->cold_replicas= cold_replicas;
+		msg->secondary_replicas= secondary_replicas;
 		iter= NULL;
 		n= NULL;
 		datap= &msg->data;
 		list_for_each_safe(iter, n, replicas_list) {
                 	objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-                	cold_replica= objPtr->replica;
-			*datap++= cold_replica.pid;
-			*datap++= cold_replica.kernel;
+                	secondary_replica= objPtr->replica;
+			*datap++= secondary_replica.pid;
+			*datap++= secondary_replica.kernel;
 		}
         }
         else{
                 msg->start= 0;
 	}
 
-        msg->header.type= PCN_KMSG_TYPE_FT_HOT_REPLICA_ANSWER;
+        msg->header.type= PCN_KMSG_TYPE_FT_PRIMARY_REPLICA_ANSWER;
         msg->header.prio= PCN_KMSG_PRIO_NORMAL;
 
         *message= msg;
@@ -504,34 +504,34 @@ static int create_hot_replica_answer_msg(struct replica_id* hot_replica_from, st
 
 }
 
-/* send msg to all cold replica listed in ft_popcorn.
+/* send msg to all secondary replica listed in ft_popcorn.
  *
  */
-void send_to_all_cold_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_kmsg_long_message* msg, int msg_size){
+void send_to_all_secondary_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_kmsg_long_message* msg, int msg_size){
 	struct list_head *iter= NULL;
-        struct replica_id cold_replica;
+        struct replica_id secondary_replica;
         struct replica_id_list* objPtr;
 
-	list_for_each(iter, &ft_popcorn->cold_replicas_head.replica_list_member) {
+	list_for_each(iter, &ft_popcorn->secondary_replicas_head.replica_list_member) {
                 objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-                cold_replica= objPtr->replica;
+                secondary_replica= objPtr->replica;
 
-                pcn_kmsg_send_long(cold_replica.kernel, msg, msg_size-sizeof(msg->hdr));
+                pcn_kmsg_send_long(secondary_replica.kernel, msg, msg_size-sizeof(msg->hdr));
 
         }
 
 }
 
-/* Returns 1 in case task is a cold replica or cold replica descendant.
+/* Returns 1 in case task is a secondary replica or secondary replica descendant.
  *
  */
-int ft_is_cold_replica(struct task_struct *task){
+int ft_is_secondary_replica(struct task_struct *task){
         struct task_struct *ancestor;
 
         ancestor= find_task_by_vpid(task->tgid);
 
-        if(ancestor->replica_type == COLD_REPLICA
-                || ancestor->replica_type == NEW_COLD_REPLICA_DESCENDANT){
+        if(ancestor->replica_type == SECONDARY_REPLICA
+                || ancestor->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT){
 
                 return 1;
         }
@@ -539,16 +539,16 @@ int ft_is_cold_replica(struct task_struct *task){
         return 0;
 }
 
-/* Returns 1 in case task is an hot replica or hot replica descendant.
+/* Returns 1 in case task is an primary replica or primary replica descendant.
  *
  */
-int ft_is_hot_replica(struct task_struct *task){
+int ft_is_primary_replica(struct task_struct *task){
 	struct task_struct *ancestor;
 
         ancestor= find_task_by_vpid(task->tgid);
 
-        if(ancestor->replica_type == HOT_REPLICA
-                || ancestor->replica_type == NEW_HOT_REPLICA_DESCENDANT){
+        if(ancestor->replica_type == PRIMARY_REPLICA
+                || ancestor->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT){
                 
                 return 1;
         }
@@ -561,10 +561,10 @@ int ft_is_hot_replica(struct task_struct *task){
  */
 int ft_is_replicated(struct task_struct *task){
 
-	if(task->replica_type == HOT_REPLICA
-                || task->replica_type == COLD_REPLICA
-                || task->replica_type == NEW_HOT_REPLICA_DESCENDANT
-                || task->replica_type == NEW_COLD_REPLICA_DESCENDANT
+	if(task->replica_type == PRIMARY_REPLICA
+                || task->replica_type == SECONDARY_REPLICA
+                || task->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT
+                || task->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT
                 || task->replica_type == REPLICA_DESCENDANT){	
 		
 		return 1;
@@ -666,8 +666,8 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 
 	pop= tsk->nsproxy->pop_ns;
 	if(is_popcorn_namespace_active(pop)){
-		if(current->pid == pop->root && current->replica_type == ROOT_POT_HOT_REPLICA){
-			tsk->replica_type= POTENTIAL_HOT_REPLICA;
+		if(current->pid == pop->root && current->replica_type == ROOT_POT_PRIMARY_REPLICA){
+			tsk->replica_type= POTENTIAL_PRIMARY_REPLICA;
 			tsk->ft_popcorn= NULL;
 			tsk->ft_pid.level= 0;
 			tsk->next_pid_to_use= 0;
@@ -698,8 +698,8 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			}
 
 			/* All forked threads should have the same ft_popcorn because all have as ancestor 
-                         * the same hot/cold replica.
-                         * The same shuould apply for new processes. However now the initial hot/cold 
+                         * the same primary/secondary replica.
+                         * The same shuould apply for new processes. However now the initial primary/secondary 
                          * replica can exit indipendently by this new process. Should we recompute all the 
                          * replica ids for this new process???
                          */
@@ -709,18 +709,18 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 				get_ft_pop_rep(tsk->ft_popcorn);
 				
 				ancestor= find_task_by_vpid(current->tgid);
-				if(ancestor->replica_type == HOT_REPLICA
-					|| ancestor->replica_type == NEW_HOT_REPLICA_DESCENDANT){
+				if(ancestor->replica_type == PRIMARY_REPLICA
+					|| ancestor->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT){
 					
-					tsk->replica_type= NEW_HOT_REPLICA_DESCENDANT;
-					printk("%s: created NEW_HOT_REPLICA_DESCENDANT from (pid %d tgid %d)\n",__func__, tsk->pid, tsk->tgid);
+					tsk->replica_type= NEW_PRIMARY_REPLICA_DESCENDANT;
+					printk("%s: created NEW_PRIMARY_REPLICA_DESCENDANT from (pid %d tgid %d)\n",__func__, tsk->pid, tsk->tgid);
 				}
 				else{
-					if(ancestor->replica_type == COLD_REPLICA
-                                        	|| ancestor->replica_type == NEW_COLD_REPLICA_DESCENDANT){
+					if(ancestor->replica_type == SECONDARY_REPLICA
+                                        	|| ancestor->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT){
                                         
-						tsk->replica_type= NEW_COLD_REPLICA_DESCENDANT;
-						printk("%s: created NEW_COLD_REPLICA_DESCENDANT from (pid %d tgid %d)\n", __func__, tsk->pid, tsk->tgid);
+						tsk->replica_type= NEW_SECONDARY_REPLICA_DESCENDANT;
+						printk("%s: created NEW_SECONDARY_REPLICA_DESCENDANT from (pid %d tgid %d)\n", __func__, tsk->pid, tsk->tgid);
                                 	}
 					else{
 						//BUG();
@@ -767,18 +767,18 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 	return 0;
 }
 
-static int _send_update_to_hot_replica(struct replica_id* hot_replica_to, struct replica_id* cold_replica_from, int error){
-        struct cold_replica_answer* msg;
+static int _send_update_to_primary_replica(struct replica_id* primary_replica_to, struct replica_id* secondary_replica_from, int error){
+        struct secondary_replica_answer* msg;
         int msg_size;
         int ret;
         
-        ret= create_cold_replica_answer_msg(cold_replica_from, hot_replica_to, error, &msg, &msg_size);
+        ret= create_secondary_replica_answer_msg(secondary_replica_from, primary_replica_to, error, &msg, &msg_size);
         if(ret)
         	return ret;
 
-        ret= pcn_kmsg_send_long(hot_replica_to->kernel,(struct pcn_kmsg_long_message*) msg, msg_size-sizeof(msg->header));
+        ret= pcn_kmsg_send_long(primary_replica_to->kernel,(struct pcn_kmsg_long_message*) msg, msg_size-sizeof(msg->header));
 	if(!ret){
-		FTPRINTK("%s: sent update to hot replica pid %d in kernel %d with %s\n",__func__, hot_replica_to->pid, hot_replica_to->kernel, ((error)?"error":"no error"));
+		FTPRINTK("%s: sent update to primary replica pid %d in kernel %d with %s\n",__func__, primary_replica_to->pid, primary_replica_to->kernel, ((error)?"error":"no error"));
 	}
 
         kfree(msg);
@@ -786,34 +786,34 @@ static int _send_update_to_hot_replica(struct replica_id* hot_replica_to, struct
 	return ret;
 }
 
-static int send_ack_to_hot_replica(struct replica_id* hot_replica_to, struct replica_id* cold_replica_from){
+static int send_ack_to_primary_replica(struct replica_id* primary_replica_to, struct replica_id* secondary_replica_from){
 
-	return _send_update_to_hot_replica(hot_replica_to, cold_replica_from, 0);
+	return _send_update_to_primary_replica(primary_replica_to, secondary_replica_from, 0);
 
 }
 
-static void _send_error_to_hot_replica_from_work(struct work_struct* work){
+static void _send_error_to_primary_replica_from_work(struct work_struct* work){
         struct ft_work* my_work= (struct ft_work*) work;
-	struct replica_id* hot_replica= (struct replica_id*) my_work->data;
-	struct replica_id cold_replica;
-        cold_replica.kernel= _cpu;
+	struct replica_id* primary_replica= (struct replica_id*) my_work->data;
+	struct replica_id secondary_replica;
+        secondary_replica.kernel= _cpu;
 
-	_send_update_to_hot_replica(hot_replica, &cold_replica, 1);
+	_send_update_to_primary_replica(primary_replica, &secondary_replica, 1);
 
-	kfree(hot_replica);
+	kfree(primary_replica);
 	kfree(work);
 	return;		
 }
 
-static void send_error_to_hot_replica(struct replica_id* hot_replica, int from_same_thread){
+static void send_error_to_primary_replica(struct replica_id* primary_replica, int from_same_thread){
 	struct ft_work *work;
-	struct replica_id* hot_rep_copy;
-	struct replica_id cold_rep;
+	struct replica_id* primary_rep_copy;
+	struct replica_id secondary_rep;
 	
 	if(from_same_thread){
-		cold_rep.kernel= _cpu;
-		cold_rep.pid= current->pid;
-		_send_update_to_hot_replica(hot_replica, &cold_rep, 1);
+		secondary_rep.kernel= _cpu;
+		secondary_rep.pid= current->pid;
+		_send_update_to_primary_replica(primary_replica, &secondary_rep, 1);
 	}
 	else{
         	work= kmalloc(sizeof(*work), GFP_ATOMIC);
@@ -821,18 +821,18 @@ static void send_error_to_hot_replica(struct replica_id* hot_replica, int from_s
                 	return;
         	}
         	
-		hot_rep_copy= kmalloc(sizeof(*hot_rep_copy), GFP_ATOMIC);
-		if(!hot_rep_copy){
+		primary_rep_copy= kmalloc(sizeof(*primary_rep_copy), GFP_ATOMIC);
+		if(!primary_rep_copy){
 			kfree(work);
 			return;
 		}
 
-		INIT_WORK( (struct work_struct*)work, _send_error_to_hot_replica_from_work);
-		*hot_rep_copy= *hot_replica;
+		INIT_WORK( (struct work_struct*)work, _send_error_to_primary_replica_from_work);
+		*primary_rep_copy= *primary_replica;
 		
-		work->data= hot_rep_copy;
+		work->data= primary_rep_copy;
 
-		queue_work(cold_replica_generator_wq, (struct work_struct*)work);
+		queue_work(secondary_replica_generator_wq, (struct work_struct*)work);
 
 	}
                   
@@ -840,13 +840,13 @@ static void send_error_to_hot_replica(struct replica_id* hot_replica, int from_s
 
 /* see ____call_usermodehelper of kernel/kmod.h
  * 
- * Associates the current thread to Popcorn namespace, set the replica_type to POTENTIAL_COLD_REPLICA
- * and tries to execve the current thread with exec path, argv and env of the hot replica stored in data.
+ * Associates the current thread to Popcorn namespace, set the replica_type to POTENTIAL_SECONDARY_REPLICA
+ * and tries to execve the current thread with exec path, argv and env of the primary replica stored in data.
  * 
- * In case of error it sends an "error" message to the hot replica.
+ * In case of error it sends an "error" message to the primary replica.
  */
-static int exec_to_cold_replica(void *data){
-	struct cold_replica_request* msg = data;
+static int exec_to_secondary_replica(void *data){
+	struct secondary_replica_request* msg = data;
         struct cred *new;
         int retval;
 	char *exe_pathp,*argvp,*envp;
@@ -875,7 +875,7 @@ static int exec_to_cold_replica(void *data){
 		goto fail;
 	}
 
-	current->replica_type= POTENTIAL_COLD_REPLICA;
+	current->replica_type= POTENTIAL_SECONDARY_REPLICA;
 	current->useful= msg;
 
 	exe_pathp= (char *) &msg->data;
@@ -941,7 +941,7 @@ static int exec_to_cold_replica(void *data){
 	}
 	copy_env[nr_pointers]= NULL;
 
-	FTPRINTK("%s: pid %d going to execve to %s for beeing a replica of pid %d in kernel %d\n",__func__, current->pid, exe_pathp, msg->hot_replica.pid, msg->hot_replica.kernel);
+	FTPRINTK("%s: pid %d going to execve to %s for beeing a replica of pid %d in kernel %d\n",__func__, current->pid, exe_pathp, msg->primary_replica.pid, msg->primary_replica.kernel);
 
 	retval = kernel_execve(exe_pathp,
                                (const char *const *)copy_argv,
@@ -959,7 +959,7 @@ static int exec_to_cold_replica(void *data){
         printk("%s failed retval{%d}\n",__func__, retval);
 
         if(retval != -ENOFTREP){
-                send_error_to_hot_replica(&((struct cold_replica_request*) current->useful)->hot_replica, 1);
+                send_error_to_primary_replica(&((struct secondary_replica_request*) current->useful)->primary_replica, 1);
         }
 
         pcn_kmsg_free_msg(current->useful);
@@ -975,7 +975,7 @@ fail:
     	printk("%s failed retval{%d}\n",__func__, retval);
 	
 	if(retval != -ENOFTREP){
-		send_error_to_hot_replica(&msg->hot_replica, 1);
+		send_error_to_primary_replica(&msg->primary_replica, 1);
 	}
 
 	pcn_kmsg_free_msg(msg);
@@ -983,32 +983,32 @@ fail:
 	do_exit(0);
 }
 
-/* Forks a new thread in a new Popcorn namespace that will execve to a cold replica.
+/* Forks a new thread in a new Popcorn namespace that will execve to a secondary replica.
  * 
- * In case of error during the fork, it sends and "error" message to the hot replica.
+ * In case of error during the fork, it sends and "error" message to the primary replica.
  */
-static void create_thread_cold_replica(struct work_struct* work){
+static void create_thread_secondary_replica(struct work_struct* work){
 	long ret;
-	struct cold_replica_request* msg;
+	struct secondary_replica_request* msg;
 	struct ft_work* my_work;
 
 	my_work= (struct ft_work*) work;
-	msg= (struct cold_replica_request*) my_work->data;	
+	msg= (struct secondary_replica_request*) my_work->data;	
 	
-	FTPRINTK("%s: received new replica request from pid %d in kernel %d\n", __func__, msg->hot_replica.pid, msg->hot_replica.kernel);
+	FTPRINTK("%s: received new replica request from pid %d in kernel %d\n", __func__, msg->primary_replica.pid, msg->primary_replica.kernel);
 
-	ret= kernel_thread( exec_to_cold_replica, my_work->data,
+	ret= kernel_thread( exec_to_secondary_replica, my_work->data,
                                     CLONE_VFORK | SIGCHLD | CLONE_NEWPOPCORN);
 
 	if(IS_ERR_VALUE(ret)){
-		send_error_to_hot_replica(&msg->hot_replica, 1);
+		send_error_to_primary_replica(&msg->primary_replica, 1);
                 pcn_kmsg_free_msg(msg);
 	}
 
 	kfree(work);
 }
 
-static int handle_cold_replica_request(struct pcn_kmsg_message* inc_msg) {
+static int handle_secondary_replica_request(struct pcn_kmsg_message* inc_msg) {
 	struct ft_work *work;
 
 	work= kmalloc(sizeof(*work),GFP_ATOMIC);
@@ -1017,46 +1017,46 @@ static int handle_cold_replica_request(struct pcn_kmsg_message* inc_msg) {
         	return -ENOMEM;
 	}
 
-        INIT_WORK( (struct work_struct*)work, create_thread_cold_replica);
+        INIT_WORK( (struct work_struct*)work, create_thread_secondary_replica);
         work->data= inc_msg;
-        queue_work(cold_replica_generator_wq, (struct work_struct*)work);
+        queue_work(secondary_replica_generator_wq, (struct work_struct*)work);
 
 	return 0;
 }
 
-static int send_update_to_cold_replica(struct replica_id* hot_replica_from, struct replica_id* cold_replica_to, int start, struct list_head *cold_replicas_list){
-        struct hot_replica_answer* msg;
+static int send_update_to_secondary_replica(struct replica_id* primary_replica_from, struct replica_id* secondary_replica_to, int start, struct list_head *secondary_replicas_list){
+        struct primary_replica_answer* msg;
         int msg_size;
         int ret;
 
-	ret= create_hot_replica_answer_msg(hot_replica_from, cold_replica_to, start, cold_replicas_list, &msg, &msg_size);
+	ret= create_primary_replica_answer_msg(primary_replica_from, secondary_replica_to, start, secondary_replicas_list, &msg, &msg_size);
         if(ret)
                 return ret;
 	
-	ret= pcn_kmsg_send_long(cold_replica_to->kernel,(struct pcn_kmsg_long_message*) msg, msg_size-sizeof(msg->header));
+	ret= pcn_kmsg_send_long(secondary_replica_to->kernel,(struct pcn_kmsg_long_message*) msg, msg_size-sizeof(msg->header));
 
         kfree(msg);
 	return ret;
 }
 
-static void send_error_to_cold_replica_from_work(struct work_struct* work){
+static void send_error_to_secondary_replica_from_work(struct work_struct* work){
         struct ft_work* my_work= (struct ft_work*) work;
-	struct cold_replica_answer* msg= (struct cold_replica_answer*) my_work->data;
+	struct secondary_replica_answer* msg= (struct secondary_replica_answer*) my_work->data;
 
-        send_update_to_cold_replica(&msg->hot_replica, &msg->cold_replica, 0, NULL);
+        send_update_to_secondary_replica(&msg->primary_replica, &msg->secondary_replica, 0, NULL);
 	
 	pcn_kmsg_free_msg(msg);
 	kfree(work);
 }
 
-/* Sends an "error" message to the first replica_number cold replicas stored in answer_collection and removes them from the list.
+/* Sends an "error" message to the first replica_number secondary replicas stored in answer_collection and removes them from the list.
  *
  */
-static void send_error_to_cold_replicas_and_remove_from_collection(struct collect_cold_replica_answers* answer_collection, int replica_number){
+static void send_error_to_secondary_replicas_and_remove_from_collection(struct collect_secondary_replica_answers* answer_collection, int replica_number){
 	struct list_head *iter= NULL;
 	struct list_head *n= NULL;
         struct replica_id_list *objPtr= NULL;
-       	struct replica_id cold_replica;
+       	struct replica_id secondary_replica;
 	int count= 0;
 
 	if(replica_number==0)	
@@ -1064,11 +1064,11 @@ static void send_error_to_cold_replicas_and_remove_from_collection(struct collec
 
 	spin_lock(&answer_collection->lock);
 
-	list_for_each_safe(iter, n, answer_collection->cold_replica_head_list) {
+	list_for_each_safe(iter, n, answer_collection->secondary_replica_head_list) {
                 objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-                cold_replica= objPtr->replica;
+                secondary_replica= objPtr->replica;
 		
-		send_update_to_cold_replica(&answer_collection->hot_replica, &cold_replica, 0, NULL);
+		send_update_to_secondary_replica(&answer_collection->primary_replica, &secondary_replica, 0, NULL);
 		
 		list_del(&objPtr->replica_list_member);
 		kfree(objPtr);
@@ -1084,24 +1084,24 @@ static void send_error_to_cold_replicas_and_remove_from_collection(struct collec
 out:	spin_unlock(&answer_collection->lock);
 }
 
-/* Sends a "start" message to all cold replicas stored in answer_collection.
+/* Sends a "start" message to all secondary replicas stored in answer_collection.
  * 
  * Returns 0 in case of success.
  */
-static int send_ack_to_cold_replicas(struct collect_cold_replica_answers* answer_collection){
+static int send_ack_to_secondary_replicas(struct collect_secondary_replica_answers* answer_collection){
 	struct list_head *iter= NULL;
         struct list_head *n= NULL;
         struct replica_id_list *objPtr= NULL;
-        struct replica_id cold_replica;
+        struct replica_id secondary_replica;
 	int ret= 0;
 
 	spin_lock(&answer_collection->lock);
 
-        list_for_each_safe(iter, n, answer_collection->cold_replica_head_list) {
+        list_for_each_safe(iter, n, answer_collection->secondary_replica_head_list) {
                 objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-                cold_replica= objPtr->replica;
+                secondary_replica= objPtr->replica;
 
-                ret= send_update_to_cold_replica(&answer_collection->hot_replica, &cold_replica, 1, answer_collection->cold_replica_head_list);
+                ret= send_update_to_secondary_replica(&answer_collection->primary_replica, &secondary_replica, 1, answer_collection->secondary_replica_head_list);
 		if(ret)
 			goto out;
         }
@@ -1111,31 +1111,31 @@ out:    spin_unlock(&answer_collection->lock);
 	return ret;
 }
 
-static int handle_hot_replica_answer(struct pcn_kmsg_message* inc_msg){
-	struct hot_replica_answer* msg= (struct hot_replica_answer*) inc_msg;
-	struct collect_hot_replica_answer* collection;
+static int handle_primary_replica_answer(struct pcn_kmsg_message* inc_msg){
+	struct primary_replica_answer* msg= (struct primary_replica_answer*) inc_msg;
+	struct collect_primary_replica_answer* collection;
 	int ret= 0;
 
-	FTPRINTK("%s: received msg from hot replica %d pid in kernel %d to pid %d in kernel %d. Cold replica %s allowed to start\n", __func__, msg->hot_replica.pid, msg->hot_replica.kernel, msg->cold_replica.pid, msg->cold_replica.kernel, ((msg->start==1)?"":"not"));
+	FTPRINTK("%s: received msg from primary replica %d pid in kernel %d to pid %d in kernel %d. Secondary replica %s allowed to start\n", __func__, msg->primary_replica.pid, msg->primary_replica.kernel, msg->secondary_replica.pid, msg->secondary_replica.kernel, ((msg->start==1)?"":"not"));
 
-	collection= find_and_get_collect_hot_replica_answer(&msg->hot_replica, &msg->cold_replica);
+	collection= find_and_get_collect_primary_replica_answer(&msg->primary_replica, &msg->secondary_replica);
 	if(collection){
         	collection->start= msg->start;
 		if(msg->start){
-			collection->num_cold_replicas= msg->cold_replicas;
-			collection->cold_replica_list= kmalloc(2*sizeof(int)*msg->cold_replicas, GFP_ATOMIC);
-			if(!collection->cold_replica_list){
+			collection->num_secondary_replicas= msg->secondary_replicas;
+			collection->secondary_replica_list= kmalloc(2*sizeof(int)*msg->secondary_replicas, GFP_ATOMIC);
+			if(!collection->secondary_replica_list){
 				ret= -ENOMEM;
 				goto out;
 			}
-			memcpy(collection->cold_replica_list, &msg->data, 2*sizeof(int)*msg->cold_replicas);
+			memcpy(collection->secondary_replica_list, &msg->data, 2*sizeof(int)*msg->secondary_replicas);
 		}
                 atomic_inc(&collection->num_answers);
                 wake_up_process(collection->waiting);
-		put_collect_hot_replica_answer(collection);
+		put_collect_primary_replica_answer(collection);
 	}
 	else{
-		FTPRINTK("%s: received msg from hot replica %d pid in kernel %d to pid %d in kernel %d but nobody waiting for this msg...\n", __func__, msg->hot_replica.pid, msg->hot_replica.kernel, msg->cold_replica.pid, msg->cold_replica.kernel);
+		FTPRINTK("%s: received msg from primary replica %d pid in kernel %d to pid %d in kernel %d but nobody waiting for this msg...\n", __func__, msg->primary_replica.pid, msg->primary_replica.kernel, msg->secondary_replica.pid, msg->secondary_replica.kernel);
 	}
 
 out:	pcn_kmsg_free_msg(msg);
@@ -1143,20 +1143,20 @@ out:	pcn_kmsg_free_msg(msg);
 
 }
 
-static int handle_cold_replica_answer(struct pcn_kmsg_message* inc_msg){
-	struct cold_replica_answer* msg= (struct cold_replica_answer*) inc_msg;
+static int handle_secondary_replica_answer(struct pcn_kmsg_message* inc_msg){
+	struct secondary_replica_answer* msg= (struct secondary_replica_answer*) inc_msg;
 	struct ft_work* work;
-	struct collect_cold_replica_answers* collection;
+	struct collect_secondary_replica_answers* collection;
 	struct replica_id_list *entry;
 	int ret= 0;
 
-	collection= find_and_get_collect_cold_replica_answers(&msg->hot_replica);
+	collection= find_and_get_collect_secondary_replica_answers(&msg->primary_replica);
 
 	if(!collection){
 		
-		FTPRINTK("%s: received msg for hot replica %d pid in kernel %d from pid %d in kernel %d but nobody is waiting\n", __func__, msg->hot_replica.pid, msg->hot_replica.kernel, msg->cold_replica.pid, msg->cold_replica.kernel);
+		FTPRINTK("%s: received msg for primary replica %d pid in kernel %d from pid %d in kernel %d but nobody is waiting\n", __func__, msg->primary_replica.pid, msg->primary_replica.kernel, msg->secondary_replica.pid, msg->secondary_replica.kernel);
 
-		if(msg->cold_replica_created == 1){
+		if(msg->secondary_replica_created == 1){
 			//send error
 			work= kmalloc(sizeof(*work), GFP_ATOMIC);
                 	if(!work){
@@ -1164,10 +1164,10 @@ static int handle_cold_replica_answer(struct pcn_kmsg_message* inc_msg){
 				goto out;
                 	}
 
-                	INIT_WORK( (struct work_struct*)work, send_error_to_cold_replica_from_work);
+                	INIT_WORK( (struct work_struct*)work, send_error_to_secondary_replica_from_work);
                 	work->data= msg;
 
-                	queue_work(cold_replica_generator_wq, (struct work_struct*)work);
+                	queue_work(secondary_replica_generator_wq, (struct work_struct*)work);
 			ret= 0;
 			goto out;		
 		}
@@ -1178,21 +1178,21 @@ static int handle_cold_replica_answer(struct pcn_kmsg_message* inc_msg){
 	}
 	else{
 		
-		FTPRINTK("%s: received msg for hot replica %d pid in kernel %d from pid %d in kernel %d. Replica was %s created\n", __func__, msg->hot_replica.pid, msg->hot_replica.kernel, msg->cold_replica.pid, msg->cold_replica.kernel, ((msg->cold_replica_created==1)?"":"not"));
+		FTPRINTK("%s: received msg for primary replica %d pid in kernel %d from pid %d in kernel %d. Replica was %s created\n", __func__, msg->primary_replica.pid, msg->primary_replica.kernel, msg->secondary_replica.pid, msg->secondary_replica.kernel, ((msg->secondary_replica_created==1)?"":"not"));
 
-		if(msg->cold_replica_created == 1){
+		if(msg->secondary_replica_created == 1){
 			entry= kmalloc(sizeof(*entry), GFP_ATOMIC);
 			if(!entry){
                                 ret= -ENOMEM;
 				goto out_put;
 			}
 			
-			entry->replica= msg->cold_replica;
+			entry->replica= msg->secondary_replica;
 			INIT_LIST_HEAD(&entry->replica_list_member);
 			
 			spin_lock(&collection->lock);
    			
-			list_add(&entry->replica_list_member, collection->cold_replica_head_list);
+			list_add(&entry->replica_list_member, collection->secondary_replica_head_list);
 			atomic_inc(&collection->num_replicas);
 			
 			spin_unlock(&collection->lock);			
@@ -1203,14 +1203,14 @@ static int handle_cold_replica_answer(struct pcn_kmsg_message* inc_msg){
 	atomic_inc(&collection->num_answers);
 	wake_up_process(collection->waiting);	
 out_put:	
-	put_collect_cold_replica_answers(collection);
+	put_collect_secondary_replica_answers(collection);
 out_msg:	
 	pcn_kmsg_free_msg(msg);
 out:		
 	return ret;
 }
 
-static int wait_for_hot_replica_answer(struct collect_hot_replica_answer * answer_collection){
+static int wait_for_primary_replica_answer(struct collect_primary_replica_answer * answer_collection){
 	unsigned long timeout = msecs_to_jiffies(WAIT_ANSWER_TIMEOUT_SECOND*1000*NR_CPUS) + 1;
 
         while(!atomic_read(&answer_collection->num_answers)){
@@ -1226,16 +1226,16 @@ static int wait_for_hot_replica_answer(struct collect_hot_replica_answer * answe
         return 0;
 }
 
-static int wait_for_cold_replica_answers(struct collect_cold_replica_answers* answer_collection, int cold_copies_requested){
+static int wait_for_secondary_replica_answers(struct collect_secondary_replica_answers* answer_collection, int secondary_copies_requested){
 	unsigned long timeout = msecs_to_jiffies(WAIT_ANSWER_TIMEOUT_SECOND*1000) + 1;
 
-	if(cold_copies_requested == 0){
+	if(secondary_copies_requested == 0){
 		return 0;
 	}
 
-	while(cold_copies_requested != atomic_read(&answer_collection->num_answers)){
+	while(secondary_copies_requested != atomic_read(&answer_collection->num_answers)){
 		timeout = schedule_timeout_interruptible(timeout);
-		if(cold_copies_requested != atomic_read(&answer_collection->num_answers)){
+		if(secondary_copies_requested != atomic_read(&answer_collection->num_answers)){
 			if(!timeout){
 				FTPRINTK("%s: timeout with %d answers\n",__func__,atomic_read(&answer_collection->num_answers));
 				return -ETIME;
@@ -1246,32 +1246,32 @@ static int wait_for_cold_replica_answers(struct collect_cold_replica_answers* an
 	return 0;
 }
 
-/* Tries to send msg (on behalf of hot_replica_from) to number_of_replicas different kernels.
+/* Tries to send msg (on behalf of primary_replica_from) to number_of_replicas different kernels.
  * 
  * Target kernels are selected sequentially from id 0 to NR_CPUS (excluding the current kernel id)
- * while number_of_replicas correct cold replicas have been created.
+ * while number_of_replicas correct secondary replicas have been created.
  *
  * When is possible to communicate with a target kernel, an update from that kernel is waited to know if
- * the cold replica was correctly created. If the target kernel does not answer within a timeout, that 
+ * the secondary replica was correctly created. If the target kernel does not answer within a timeout, that 
  * replica is discarded.
  *
- * In case number_of_replicas replicas were successfully created, a message to all the cold replicas is sent to 
+ * In case number_of_replicas replicas were successfully created, a message to all the secondary replicas is sent to 
  * allow them to start their execution. 
  *
  * In case the replicas created are less then number_of_replicas requested, an error message is sent to the created
  * ones to discard them.
  *
- * In case of success it returns 0 and populate cold_replica_head with a list of the cold replicas created, a value <0 otherwise.
+ * In case of success it returns 0 and populate secondary_replica_head with a list of the secondary replicas created, a value <0 otherwise.
  * If repication requirements are not met -ENOFTREP is returned.
  */
-static int send_cold_replica_requests(struct cold_replica_request* msg, int msg_size, struct replica_id* hot_replica_from, int number_of_replicas, struct list_head* cold_replica_head){
+static int send_secondary_replica_requests(struct secondary_replica_request* msg, int msg_size, struct replica_id* primary_replica_from, int number_of_replicas, struct list_head* secondary_replica_head){
 	int i,ret= 0;
-	int cold_copies_requested= 0;	
-	int cold_copy_collected= 0;
+	int secondary_copies_requested= 0;	
+	int secondary_copy_collected= 0;
 	int sent_to[NR_CPUS]= {0};
-	struct collect_cold_replica_answers* answer_collection;
+	struct collect_secondary_replica_answers* answer_collection;
 
-	if(!msg || !hot_replica_from)
+	if(!msg || !primary_replica_from)
 		return -EFAULT;
 
 	if(number_of_replicas == 0)
@@ -1283,18 +1283,18 @@ static int send_cold_replica_requests(struct cold_replica_request* msg, int msg_
 
 	kref_init(&answer_collection->kref);
 	INIT_LIST_HEAD(&answer_collection->list_member);
-	answer_collection->hot_replica= *hot_replica_from;
+	answer_collection->primary_replica= *primary_replica_from;
 	answer_collection->waiting= current;
 	atomic_set(&answer_collection->num_replicas,0);
 	atomic_set(&answer_collection->num_answers,0);
-	answer_collection->cold_replica_head_list= cold_replica_head;
+	answer_collection->secondary_replica_head_list= secondary_replica_head;
 	spin_lock_init(&answer_collection->lock);
 	
-	add_collect_cold_replica_answers(answer_collection);
+	add_collect_secondary_replica_answers(answer_collection);
 
 	FTPRINTK("%s: starting request for %d replicas\n",__func__,number_of_replicas);
 again:
-	cold_copies_requested= 0;
+	secondary_copies_requested= 0;
 	atomic_set(&answer_collection->num_answers,0);
 
 #ifndef SUPPORT_FOR_CLUSTERING
@@ -1315,22 +1315,22 @@ again:
 			ret= pcn_kmsg_send_long(i,(struct pcn_kmsg_long_message*) msg, msg_size-sizeof(msg->header));
 			if(!ret) {
 				FTPRINTK("%s: replica request sent to kernel %d\n",__func__,i);
-				cold_copies_requested++;
+				secondary_copies_requested++;
 				sent_to[i]= 1;
-				if(cold_copies_requested + cold_copy_collected == number_of_replicas){
+				if(secondary_copies_requested + secondary_copy_collected == number_of_replicas){
 					goto next;
 				}
 			}
 		}
     	}	
 
-next:	if(cold_copies_requested + cold_copy_collected != number_of_replicas){
+next:	if(secondary_copies_requested + secondary_copy_collected != number_of_replicas){
 		//not enougth kernels available
 		FTPRINTK("%s: not enougth kernels available for creating %d replicas\n", __func__, number_of_replicas);
 						
-		wait_for_cold_replica_answers(answer_collection, cold_copies_requested);
+		wait_for_secondary_replica_answers(answer_collection, secondary_copies_requested);
 
-		remove_collect_cold_replica_answers(answer_collection);
+		remove_collect_secondary_replica_answers(answer_collection);
 
 		if(atomic_read(&answer_collection->num_replicas) > 0){
 			//somebody timouted maybe answered...
@@ -1338,7 +1338,7 @@ next:	if(cold_copies_requested + cold_copy_collected != number_of_replicas){
 				goto collected;
 			}
 			else{
-				send_error_to_cold_replicas_and_remove_from_collection(answer_collection, atomic_read(&answer_collection->num_replicas));
+				send_error_to_secondary_replicas_and_remove_from_collection(answer_collection, atomic_read(&answer_collection->num_replicas));
 			}			
 		}
 		
@@ -1347,80 +1347,80 @@ next:	if(cold_copies_requested + cold_copy_collected != number_of_replicas){
 		goto out;
 	}
 	else{
-		wait_for_cold_replica_answers(answer_collection, cold_copies_requested);
+		wait_for_secondary_replica_answers(answer_collection, secondary_copies_requested);
 		
 		if(atomic_read(&answer_collection->num_replicas) != number_of_replicas){
-			cold_copy_collected= atomic_read(&answer_collection->num_replicas);
+			secondary_copy_collected= atomic_read(&answer_collection->num_replicas);
 			goto again;
 		}
 		
-		remove_collect_cold_replica_answers(answer_collection);
+		remove_collect_secondary_replica_answers(answer_collection);
 	}
 
 
 collected:
 	//if somebody timouted answered, there can be more replicas than necessary	
 	if(atomic_read(&answer_collection->num_replicas)>number_of_replicas){
-		send_error_to_cold_replicas_and_remove_from_collection(answer_collection, atomic_read(&answer_collection->num_replicas)-number_of_replicas);
+		send_error_to_secondary_replicas_and_remove_from_collection(answer_collection, atomic_read(&answer_collection->num_replicas)-number_of_replicas);
 	}
 
-	ret= send_ack_to_cold_replicas(answer_collection);
+	ret= send_ack_to_secondary_replicas(answer_collection);
 
-out:	put_collect_cold_replica_answers(answer_collection);
+out:	put_collect_secondary_replica_answers(answer_collection);
 	
 	return ret;
 
 }
 
-/* Creates replication_degree-1 cold replicas of hot_replica_task.
+/* Creates replication_degree-1 secondary replicas of primary_replica_task.
  * 
- * In case of success 0 is returned and cold_replica_head is populated with 
- * a list of struct replica_id_list of the cold replicas created.
+ * In case of success 0 is returned and secondary_replica_head is populated with 
+ * a list of struct replica_id_list of the secondary replicas created.
  *
  * Replicas will start in newly forked thread and will be forced to execve
- * to the same exec, with the same path, env and args of hot_replica_task.
+ * to the same exec, with the same path, env and args of primary_replica_task.
  *
  */
-static int create_replicas(struct task_struct* hot_replica_task, int replication_degree, struct ft_pop_rep_id *ft_rep_id, struct list_head* cold_replica_head){
-	struct cold_replica_request* msg= NULL;
+static int create_replicas(struct task_struct* primary_replica_task, int replication_degree, struct ft_pop_rep_id *ft_rep_id, struct list_head* secondary_replica_head){
+	struct secondary_replica_request* msg= NULL;
 	int msg_size= 0;
 	int ret= 0;
-	struct replica_id hot_replica;
+	struct replica_id primary_replica;
 
-	FTPRINTK("%s: thread %d requested %d replicas\n", __func__, hot_replica_task->pid, replication_degree-1);
+	FTPRINTK("%s: thread %d requested %d replicas\n", __func__, primary_replica_task->pid, replication_degree-1);
 
-	ret= create_cold_replica_request_msg(hot_replica_task, replication_degree, ft_rep_id, &msg, &msg_size);
+	ret= create_secondary_replica_request_msg(primary_replica_task, replication_degree, ft_rep_id, &msg, &msg_size);
 	if(ret)
 		return ret;
 	
-	hot_replica.kernel= _cpu;
-	hot_replica.pid= hot_replica_task->pid;
+	primary_replica.kernel= _cpu;
+	primary_replica.pid= primary_replica_task->pid;
 
-	/*replication_degree includes the hot one*/
-	ret= send_cold_replica_requests(msg, msg_size, &hot_replica, replication_degree-1, cold_replica_head);
+	/*replication_degree includes the primary one*/
+	ret= send_secondary_replica_requests(msg, msg_size, &primary_replica, replication_degree-1, secondary_replica_head);
 	
 	kfree(msg);
 
 	return ret;
 }
 
-/* Notify hot_replica_to that cold_replica_from has been created.
+/* Notify primary_replica_to that secondary_replica_from has been created.
  * 
- * It waits for an update message from hot_replica_to for a timeout.
+ * It waits for an update message from primary_replica_to for a timeout.
  * The update message can be "start" type or "discard". 
  *
- * In case a "start" message is received list_cold_replicas is populated with 
- * the received list of cold replicas.
+ * In case a "start" message is received list_secondary_replicas is populated with 
+ * the received list of secondary replicas.
  * 
- * Return 0 if the cold copy can start, a value <0 otherwise.
+ * Return 0 if the secondary copy can start, a value <0 otherwise.
  * When replication requirements are not met,-ENOFTREP is returned.
  */
-static int notify_hot_replica(struct replica_id* hot_replica_to, struct replica_id* cold_replica_from, struct list_head* list_cold_replicas){
-        struct collect_hot_replica_answer* answer_collection;
+static int notify_primary_replica(struct replica_id* primary_replica_to, struct replica_id* secondary_replica_from, struct list_head* list_secondary_replicas){
+        struct collect_primary_replica_answer* answer_collection;
 	int i,ret= 0;
 	struct replica_id_list *entry;
 
-	FTPRINTK("%s: thread pid %d successfully execve to a replica, going to notify hot replica pid %d in kernel %d\n", __func__, current->pid, hot_replica_to->pid, hot_replica_to->kernel);
+	FTPRINTK("%s: thread pid %d successfully execve to a replica, going to notify primary replica pid %d in kernel %d\n", __func__, current->pid, primary_replica_to->pid, primary_replica_to->kernel);
 
 	answer_collection= kmalloc(sizeof(*answer_collection), GFP_KERNEL);
 	if(!answer_collection)
@@ -1428,43 +1428,43 @@ static int notify_hot_replica(struct replica_id* hot_replica_to, struct replica_
 
 	kref_init(&answer_collection->kref);
 	INIT_LIST_HEAD(&answer_collection->list_member);
-	answer_collection->cold_replica= *cold_replica_from;
-	answer_collection->hot_replica= *hot_replica_to;
+	answer_collection->secondary_replica= *secondary_replica_from;
+	answer_collection->primary_replica= *primary_replica_to;
 	answer_collection->waiting= current;
 	atomic_set(&answer_collection->num_answers,0);
 	answer_collection->start= 0;
-	answer_collection->num_cold_replicas= 0;
-	answer_collection->cold_replica_list= NULL;
+	answer_collection->num_secondary_replicas= 0;
+	answer_collection->secondary_replica_list= NULL;
 
-	add_collect_hot_replica_answer(answer_collection);	
+	add_collect_primary_replica_answer(answer_collection);	
 
-	ret= send_ack_to_hot_replica(hot_replica_to,cold_replica_from);
+	ret= send_ack_to_primary_replica(primary_replica_to,secondary_replica_from);
 	if(ret)
 		goto out;
 
-	/* From this point I already sent an ack message to the hot_replica, so if an error occurs that makes me fail the exec, mask it with -ENOFTREP,
+	/* From this point I already sent an ack message to the primary_replica, so if an error occurs that makes me fail the exec, mask it with -ENOFTREP,
 	 * such that the caller of the do_execve will not send another update message.
 	 */	
 
-	ret= wait_for_hot_replica_answer(answer_collection);
+	ret= wait_for_primary_replica_answer(answer_collection);
 	
-	remove_collect_hot_replica_answer(answer_collection);
+	remove_collect_primary_replica_answer(answer_collection);
 
 	if(ret){
 		if(!atomic_read(&answer_collection->num_answers)){
 			ret= -ENOFTREP;
-			FTPRINTK("%s: thread pid %d will not start as a cold replica\n",__func__, current->pid);
+			FTPRINTK("%s: thread pid %d will not start as a secondary replica\n",__func__, current->pid);
                 	goto out;
 		}
 	}
 
 	if(answer_collection->start == 0){
 		ret= -ENOFTREP;
-		FTPRINTK("%s: thread pid %d will not start as a cold replica\n",__func__, current->pid);
+		FTPRINTK("%s: thread pid %d will not start as a secondary replica\n",__func__, current->pid);
 		goto out;
 	}
 	
-	for(i=0;i<answer_collection->num_cold_replicas;i++){
+	for(i=0;i<answer_collection->num_secondary_replicas;i++){
 		entry= kmalloc(sizeof(*entry), GFP_ATOMIC);
 		if(!entry){
 			//ret= -ENOMEM;
@@ -1472,18 +1472,18 @@ static int notify_hot_replica(struct replica_id* hot_replica_to, struct replica_
 			goto out;
 		}
 
-		entry->replica.pid= answer_collection->cold_replica_list[i*2];
-		entry->replica.kernel= answer_collection->cold_replica_list[i*2+1];
+		entry->replica.pid= answer_collection->secondary_replica_list[i*2];
+		entry->replica.kernel= answer_collection->secondary_replica_list[i*2+1];
 		INIT_LIST_HEAD(&entry->replica_list_member);
 
-		list_add(&entry->replica_list_member,list_cold_replicas);
+		list_add(&entry->replica_list_member,list_secondary_replicas);
 	}
 	
 	
-out:	if(answer_collection->cold_replica_list)
-		kfree(answer_collection->cold_replica_list);
+out:	if(answer_collection->secondary_replica_list)
+		kfree(answer_collection->secondary_replica_list);
 
-	put_collect_hot_replica_answer(answer_collection);
+	put_collect_primary_replica_answer(answer_collection);
         return ret;
 }
 
@@ -1494,21 +1494,21 @@ out:	if(answer_collection->cold_replica_list)
  * Returns 0 in case no errors occured, a value < 0 otherwise.
  * When replication requirements are not met,-ENOFTREP is returned.
  * 
- * If replica_type is POTENTIAL_HOT_REPLICA, it tries to create n-1 cold replicas in other kernels, 
- * where n is the replication_degree of the namespace, and set the replica_type to HOT_REPLICA in
+ * If replica_type is POTENTIAL_PRIMARY_REPLICA, it tries to create n-1 secondary replicas in other kernels, 
+ * where n is the replication_degree of the namespace, and set the replica_type to PRIMARY_REPLICA in
  * case of success.    
  *
- * If replica_type is POTENTIAL_COLD_REPLICA, it notifies the correlated hot replica that a cold copy
- * was succesfully created, and set the replica_type to COLD_REPLICA in case of success.
+ * If replica_type is POTENTIAL_SECONDARY_REPLICA, it notifies the correlated primary replica that a secondary copy
+ * was succesfully created, and set the replica_type to SECONDARY_REPLICA in case of success.
  * 
  * In both above cases, in case of success, the current's ft_popcorn field is allocated and populated 
- * with a list of all cold replicas and the current hot replica.
+ * with a list of all secondary replicas and the current primary replica.
  */
 int maybe_create_replicas(void){
 	struct popcorn_namespace *pop;
 	int ret= 0;
-	struct replica_id cold;
-	struct cold_replica_request* msg;
+	struct replica_id secondary;
+	struct secondary_replica_request* msg;
 	struct list_head *iter= NULL;
         struct replica_id_list *objPtr= NULL;
 	struct ft_pop_rep* ft_popcorn;
@@ -1516,7 +1516,7 @@ int maybe_create_replicas(void){
 	pop= current->nsproxy->pop_ns;
 
 	if(is_popcorn_namespace_active(pop)){
-		if(current->replica_type == POTENTIAL_HOT_REPLICA){
+		if(current->replica_type == POTENTIAL_PRIMARY_REPLICA){
 
 			ft_popcorn= create_ft_pop_rep(pop->replication_degree, 1, NULL);	
 				
@@ -1524,17 +1524,17 @@ int maybe_create_replicas(void){
 				return PTR_ERR(ft_popcorn);
 			}
 
-			ret= create_replicas(current,pop->replication_degree, &ft_popcorn->id, &ft_popcorn->cold_replicas_head.replica_list_member);			
+			ret= create_replicas(current,pop->replication_degree, &ft_popcorn->id, &ft_popcorn->secondary_replicas_head.replica_list_member);			
 			if(ret == 0){
-				current->replica_type= HOT_REPLICA;	
-				ft_popcorn->hot_replica.pid= current->pid;
-				ft_popcorn->hot_replica.kernel= _cpu;
+				current->replica_type= PRIMARY_REPLICA;	
+				ft_popcorn->primary_replica.pid= current->pid;
+				ft_popcorn->primary_replica.kernel= _cpu;
 				current->ft_popcorn= ft_popcorn;
 				current->ft_pid.ft_pop_id= ft_popcorn->id;
 				
 				printk("%s: Replica list of %s pid %d\n", __func__, current->comm, current->pid);
-				printk("hot: {pid: %d, kernel %d}, cold: ", ft_popcorn->hot_replica.pid, ft_popcorn->hot_replica.kernel);
-				list_for_each(iter, &ft_popcorn->cold_replicas_head.replica_list_member) {
+				printk("primary: {pid: %d, kernel %d}, secondary: ", ft_popcorn->primary_replica.pid, ft_popcorn->primary_replica.kernel);
+				list_for_each(iter, &ft_popcorn->secondary_replicas_head.replica_list_member) {
                 			objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
 					printk("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
 				}
@@ -1547,11 +1547,11 @@ int maybe_create_replicas(void){
 			
 		}
 		else{
-			if(current->replica_type == POTENTIAL_COLD_REPLICA){
-				cold.pid= current->pid;
-				cold.kernel= _cpu;
+			if(current->replica_type == POTENTIAL_SECONDARY_REPLICA){
+				secondary.pid= current->pid;
+				secondary.kernel= _cpu;
 			
-				msg= (struct cold_replica_request*) current->useful;
+				msg= (struct secondary_replica_request*) current->useful;
 
 				ft_popcorn= create_ft_pop_rep(pop->replication_degree, 0, &msg->ft_rep_id);
 
@@ -1559,17 +1559,17 @@ int maybe_create_replicas(void){
         	                        return PTR_ERR(ft_popcorn);
                 	        }
 
-				ret= notify_hot_replica(&msg->hot_replica, &cold, &ft_popcorn->cold_replicas_head.replica_list_member);
+				ret= notify_primary_replica(&msg->primary_replica, &secondary, &ft_popcorn->secondary_replicas_head.replica_list_member);
 	                        if(ret == 0){
-        	                        current->replica_type= COLD_REPLICA;
-					ft_popcorn->hot_replica.pid= msg->hot_replica.pid;
-	                                ft_popcorn->hot_replica.kernel= msg->hot_replica.kernel;
+        	                        current->replica_type= SECONDARY_REPLICA;
+					ft_popcorn->primary_replica.pid= msg->primary_replica.pid;
+	                                ft_popcorn->primary_replica.kernel= msg->primary_replica.kernel;
 					current->ft_popcorn= ft_popcorn;
 					current->ft_pid.ft_pop_id= ft_popcorn->id;
 
 					printk("%s: Replica list of %s pid %d\n", __func__, current->comm, current->pid);
-                                	printk("hot: {pid: %d, kernel %d}, cold: ", ft_popcorn->hot_replica.pid, ft_popcorn->hot_replica.kernel);
-					list_for_each(iter, &ft_popcorn->cold_replicas_head.replica_list_member) {
+                                	printk("primary: {pid: %d, kernel %d}, secondary: ", ft_popcorn->primary_replica.pid, ft_popcorn->primary_replica.kernel);
+					list_for_each(iter, &ft_popcorn->secondary_replicas_head.replica_list_member) {
                                         	objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
                                         	printk("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
                                 	}       
@@ -1593,16 +1593,16 @@ int maybe_create_replicas(void){
 
 static int __init ft_replication_init(void) {
 
-	cold_replica_generator_wq= create_singlethread_workqueue("cold_replica_generator_wq");
+	secondary_replica_generator_wq= create_singlethread_workqueue("secondary_replica_generator_wq");
 
-	INIT_LIST_HEAD(&collect_hot_replica_answer_head.list_member);
-	INIT_LIST_HEAD(&collect_cold_replica_answers_head.list_member);
+	INIT_LIST_HEAD(&collect_primary_replica_answer_head.list_member);
+	INIT_LIST_HEAD(&collect_secondary_replica_answers_head.list_member);
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FT_COLD_REPLICA_REQUEST, handle_cold_replica_request);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FT_SECONDARY_REPLICA_REQUEST, handle_secondary_replica_request);
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FT_COLD_REPLICA_ANSWER, handle_cold_replica_answer);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FT_SECONDARY_REPLICA_ANSWER, handle_secondary_replica_answer);
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FT_HOT_REPLICA_ANSWER, handle_hot_replica_answer);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FT_PRIMARY_REPLICA_ANSWER, handle_primary_replica_answer);
 			
 	return 0;
 }

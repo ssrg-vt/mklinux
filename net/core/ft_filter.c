@@ -471,13 +471,13 @@ next:	if(fake_filter){
 		spin_lock(&fake_filter->lock);
 		
 		filter->local_tx= fake_filter->local_tx;
-		filter->hot_tx= fake_filter->hot_tx;
+		filter->primary_tx= fake_filter->primary_tx;
 		filter->local_rx= fake_filter->local_rx;
-		filter->hot_rx= fake_filter->hot_rx;
+		filter->primary_rx= fake_filter->primary_rx;
 	
-		filter->hot_connect_id= fake_filter->hot_connect_id;
+		filter->primary_connect_id= fake_filter->primary_connect_id;
         	filter->local_connect_id= fake_filter->local_connect_id;
-		filter->hot_accept_id= fake_filter->hot_accept_id;
+		filter->primary_accept_id= fake_filter->primary_accept_id;
                 filter->local_accept_id= fake_filter->local_accept_id;
 
 		filter->tcp_param= fake_filter->tcp_param;
@@ -610,8 +610,8 @@ out_clean:
 /* Creates a struct net_filter_info* fake_filter and adds it in filter_list_head
  * if a real one does not already exists.
  * 
- * A fake filter is used as "temporary" struct net_filter_info to store hot replica's
- * notifications while the cold one reaches the create_filter call.
+ * A fake filter is used as "temporary" struct net_filter_info to store primary replica's
+ * notifications while the secondary one reaches the create_filter call.
  */
 static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_child, __be32 daddr, __be16 dport){
 	struct net_filter_info* filter;
@@ -654,14 +654,14 @@ static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_chil
 	filter->id= filter_id;
 
         filter->local_tx= 0;
-        filter->hot_tx= 0;
+        filter->primary_tx= 0;
         filter->local_rx= 0;
-        filter->hot_rx= 0;
+        filter->primary_rx= 0;
 
-	filter->hot_connect_id= 0;
+	filter->primary_connect_id= 0;
 	filter->local_connect_id= 0;
 
-	filter->hot_accept_id= 0;
+	filter->primary_accept_id= 0;
         filter->local_accept_id= 0;
 
 	if(is_child){
@@ -741,18 +741,18 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
         	}
 
                 filter->local_tx= -1;
-                filter->hot_tx= 0;
+                filter->primary_tx= 0;
                 filter->local_rx= 0;
-                filter->hot_rx= 0;
+                filter->primary_rx= 0;
 
-                filter->hot_connect_id= 0;
+                filter->primary_connect_id= 0;
                 filter->local_connect_id= 0;
 
-                filter->hot_accept_id= 0;
+                filter->primary_accept_id= 0;
                 filter->local_accept_id= 0;
 
 
-		if(filter->type & FT_FILTER_COLD_REPLICA){
+		if(filter->type & FT_FILTER_SECONDARY_REPLICA){
                 	add_filter_coping_pending(filter);
 		}
 		else{
@@ -829,30 +829,30 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority){
         	}
 
                 filter->local_tx= 0;
-                filter->hot_tx= 0;
+                filter->primary_tx= 0;
                 filter->local_rx= 0;
-                filter->hot_rx= 0;
+                filter->primary_rx= 0;
 
-		filter->hot_connect_id= 0;
+		filter->primary_connect_id= 0;
 	        filter->local_connect_id= 0;
 		
-		filter->hot_accept_id= 0;
+		filter->primary_accept_id= 0;
 	        filter->local_accept_id= 0;
 
 		memset(&filter->tcp_param,0,sizeof(filter->tcp_param));
 	
 		ancestor= find_task_by_vpid(task->tgid);
 
-		if(ancestor->replica_type == HOT_REPLICA || ancestor->replica_type == NEW_HOT_REPLICA_DESCENDANT){
+		if(ancestor->replica_type == PRIMARY_REPLICA || ancestor->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT){
 			filter->type= FT_FILTER_ENABLE;
-			filter->type |= FT_FILTER_HOT_REPLICA;
+			filter->type |= FT_FILTER_PRIMARY_REPLICA;
 			add_filter(filter);
 		}
 		else{
-			if(ancestor->replica_type == COLD_REPLICA || ancestor->replica_type == NEW_COLD_REPLICA_DESCENDANT){
+			if(ancestor->replica_type == SECONDARY_REPLICA || ancestor->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT){
                         	filter->type= FT_FILTER_ENABLE; 
-                        	filter->type |= FT_FILTER_COLD_REPLICA;
-				/*maybe the hot replica alredy sent me some notifications or msg*/
+                        	filter->type |= FT_FILTER_SECONDARY_REPLICA;
+				/*maybe the primary replica alredy sent me some notifications or msg*/
 				add_filter_coping_pending(filter);
 			}
 			else{
@@ -986,7 +986,7 @@ out:
         return ret;
 }
 
-/* Stores hot_replica notifications on the proper struct net_filter_info filter.
+/* Stores primary_replica notifications on the proper struct net_filter_info filter.
  * 
  * If a filter is not found, a fake one is temporarily added in the list for storing
  * incoming notifications.
@@ -1042,8 +1042,8 @@ again:	filter= find_and_get_filter(&msg->creator, msg->filter_id, msg->is_child,
 			new_entry->skbuff= NULL;
 
 			
-			if(filter->hot_tx < msg->pckt_id)
-				filter->hot_tx= msg->pckt_id;
+			if(filter->primary_tx < msg->pckt_id)
+				filter->primary_tx= msg->pckt_id;
 
 			filter_wait_queue= filter->wait_queue;
 			
@@ -1162,7 +1162,7 @@ static void send_tx_notification(struct work_struct* work){
 
 #endif
 
-	send_to_all_cold_replicas(filter->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
+	send_to_all_secondary_replicas(filter->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
 	
 	kfree(msg);
 
@@ -1171,7 +1171,7 @@ out:	kfree_skb(tx_n_work->skb);
 	put_ft_filter(filter);
 }
 
-/* Notifies all cold replicas that a new packet is beeing transmitted
+/* Notifies all secondary replicas that a new packet is beeing transmitted
  * on this socket.
  *
  * Note: messages are sent from a working queue.
@@ -1179,7 +1179,7 @@ out:	kfree_skb(tx_n_work->skb);
  * In case of error a value < 0 is returned, FT_TX_OK
  * is returned.
  */
-static int tx_filter_hot(struct net_filter_info *filter, struct sk_buff* skb){
+static int tx_filter_primary(struct net_filter_info *filter, struct sk_buff* skb){
         long long pckt_id;
 	int ret= FT_TX_OK;
 	struct tx_notify_work *work;
@@ -1253,12 +1253,12 @@ static int is_pckt_to_filter(struct sk_buff *skb){
 	return 0;
 }
 
-/* Waits that the hot replica transmits the same packet.
+/* Waits that the primary replica transmits the same packet.
  *
  * In case of error a value < 0 is returned, FT_TX_DROP
  * is returned.
  */
-static int tx_filter_cold(struct net_filter_info *filter, struct sk_buff *skb){
+static int tx_filter_secondary(struct net_filter_info *filter, struct sk_buff *skb){
 	long long pckt_id;
 	struct ft_sk_buff_list *buff_entry, *old_buff_entry= NULL;
 	struct ft_sk_buff_tcp_list *buff_entry_tcp;
@@ -1299,7 +1299,7 @@ static int tx_filter_cold(struct net_filter_info *filter, struct sk_buff *skb){
 	pckt_id= ++filter->local_tx;
 	buff_entry->pckt_id= pckt_id;
 
-	if(filter->hot_tx < pckt_id){
+	if(filter->primary_tx < pckt_id){
 		//increment kref of filter to let it active for the handler of tx_notify
 		get_ft_filter(filter);
 	
@@ -1356,12 +1356,12 @@ static int tx_filter_cold(struct net_filter_info *filter, struct sk_buff *skb){
 /* Packet filter for ft-popcorn, activated only if sk is associated
  * with a replicated thread.
  *
- * In case the sock was created by an hot replica associated thread, 
- * a notification message is sent to all cold replicas.
+ * In case the sock was created by an primary replica associated thread, 
+ * a notification message is sent to all secondary replicas.
  *
- * In case the socket was created by a cold replica associated thread,
+ * In case the socket was created by a secondary replica associated thread,
  * the execution is delayed while the corresponding packet notification
- * is received from the hot replica.
+ * is received from the primary replica.
  * 
  * In case of error a value < 0 is returned, otherwise FT_TX_OK or FT_TX_DROP
  * is returned.
@@ -1390,12 +1390,12 @@ int net_ft_tx_filter(struct sock* sk, struct sk_buff *skb){
 	}
 
 
-	if(filter->type & FT_FILTER_COLD_REPLICA){
-		return tx_filter_cold(filter, skb);
+	if(filter->type & FT_FILTER_SECONDARY_REPLICA){
+		return tx_filter_secondary(filter, skb);
 	}
 
-	if(filter->type & FT_FILTER_HOT_REPLICA){
-		return tx_filter_hot(filter, skb);
+	if(filter->type & FT_FILTER_PRIMARY_REPLICA){
+		return tx_filter_primary(filter, skb);
 	}	
 
 out:	return ret;
@@ -1581,16 +1581,16 @@ again:	spin_lock(&filter->lock);
 	if(filter->type & FT_FILTER_ENABLE){
 
 	        //TODO: I should save a copy on a list
-		// beacuse maybe the hot replica died before sending this pckt to other 
+		// beacuse maybe the primary replica died before sending this pckt to other 
 		// kernels => save a copy to give to them.
-		if(msg->pckt_id != filter->hot_rx+1){
-			printk("%s: ERROR out of order delivery pckt id %llu hot_rx %llu \n", __func__, msg->pckt_id, filter->hot_rx);
+		if(msg->pckt_id != filter->primary_rx+1){
+			printk("%s: ERROR out of order delivery pckt id %llu primary_rx %llu \n", __func__, msg->pckt_id, filter->primary_rx);
 			goto out_err;
 		}
 		
-		filter->hot_rx= msg->pckt_id;
+		filter->primary_rx= msg->pckt_id;
 
-		/* Wait to be aligned with the hot replica for the delivery of the packet.
+		/* Wait to be aligned with the primary replica for the delivery of the packet.
 		 * => wait to reach the same number of sent pckts.
 		 */
 		while( (filter->type & FT_FILTER_FAKE) || (filter->local_tx < msg->local_tx)){
@@ -1855,12 +1855,12 @@ static void send_skb_copy(struct net_filter_info *filter, long long pckt_id, lon
         if(ret)
                 return;
 
-	send_to_all_cold_replicas(filter->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
+	send_to_all_secondary_replicas(filter->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
 
         kfree(msg);
 }
 
-static int rx_filter_hot(struct net_filter_info *filter, struct sk_buff *skb){
+static int rx_filter_primary(struct net_filter_info *filter, struct sk_buff *skb){
 	long long pckt_id;
 	long long local_tx;
 #if FT_FILTER_VERBOSE
@@ -1886,7 +1886,7 @@ static int rx_filter_hot(struct net_filter_info *filter, struct sk_buff *skb){
 	send_skb_copy(filter, pckt_id, local_tx, skb);
 	
 	/* Do not know if it is correct to send msgs while holding this lock,
-	 * but this should prevent deliver out of order of pckts to cold replicas
+	 * but this should prevent deliver out of order of pckts to secondary replicas
 	 * if the working queues rx_copy_wq are single thread.
 	 * (assuming that msg layer is FIFO)
  	 */
@@ -1895,16 +1895,16 @@ static int rx_filter_hot(struct net_filter_info *filter, struct sk_buff *skb){
         return 0;
 }
 
-static int rx_filter_cold(struct net_filter_info *filter){
+static int rx_filter_secondary(struct net_filter_info *filter){
 	long long pckt_id;
-	long long hot_rx;
+	long long primary_rx;
 	char* filter_id_printed;
 #if FT_FILTER_VERBOSE
         char* ft_pid_printed;
 #endif
         spin_lock(&filter->lock);
         pckt_id= ++filter->local_rx;	
-	hot_rx= filter->hot_rx;
+	primary_rx= filter->primary_rx;
 	spin_unlock(&filter->lock);
 
 #if FT_FILTER_VERBOSE
@@ -1927,9 +1927,9 @@ static int rx_filter_cold(struct net_filter_info *filter){
         }
 
 
-	if(pckt_id > hot_rx){
+	if(pckt_id > primary_rx){
 		filter_id_printed= print_filter_id(filter);
-		printk("%s: ERROR pckt id is %llu hot rx is %llu in filter %s\n", __func__, pckt_id, hot_rx, filter_id_printed);
+		printk("%s: ERROR pckt id is %llu primary rx is %llu in filter %s\n", __func__, pckt_id, primary_rx, filter_id_printed);
 		if(filter_id_printed)
                 	kfree(filter_id_printed);
 	}
@@ -1957,11 +1957,11 @@ again:  filter= find_and_get_filter(&msg->creator, msg->filter_id, msg->is_child
                 spin_lock(&filter->lock);
                 if(filter->type & FT_FILTER_ENABLE){
 			if(msg->connect_id != -1){
-				filter->hot_connect_id++;
+				filter->primary_connect_id++;
 
 			}
 			else{
-           			filter->hot_accept_id++;
+           			filter->primary_accept_id++;
 			}
 			update_tcp_init_param(filter, &msg->tcp_param);
                 }
@@ -2029,7 +2029,7 @@ static void send_tcp_init_parameters_from_work(struct work_struct* work){
 	if(ret)
 		goto out;
 	
-	send_to_all_cold_replicas(filter->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
+	send_to_all_secondary_replicas(filter->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
 	
 	kfree(msg);
 out:
@@ -2125,9 +2125,9 @@ void ft_change_tcp_init_accept(struct request_sock *req){
         tcp_rsk(req)->snt_synack= tcp_rsk(req)->snt_isn*10;
 }
 
-/* Remove randomly generated sequence numbers to align hot/cold replicas.
- * If replica is HOT, also send init connection information, like real port
- * and address to COLD replicas.
+/* Remove randomly generated sequence numbers to align primary/secondary replicas.
+ * If replica is PRIMARY, also send init connection information, like real port
+ * and address to SECONDARY replicas.
  */
 void ft_check_tcp_init_param(struct net_filter_info* filter, struct sock* sk, struct request_sock *req){
 
@@ -2137,7 +2137,7 @@ void ft_check_tcp_init_param(struct net_filter_info* filter, struct sock* sk, st
 		else
 			ft_change_tcp_init_accept(req);
 	
-		if(filter->type & FT_FILTER_HOT_REPLICA){
+		if(filter->type & FT_FILTER_PRIMARY_REPLICA){
 			send_tcp_init_param(filter, sk, req);
 		}
 	}
@@ -2313,13 +2313,13 @@ int net_ft_rx_filter(struct sk_buff *skb){
 		goto out;
 	}
 
-	if(filter->type & FT_FILTER_COLD_REPLICA){
-		ret= rx_filter_cold(filter);
+	if(filter->type & FT_FILTER_SECONDARY_REPLICA){
+		ret= rx_filter_secondary(filter);
 		goto out;
 	}
 
-        if(filter->type & FT_FILTER_HOT_REPLICA){
-               	ret= rx_filter_hot(filter, skb);
+        if(filter->type & FT_FILTER_PRIMARY_REPLICA){
+               	ret= rx_filter_primary(filter, skb);
 		goto out;
         }
 
@@ -2332,7 +2332,7 @@ out:
  */
 int ft_check_tcp_timestamp(struct sock* sk){
 	if(sk->ft_filter){
-		if(sk->ft_filter->type & FT_FILTER_COLD_REPLICA){
+		if(sk->ft_filter->type & FT_FILTER_SECONDARY_REPLICA){
 			return 0;
 		}
 
