@@ -193,6 +193,13 @@ struct task_struct;
 int copy_replication(unsigned long flags, struct task_struct *tsk);
 struct timeval;
 struct timezone;
+
+void* ft_syscall_hash_remove(char *key);
+void* ft_syscall_hash_add(char *key, void* obj);
+void* ft_syscall_hash_lookup(char *key);
+char* ft_syscall_get_key(struct ft_pop_rep_id* ft_pop_id, int level, int* id_array, int id_syscall);
+char* ft_syscall_get_key_from_ft_pid(struct ft_pid *ft_pid, int id_syscall);
+
 long ft_gettimeofday(struct timeval __user * tv, struct timezone __user * tz);
 
 #define DUMMY_DRIVER "ft_dummy_driver"

@@ -360,7 +360,7 @@ static void release_filter(struct kref *kref){
                         kfree(filter_printed);
 #endif*/
                 filter_printed= print_filter_id(filter);
-                printk("%s: deleting %s filter %s pckt rcv %d pckt snt %d\n", __func__, (filter->type & FT_FILTER_FAKE)?"fake":"", filter_printed, filter->local_rx, filter->local_tx);
+                printk("%s: deleting %s filter %s pckt rcv %lld pckt snt %lld\n", __func__, (filter->type & FT_FILTER_FAKE)?"fake":"", filter_printed, filter->local_rx, filter->local_tx);
                 if(filter_printed)
                         kfree(filter_printed);
 		if(filter->ft_popcorn)
@@ -1183,9 +1183,10 @@ static int tx_filter_primary(struct net_filter_info *filter, struct sk_buff* skb
         long long pckt_id;
 	int ret= FT_TX_OK;
 	struct tx_notify_work *work;
+	char* filter_id_printed;
 #if FT_FILTER_VERBOSE
         char* ft_pid_printed;
-        char* filter_id_printed;
+        //char* filter_id_printed;
 #endif
 
         spin_lock(&filter->lock);
@@ -1225,7 +1226,7 @@ static int tx_filter_primary(struct net_filter_info *filter, struct sk_buff* skb
 
         queue_work(tx_notify_wq, (struct work_struct*)work);
 
-        char* filter_id_printed= print_filter_id(filter);
+        filter_id_printed= print_filter_id(filter);
         printk("%s: pid %d tx packet %llu csum %d in filter %s\n", __func__, current->pid, pckt_id, work->csum, filter_id_printed);
         if(filter->ft_sock->sk_protocol == IPPROTO_TCP)
                 printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
@@ -1863,8 +1864,9 @@ static void send_skb_copy(struct net_filter_info *filter, long long pckt_id, lon
 static int rx_filter_primary(struct net_filter_info *filter, struct sk_buff *skb){
 	long long pckt_id;
 	long long local_tx;
-#if FT_FILTER_VERBOSE
 	char* filter_id_printed;
+#if FT_FILTER_VERBOSE
+	//char* filter_id_printed;
 #endif
 
         spin_lock(&filter->lock);
@@ -1877,7 +1879,6 @@ static int rx_filter_primary(struct net_filter_info *filter, struct sk_buff *skb
         if(filter_id_printed)
                 kfree(filter_id_printed);
 #endif
-	char* filter_id_printed;
 	filter_id_printed= print_filter_id(filter);
         printk("%s: pid %d broadcasting packet %llu in filter %s\n\n", __func__, current->pid, pckt_id, filter_id_printed);
         if(filter_id_printed)

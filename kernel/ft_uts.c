@@ -76,7 +76,7 @@ int sync_uts(struct task_struct *task)
 
 		msg->header.type = PCN_KMSG_TYPE_FT_UTS_SYNC;
 		msg->header.prio = PCN_KMSG_PRIO_NORMAL;
-		msg->uts_id = task->next_id_kernel_requests ++;
+		msg->uts_id = task->id_syscall;
 		memcpy(&msg->ft_pop_id, &task->ft_pid.ft_pop_id, sizeof(struct ft_pop_rep_id));
 		msg->level = task->ft_pid.level;
 		memcpy(&msg->info.utsname, &task->nsproxy->uts_ns->ft_name, sizeof(struct new_utsname));

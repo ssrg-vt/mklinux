@@ -19,7 +19,7 @@
 #define FTPRINTK(...) ;
 #endif
 
-typedef struct _list_entry{
+/*typedef struct _list_entry{
 	struct list_head list;
 	char *string;
 	void *obj;
@@ -64,21 +64,10 @@ unsigned int hash(hash_table_t *hashtable, char *str)
 {
     unsigned int hashval;
     
-    /* we start our hash out at 0 */
     hashval = 0;
 
-    /* for each character, we multiply the old hash by 31 and add the current
-     * character.  Remember that shifting a number left is equivalent to 
-     * multiplying it by 2 raised to the number of places shifted.  So we 
-     * are in effect multiplying hashval by 32 and then subtracting hashval.  
-     * Why do we do this?  Because shifting and subtraction are much more 
-     * efficient operations than multiplication.
-     */
     for(; *str != '\0'; str++) hashval = *str + (hashval << 5) - hashval;
 
-    /* we then return the hash value mod the hashtable size so that it will
-     * fit into the necessary range
-     */
     return hashval % hashtable->size;
 }
 
@@ -186,7 +175,8 @@ out:
 
 
 
-hash_table_t* gettimeofday_hash;
+hash_table_t* gettimeofday_hash;*/
+
 static struct workqueue_struct *ft_time_wq;
 
 struct get_time_info{
@@ -318,7 +308,7 @@ static long ft_gettimeofday_primary(struct timeval __user * tv, struct timezone 
 	if(ktz)
 		my_work->info.tz= *ktz;
 
-	my_work->get_time_id= current->next_id_kernel_requests++;
+	my_work->get_time_id= current->id_syscall;
 		
         my_work->ft_pop_id= current->ft_pid.ft_pop_id;
         my_work->level= current->ft_pid.level;
@@ -342,7 +332,7 @@ out:
 
 
 }
-
+/*
 static char* get_bare_string_ft_pid(struct ft_pop_rep_id* ft_pop_id, int level, int* id_array, int get_time_id){
 	char* string;
 	const int size= 1024;
@@ -379,7 +369,7 @@ out_clean:
         return NULL;
 
 }
-
+*/
 static long ft_gettimeofday_secondary(struct timeval __user * tv, struct timezone __user * tz){
         struct wait_time_info* wait_info;
         struct wait_time_info* present_info= NULL;
@@ -389,7 +379,7 @@ static long ft_gettimeofday_secondary(struct timeval __user * tv, struct timezon
 
         FTPRINTK("%s called from pid %d\n", __func__, current->pid);
 
-	key= get_bare_string_ft_pid(&current->ft_pid.ft_pop_id, current->ft_pid.level, current->ft_pid.id_array, current->next_id_kernel_requests++);
+	key= ft_syscall_get_key_from_ft_pid(&current->ft_pid, current->id_syscall);
         if(!key)
                 return -ENOMEM;
 
@@ -400,7 +390,7 @@ static long ft_gettimeofday_secondary(struct timeval __user * tv, struct timezon
         wait_info->task= current;
         wait_info->populated= 0;
 
-        if((present_info= ((struct wait_time_info*) hash_add(gettimeofday_hash, key, (void*) wait_info)))){
+        if((present_info= ((struct wait_time_info*) ft_syscall_hash_add(key, (void*) wait_info)))){
                 kfree(wait_info);
 		free_key= 1;
 		goto copy;
@@ -427,21 +417,21 @@ copy: 	if(present_info->populated != 1){
 	}
 
 	if (likely(tv != NULL)) {
-		if (copy_to_user(tv, (void*) &present_info->info.tv, sizeof(tv))){
+		if (copy_to_user(tv, (void*) &present_info->info.tv, sizeof(*tv))){
 			ret= -EFAULT;
 			goto out;
 		}
 	}
 
 	if (unlikely(tz != NULL)) {
-		if (copy_to_user(tz, (void*) &present_info->info.tz, sizeof(sys_tz))){
+		if (copy_to_user(tz, (void*) &present_info->info.tz, sizeof(*tz))){
 			ret= -EFAULT;
 			goto out;
 		}
 	}
 
 
-out:	hash_remove(gettimeofday_hash, key);
+out:	ft_syscall_hash_remove(key);
 	if(free_key)
 		kfree(key);	
 	kfree(present_info);
@@ -484,7 +474,7 @@ static int handle_gettimeofday_msg(struct pcn_kmsg_message* inc_msg){
 
 	//FTPRINTK("%s received data\n", __func__);
 
-	key= get_bare_string_ft_pid(&msg->ft_pop_id, msg->level,(int*) &msg->id_array, msg->get_time_id);
+	key= ft_syscall_get_key(&msg->ft_pop_id, msg->level,(int*) &msg->id_array, msg->get_time_id);
 	if(!key)
 		return -ENOMEM;
 
@@ -496,7 +486,7 @@ static int handle_gettimeofday_msg(struct pcn_kmsg_message* inc_msg){
 	wait_info->task= NULL;
 	wait_info->populated=1;
 	
-	if((present_info= ((struct wait_time_info*) hash_add(gettimeofday_hash, key, (void*) wait_info)))){
+	if((present_info= ((struct wait_time_info*) ft_syscall_hash_add(key, (void*) wait_info)))){
 		kfree(key);
 		kfree(wait_info);
 
@@ -515,7 +505,7 @@ static int handle_gettimeofday_msg(struct pcn_kmsg_message* inc_msg){
 
 static int __init ft_time_init(void) {
 	ft_time_wq= create_singlethread_workqueue("ft_time_wq");
-	gettimeofday_hash= create_hashtable(50);
+	//gettimeofday_hash= create_hashtable(50);
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FT_GETTIMEOFDAY, handle_gettimeofday_msg);
 	
 	return 0;

@@ -1608,7 +1608,7 @@ struct task_struct {
 	struct ft_pid ft_pid;
 	int next_pid_to_use;
 	int next_id_resources;
-	int next_id_kernel_requests;
+	int id_syscall;
 	void *useful;
 	
 	struct ft_pop_rep *ft_popcorn;

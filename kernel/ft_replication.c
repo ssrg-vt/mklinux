@@ -672,7 +672,7 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			tsk->ft_pid.level= 0;
 			tsk->next_pid_to_use= 0;
 			tsk->next_id_resources= 0;
-			tsk->next_id_kernel_requests= 0;
+			tsk->id_syscall= 0;
                 	tsk->ft_pid.id_array= NULL;
 			return 0;
 		}
@@ -690,7 +690,7 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 		                tsk->ft_pid.id_array= NULL;
                 		tsk->next_pid_to_use= 0;
                 		tsk->next_id_resources= 0;
-                		tsk->next_id_kernel_requests= 0;
+                		tsk->id_syscall= 0;
 				tsk->replica_type= NOT_REPLICATED;
                 		tsk->ft_popcorn= NULL;
 
@@ -752,7 +752,7 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			tsk->ft_pid.id_array[current->ft_pid.level]= current->next_pid_to_use++;
 
 			tsk->next_id_resources= 0;
-			tsk->next_id_kernel_requests= 0;
+			tsk->id_syscall= 0;
 		}
 	}
 	else{
@@ -1609,11 +1609,12 @@ static int __init ft_replication_init(void) {
 
 late_initcall(ft_replication_init);
 
-long syscall_hook_enter(struct pt_regs *regs)
+/*long syscall_hook_enter(struct pt_regs *regs)
 {
 	// System call number is in orig_ax
 	if(ft_is_replicated(current)){
 		printk("%s in system call [%ld]\n", current->comm, regs->orig_ax, regs->ax);
+		current->id_syscall++;
 	}
 	return regs->orig_ax;
 }
@@ -1624,4 +1625,4 @@ void syscall_hook_exit(struct pt_regs *regs)
 	if(ft_is_replicated(current)){
                 printk("%s out[%ld] [%ld]\n", current->comm, regs->orig_ax, regs->ax);
 	}
-}
+}*/
