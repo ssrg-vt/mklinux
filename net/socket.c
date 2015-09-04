@@ -548,7 +548,10 @@ static inline int __sock_sendmsg_nosec(struct kiocb *iocb, struct socket *sock,
 				       struct msghdr *msg, size_t size)
 {
 	struct sock_iocb *si = kiocb_to_siocb(iocb);
-
+	int ret;
+#ifdef FT_POPCORN
+	int ft_ret;
+#endif
 	sock_update_classid(sock->sk);
 
 	si->sock = sock;
@@ -556,7 +559,17 @@ static inline int __sock_sendmsg_nosec(struct kiocb *iocb, struct socket *sock,
 	si->msg = msg;
 	si->size = size;
 
-	return sock->ops->sendmsg(iocb, sock, msg, size);
+#ifdef FT_POPCORN
+	ft_ret= ft_before_syscall_send_family(iocb, sock, msg, size, &ret);
+	if(ft_ret==FT_SYSCALL_DROP)
+		return ret;
+#endif
+	ret= sock->ops->sendmsg(iocb, sock, msg, size);
+
+#ifdef FT_POPCORN
+	ft_after_syscall_send_family(ret);
+#endif	
+	return ret;
 }
 
 static inline int __sock_sendmsg(struct kiocb *iocb, struct socket *sock,

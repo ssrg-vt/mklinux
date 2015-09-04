@@ -191,8 +191,6 @@ void send_to_all_secondary_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_km
 int maybe_create_replicas(void);
 struct task_struct;
 int copy_replication(unsigned long flags, struct task_struct *tsk);
-struct timeval;
-struct timezone;
 
 #define FT_SYSCALL_CONTINUE 0
 #define FT_SYSCALL_DROP 1
@@ -200,7 +198,14 @@ void ft_send_syscall_info(struct ft_pop_rep *replica_group, struct ft_pid *prima
 void ft_send_syscall_info_from_work(struct ft_pop_rep *replica_group, struct ft_pid *primary_pid, int syscall_id, char* syscall_info, unsigned int syscall_info_size);
 void* ft_wait_for_syscall_info(struct ft_pid *secondary, int id_syscall);
 
+struct timeval;
+struct timezone;
 long ft_gettimeofday(struct timeval __user * tv, struct timezone __user * tz);
+struct kiocb;
+struct msghdr;
+int ft_before_syscall_send_family(struct kiocb *iocb, struct socket *sock,
+                                       struct msghdr *msg, size_t size, int* ret);
+int ft_after_syscall_send_family(int ret);
 
 #define DUMMY_DRIVER "ft_dummy_driver"
 

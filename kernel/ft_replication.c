@@ -674,6 +674,8 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			tsk->next_id_resources= 0;
 			tsk->id_syscall= 0;
                 	tsk->ft_pid.id_array= NULL;
+			tsk->useful= NULL;
+
 			return 0;
 		}
 		else{
@@ -693,6 +695,7 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
                 		tsk->id_syscall= 0;
 				tsk->replica_type= NOT_REPLICATED;
                 		tsk->ft_popcorn= NULL;
+				tsk->useful= NULL;
 
 				return 0;
 			}
@@ -753,6 +756,7 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 
 			tsk->next_id_resources= 0;
 			tsk->id_syscall= 0;
+			tsk->useful= NULL;
 		}
 	}
 	else{
@@ -762,6 +766,7 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 		tsk->next_id_resources= 0;
 		tsk->replica_type= NOT_REPLICATED;
 		tsk->ft_popcorn= NULL;
+		tsk->useful= NULL;
 	}
 	
 	return 0;
@@ -1552,6 +1557,7 @@ int maybe_create_replicas(void){
 				secondary.kernel= _cpu;
 			
 				msg= (struct secondary_replica_request*) current->useful;
+				current->useful= NULL;
 
 				ft_popcorn= create_ft_pop_rep(pop->replication_degree, 0, &msg->ft_rep_id);
 
