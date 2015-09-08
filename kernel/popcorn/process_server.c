@@ -2541,6 +2541,1596 @@ static int handle_invalid_request(struct pcn_kmsg_message* inc_msg) {
 
 }
 
+extern int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *vma,
+	      unsigned long address, pte_t *page_table, pmd_t *pmd,
+	      spinlock_t *ptl, pte_t orig_pte);
+
+
+#if FOR_2_KERNELS
+
+void process_mapping_request_for_2_kernels(struct work_struct* work) {
+
+      request_work_t* request_work = (request_work_t*) work;
+      data_request_for_2_kernels_t* request = request_work->request;
+      memory_t * memory;
+      struct mm_struct* mm = NULL;
+      struct vm_area_struct* vma = NULL;
+      data_void_response_for_2_kernels_t* void_response;
+      int owner= 0;
+      char* plpath;
+      char lpath[512];
+      int from_cpu = request->header.from_cpu;
+      unsigned long address = request->address & PAGE_MASK;
+      pgd_t* pgd;
+      pud_t* pud;
+      pmd_t* pmd;
+      pte_t* pte;
+      pte_t entry;
+      spinlock_t* ptl;
+      request_work_t* delay;
+      struct page* page, *old_page;
+      data_response_for_2_kernels_t* response;
+      mapping_answers_for_2_kernels_t* fetched_data;
+      int lock =0;
+      void *vfrom;
+
+      trace_printk("s\n");
+#if STATISTICS
+	      request_data++;
+#endif
+
+	      PSMINPRINTK("Request for address %lu is fetch %i is write %i\n", request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
+	      PSPRINTK("Request %i address %lu is fetch %i is write %i\n", request_data, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
+
+	      memory = find_memory_entry(request->tgroup_home_cpu,
+			      request->tgroup_home_id);
+	      if (memory != NULL) {
+		      if(memory->setting_up==1){
+			      owner=1;
+			      goto out;
+		      }
+		      mm = memory->mm;
+	      } else {
+		      owner=1;
+		      goto out;
+	      }
+
+	      down_read(&mm->mmap_sem);
+
+	      //check the vma era first
+	      if(mm->vma_operation_index < request->vma_operation_index){
+		      printk("different era request mm->vma_operation_index %d request->vma_operation_index %d\n",mm->vma_operation_index,request->vma_operation_index);
+		      delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
+
+		      if (delay) {
+			      delay->request = request;
+			      INIT_DELAYED_WORK( (struct delayed_work*)delay,
+					      process_mapping_request_for_2_kernels);
+			      queue_delayed_work(message_request_wq,
+					      (struct delayed_work*) delay, 10);
+		      }
+
+		      up_read(&mm->mmap_sem);
+		      kfree(work);
+		      trace_printk("e\n");
+		      return;
+	      }
+
+	      // check if there is a valid vma
+	      vma = find_vma(mm, address);
+	      if (!vma || address >= vma->vm_end || address < vma->vm_start) {
+		      vma = NULL;
+		      if(_cpu == request->tgroup_home_cpu){
+			      printk(KERN_ALERT"%s: vma NULL in xeon address{%lu} \n",__func__,address);
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+	      } else {
+
+		      if (unlikely(is_vm_hugetlb_page(vma))
+				      || unlikely(transparent_hugepage_enabled(vma))) {
+			      printk("ERROR: Request for HUGE PAGE vma\n");
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+
+		      PSPRINTK(
+				      "Find vma from %s start %lu end %lu\n", ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"), vma->vm_start, vma->vm_end);
+
+	      }
+
+		  PSPRINTK("In %s:%d vma_flags = %lx\n", __func__, __LINE__, vma->vm_flags);	
+
+		  if(vma->vm_flags & VM_FETCH_LOCAL)
+		  {
+			  PSPRINTK("%s:%d - VM_FETCH_LOCAL flag set - Going to void response\n", __func__, __LINE__);
+			  goto out;
+		  }
+
+		  /*if((vma->vm_flags & VM_EXEC) &&(address >= mm->start_code) && (address <= mm->end_code))
+		  {
+			  printk("%s:%d going to void response\n", __func__, __LINE__);
+			  goto out;
+		  }*/
+
+	      if(_cpu!=request->tgroup_home_cpu){
+
+		      pgd = pgd_offset(mm, address);
+		      if (!pgd || pgd_none(*pgd)) {
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+
+		      pud = pud_offset(pgd, address);
+		      if (!pud || pud_none(*pud)) {
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+
+		      pmd = pmd_offset(pud, address);
+
+		      if (!pmd || pmd_none(*pmd) || pmd_trans_huge(*pmd)) {
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+	      }
+	      else{
+
+		      pgd = pgd_offset(mm, address);
+
+		      pud = pud_alloc(mm, pgd, address);
+		      if (!pud){
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+
+		      pmd = pmd_alloc(mm, pud, address);
+		      if (!pmd){
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+
+		      if (pmd_none(*pmd) && __pte_alloc(mm, vma, pmd, address)){
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+
+		      if (unlikely(pmd_trans_huge(*pmd))) {
+			      printk("ERROR: request for huge page\n");
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+
+	      }
+
+       pte = pte_offset_map_lock(mm, pmd, address, &ptl);
+       /*PTE LOCKED*/
+
+       entry = *pte;
+       lock= 1;
+
+
+       if (pte == NULL || pte_none(pte_clear_flags(entry, _PAGE_UNUSED1))) {
+
+	       PSPRINTK("pte not mapped \n");
+
+	       if( !pte_none(entry) ){
+
+		       if(_cpu!=request->tgroup_home_cpu || request->is_fetch==1){
+			       printk("ERROR: incorrect request for marked page\n");
+			       goto out;
+		       }
+		       else{
+			       PSPRINTK("request for a marked page\n");
+		       }
+	       }
+
+	       if ((_cpu==request->tgroup_home_cpu) || memory->alive != 0) {
+
+		       fetched_data = find_mapping_entry(
+				       request->tgroup_home_cpu, request->tgroup_home_id, address);
+
+		       //case concurrent fetch
+		       if (fetched_data != NULL) {
+
+fetch:				PSPRINTK("concurrent request\n");
+
+				/*Whit marked pages only two scenarios can happenn:
+				 * Or I am the main and I an locally fetching=> delay this fetch
+				 * Or I am not the main, but the main already answer to my fetch (otherwise it will not answer to me the page)
+				 * so wait that the answer arrive before consuming the fetch.
+				 * */
+				if (fetched_data->is_fetch != 1)
+					printk(
+							"ERROR: find a mapping_answers_for_2_kernels_t not mapped and not fetch\n");
+
+				delay = (request_work_t*)kmalloc(sizeof(request_work_t),
+						GFP_ATOMIC);
+
+				if (delay!=NULL) {
+					delay->request = request;
+					INIT_DELAYED_WORK(
+							(struct delayed_work*)delay,
+							process_mapping_request_for_2_kernels);
+					queue_delayed_work(message_request_wq,
+							(struct delayed_work*) delay, 10);
+				}
+
+				spin_unlock(ptl);
+				up_read(&mm->mmap_sem);
+				kfree(work);
+				trace_printk("e\n");
+				return;
+
+		       }
+
+		       else{
+			       //mark the pte if main
+			       if(_cpu==request->tgroup_home_cpu){
+
+				       PSPRINTK(KERN_ALERT"%s: marking a pte for address %lu \n",__func__,address);
+
+				       entry = pte_set_flags(entry, _PAGE_UNUSED1);
+
+				       ptep_clear_flush(vma, address, pte);
+
+				       set_pte_at_notify(mm, address, pte, entry);
+				       //in x86 does nothing
+				       update_mmu_cache(vma, address, pte);
+
+			       }
+		       }
+	       }
+	       //pte not present
+	       owner= 1;
+	       goto out;
+
+       }
+
+       page = pte_page(entry);
+       if (page != vm_normal_page(vma, address, entry)) {
+	       PSPRINTK("Page different from vm_normal_page in request page\n");
+       }
+       old_page = NULL;
+
+       if (is_zero_page(pte_pfn(entry)) || !(page->replicated == 1)) {
+
+	       PSPRINTK("Page not replicated\n");
+
+	       /*There is the possibility that this request arrived while I am fetching, after that I installed the page
+		* but before calling the update page....
+		* */
+	       if (memory->alive != 0) {
+		       fetched_data = find_mapping_entry(
+				       request->tgroup_home_cpu, request->tgroup_home_id, address);
+
+		       if(fetched_data!=NULL){
+			       goto fetch;
+		       }
+	       }
+
+	       //the request must be for a fetch
+	       if(request->is_fetch==0)
+		       printk("ERROR received a request not fetch for a not replicated page\n");
+
+	       if (vma->vm_flags & VM_WRITE) {
+
+		       //if the page is writable but the pte has not the write flag set, it is a cow page
+		       if (!pte_write(entry)) {
+
+retry_cow:
+			       PSPRINTK("COW page at %lu \n", address);
+
+			       int ret= do_wp_page_for_popcorn(mm, vma,address, pte,pmd,ptl, entry);
+
+			       if (ret & VM_FAULT_ERROR) {
+				       if (ret & VM_FAULT_OOM){
+					       printk("ERROR: %s VM_FAULT_OOM\n",__func__);
+					       up_read(&mm->mmap_sem);
+					       goto out;
+				       }
+
+				       if (ret & (VM_FAULT_HWPOISON | VM_FAULT_HWPOISON_LARGE)){
+					       printk("ERROR: %s EHWPOISON\n",__func__);
+					       up_read(&mm->mmap_sem);
+					       goto out;
+				       }
+
+				       if (ret & VM_FAULT_SIGBUS){
+					       printk("ERROR: %s EFAULT\n",__func__);
+					       up_read(&mm->mmap_sem);
+					       goto out;
+				       }
+
+				       printk("ERROR: %s bug from do_wp_page_for_popcorn\n",__func__);
+				       up_read(&mm->mmap_sem);
+				       goto out;
+			       }
+
+			       spin_lock(ptl);
+			       /*PTE LOCKED*/
+			       lock = 1;
+
+			       entry = *pte;
+
+			       if(!pte_write(entry)){
+				       printk("WARNING: page not writable after cow\n");
+				       goto retry_cow;
+			       }
+
+			       page = pte_page(entry);
+
+		       }
+
+		       page->replicated = 1;
+
+		       flush_cache_page(vma, address, pte_pfn(*pte));
+		       entry = mk_pte(page, vma->vm_page_prot);
+
+		       if(request->is_write==0){
+			       //case fetch for read
+			       page->status = REPLICATION_STATUS_VALID;
+			       entry = pte_clear_flags(entry, _PAGE_RW);
+			       entry = pte_set_flags(entry, _PAGE_PRESENT);
+			       owner= 0;
+			       page->owner= 1;
+		       }
+		       else{
+			       //case fetch for write
+			       page->status = REPLICATION_STATUS_INVALID;
+			       entry = pte_clear_flags(entry, _PAGE_PRESENT);
+			       owner= 1;
+			       page->owner= 0;
+		       }
+
+		       page->last_write= 1;
+
+		       entry = pte_set_flags(entry, _PAGE_USER);
+		       entry = pte_set_flags(entry, _PAGE_ACCESSED);
+
+		       ptep_clear_flush(vma, address, pte);
+
+		       set_pte_at_notify(mm, address, pte, entry);
+
+		       //in x86 does nothing
+		       update_mmu_cache(vma, address, pte);
+
+		       if (old_page != NULL){
+			       page_remove_rmap(old_page);
+		       }
+	       } else {
+		       //read only vma
+		       page->replicated=0;
+		       page->status= REPLICATION_STATUS_NOT_REPLICATED;
+
+		       if(request->is_write==1){
+			       printk("ERROR: received a write in a read-only not replicated page\n");
+		       }
+		       page->owner= 1;
+		       owner= 0;
+	       }
+
+	       page->other_owners[_cpu]=1;
+	       page->other_owners[from_cpu]=1;
+
+	       goto resolved;
+       }
+       else{
+	       //replicated page case
+	       PSPRINTK("Page replicated...\n");
+
+	       if(request->is_fetch==1){
+		       printk("ERROR: received a fetch request in a replicated status\n");
+	       }
+
+	       if(page->writing==1){
+
+		       PSPRINTK("Page currently in writing \n");
+
+
+		       if(request->is_write==0){
+			       PSPRINTK("Concurrent read request\n");
+		       }
+		       else{
+
+			       PSPRINTK("Concurrent write request\n");
+		       }
+		       delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
+
+		       if (delay!=NULL) {
+			       delay->request = request;
+			       INIT_DELAYED_WORK( (struct delayed_work*)delay,
+					       process_mapping_request_for_2_kernels);
+			       queue_delayed_work(message_request_wq,
+					       (struct delayed_work*) delay, 10);
+		       }
+
+		       spin_unlock(ptl);
+		       up_read(&mm->mmap_sem);
+		       kfree(work);
+		       trace_printk("e\n");
+		       return;
+
+	       }
+
+	       if(page->reading==1){
+
+		       printk("ERROR: page in reading but received a request\n");
+		       goto out;
+	       }
+
+	       //invalid page case
+	       if (page->status == REPLICATION_STATUS_INVALID) {
+
+		       printk("ERROR: received a request in invalid status without reading or writing\n");
+		       goto out;
+	       }
+
+	       //valid page case
+	       if (page->status == REPLICATION_STATUS_VALID) {
+
+		       PSPRINTK("Page requested valid\n");
+
+		       if(page->owner!=1)
+			       printk("ERROR: request in a not owner valid page\n");
+		       else{
+			       if(request->is_write){
+				       if(page->last_write!= request->last_write)
+					       printk("ERROR: received a write for copy %lu but my copy is %lu\n",request->last_write,page->last_write);
+
+				       page->status= REPLICATION_STATUS_INVALID;
+				       page->owner= 0;
+				       owner= 1;
+				       entry = *pte;
+				       entry = pte_clear_flags(entry, _PAGE_PRESENT);
+				       entry = pte_set_flags(entry, _PAGE_ACCESSED);
+
+				       ptep_clear_flush(vma, address, pte);
+
+				       set_pte_at_notify(mm, address, pte, entry);
+
+				       update_mmu_cache(vma, address, pte);
+			       }
+			       else{
+				       printk("ERROR: received a read request in valid status\n");
+			       }
+		       }
+
+		       goto out;
+	       }
+
+	       if (page->status == REPLICATION_STATUS_WRITTEN) {
+
+		       PSPRINTK("Page requested in written status\n");
+
+		       if(page->owner!=1)
+			       printk("ERROR: page in written status without ownership\n");
+		       else{
+			       if(request->is_write==1){
+
+				       if(page->last_write!= (request->last_write+1))
+					       printk("ERROR: received a write for copy %lu but my copy is %lu\n",request->last_write,page->last_write);
+
+				       page->status= REPLICATION_STATUS_INVALID;
+				       page->owner= 0;
+				       owner= 1;
+				       entry = *pte;
+				       entry = pte_clear_flags(entry, _PAGE_PRESENT);
+				       entry = pte_set_flags(entry, _PAGE_ACCESSED);
+
+				       ptep_clear_flush(vma, address, pte);
+
+				       set_pte_at_notify(mm, address, pte, entry);
+
+				       update_mmu_cache(vma, address, pte);
+			       }
+			       else{
+
+				       if(page->last_write!= (request->last_write+1))
+					       printk("ERROR: received an read for copy %lu but my copy is %lu\n",request->last_write,page->last_write);
+
+				       page->status = REPLICATION_STATUS_VALID;
+				       page->owner= 1;
+				       owner= 0;
+				       entry = *pte;
+				       entry = pte_set_flags(entry, _PAGE_PRESENT);
+				       entry = pte_set_flags(entry, _PAGE_ACCESSED);
+				       entry = pte_clear_flags(entry, _PAGE_RW);
+
+				       ptep_clear_flush(vma, address, pte);
+
+				       set_pte_at_notify(mm, address, pte, entry);
+
+				       update_mmu_cache(vma, address, pte);
+			       }
+		       }
+
+#if DIFF_PAGE
+		       goto resolved_diff;
+#else
+		       goto resolved;
+#endif
+	       }
+
+       }
+
+resolved:
+
+       PSPRINTK(
+		       "Resolved Copy from %s\n", ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"));
+
+       PSPRINTK(
+		       "Page read only?%i Page shared?%i \n", (vma->vm_flags & VM_WRITE)?0:1, (vma->vm_flags & VM_SHARED)?1:0);
+
+#if DIFF_PAGE
+
+       char *app= kmalloc(sizeof(char)*PAGE_SIZE*2, GFP_ATOMIC);
+       if (app == NULL) {
+	       printk("Impossible to kmalloc app.\n");
+	       spin_unlock(ptl);
+	       up_read(&mm->mmap_sem);
+	       pcn_kmsg_free_msg(request);
+	       kfree(work);
+	       return;
+       }
+
+       // Ported to Linux 3.12 
+       //vfrom = kmap_atomic(page, KM_USER0);
+       vfrom = kmap_atomic(page);
+
+       unsigned int compressed_byte= WKdm_compress(vfrom,app);
+
+       if(compressed_byte<((PAGE_SIZE/10)*9)){
+
+#if STATISTICS
+	       compressed_page_sent++;
+#endif
+	       // Ported to Linux 3.12 
+	       //kunmap_atomic(vfrom, KM_USER0);
+	       kunmap_atomic(vfrom);
+	       response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+compressed_byte, GFP_ATOMIC);
+	       if (response == NULL) {
+		       printk("Impossible to kmalloc in process mapping request.\n");
+		       spin_unlock(ptl);
+		       up_read(&mm->mmap_sem);
+		       pcn_kmsg_free_msg(request);
+		       kfree(work);
+		       kfree(app);
+		       return;
+	       }
+	       memcpy(&(response->data),app,compressed_byte);
+	       response->data_size= compressed_byte;
+	       kfree(app);
+       }
+       else{
+
+#if STATISTICS
+	       not_compressed_page++;
+#endif
+
+	       response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
+	       if (response == NULL) {
+		       printk("Impossible to kmalloc in process mapping request.\n");
+		       spin_unlock(ptl);
+		       up_read(&mm->mmap_sem);
+		       pcn_kmsg_free_msg(request);
+		       kfree(work);
+		       kfree(app);
+		       return;
+	       }
+	       void* vto = &(response->data);
+	       copy_page(vto, vfrom);
+	       kunmap_atomic(vfrom, KM_USER0);
+	       response->data_size= PAGE_SIZE;
+	       kfree(app);
+       }
+
+       response->diff=0;
+
+#else
+       response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
+       if (response == NULL) {
+	       printk("Impossible to kmalloc in process mapping request.\n");
+	       spin_unlock(ptl);
+	       up_read(&mm->mmap_sem);
+	       pcn_kmsg_free_msg(request);
+	       kfree(work);
+	       return;
+       }
+
+       void* vto = &(response->data);
+       // Ported to Linux 3.12 
+       //vfrom = kmap_atomic(page, KM_USER0);
+       vfrom = kmap_atomic(page);
+
+#if READ_PAGE
+       int ct=0;
+       unsigned long _buff[16];
+
+       if(address == PAGE_ADDR){
+	       for(ct=0;ct<8;ct++){
+		       _buff[ct]=(unsigned long) *(((unsigned long *)vfrom) + ct);
+	       }
+       }
+#endif
+
+       //printk("Copying page (address) : 0x%lx\n", address);
+       copy_page(vto, vfrom);
+       
+       // Ported to Linux 3.12 
+       //kunmap_atomic(vfrom, KM_USER0);
+       kunmap_atomic(vfrom);
+
+#ifdef PRINT_PAGE
+	unsigned char *print_ptr = vto;
+	int i = 0;
+	printk("\n================================================");
+	printk("\nPAGE COPIED:\n");
+	/* Print the needed code section */
+	print_ptr = vto;
+	for(i = 0; i < PAGE_SIZE;  i++) {
+		if((i%32) == 0){
+			printk("\n");
+		}
+               	printk("%02x ", *print_ptr);
+		print_ptr++;
+	}
+	printk("\n================================================\n");
+#endif
+       response->data_size= PAGE_SIZE;
+
+
+#if READ_PAGE
+       if(address == PAGE_ADDR){
+	       for(ct=8;ct<16;ct++){
+		       _buff[ct]=(unsigned long) *((unsigned long*)(&(response->data))+ct-8);
+	       }
+	       for(ct=0;ct<16;ct++){
+		       printk(KERN_ALERT"{%lx} ",_buff[ct]);
+	       }
+       }
+#endif
+
+#if CHECKSUM
+       // Ported to Linux 3.12
+       // vfrom= kmap_atomic(page, KM_USER0);
+       vfrom= kmap_atomic(page);
+       __wsum check1= csum_partial(vfrom, PAGE_SIZE, 0);
+       // Ported to Linux 3.12 
+       //kunmap_atomic(vfrom, KM_USER0);
+       kunmap_atomic(vfrom);
+       __wsum check2= csum_partial(&(response->data), PAGE_SIZE, 0);
+       if(check1!=check2)
+	       printk("page just copied is not matching, address %lu\n",address);
+#endif
+
+#endif
+
+       flush_cache_page(vma, address, pte_pfn(*pte));
+
+       response->last_write = page->last_write;
+
+       response->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
+       response->header.prio = PCN_KMSG_PRIO_NORMAL;
+       response->tgroup_home_cpu = request->tgroup_home_cpu;
+       response->tgroup_home_id = request->tgroup_home_id;
+       response->address = request->address;
+       response->owner= owner;
+
+       response->futex_owner = (!page) ? 0 : page->futex_owner;//akshay
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+       if (_cpu == request->tgroup_home_cpu && vma != NULL)
+	       //only the vmas SERVER sends the vma
+#else
+#if PARTIAL_VMA_MANAGEMENT
+	       if (vma != NULL)
+#endif
+#endif
+	       {
+
+		       response->vma_present = 1;
+		       response->vaddr_start = vma->vm_start;
+		       response->vaddr_size = vma->vm_end - vma->vm_start;
+		       response->prot = vma->vm_page_prot;
+		       response->vm_flags = vma->vm_flags;
+		       response->pgoff = vma->vm_pgoff;
+		       if (vma->vm_file == NULL) {
+			       response->path[0] = '\0';
+		       } else {
+			       plpath = d_path(&vma->vm_file->f_path, lpath, 512);
+			       strcpy(response->path, plpath);
+		       }
+		       PSPRINTK("response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->futex_owner %d\n",
+				       response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
+	       }
+
+	       else
+		       response->vma_present = 0;
+
+       spin_unlock(ptl);
+       up_read(&mm->mmap_sem);
+
+#if !DIFF_PAGE
+#if CHECKSUM
+       response->checksum= csum_partial(&response->data, PAGE_SIZE, 0);
+#endif
+#endif
+
+       trace_printk("m\n");
+       // Send response
+       pcn_kmsg_send_long(from_cpu, (struct pcn_kmsg_long_message*) (response),
+		       sizeof(data_response_for_2_kernels_t) - sizeof(struct pcn_kmsg_hdr) + response->data_size);
+       trace_printk("a\n");
+       // Clean up incoming messages
+       pcn_kmsg_free_msg(request);
+       kfree(work);
+       kfree(response);
+       //end= native_read_tsc();
+#if PRINT_PAGE
+	unsigned char *print_ptr = vto;
+	int i = 0;
+	printk("\n=======================================================");
+	printk("\nPAGE COPIED: (0x%x)\n", address);
+	/* Print the needed code section */
+	print_ptr = vto;
+        
+	for(i = 0; i < PAGE_SIZE;  i++) {
+		if((i%32) == 0){
+			printk("\n");
+		}
+		printk("%02x ", *print_ptr);
+		print_ptr++;
+	}
+	printk("\n======================================================\n");        
+#endif
+       PSPRINTK("Handle request end\n");
+       trace_printk("e\n");
+       return;
+
+#if DIFF_PAGE
+
+resolved_diff:
+
+       if(page->old_page_version==NULL){
+	       printk("ERROR: no previous version of the page to calculate diff address %lu\n",address);
+	       spin_unlock(ptl);
+	       up_read(&mm->mmap_sem);
+	       pcn_kmsg_free_msg(request);
+	       kfree(work);
+	       return;
+       }
+
+       app= kmalloc(sizeof(char)*PAGE_SIZE*2, GFP_ATOMIC);
+       if (app == NULL) {
+	       printk("Impossible to kmalloc app.\n");
+	       spin_unlock(ptl);
+	       up_read(&mm->mmap_sem);
+	       pcn_kmsg_free_msg(request);
+	       kfree(work);
+	       return;
+       }
+
+       // Ported to Linux 3.12
+       //vfrom = kmap_atomic(page, KM_USER0);
+       vfrom = kmap_atomic(page);
+
+       compressed_byte= WKdm_diff_and_compress (page->old_page_version, vfrom, app);
+
+       if(compressed_byte<((PAGE_SIZE/10)*9)){
+
+#if STATISTICS
+	       compressed_page_sent++;
+#endif
+
+	       // Ported to Linux 3.12 
+	       //kunmap_atomic(vfrom, KM_USER0);
+	       kunmap_atomic(vfrom);
+	       response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+compressed_byte, GFP_ATOMIC);
+	       if (response == NULL) {
+		       printk("Impossible to kmalloc in process mapping request.\n");
+		       spin_unlock(ptl);
+		       up_read(&mm->mmap_sem);
+		       pcn_kmsg_free_msg(request);
+		       kfree(work);
+		       kfree(app);
+		       return;
+	       }
+	       memcpy(&(response->data),app,compressed_byte);
+	       response->data_size= compressed_byte;
+	       kfree(app);
+       }
+       else{
+
+#if STATISTICS
+	       not_compressed_page++;
+	       not_compressed_diff_page++;
+#endif
+
+	       response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
+	       if (response == NULL) {
+		       printk("Impossible to kmalloc in process mapping request.\n");
+		       spin_unlock(ptl);
+		       up_read(&mm->mmap_sem);
+		       pcn_kmsg_free_msg(request);
+		       kfree(work);
+		       kfree(app);
+		       return;
+	       }
+	       void* vto = &(response->data);
+	       copy_page(vto, vfrom);
+	       kunmap_atomic(vfrom, KM_USER0);
+	       response->data_size= PAGE_SIZE;
+	       kfree(app);
+       }
+
+       response->diff=1;
+
+       PSPRINTK(
+		       "Resolved Copy from %s\n", ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"));
+
+       PSPRINTK(
+		       "Page read only?%i Page shared?%i \n", (vma->vm_flags & VM_WRITE)?0:1, (vma->vm_flags & VM_SHARED)?1:0);
+
+       flush_cache_page(vma, address, pte_pfn(*pte));
+
+       response->last_write = page->last_write;
+
+       response->futex_owner = page->futex_owner;//akshay
+
+       response->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
+       response->header.prio = PCN_KMSG_PRIO_NORMAL;
+       response->tgroup_home_cpu = request->tgroup_home_cpu;
+       response->tgroup_home_id = request->tgroup_home_id;
+       response->address = request->address;
+       response->owner= owner;
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+       if (_cpu == request->tgroup_home_cpu && vma != NULL)
+	       //only the vmas SERVER sends the vma
+#else
+#if PARTIAL_VMA_MANAGEMENT
+	       if (vma != NULL)
+#endif
+#endif
+	       {
+
+		       response->vma_present = 1;
+		       response->vaddr_start = vma->vm_start;
+		       response->vaddr_size = vma->vm_end - vma->vm_start;
+		       response->prot = vma->vm_page_prot;
+		       response->vm_flags = vma->vm_flags;
+		       response->pgoff = vma->vm_pgoff;
+		       if (vma->vm_file == NULL) {
+			       response->path[0] = '\0';
+		       } else {
+			       plpath = d_path(&vma->vm_file->f_path, lpath, 512);
+			       strcpy(response->path, plpath);
+		       }
+	       }
+
+	       else
+		       response->vma_present = 0;
+
+       spin_unlock(ptl);
+       up_read(&mm->mmap_sem);
+
+       trace_printk("m\n");
+       // Send response
+       pcn_kmsg_send_long(from_cpu, (struct pcn_kmsg_long_message*) (response),
+		       sizeof(data_response_for_2_kernels_t) - sizeof(struct pcn_kmsg_hdr) + response->data_size);
+       trace_printk("a\n");
+       // Clean up incoming messages
+       pcn_kmsg_free_msg(request);
+       kfree(work);
+       kfree(response);
+       //end= native_read_tsc();
+       PSPRINTK("Handle request end\n");
+       trace_printk("e\n");
+       return;
+#endif
+
+out:
+
+       PSPRINTK("sending void answer\n");
+
+       void_response = (data_void_response_for_2_kernels_t*) kmalloc(
+		       sizeof(data_void_response_for_2_kernels_t), GFP_ATOMIC);
+       if (void_response == NULL) {
+	       if(lock){
+		       spin_unlock(ptl);
+		       up_read(&mm->mmap_sem);
+	       }
+	       printk("Impossible to kmalloc in process mapping request.\n");
+	       pcn_kmsg_free_msg(request);
+	       kfree(work);
+	       return;
+       }
+
+       void_response->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_VOID;
+       void_response->header.prio = PCN_KMSG_PRIO_NORMAL;
+       void_response->tgroup_home_cpu = request->tgroup_home_cpu;
+       void_response->tgroup_home_id = request->tgroup_home_id;
+       void_response->address = request->address;
+       void_response->owner=owner;
+
+       void_response->futex_owner = 0;//TODO: page->futex_owner;//akshay
+
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+       if (_cpu == request->tgroup_home_cpu && vma != NULL)
+#else
+#if PARTIAL_VMA_MANAGEMENT
+	       if (vma != NULL)
+#endif
+#endif
+	       {
+		       void_response->vma_present = 1;
+		       void_response->vaddr_start = vma->vm_start;
+		       void_response->vaddr_size = vma->vm_end - vma->vm_start;
+		       void_response->prot = vma->vm_page_prot;
+		       void_response->vm_flags = vma->vm_flags;
+		       void_response->pgoff = vma->vm_pgoff;
+		       if (vma->vm_file == NULL) {
+			       void_response->path[0] = '\0';
+		       } else {
+			       plpath = d_path(&vma->vm_file->f_path, lpath, 512);
+			       strcpy(void_response->path, plpath);
+		       }
+	       } else
+		       void_response->vma_present = 0;
+
+       if(lock){
+	       spin_unlock(ptl);
+	       up_read(&mm->mmap_sem);
+       }
+
+       trace_printk("m\n");
+       // Send response
+       pcn_kmsg_send_long(from_cpu,
+		       (struct pcn_kmsg_long_message*) (void_response),
+		       sizeof(data_void_response_for_2_kernels_t) - sizeof(struct pcn_kmsg_hdr));
+       trace_printk("a\n");
+       // Clean up incoming messages
+       pcn_kmsg_free_msg(request);
+       kfree(void_response);
+       kfree(work);
+       //end= native_read_tsc();
+       PSPRINTK("Handle request end\n");
+       trace_printk("e\n");
+}
+
+#else
+
+void process_mapping_request(struct work_struct* work) {
+
+      request_work_t* request_work = (request_work_t*) work;
+      data_request_t* request = request_work->request;
+
+      int from_cpu = request->header.from_cpu;
+      unsigned long address = request->address & PAGE_MASK;
+
+      data_response_t* response;
+      data_void_response_t* void_response;
+
+      struct mm_struct* mm = NULL;
+      struct vm_area_struct* vma = NULL;
+      pgd_t* pgd;
+      pud_t* pud;
+      pmd_t* pmd;
+      pte_t* pte;
+      pte_t entry;
+      spinlock_t* ptl;
+      request_work_t* delay;
+      struct page* page, *old_page;
+      void* vto, *vfrom;
+      int i;
+      //int wake = 0;
+      int fetching = 0;
+      char* plpath;
+      char lpath[512];
+      int app[MAX_KERNEL_IDS];
+      memory_t * memory;
+      int owners[MAX_KERNEL_IDS];
+      //unsigned long long start,end;
+
+#if STATISTICS
+	      request_data++;
+#endif
+
+	      PSPRINTK(
+			      "Request %i address %lu from cpu %i\n", request_data, request->address, from_cpu);
+
+	      //start= native_read_tsc();
+
+	      memset(owners,0,MAX_KERNEL_IDS*sizeof(int));
+
+	      memory = find_memory_entry(request->tgroup_home_cpu,
+			      request->tgroup_home_id);
+	      if (memory != NULL) {
+		      if(memory->setting_up==1){
+			      goto out;
+		      }
+		      mm = memory->mm;
+	      } else {
+		      goto out;
+	      }
+
+	      down_read(&mm->mmap_sem);
+
+	      //check the vma era first
+	      if(mm->vma_operation_index < request->vma_operation_index){
+
+		      delay = kmalloc(sizeof(request_work_t), GFP_ATOMIC);
+
+		      if (delay) {
+			      delay->request = request;
+			      INIT_DELAYED_WORK( (struct delayed_work*)delay,
+					      process_mapping_request);
+			      queue_delayed_work(message_request_wq,
+					      (struct delayed_work*) delay, 10);
+		      }
+
+		      up_read(&mm->mmap_sem);
+		      kfree(work);
+		      return;
+	      }
+
+	      // check if there is a valid vma
+	      vma = find_vma(mm, address);
+	      if (!vma || address >= vma->vm_end || address < vma->vm_start) {
+		      vma = NULL;
+	      } else {
+
+		      if (unlikely(is_vm_hugetlb_page(vma))
+				      || unlikely(transparent_hugepage_enabled(vma))) {
+			      printk("ERROR: Request for HUGE PAGE vma\n");
+			      up_read(&mm->mmap_sem);
+			      goto out;
+		      }
+
+		      PSPRINTK(
+				      "Find vma from %s start %lu end %lu\n", ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"), vma->vm_start, vma->vm_end);
+
+	      }
+
+	      pgd = pgd_offset(mm, address);
+	      if (!pgd || pgd_none(*pgd)) {
+		      up_read(&mm->mmap_sem);
+		      goto out;
+	      }
+
+	      pud = pud_offset(pgd, address);
+	      if (!pud || pud_none(*pud)) {
+		      up_read(&mm->mmap_sem);
+		      goto out;
+	      }
+
+	      pmd = pmd_offset(pud, address);
+
+	      if (!pmd || pmd_none(*pmd) || pmd_trans_huge(*pmd)) {
+		      up_read(&mm->mmap_sem);
+		      goto out;
+	      }
+
+retry: pte = pte_offset_map_lock(mm, pmd, address, &ptl);
+       /*PTE LOCKED*/
+
+       entry = *pte;
+
+       if (pte == NULL || pte_none(entry)) {
+
+	       PSPRINTK("pte not mapped \n");
+
+	       if (memory->alive != 0) {
+		       //Check if I am concurrently fetching the page
+		       mapping_answers_t* fetched_data = find_mapping_entry(
+				       request->tgroup_home_cpu, request->tgroup_home_id, address);
+
+		       if (fetched_data != NULL) {
+			       unsigned long flags;
+			       raw_spin_lock_irqsave(&(fetched_data->lock), flags);
+			       fetched_data->fetching = 1;
+			       fetched_data->owners[from_cpu] = 1;
+			       memcpy(owners,fetched_data->owners,MAX_KERNEL_IDS*sizeof(int));
+			       owners[_cpu]=1;
+			       raw_spin_unlock_irqrestore(&(fetched_data->lock), flags);
+			       fetching = 1;
+			       PSPRINTK("Concurrently fetching the same address\n");
+		       }
+
+	       }
+
+	       spin_unlock(ptl);
+	       up_read(&mm->mmap_sem);
+	       goto out;
+
+       }
+
+       page = pte_page(entry);
+       if (page != vm_normal_page(vma, address, entry)) {
+	       PSPRINTK("Page different from vm_normal_page in request page\n");
+       }
+       old_page = NULL;
+
+       /*If the page is not replicated and not read only I have to replicate it.
+	*If nobody previously asked for the page I am the owner=> it is valid
+	*If the page is the zero page, trying to access to page fields give error => check first if it is a zero page
+	*/
+       if (is_zero_page(pte_pfn(entry)) || !(page->replicated == 1)) {
+
+	       PSPRINTK("Page not replicated\n");
+
+	       if (vma->vm_flags & VM_WRITE) {
+
+		       //if the page is writable but the pte has not the write flag set, it is a cow page
+		       if (!pte_write(entry)) {
+			       /*
+				* I unlock because alloc page may go to sleep
+				*/
+			       PSPRINTK("COW page at %lu \n", address);
+
+			       spin_unlock(ptl);
+			       /*PTE UNLOCKED*/
+
+			       old_page = page;
+
+			       if (unlikely(anon_vma_prepare(vma))) {
+				       up_read(&mm->mmap_sem);
+				       goto out;
+			       }
+
+			       if (is_zero_page(pte_pfn(entry))) {
+
+				       page = alloc_zeroed_user_highpage_movable(vma, address);
+				       if (!page) {
+					       up_read(&mm->mmap_sem);
+					       goto out;
+				       }
+
+			       } else {
+
+				       page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
+				       if (!page) {
+					       up_read(&mm->mmap_sem);
+					       goto out;
+				       }
+
+				       copy_user_highpage(page, old_page, address, vma);
+			       }
+
+			       __SetPageUptodate(page);
+
+			       if (mem_cgroup_newpage_charge(page, mm, GFP_ATOMIC)) {
+				       page_cache_release(page);
+				       up_read(&mm->mmap_sem);
+				       goto out;
+
+			       }
+
+			       spin_lock(ptl);
+			       /*PTE LOCKED*/
+
+			       //if somebody changed the pte
+			       if (unlikely(!pte_same(*pte, entry))) {
+
+				       mem_cgroup_uncharge_page(page);
+				       page_cache_release(page);
+				       spin_unlock(ptl);
+				       goto retry;
+
+			       } else {
+				       page_add_new_anon_rmap(page, vma, address);
+#if STATISTICS
+				       pages_allocated++;
+#endif
+
+			       }
+		       }
+
+
+		       page->replicated = 1;
+		       page->status = REPLICATION_STATUS_VALID;
+		       page->other_owners[from_cpu] = 1;
+		       page->other_owners[_cpu] = 1;
+
+		       flush_cache_page(vma, address, pte_pfn(*pte));
+
+		       entry = mk_pte(page, vma->vm_page_prot);
+		       //I need to catch the next write access
+		       entry = pte_clear_flags(entry, _PAGE_RW);
+		       entry = pte_set_flags(entry, _PAGE_PRESENT);
+		       entry = pte_set_flags(entry, _PAGE_USER);
+		       entry = pte_set_flags(entry, _PAGE_ACCESSED);
+
+		       ptep_clear_flush(vma, address, pte);
+
+		       set_pte_at_notify(mm, address, pte, entry);
+
+		       //in x86 does nothing
+		       update_mmu_cache(vma, address, pte);
+
+		       /*according to the cpu this function flushes
+			* or the single address on the tlb
+			* or all the tlb
+			*if SMP it flushes all the others tlb
+			*/
+		       //flush_tlb_page(vma, address);
+
+		       //should be same as flush_tlb_page
+		       //flush_tlb_fix_spurious_fault(vma, address);
+
+		       if (old_page != NULL)
+			       page_remove_rmap(old_page);
+
+	       } else {
+
+		       page->other_owners[from_cpu] = 1;
+		       page->other_owners[_cpu] = 1;
+	       }
+
+	       memcpy(owners,page->other_owners,MAX_KERNEL_IDS*sizeof(int));
+       }
+
+       //page replicated
+       else {
+	       PSPRINTK("Page replicated...\n");
+
+	       if (page->writing == 1) {
+		       PSPRINTK("Page currently in writing \n");
+
+		       //I cannot put this thread on sleep otherwise I cannot consume other messages => re-queue the work
+		       delay = kmalloc(sizeof(request_work_t), GFP_ATOMIC);
+
+		       if (delay) {
+			       delay->request = request;
+			       INIT_DELAYED_WORK( (struct delayed_work*)delay,
+					       process_mapping_request);
+			       queue_delayed_work(message_request_wq,
+					       (struct delayed_work*) delay, 10);
+		       }
+
+		       spin_unlock(ptl);
+		       up_read(&mm->mmap_sem);
+		       kfree(work);
+		       return;
+
+	       }
+
+	       /*if (page->writing == 1 && page->reading == 1) {
+		 if (request->read_for_write == 0) {
+		 printk("ERROR: Consuming normal fetch in read write\n");
+		 }
+		 if (page->status != REPLICATION_STATUS_INVALID) {
+		 printk("ERROR: Answering in read write with a copy.\n");
+		 }
+		 (page->concurrent_fetch)++;
+		 wake = 1;
+		 PSPRINTK("Page in reading for write received a request \n");
+		 }*/
+
+	       //invalid page case
+	       if (page->status == REPLICATION_STATUS_INVALID) {
+		       page->other_owners[from_cpu] = 1;
+		       memcpy(owners,page->other_owners,MAX_KERNEL_IDS*sizeof(int));
+		       spin_unlock(ptl);
+		       up_read(&mm->mmap_sem);
+		       PSPRINTK("Request in status invalid\n");
+		       goto out;
+	       }
+
+	       //valid page case
+	       if (page->status == REPLICATION_STATUS_VALID) {
+		       page->other_owners[from_cpu] = 1;
+		       PSPRINTK("Page requested valid\n");
+		       goto resolved;
+	       }
+
+	       //if it is written I need to change status to avoid to write local the next time
+	       if (page->status == REPLICATION_STATUS_WRITTEN) {
+
+		       PSPRINTK("Page requested in written status\n");
+		       page->other_owners[from_cpu] = 1;
+
+		       if (request->read_for_write == 1) {
+
+			       (page->concurrent_fetch)++;
+			       PSPRINTK("Page requested from a read for write \n");
+
+		       }
+		       page->need_fetch[from_cpu] = 1;
+
+		       if (page->concurrent_writers != page->concurrent_fetch) {
+			       spin_unlock(ptl);
+			       up_read(&mm->mmap_sem);
+			       pcn_kmsg_free_msg(request);
+			       kfree(work);
+			       PSPRINTK(
+					       "Waiting, page->concurrent_writers!=page->concurrent_fetch\n");
+			       return;
+		       }
+
+		       page->status = REPLICATION_STATUS_VALID;
+
+		       entry = *pte;
+		       entry = pte_set_flags(entry, _PAGE_PRESENT);
+		       entry = pte_set_flags(entry, _PAGE_ACCESSED);
+		       entry = pte_clear_flags(entry, _PAGE_RW);
+
+		       ptep_clear_flush(vma, address, pte);
+
+		       set_pte_at_notify(mm, address, pte, entry);
+
+		       update_mmu_cache(vma, address, pte);
+		       //flush_tlb_page(vma, address);
+
+		       //flush_tlb_fix_spurious_fault(vma, address);
+
+		       response = (data_response_t*) kmalloc(sizeof(data_response_t),
+				       GFP_ATOMIC);
+		       if (response == NULL) {
+			       spin_unlock(ptl);
+			       up_read(&mm->mmap_sem);
+			       pcn_kmsg_free_msg(request);
+			       kfree(work);
+			       printk("Impossible to kmalloc in process mapping request\n");
+			       return;
+		       }
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+		       if (_cpu == request->tgroup_home_cpu && vma != NULL)
+#else
+#if PARTIAL_VMA_MANAGEMENT
+			       if (vma != NULL)
+#endif
+#endif
+			       {
+				       response->vma_present = 1;
+				       response->vaddr_start = vma->vm_start;
+				       response->vaddr_size = vma->vm_end - vma->vm_start;
+				       response->prot = vma->vm_page_prot;
+				       response->vm_flags = vma->vm_flags;
+				       response->pgoff = vma->vm_pgoff;
+				       if (vma->vm_file == NULL) {
+					       response->path[0] = '\0';
+				       } else {
+					       plpath = d_path(&vma->vm_file->f_path, lpath, 512);
+					       strcpy(response->path, plpath);
+				       }
+			       } else
+				       response->vma_present = 0;
+
+		       vto = response->data;
+		       // Ported to Linux 3.12
+		       //vfrom = kmap_atomic(page, KM_USER0);
+		       vfrom = kmap_atomic(page);
+		       copy_page(vto, vfrom);
+		       // Ported to Linux 3.12
+		       //kunmap_atomic(vfrom, KM_USER0);
+		       kunmap_atomic(vfrom);
+
+#if CHECKSUM
+		       // Ported to Linux 3.12
+		       //vfrom= kmap_atomic(page, KM_USER0);
+		       vfrom= kmap_atomic(page);
+		       __wsum check1= csum_partial(vfrom, PAGE_SIZE, 0);
+		       // Ported to Linux 3.12
+		       //kunmap_atomic(vfrom, KM_USER0);
+		       kunmap_atomic(vfrom);
+		       __wsum check2= csum_partial(&response->data, PAGE_SIZE, 0);
+		       if(check1!=check2)
+			       printk("page just copied is not matching, address %lu\n",address);
+#endif
+
+		       response->last_write = page->last_write;
+		       for (i = 0; i < MAX_KERNEL_IDS; i++) {
+			       response->owners[i] = page->other_owners[i];
+		       }
+
+		       response->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
+		       response->header.prio = PCN_KMSG_PRIO_NORMAL;
+		       response->tgroup_home_cpu = request->tgroup_home_cpu;
+		       response->tgroup_home_id = request->tgroup_home_id;
+		       response->address = request->address;
+		       response->address_present = REPLICATION_STATUS_WRITTEN;
+
+#if CHECKSUM
+		       response->checksum= csum_partial(&response->data, PAGE_SIZE, 0);
+#endif
+
+		       page->concurrent_writers = 0;
+		       page->concurrent_fetch = 0;
+		       page->time_stamp = 0;
+
+		       for (i = 0; i < MAX_KERNEL_IDS; i++)
+			       if (page->need_fetch[i]) {
+				       app[i] = 1;
+				       page->need_fetch[i] = 0;
+			       } else
+				       app[i] = 0;
+
+		       spin_unlock(ptl);
+
+		       for (i = 0; i < MAX_KERNEL_IDS; i++)
+			       if (app[i]) {
+				       pcn_kmsg_send_long(i,
+						       (struct pcn_kmsg_long_message*) (response),
+						       sizeof(data_response_t)
+						       - sizeof(struct pcn_kmsg_hdr));
+			       }
+
+		       up_read(&mm->mmap_sem);
+		       kfree(response);
+		       pcn_kmsg_free_msg(request);
+		       kfree(work);
+		       PSPRINTK("End request in written page \n");
+		       return;
+
+	       }
+       }
+
+resolved:
+
+       response = (data_response_t*) kmalloc(sizeof(data_response_t), GFP_ATOMIC);
+       if (response == NULL) {
+	       printk("Impossible to kmalloc in process mapping request.\n");
+	       return;
+       }
+
+       PSPRINTK(
+		       "Resolved Copy from %s\n", ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"));
+
+       PSPRINTK(
+		       "Page read only?%i Page shared?%i \n", (vma->vm_flags & VM_WRITE)?0:1, (vma->vm_flags & VM_SHARED)?1:0);
+
+       flush_cache_page(vma, address, pte_pfn(*pte));
+
+       vto = response->data;
+       // Ported to Linux 3.12
+       //vfrom = kmap_atomic(page, KM_USER0);
+       vfrom = kmap_atomic(page);
+       copy_page(vto, vfrom);
+       // Ported to Linux 3.12
+       //kunmap_atomic(vfrom, KM_USER0);
+       kunmap_atomic(vfrom);
+
+#if CHECKSUM
+       // Ported to Linux 3.12
+       //vfrom= kmap_atomic(page, KM_USER0);
+       vfrom= kmap_atomic(page);
+       __wsum check1= csum_partial(vfrom, PAGE_SIZE, 0);
+       // Ported to Linux 3.12
+       //kunmap_atomic(vfrom, KM_USER0);
+       kunmap_atomic(vfrom);
+       __wsum check2= csum_partial(&response->data, PAGE_SIZE, 0);
+       if(check1!=check2)
+	       printk("page just copied is not matching, address %lu\n",address);
+#endif
+
+       response->last_write = page->last_write;
+
+       for (i = 0; i < MAX_KERNEL_IDS; i++) {
+	       response->owners[i] = page->other_owners[i];
+       }
+
+       response->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
+       response->header.prio = PCN_KMSG_PRIO_NORMAL;
+       response->tgroup_home_cpu = request->tgroup_home_cpu;
+       response->tgroup_home_id = request->tgroup_home_id;
+       response->address = request->address;
+       response->address_present = REPLICATION_STATUS_VALID;
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+       if (_cpu == request->tgroup_home_cpu && vma != NULL)
+	       //only the vmas SERVER sends the vma
+#else
+#if PARTIAL_VMA_MANAGEMENT
+	       if (vma != NULL)
+#endif
+#endif
+	       {
+
+		       response->vma_present = 1;
+		       response->vaddr_start = vma->vm_start;
+		       response->vaddr_size = vma->vm_end - vma->vm_start;
+		       response->prot = vma->vm_page_prot;
+		       response->vm_flags = vma->vm_flags;
+		       response->pgoff = vma->vm_pgoff;
+		       if (vma->vm_file == NULL) {
+			       response->path[0] = '\0';
+		       } else {
+			       plpath = d_path(&vma->vm_file->f_path, lpath, 512);
+			       strcpy(response->path, plpath);
+		       }
+	       }
+
+	       else
+		       response->vma_present = 0;
+
+       spin_unlock(ptl);
+       up_read(&mm->mmap_sem);
+
+#if CHECKSUM
+       response->checksum= csum_partial(&response->data, PAGE_SIZE, 0);
+#endif
+
+       // Send response
+       pcn_kmsg_send_long(from_cpu, (struct pcn_kmsg_long_message*) (response),
+		       sizeof(data_response_t) - sizeof(struct pcn_kmsg_hdr));
+
+       // Clean up incoming messages
+       pcn_kmsg_free_msg(request);
+       kfree(work);
+       kfree(response);
+       //end= native_read_tsc();
+       PSPRINTK("Handle request end\n");
+       return;
+
+out:
+
+       PSPRINTK("There are no copies of the page...\n");
+
+       void_response = (data_void_response_t*) kmalloc(
+		       sizeof(data_void_response_t), GFP_ATOMIC);
+       if (void_response == NULL) {
+	       printk("Impossible to kmalloc in process mapping request.\n");
+	       return;
+       }
+
+       void_response->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_VOID;
+       void_response->header.prio = PCN_KMSG_PRIO_NORMAL;
+       void_response->tgroup_home_cpu = request->tgroup_home_cpu;
+       void_response->tgroup_home_id = request->tgroup_home_id;
+       void_response->address = request->address;
+       void_response->address_present = REPLICATION_STATUS_INVALID;
+       memcpy(void_response->owners,owners,MAX_KERNEL_IDS*sizeof(int));
+
+       if (fetching)
+	       void_response->fetching = 1;
+       else
+	       void_response->fetching = 0;
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+       if (_cpu == request->tgroup_home_cpu && vma != NULL)
+#else
+#if PARTIAL_VMA_MANAGEMENT
+	       if (vma != NULL)
+#endif
+#endif
+	       {
+		       void_response->vma_present = 1;
+		       void_response->vaddr_start = vma->vm_start;
+		       void_response->vaddr_size = vma->vm_end - vma->vm_start;
+		       void_response->prot = vma->vm_page_prot;
+		       void_response->vm_flags = vma->vm_flags;
+		       void_response->pgoff = vma->vm_pgoff;
+		       if (vma->vm_file == NULL) {
+			       void_response->path[0] = '\0';
+		       } else {
+			       plpath = d_path(&vma->vm_file->f_path, lpath, 512);
+			       strcpy(void_response->path, plpath);
+		       }
+	       } else
+		       void_response->vma_present = 0;
+
+       //if (wake) {
+       //	wake_up(&fetch_write_wait);
+       //}
+
+       // Send response
+       pcn_kmsg_send_long(from_cpu,
+		       (struct pcn_kmsg_long_message*) (void_response),
+		       sizeof(data_void_response_t) - sizeof(struct pcn_kmsg_hdr));
+
+       // Clean up incoming messages
+       pcn_kmsg_free_msg(request);
+       kfree(void_response);
+       kfree(work);
+       //end= native_read_tsc();
+       PSPRINTK("Handle request end\n");
+}
+#endif
+
 static int handle_mapping_request(struct pcn_kmsg_message* inc_msg) {
 
       request_work_t* request_work;
@@ -3219,7 +4809,7 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 			goto out_not_locked;
 		}
 
-			pte = pte_offset_map_lock(mm, pmd, address, &ptl);
+retry:			pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 			entry= *pte;
 
 			page = pte_page(entry);
@@ -3544,6 +5134,1440 @@ void process_server_clean_page(struct page* page) {
 
 }
 
+#if FOR_2_KERNELS
+//static
+int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
+		struct mm_struct *mm, struct vm_area_struct *vma,
+		unsigned long address, unsigned long page_fault_flags,
+		pmd_t* pmd, pte_t* pte,
+		spinlock_t* ptl, struct page* page) {
+	pte_t value_pte;
+	int ret=0,i;
+
+	if(strcmp(current->comm,"IS") == 0){
+		trace_printk("s\n");
+	}
+
+#if STATISTICS
+	read++;
+#endif
+
+	PSMINPRINTK("Read for address %lu pid %d\n", address,current->pid);
+
+	page->reading= 1;
+
+	//message to ask for a copy
+	data_request_for_2_kernels_t* read_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
+			GFP_ATOMIC);
+	if (read_message == NULL) {
+		ret = VM_FAULT_OOM;
+		goto exit;
+	}
+
+	read_message->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
+	read_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+	read_message->address = address;
+	read_message->tgroup_home_cpu = tgroup_home_cpu;
+	read_message->tgroup_home_id = tgroup_home_id;
+	read_message->is_fetch= 0;
+	read_message->is_write= 0;
+	read_message->last_write= page->last_write;
+	read_message->vma_operation_index= current->mm->vma_operation_index;
+
+	//object to held responses
+	mapping_answers_for_2_kernels_t* reading_page = (mapping_answers_for_2_kernels_t*) kmalloc(sizeof(mapping_answers_for_2_kernels_t),
+			GFP_ATOMIC);
+	if (reading_page == NULL) {
+		ret = VM_FAULT_OOM;
+		goto exit_read_message;
+	}
+
+	reading_page->tgroup_home_cpu= tgroup_home_cpu;
+	reading_page->tgroup_home_id= tgroup_home_id;
+	reading_page->address = address;
+	reading_page->address_present= 0;
+	reading_page->data= NULL;
+	reading_page->is_fetch= 0;
+	reading_page->is_write= 0;
+	reading_page->last_write= page->last_write;
+	reading_page->owner= 0;
+
+	reading_page->vma_present = 0;
+	reading_page->vaddr_start = 0;
+	reading_page->vaddr_size = 0;
+	reading_page->pgoff = 0;
+	memset(reading_page->path,0,sizeof(char)*512);
+	memset(&(reading_page->prot),0,sizeof(pgprot_t));
+	reading_page->vm_flags = 0;
+	reading_page->waiting = current;
+
+	// Make data entry visible to handler.
+	add_mapping_entry(reading_page);
+
+	PSPRINTK("Sending a read message for address %lu \n ", address);
+
+	spin_unlock(ptl);
+	up_read(&mm->mmap_sem);
+	/*PTE UNLOCKED*/
+	int sent= 0;
+	reading_page->arrived_response=0;
+
+#ifndef SUPPORT_FOR_CLUSTERING
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
+		// Skip the current cpu
+		if(i == _cpu) continue;
+
+#else
+		// the list does not include the current processor group descirptor (TODO)
+		struct list_head *iter;
+		_remote_cpu_info_list_t *objPtr;
+
+		list_for_each(iter, &rlist_head) {
+			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+			i = objPtr->_data._processor;
+#endif
+			if (page->other_owners[i] == 1){
+				if(strcmp(current->comm,"IS") == 0){
+					trace_printk("se\n");
+				}
+			}
+
+			if (!(pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (read_message),
+							sizeof(data_request_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr)) == -1)) {
+				// Message delivered
+				sent++;
+				if(sent>1)
+					printk("ERROR: using protocol optimized for 2 kernels but sending a read to more than one kernel");
+			}
+		}
+
+		if(sent){
+			while (reading_page->arrived_response == 0) {
+				set_task_state(current, TASK_UNINTERRUPTIBLE);
+				if (reading_page->arrived_response == 0)
+					schedule();
+				set_task_state(current, TASK_RUNNING);
+			}
+
+			if(strcmp(current->comm,"IS") == 0) {
+				trace_printk("r\n");
+			}
+		}
+		else{
+			printk("ERROR: impossible to send read message, no destination kernel\n");
+			ret= VM_FAULT_REPLICATION_PROTOCOL;
+			down_read(&mm->mmap_sem);
+			spin_lock(ptl);
+			goto exit_reading_page;
+		}
+
+		if(strcmp(current->comm,"IS") == 0){
+			trace_printk("ls\n");
+		}
+
+		down_read(&mm->mmap_sem);
+		spin_lock(ptl);
+		/*PTE LOCKED*/
+		if(strcmp(current->comm,"IS") == 0){
+			trace_printk("l\n");
+		}
+
+		vma = find_vma(mm, address);
+		if (unlikely(
+					!vma || address >= vma->vm_end || address < vma->vm_start)) {
+			printk("ERROR: vma not valid during read for write\n");
+			ret = VM_FAULT_VMA;
+			goto exit_reading_page;
+		}
+
+		if(reading_page->address_present==1){
+			if (reading_page->data->address != address) {
+				printk("ERROR: trying to copy wrong address!");
+				pcn_kmsg_free_msg(reading_page->data);
+				ret = VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_reading_page;
+			}
+
+			if (reading_page->last_write != (page->last_write+1)) {
+				printk("ERROR: new copy received during a read but my last write is %lu and received last write is %lu\n",
+						page->last_write,reading_page->last_write);
+				ret = VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_reading_page;
+			}
+			else
+				page->last_write= reading_page->last_write;
+
+			if(reading_page->owner==1){
+				printk("ERROR: owneship sent with read request\n");
+				ret = VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_reading_page;
+			}
+
+			void *vto;
+			void *vfrom;
+			// Ported to Linux 3.12
+			//vto = kmap_atomic(page, KM_USER0);
+			vto = kmap_atomic(page);
+			vfrom = &(reading_page->data->data);
+
+#if	DIFF_PAGE
+			if(reading_page->data->data_size==PAGE_SIZE){
+				copy_user_page(vto, vfrom, address, page);
+			}
+			else{
+
+				if(reading_page->data->diff==1)
+					WKdm_decompress_and_diff(vfrom,vto);
+				else
+				{
+					kunmap_atomic(vto, KM_USER0);
+					pcn_kmsg_free_msg(reading_page->data);
+					printk(
+							"ERROR: received data not diff in write address %lu\n",address);
+					ret = VM_FAULT_REPLICATION_PROTOCOL;
+					goto exit_reading_page;
+				}
+			}
+
+#else
+			copy_user_page(vto, vfrom, address, page);
+#endif
+
+			// Ported to Linux 3.12
+			//kunmap_atomic(vto, KM_USER0);
+			kunmap_atomic(vto);
+
+#if !DIFF_PAGE
+#if CHECKSUM
+			// Ported to Linux 3.12
+			//vto= kmap_atomic(page, KM_USER0);
+			vto= kmap_atomic(page);
+			__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
+			// Ported to Linux 3.12
+			//kunmap_atomic(vto, KM_USER0);
+			kunmap_atomic(vto);
+			__wsum check2= csum_partial(&(reading_page->data->data), PAGE_SIZE, 0);
+			if(check1!=check2) {
+				printk("ERROR: page just copied is not matching, address %lu\n",address);
+				pcn_kmsg_free_msg(reading_page->data);
+				ret= VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_reading_page;
+			}
+			if(check1!=reading_page->data->checksum) {
+				printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
+				pcn_kmsg_free_msg(reading_page->data);
+				ret= VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_reading_page;
+			}
+#endif
+#endif
+			pcn_kmsg_free_msg(reading_page->data);
+
+			page->status = REPLICATION_STATUS_VALID;
+			page->owner = reading_page->owner;
+
+#if STATISTICS
+			if(page->last_write> most_written_page)
+				most_written_page= page->last_write;
+#endif
+
+			flush_cache_page(vma, address, pte_pfn(*pte));
+			//now the page can be written
+			value_pte = *pte;
+			value_pte = pte_clear_flags(value_pte, _PAGE_RW);
+			value_pte = pte_set_flags(value_pte, _PAGE_PRESENT);
+
+			value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
+
+			ptep_clear_flush(vma, address, pte);
+
+			set_pte_at_notify(mm, address, pte, value_pte);
+
+			update_mmu_cache(vma, address, pte);
+
+			//flush_tlb_page(vma, address);
+
+			flush_tlb_fix_spurious_fault(vma, address);
+			PSPRINTK("Out read %i address %lu \n ", read, address);
+		}
+		else{
+			printk("ERROR: no copy received for a read\n");
+			ret= VM_FAULT_REPLICATION_PROTOCOL;
+			remove_mapping_entry(reading_page);
+			kfree(reading_page);
+			kfree(read_message);
+			goto exit;
+
+		}
+exit_reading_page:
+		remove_mapping_entry(reading_page);
+		kfree(reading_page);
+
+exit_read_message:
+		kfree(read_message);
+
+exit:
+		page->reading = 0;
+		if(strcmp(current->comm,"IS") == 0){
+			trace_printk("e\n");
+		}
+		return ret;
+	}
+
+#else
+
+/* Read on a REPLICATED page => ask a copy of the page at address "address" on the
+ * virtual mapping of the process identified by "tgroup_home_cpu" and "tgroup_home_id".
+ *
+ * down_read(&mm->mmap_sem) must be held.
+ * pte lock must be held.
+ *
+ *return types:
+ *VM_FAULT_OOM, problem allocating memory.
+ *VM_FAULT_VMA, error vma management.
+ *VM_FAULT_REPLICATION_PROTOCOL, general error.
+ *0, write succeeded;
+ * */
+static int do_remote_read(int tgroup_home_cpu, int tgroup_home_id,
+		struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
+		unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, spinlock_t* ptl,
+		struct page* page) {
+#if STATISTICS
+		int attemps_read;
+#endif
+		data_request_t* read_message;
+		mapping_answers_t* reading_page;
+		int i;
+		void *vto;
+		void *vfrom;
+		pte_t value_pte;
+		int ret;
+		unsigned long flags;
+
+#if STATISTICS
+		read++;
+		attemps_read=0;
+#endif
+
+		page->reading = 1;
+
+		//message to ask a copy of the page
+		read_message = (data_request_t*) kmalloc(sizeof(data_request_t),
+				GFP_ATOMIC);
+		if (read_message == NULL) {
+			ret = VM_FAULT_OOM;
+			goto exit;
+		}
+
+		read_message->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
+		read_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+		read_message->address = address;
+		read_message->tgroup_home_cpu = tgroup_home_cpu;
+		read_message->tgroup_home_id = tgroup_home_id;
+		read_message->read_for_write = 0;
+		read_message->flags = page_fault_flags;
+		read_message->vma_operation_index= current->mm->vma_operation_index;
+
+		//object to held responses
+		reading_page = (mapping_answers_t*) kmalloc(sizeof(mapping_answers_t),
+				GFP_ATOMIC);
+		if (reading_page == NULL) {
+			ret = VM_FAULT_OOM;
+			goto exit_read_message;
+		}
+
+		reading_page->address = address;
+		reading_page->address_present = REPLICATION_STATUS_INVALID;
+		reading_page->vma_present = 0;
+		reading_page->data = NULL;
+		reading_page->responses = 0;
+		reading_page->expected_responses = 0;
+		reading_page->last_invalid = -1;
+		reading_page->last_write = 0;
+		reading_page->tgroup_home_cpu = tgroup_home_cpu;
+		reading_page->tgroup_home_id = tgroup_home_id;
+		reading_page->waiting = current;
+		raw_spin_lock_init(&(reading_page->lock));
+
+		// Add to appropriate list.
+		add_mapping_entry(reading_page);
+
+retry_read:
+
+#if STATISTICS
+		attemps_read++;
+#endif
+
+		PSPRINTK("Read %i address %lu iter %i \n", read, address, attemps_read);
+		PSMINPRINTK("Read %i address %lu iter %i \n", read, address, attemps_read);
+
+		if (page->owner == _cpu) {
+			printk("ERROR: asking a page to myself for read address %lu\n",
+					address);
+			ret = VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit_reading_page;
+		}
+
+		spin_unlock(ptl);
+		up_read(&mm->mmap_sem);
+		/*PTE UNLOCKED*/
+
+		/* Try to ask the page to the owner first.
+		 * Likely it has the most updated version
+		 */
+		if (pcn_kmsg_send(page->owner, (struct pcn_kmsg_message*) (read_message))
+				!= -1) {
+
+			reading_page->expected_responses = 1;
+
+			while (reading_page->responses == 0) {
+				//DEFINE_WAIT(wait);
+				//prepare_to_wait(&request_wait, &wait, TASK_UNINTERRUPTIBLE);
+				set_task_state(current, TASK_UNINTERRUPTIBLE);
+				if (reading_page->responses == 0)
+					schedule();
+				set_task_state(current, TASK_RUNNING);
+				//finish_wait(&request_wait, &wait);
+			}
+		}
+
+		down_read(&mm->mmap_sem);
+		spin_lock(ptl);
+		/*PTE LOCKED*/
+		vma = find_vma(mm, address);
+		if (unlikely(!vma || address >= vma->vm_end || address < vma->vm_start)) {
+
+			printk("ERROR: vma not valid during read\n");
+			ret = VM_FAULT_VMA;
+			goto exit_reading_page;
+		}
+
+		/*If the owner has not a valid copy, or an invalid arrived in the meanwhile,
+		 *ask to everybody in the system
+		 */
+		if (reading_page->address_present == REPLICATION_STATUS_INVALID
+				|| reading_page->last_invalid >= reading_page->last_write) {
+
+#if STATISTICS
+			attemps_read++;
+#endif
+			PSPRINTK("Read %i address %lu iter %i \n", read, address, attemps_read);
+
+			reading_page->address_present = REPLICATION_STATUS_INVALID;
+			if (reading_page->data != NULL) {
+				pcn_kmsg_free_msg(reading_page->data);
+				reading_page->data = NULL;
+			}
+			reading_page->responses = 0;
+			reading_page->expected_responses = 0;
+			reading_page->vma_present = 0;
+
+			spin_unlock(ptl);
+			up_read(&mm->mmap_sem);
+			/*PTE UNLOCKED*/
+
+#ifndef SUPPORT_FOR_CLUSTERING
+			for(i = 0; i < MAX_KERNEL_IDS; i++) {
+				// Skip the current cpu
+				if(i == _cpu) continue;
+#else
+				// the list does not include the current processor group descirptor (TODO)
+				struct list_head *iter;
+				_remote_cpu_info_list_t *objPtr;
+
+				list_for_each(iter, &rlist_head) {
+					objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+					i = objPtr->_data._processor;
+#endif
+					if (page->other_owners[i] == 1) {
+						if (!(pcn_kmsg_send(i,
+										(struct pcn_kmsg_message*) (read_message)) == -1)) {
+							// Message delivered
+							reading_page->expected_responses++;
+						}
+					}
+				}
+
+				while (!(reading_page->responses == reading_page->expected_responses)) {
+					//DEFINE_WAIT(wait);
+					//prepare_to_wait(&request_wait, &wait, TASK_UNINTERRUPTIBLE);
+					set_task_state(current, TASK_UNINTERRUPTIBLE);
+					if (!(reading_page->responses == reading_page->expected_responses))
+						schedule();
+					//finish_wait(&request_wait, &wait);
+					set_task_state(current, TASK_RUNNING);
+				}
+
+				down_read(&mm->mmap_sem);
+				spin_lock(ptl);
+				/*PTE LOCKED*/
+				vma = find_vma(mm, address);
+				if (unlikely(
+							!vma || address >= vma->vm_end || address < vma->vm_start)) {
+
+					printk("ERROR: vma not valid during read\n");
+					ret = VM_FAULT_VMA;
+					goto exit_reading_page;
+				}
+			}
+
+			if (reading_page->last_invalid >= reading_page->last_write) {
+
+				reading_page->address_present = REPLICATION_STATUS_INVALID;
+				if (reading_page->data != NULL) {
+					pcn_kmsg_free_msg(reading_page->data);
+					reading_page->data = NULL;
+				}
+				reading_page->responses = 0;
+				reading_page->expected_responses = 0;
+				reading_page->vma_present = 0;
+
+				goto retry_read;
+			}
+
+			raw_spin_lock_irqsave(&(reading_page->lock), flags);
+			raw_spin_unlock_irqrestore(&(reading_page->lock), flags);
+
+			remove_mapping_entry(reading_page);
+
+			if (reading_page->address_present == REPLICATION_STATUS_INVALID) {
+				//aaaaaaaaaaaaaaaaaaa not valid copy in the system!!!
+				printk("ERROR: NO VALID COPY IN THE SYSTEM\n");
+				ret = VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_reading_page;
+
+			}
+
+			PSPRINTK("Out read %i address %lu iter %i \n", read, address, attemps_read);
+
+			if (reading_page->data->address != address) {
+				printk("ERROR: trying to copy wrong address!");
+				pcn_kmsg_free_msg(reading_page->data);
+				ret = VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_reading_page;
+			}
+
+			// Ported to Linux 3.12
+			//vto = kmap_atomic(page, KM_USER0);
+			vto = kmap_atomic(page);
+			vfrom = reading_page->data->data;
+			copy_user_page(vto, vfrom, address, page);
+			// Ported to Linux 3.12
+			//kunmap_atomic(vto, KM_USER0);
+			kunmap_atomic(vto);
+
+#if CHECKSUM
+			// Ported to Linux 3.12
+			//vto= kmap_atomic(page, KM_USER0);
+			vto= kmap_atomic(page);
+			__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
+			// Ported to Linux 3.12
+			//kunmap_atomic(vto, KM_USER0);
+			kunmap_atomic(vto);
+			__wsum check2= csum_partial(&(reading_page->data->data), PAGE_SIZE, 0);
+			if(check1!=check2) {
+				printk("ERROR: page just copied is not matching, address %lu\n",address);
+				pcn_kmsg_free_msg(reading_page->data);
+				ret= VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_reading_page;
+			}
+			if(check1!=reading_page->data->checksum) {
+				printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
+				pcn_kmsg_free_msg(reading_page->data);
+				ret= VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_reading_page;
+			}
+#endif
+
+			pcn_kmsg_free_msg(reading_page->data);
+			page->last_write = reading_page->last_write;
+
+#if STATISTICS
+			if(page->last_write> most_written_page)
+				most_written_page= page->last_write;
+			if(attemps_read > most_long_read)
+				most_long_read= attemps_read;
+#endif
+
+			page->status = REPLICATION_STATUS_VALID;
+
+			value_pte = *pte;
+			//we need to catch write access
+			value_pte = pte_clear_flags(value_pte, _PAGE_RW);
+			//value_pte= pte_clear_flags(value_pte,_PAGE_DIRTY);
+			value_pte = pte_set_flags(value_pte, _PAGE_PRESENT);
+			//value_pte= pte_set_flags(value_pte,_PAGE_USER);
+			value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
+
+			ptep_clear_flush(vma, address, pte);
+
+			set_pte_at_notify(mm, address, pte, value_pte);
+
+			update_mmu_cache(vma, address, pte);
+
+			//flush_tlb_page(vma, address);
+			//flush_tlb_range(vma,vma->vm_start,vma->vm_end);
+
+			//flush_tlb_fix_spurious_fault(vma, address);
+
+			flush_cache_page(vma, address, pte_pfn(*pte));
+
+			ret = 0;
+
+exit_reading_page:
+
+			remove_mapping_entry(reading_page);
+			kfree(reading_page);
+
+exit_read_message:
+
+			kfree(read_message);
+
+exit:
+
+	page->reading = 0;
+	return ret;
+}
+#endif
+
+#if FOR_2_KERNELS
+//static
+int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
+		struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
+		unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, spinlock_t* ptl,
+		struct page* page,int invalid) {
+
+	int  i;
+	int ret= 0;
+	pte_t value_pte;
+
+	if(strcmp(current->comm,"IS") == 0){
+		trace_printk("s\n");
+	}
+	page->writing = 1;
+
+#if STATISTICS
+	write++;
+#endif
+
+	PSPRINTK("Write %i address %lu pid %d\n", write, address,current->pid);
+	PSMINPRINTK("Write for address %lu owner %d pid %d\n", address,page->owner==1?1:0,current->pid);
+
+	if(page->owner==1){
+		//in this case I send and invalid message
+		if(invalid){
+			printk("ERROR: I am the owner of the page and it is invalid when going to write\n");
+			ret= VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit;
+		}
+		//object to store the acks (nacks) sent by other kernels
+		ack_answers_for_2_kernels_t* answers = (ack_answers_for_2_kernels_t*) kmalloc(sizeof(ack_answers_for_2_kernels_t), GFP_ATOMIC);
+		if (answers == NULL) {
+			ret = VM_FAULT_OOM;
+			goto exit;
+		}
+		answers->tgroup_home_cpu = tgroup_home_cpu;
+		answers->tgroup_home_id = tgroup_home_id;
+		answers->address = address;
+		answers->waiting = current;
+
+		//message to invalidate the other copies
+		invalid_data_for_2_kernels_t* invalid_message = (invalid_data_for_2_kernels_t*) kmalloc(sizeof(invalid_data_for_2_kernels_t),
+				GFP_ATOMIC);
+		if (invalid_message == NULL) {
+			ret = VM_FAULT_OOM;
+			goto exit_answers;
+		}
+		invalid_message->header.type = PCN_KMSG_TYPE_PROC_SRV_INVALID_DATA;
+		invalid_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+		invalid_message->tgroup_home_cpu = tgroup_home_cpu;
+		invalid_message->tgroup_home_id = tgroup_home_id;
+		invalid_message->address = address;
+		invalid_message->vma_operation_index= current->mm->vma_operation_index;
+
+		// Insert the object in the appropriate list.
+		add_ack_entry(answers);
+
+		invalid_message->last_write = page->last_write;
+
+		answers->response_arrived= 0;
+
+		int sent= 0;
+
+		spin_unlock(ptl);
+		up_read(&mm->mmap_sem);
+		/*PTE UNLOCKED*/
+#ifndef SUPPORT_FOR_CLUSTERING
+		for(i = 0; i < MAX_KERNEL_IDS; i++) {
+			// Skip the current cpu
+			if(i == _cpu) continue;
+
+#else
+			// the list does not include the current processor group descirptor (TODO)
+			struct list_head *iter;
+			_remote_cpu_info_list_t *objPtr;
+			list_for_each(iter, &rlist_head) {
+				objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+				i = objPtr->_data._processor;
+#endif
+				if (page->other_owners[i] == 1) {
+					if(strcmp(current->comm,"IS") == 0){
+						trace_printk("se\n");
+					}
+
+					if (!(pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (invalid_message),sizeof(invalid_data_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr))
+								== -1)) {
+						// Message delivered
+						sent++;
+						if(sent>1)
+							printk("ERROR: using protocol optimized for 2 kernels but sending an invalid to more than one kernel");
+					}
+				}
+			}
+
+			if(sent){
+				while (answers->response_arrived==0) {
+					set_task_state(current, TASK_UNINTERRUPTIBLE);
+					if (answers->response_arrived==0)
+						schedule();
+					set_task_state(current, TASK_RUNNING);
+				}
+				if(strcmp(current->comm,"IS") == 0){
+					trace_printk("r\n");
+				}
+			}
+			else
+				printk("Impossible to send invalid, no destination kernel\n");
+
+			if(strcmp(current->comm,"IS") == 0){
+				trace_printk("ls\n");
+			}
+
+			down_read(&mm->mmap_sem);
+			spin_lock(ptl);
+
+			if(strcmp(current->comm,"IS") == 0){
+				trace_printk("l\n");
+			}
+			/*PTE LOCKED*/
+			vma = find_vma(mm, address);
+			if (unlikely(!vma || address >= vma->vm_end || address < vma->vm_start)) {
+				printk("ERROR: vma not valid after waiting for ack to invalid\n");
+				ret = VM_FAULT_VMA;
+				goto exit_invalid;
+			}
+
+			PSPRINTK("Received ack to invalid %i address %lu \n", write, address);
+
+exit_invalid:
+			kfree(invalid_message);
+			remove_ack_entry(answers);
+exit_answers:
+			kfree(answers);
+			if(ret!=0)
+				goto exit;
+		} else {
+			//in this case I send a mapping request with write flag set
+
+			//message to ask for a copy
+			data_request_for_2_kernels_t* write_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
+					GFP_ATOMIC);
+			if (write_message == NULL) {
+				ret = VM_FAULT_OOM;
+				goto exit;
+			}
+
+			write_message->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
+			write_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+			write_message->address = address;
+			write_message->tgroup_home_cpu = tgroup_home_cpu;
+			write_message->tgroup_home_id = tgroup_home_id;
+			write_message->is_fetch= 0;
+			write_message->is_write= 1;
+			write_message->last_write= page->last_write;
+			write_message->vma_operation_index= current->mm->vma_operation_index;
+
+			//object to held responses
+			mapping_answers_for_2_kernels_t* writing_page = (mapping_answers_for_2_kernels_t*) kmalloc(sizeof(mapping_answers_for_2_kernels_t),
+					GFP_ATOMIC);
+			if (writing_page == NULL) {
+				ret = VM_FAULT_OOM;
+				goto exit_write_message;
+
+			}
+
+			writing_page->tgroup_home_cpu= tgroup_home_cpu;
+			writing_page->tgroup_home_id= tgroup_home_id;
+			writing_page->address = address;
+			writing_page->address_present= 0;
+			writing_page->data= NULL;
+			writing_page->is_fetch= 0;
+			writing_page->is_write= 1;
+			writing_page->last_write= page->last_write;
+			writing_page->owner= 0;
+
+			writing_page->vma_present = 0;
+			writing_page->vaddr_start = 0;
+			writing_page->vaddr_size = 0;
+			writing_page->pgoff = 0;
+			memset(writing_page->path,0,sizeof(char)*512);
+			memset(&(writing_page->prot),0,sizeof(pgprot_t));
+			writing_page->vm_flags = 0;
+			writing_page->waiting = current;
+
+			// Make data entry visible to handler.
+			add_mapping_entry(writing_page);
+
+			PSPRINTK(
+					"Sending a write message for address %lu \n ", address);
+
+
+			spin_unlock(ptl);
+			up_read(&mm->mmap_sem);
+			/*PTE UNLOCKED*/
+			int sent= 0;
+			writing_page->arrived_response=0;
+
+#ifndef SUPPORT_FOR_CLUSTERING
+			for(i = 0; i < MAX_KERNEL_IDS; i++) {
+				// Skip the current cpu
+				if(i == _cpu) continue;
+
+#else
+				// the list does not include the current processor group descirptor (TODO)
+				struct list_head *iter;
+				_remote_cpu_info_list_t *objPtr;
+				list_for_each(iter, &rlist_head) {
+					objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+					i = objPtr->_data._processor;
+#endif
+					if (page->other_owners[i] == 1) {
+						if(strcmp(current->comm,"IS") == 0){
+							trace_printk("se\n");
+						}
+						if (!(pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (write_message),sizeof(data_request_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr))
+									== -1)) {
+							// Message delivered
+							sent++;
+							if(sent>1)
+								printk("ERROR: using protocol optimized for 2 kernels but sending a write to more than one kernel");
+						}
+					}
+				}
+
+				if(sent){
+					while (writing_page->arrived_response == 0) {
+						set_task_state(current, TASK_UNINTERRUPTIBLE);
+						if (writing_page->arrived_response == 0)
+							schedule();
+						set_task_state(current, TASK_RUNNING);
+					}
+
+					if(strcmp(current->comm,"IS") == 0){
+						trace_printk("r\n");
+					}
+				} else {
+					printk("ERROR: impossible to send write message, no destination kernel\n");
+					ret= VM_FAULT_REPLICATION_PROTOCOL;
+					down_read(&mm->mmap_sem);
+					spin_lock(ptl);
+					goto exit_writing_page;
+				}
+
+				if(strcmp(current->comm,"IS") == 0){
+					trace_printk("ls\n");
+				}
+
+				down_read(&mm->mmap_sem);
+				spin_lock(ptl);
+				/*PTE LOCKED*/
+
+				if(strcmp(current->comm,"IS") == 0){
+					trace_printk("l\n");
+				}
+
+				vma = find_vma(mm, address);
+				if (unlikely(
+							!vma || address >= vma->vm_end || address < vma->vm_start)) {
+
+					printk("ERROR: vma not valid during read for write\n");
+					ret = VM_FAULT_VMA;
+					goto exit_writing_page;
+				}
+
+				if(writing_page->owner!=1){
+					printk("ERROR: received answer to write without ownership\n");
+					ret = VM_FAULT_REPLICATION_PROTOCOL;
+					goto exit_writing_page;
+				}
+
+				if(writing_page->address_present==1){
+					if (writing_page->data->address != address) {
+						printk("ERROR: trying to copy wrong address!");
+						pcn_kmsg_free_msg(writing_page->data);
+						ret = VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit_writing_page;
+					}
+					//in this case I also received the new copy
+					if (writing_page->last_write != (page->last_write+1)) {
+						pcn_kmsg_free_msg(writing_page->data);
+						printk(
+								"ERROR: new copy received during a write but my last write is %lu and received last write is %lu\n",page->last_write,writing_page->last_write);
+						ret = VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit_writing_page;
+					}
+					else
+						page->last_write= writing_page->last_write;
+
+					void *vto;
+					void *vfrom;
+					// Ported to Linux 3.12 
+					//vto = kmap_atomic(page, KM_USER0);
+					vto = kmap_atomic(page);
+					vfrom = &(writing_page->data->data);
+
+#if	DIFF_PAGE
+					if(writing_page->data->data_size==PAGE_SIZE){
+						copy_user_page(vto, vfrom, address, page);
+					}
+					else{
+						if(writing_page->data->diff==1)
+							WKdm_decompress_and_diff(vfrom,vto);
+						else
+						{
+							kunmap_atomic(vto, KM_USER0);
+							pcn_kmsg_free_msg(writing_page->data);
+							printk(
+									"ERROR: received data not diff in write address %lu\n",address);
+							ret = VM_FAULT_REPLICATION_PROTOCOL;
+							goto exit_writing_page;
+						}
+					}
+
+#else
+					copy_user_page(vto, vfrom, address, page);
+#endif
+					// Ported to Linux 3.12 
+					//kunmap_atomic(vto, KM_USER0);
+					kunmap_atomic(vto);
+#if !DIFF_PAGE
+#if CHECKSUM
+					// Ported to Linux 3.12 
+					//vto= kmap_atomic(page, KM_USER0);
+					vto= kmap_atomic(page);
+					__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
+					// Ported to Linux 3.12 
+					//kunmap_atomic(vto, KM_USER0);
+					kunmap_atomic(vto);
+					__wsum check2= csum_partial(&(writing_page->data->data), PAGE_SIZE, 0);
+					if(check1!=check2) {
+						printk("ERROR: page just copied is not matching, address %lu\n",address);
+						pcn_kmsg_free_msg(writing_page->data);
+						ret= VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit_writing_page;
+					}
+					if(check1!=writing_page->data->checksum) {
+						printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
+						pcn_kmsg_free_msg(writing_page->data);
+						ret= VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit_writing_page;
+					}
+#endif
+#endif
+					pcn_kmsg_free_msg(writing_page->data);
+
+exit_writing_page:
+
+					remove_mapping_entry(writing_page);
+					kfree(writing_page);
+
+exit_write_message:
+
+					kfree(write_message);
+
+					if(ret!=0)
+						goto exit;
+				}
+				else{
+					remove_mapping_entry(writing_page);
+					kfree(writing_page);
+					kfree(write_message);
+
+					if(invalid){
+						printk("ERROR: writing an invalid page but not received a copy\n");
+						ret= VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit;
+					}
+				}
+			}
+			page->status = REPLICATION_STATUS_WRITTEN;
+			page->owner = 1;
+			(page->last_write)++;
+
+#if STATISTICS
+			if(page->last_write> most_written_page)
+				most_written_page= page->last_write;
+#endif
+
+#if	DIFF_PAGE
+			if(page->old_page_version==NULL){
+				page->old_page_version= kmalloc(sizeof(char)*PAGE_SIZE,
+						GFP_ATOMIC);
+				if(page->old_page_version==NULL){
+					printk("ERROR: impossible to kmalloc old diff page\n");
+					goto exit;
+				}
+			}
+
+			void *vto;
+			void *vfrom;
+			vto = page->old_page_version;
+			// Ported to Linux 3.12 
+			// vfrom = kmap_atomic(page, KM_USER0);
+			vfrom = kmap_atomic(page);
+			copy_user_page(vto, vfrom, address, page);
+			// Ported to Linux 3.12 
+			//kunmap_atomic(vfrom, KM_USER0);
+			kunmap_atomic(vfrom);
+#endif
+
+			flush_cache_page(vma, address, pte_pfn(*pte));
+
+			//now the page can be written
+			value_pte = *pte;
+			value_pte = pte_set_flags(value_pte, _PAGE_RW);
+			value_pte = pte_set_flags(value_pte, _PAGE_PRESENT);
+			//value_pte=pte_set_flags(value_pte,_PAGE_USER);
+			value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
+			//value_pte=pte_set_flags(value_pte,_PAGE_DIRTY);
+			ptep_clear_flush(vma, address, pte);
+
+			set_pte_at_notify(mm, address, pte, value_pte);
+
+			update_mmu_cache(vma, address, pte);
+
+			//flush_tlb_page(vma, address);
+
+			flush_tlb_fix_spurious_fault(vma, address);
+
+			PSPRINTK("Out write %i address %lu last write is %lu \n ", write, address,page->last_write);
+
+exit:
+			page->writing = 0;
+
+			if(strcmp(current->comm,"IS") == 0){
+				trace_printk("e\n");
+			}
+
+			return ret;
+		}
+
+#else
+/* Write on a REPLICATED page => coordinate with other kernels to write on the page at address "address" on the
+ * virtual mapping of the process identified by "tgroup_home_cpu" and "tgroup_home_id".
+ *
+ * down_read(&mm->mmap_sem) must be held.
+ * pte lock must be held.
+ *
+ *return types:
+ *VM_FAULT_OOM, problem allocating memory.
+ *VM_FAULT_VMA, error vma management.
+ *VM_FAULT_REPLICATION_PROTOCOL, general error.
+ *0, write succeeded;
+ * */
+static int do_remote_write(int tgroup_home_cpu, int tgroup_home_id,
+		struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
+		unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, spinlock_t* ptl,
+		struct page* page) {
+
+	int attemps_write, i;
+	ack_answers_t* answers;
+	invalid_data_t* invalid_message;
+	data_request_t* read_message;
+	mapping_answers_t* reading_page;
+	unsigned long flags;
+	int ret;
+	void *vto;
+	void *vfrom;
+	pte_t value_pte;
+
+	attemps_write = 1;
+
+	page->writing = 1;
+
+	/* Each write has a unique time stamp associated.
+	 * This time stamp will not change until the status will be set to written.
+	 */
+	page->time_stamp = native_read_tsc();
+
+	page->concurrent_writers = 0;
+	page->concurrent_fetch = 0;
+
+	//object to store the acks (nacks) sent by other kernels
+	answers = (ack_answers_t*) kmalloc(sizeof(ack_answers_t), GFP_ATOMIC);
+	if (answers == NULL) {
+		ret = VM_FAULT_OOM;
+		goto exit;
+	}
+	answers->tgroup_home_cpu = tgroup_home_cpu;
+	answers->tgroup_home_id = tgroup_home_id;
+	answers->address = address;
+	answers->waiting = current;
+	raw_spin_lock_init(&(answers->lock));
+
+	//message to invalidate the other copies
+	invalid_message = (invalid_data_t*) kmalloc(sizeof(invalid_data_t),
+			GFP_ATOMIC);
+	if (invalid_message == NULL) {
+		ret = VM_FAULT_OOM;
+		goto exit_answers;
+	}
+	invalid_message->header.type = PCN_KMSG_TYPE_PROC_SRV_INVALID_DATA;
+	invalid_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+	invalid_message->tgroup_home_cpu = tgroup_home_cpu;
+	invalid_message->tgroup_home_id = tgroup_home_id;
+	invalid_message->address = address;
+	invalid_message->time_stamp = page->time_stamp;
+	invalid_message->vma_operation_index= current->mm->vma_operation_index;
+
+	// Insert the object in the appropriate list.
+	add_ack_entry(answers);
+
+#if STATISTICS
+	write++;
+#endif
+
+retry_write:
+
+	PSPRINTK("Write %i address %lu attempts %i\n", write, address, attemps_write);
+
+	/* If this is not the fist attempt to write, the page has been written by a concurrent thread in another kernel.
+	 * I need to remote-read the page before trying to write again.
+	 */
+	if (attemps_write != 1) {
+
+		page->reading = 1;
+
+		//message to ask for a copy
+		read_message = (data_request_t*) kmalloc(sizeof(data_request_t),
+				GFP_ATOMIC);
+		if (read_message == NULL) {
+			ret = VM_FAULT_OOM;
+			goto exit_invalid;
+		}
+
+		read_message->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
+		read_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+		read_message->address = address;
+		read_message->tgroup_home_cpu = tgroup_home_cpu;
+		read_message->tgroup_home_id = tgroup_home_id;
+		read_message->read_for_write = 1;
+		read_message->vma_operation_index= current->mm->vma_operation_index;
+
+		//object to held responses
+		reading_page = (mapping_answers_t*) kmalloc(sizeof(mapping_answers_t),
+				GFP_ATOMIC);
+		if (reading_page == NULL) {
+			ret = VM_FAULT_OOM;
+			goto exit_read_message;
+
+		}
+		reading_page->address = address;
+		reading_page->address_present = REPLICATION_STATUS_INVALID;
+		reading_page->vma_present = 0;
+		reading_page->responses = 0;
+		reading_page->expected_responses = 0;
+		reading_page->tgroup_home_cpu = tgroup_home_cpu;
+		reading_page->tgroup_home_id = tgroup_home_id;
+		reading_page->waiting = current;
+		raw_spin_lock_init(&(reading_page->lock));
+
+		// Make data entry visible to handler.
+		add_mapping_entry(reading_page);
+
+		PSPRINTK(
+				"Read for write %i attempt %i address %lu \n ", write, attemps_write, address);
+
+		if (answers->owner == _cpu) {
+			printk("ERROR: asking a copy of a page for a write to myself.\n");
+			ret = VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit_reading_page;
+		}
+
+		spin_unlock(ptl);
+		up_read(&mm->mmap_sem);
+		/*PTE UNLOCKED*/
+
+		// Wait for owner to respond.
+		if (pcn_kmsg_send(answers->owner,
+					(struct pcn_kmsg_message*) (read_message)) != -1) {
+
+			reading_page->expected_responses = 1;
+
+			while (reading_page->responses == 0) {
+				//DEFINE_WAIT(wait);
+				//prepare_to_wait(&request_wait, &wait, TASK_UNINTERRUPTIBLE);
+				set_task_state(current, TASK_UNINTERRUPTIBLE);
+				if (reading_page->responses == 0)
+					schedule();
+				//finish_wait(&request_wait, &wait);
+				set_task_state(current, TASK_RUNNING);
+			}
+
+		} else {
+			printk("ERROR: owner not reachable.\n");
+			down_read(&mm->mmap_sem);
+			spin_lock(ptl);
+			ret = VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit_reading_page;
+		}
+
+		down_read(&mm->mmap_sem);
+		spin_lock(ptl);
+		/*PTE LOCKED*/
+
+		vma = find_vma(mm, address);
+		if (unlikely(
+					!vma || address >= vma->vm_end || address < vma->vm_start)) {
+
+			printk("ERROR: vma not valid during read for write\n");
+			ret = VM_FAULT_VMA;
+			goto exit_reading_page;
+		}
+
+		raw_spin_lock_irqsave(&(reading_page->lock), flags);
+		raw_spin_unlock_irqrestore(&(reading_page->lock), flags);
+
+		if (reading_page->address_present == REPLICATION_STATUS_INVALID) {
+			//aaaaaaaaaaaaaaaaaaa not valid copy in the system!!!
+			printk(
+					"ERROR: NO VALID COPY IN THE SYSTEM WHEN READING FOR WRITE\n");
+			ret = VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit_reading_page;
+		}
+
+		if (reading_page->data->address != address) {
+			printk("ERROR: trying to copy wrong address!");
+			pcn_kmsg_free_msg(reading_page->data);
+			ret = VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit_reading_page;
+		}
+		// Ported to Linux 3.12 
+		//vto = kmap_atomic(page, KM_USER0);
+		vto = kmap_atomic(page);
+		vfrom = reading_page->data->data;
+		copy_user_page(vto, vfrom, address, page);
+		// Ported to Linux 3.12 
+		//kunmap_atomic(vto, KM_USER0);
+		kunmap_atomic(vto);
+
+#if CHECKSUM
+		// Ported to Linux 3.12 
+		//vto= kmap_atomic(page, KM_USER0);
+		vto= kmap_atomic(page);
+		__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
+		// Ported to Linux 3.12 
+		//kunmap_atomic(vto, KM_USER0);
+		kunmap_atomic(vto);
+		__wsum check2= csum_partial(reading_page->data->data, PAGE_SIZE, 0);
+		if(check1!=check2) {
+			printk("ERROR: page just copied is not matching, address %lu\n",address);
+			pcn_kmsg_free_msg(reading_page->data);
+			ret= VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit_reading_page;
+		}
+		if(check1!=reading_page->data->checksum) {
+			printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
+			pcn_kmsg_free_msg(reading_page->data);
+			ret= VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit_reading_page;
+		}
+#endif
+
+		pcn_kmsg_free_msg(reading_page->data);
+		flush_cache_page(vma, address, pte_pfn(*pte));
+
+		page->status = REPLICATION_STATUS_VALID;
+		page->last_write = reading_page->last_write;
+
+		value_pte = *pte;
+		//we need to catch write access
+		value_pte = pte_clear_flags(value_pte, _PAGE_RW);
+		//value_pte= pte_clear_flags(value_pte,_PAGE_DIRTY);
+		value_pte = pte_set_flags(value_pte, _PAGE_PRESENT);
+		//value_pte= pte_set_flags(value_pte,_PAGE_USER);
+		value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
+
+		ptep_clear_flush(vma, address, pte);
+
+		set_pte_at_notify(mm, address, pte, value_pte);
+
+		update_mmu_cache(vma, address, pte);
+
+		//flush_tlb_page(vma, address);
+		//flush_tlb_fix_spurious_fault(vma, address);
+
+		remove_mapping_entry(reading_page);
+		kfree(reading_page);
+		kfree(read_message);
+
+		page->reading = 0;
+
+		//flush_cache_page(vma, address, pte_pfn(*pte));
+		PSPRINTK(
+				"Out read for write %i attempt %i address %lu \n ", write, attemps_write, address);
+	}
+
+	invalid_message->last_write = page->last_write;
+
+	answers->nack = 0;
+	answers->responses = 0;
+	answers->expected_responses = 0;
+	answers->concurrent = 0;
+	answers->owner = _cpu;
+	answers->time_stamp = page->time_stamp;
+
+	//send to the other copies the invalidation message
+	spin_unlock(ptl);
+	up_read(&mm->mmap_sem);
+	/*PTE UNLOCKED*/
+
+	PSMINPRINTK("writing %i address %lu iter %i \n", write, address,attemps_write);
+
+#ifndef SUPPORT_FOR_CLUSTERING
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
+		// Skip the current cpu
+		if(i == _cpu) continue;
+
+#else
+		// the list does not include the current processor group descirptor (TODO)
+		struct list_head *iter;
+		_remote_cpu_info_list_t *objPtr;
+		list_for_each(iter, &rlist_head) {
+			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+			i = objPtr->_data._processor;
+#endif
+			if (page->other_owners[i] == 1) {
+
+				if (!(pcn_kmsg_send(i, (struct pcn_kmsg_message*) (invalid_message))
+							== -1)) {
+					// Message delivered
+					answers->expected_responses++;
+				}
+			}
+		}
+
+		//wait for all the answers (ack or nack) to arrive
+		while (!(answers->responses == answers->expected_responses)) {
+			//DEFINE_WAIT(wait);
+			//	prepare_to_wait(&ack_wait, &wait, TASK_UNINTERRUPTIBLE);
+			set_task_state(current, TASK_UNINTERRUPTIBLE);
+			if (!(answers->responses == answers->expected_responses))
+				schedule();
+			//finish_wait(&ack_wait, &wait);
+			set_task_state(current, TASK_RUNNING);
+		}
+
+		down_read(&mm->mmap_sem);
+		spin_lock(ptl);
+		/*PTE LOCKED*/
+
+		vma = find_vma(mm, address);
+		if (unlikely(!vma || address >= vma->vm_end || address < vma->vm_start)) {
+
+			printk("ERROR: vma not valid after waiting for ack to invalid\n");
+			ret = VM_FAULT_VMA;
+			goto exit_invalid;
+		}
+
+		/* If somebody was concurrently writing with success on other kernels, retry.
+		 */
+		PSPRINTK("Concurrent_writers %i \n", page->concurrent_writers);
+
+		if (answers->nack != 0) {
+
+#if STATISTICS
+			concurrent_write++;
+#endif
+
+			attemps_write++;
+			goto retry_write;
+
+		} else {
+
+			PSPRINTK(
+					"Received all acks to write %i address %lu attempts %i\n", write, address, attemps_write);
+
+			raw_spin_lock_irqsave(&(answers->lock), flags);
+			raw_spin_unlock_irqrestore(&(answers->lock), flags);
+
+			//change status to written
+			page->status = REPLICATION_STATUS_WRITTEN;
+			page->owner = _cpu;
+			(page->last_write)++;
+
+#if STATISTICS
+			if(page->last_write> most_written_page)
+				most_written_page= page->last_write;
+			if(attemps_write >most_long_write)
+				most_long_write= attemps_write;
+#endif
+
+			memset(page->need_fetch, 0, MAX_KERNEL_IDS*sizeof(int));
+			page->concurrent_fetch = 0;
+			page->concurrent_writers = answers->concurrent;
+
+			flush_cache_page(vma, address, pte_pfn(*pte));
+
+			//now the page can be written
+			value_pte = *pte;
+			value_pte = pte_set_flags(value_pte, _PAGE_RW);
+			value_pte = pte_set_flags(value_pte, _PAGE_PRESENT);
+			//value_pte=pte_set_flags(value_pte,_PAGE_USER);
+			value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
+			//value_pte=pte_set_flags(value_pte,_PAGE_DIRTY);
+			ptep_clear_flush(vma, address, pte);
+
+			set_pte_at_notify(mm, address, pte, value_pte);
+
+			update_mmu_cache(vma, address, pte);
+
+			//flush_tlb_page(vma, address);
+
+			flush_tlb_fix_spurious_fault(vma, address);
+
+			ret = 0;
+			goto exit_invalid;
+		}
+
+exit_reading_page:
+
+		remove_mapping_entry(reading_page);
+		kfree(reading_page);
+
+exit_read_message:
+
+		kfree(read_message);
+		page->reading = 0;
+
+exit_invalid:
+
+		kfree(invalid_message);
+		remove_ack_entry(answers);
+
+exit_answers:
+
+		kfree(answers);
+
+exit:
+
+		page->writing = 0;
+
+		return ret;
+}
+
+#endif
+
 static unsigned long map_difference(struct file *file, unsigned long addr,
 		unsigned long len, unsigned long prot, unsigned long flags,
 		unsigned long pgoff) {
@@ -3658,10 +6682,10 @@ done:
 }
 
 #if FOR_2_KERNELS
-int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* fetching_page,
+static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* fetching_page,
 	struct mm_struct* mm, unsigned long address, spinlock_t* ptl) {
 #else
-int do_mapping_for_distributed_process(mapping_answers_t* fetching_page,
+static int do_mapping_for_distributed_process(mapping_answers_t* fetching_page,
 		struct mm_struct* mm, unsigned long address, spinlock_t* ptl) {
 #endif
 
@@ -3905,6 +6929,856 @@ int do_mapping_for_distributed_process(mapping_answers_t* fetching_page,
 	return 0;
 }
 
+#if FOR_2_KERNELS
+//static
+int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
+		struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
+		unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, pte_t value_pte,
+		spinlock_t* ptl) {
+
+	mapping_answers_for_2_kernels_t* fetching_page;
+	data_request_for_2_kernels_t* fetch_message;
+	int ret= 0,i,reachable,other_cpu=-1;
+
+	if(strcmp(current->comm,"IS") == 0){
+		trace_printk("s\n");
+	}
+
+	PSMINPRINTK("Fetch for address %lu write %i pid %d is local?%d\n", address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),current->pid,pte_none(value_pte));
+#if STATISTICS
+	fetch++;
+#endif
+
+	fetching_page = (mapping_answers_for_2_kernels_t*) kmalloc(sizeof(mapping_answers_for_2_kernels_t),
+			GFP_ATOMIC);
+	if (fetching_page == NULL) {
+		ret = VM_FAULT_OOM;
+		goto exit;
+	}
+
+	fetching_page->tgroup_home_cpu = tgroup_home_cpu;
+	fetching_page->tgroup_home_id = tgroup_home_id;
+	fetching_page->address = address;
+
+	fetching_page->vma_present = 0;
+	fetching_page->vaddr_start = 0;
+	fetching_page->vaddr_size = 0;
+	fetching_page->pgoff = 0;
+	memset(fetching_page->path,0,sizeof(char)*512);
+	memset(&(fetching_page->prot),0,sizeof(pgprot_t));
+	fetching_page->vm_flags = 0;
+
+	if(page_fault_flags & FAULT_FLAG_WRITE)
+		fetching_page->is_write= 1;
+	else
+		fetching_page->is_write= 0;
+
+	fetching_page->is_fetch= 1;
+	fetching_page->owner= 0;
+	fetching_page->address_present= 0;
+	fetching_page->last_write= 0;
+	fetching_page->data= NULL;
+	fetching_page->futex_owner = -1;//akshay
+
+	fetching_page->waiting = current;
+
+	add_mapping_entry(fetching_page);
+
+	if(_cpu==tgroup_home_cpu){
+		if(pte_none(value_pte)){
+			//not marked pte
+
+#if STATISTICS
+			local_fetch++;
+#endif
+			PSPRINTK("Copy not present in the other kernel, local fetch %d of address %lu\n", local_fetch, address);
+			ret = VM_CONTINUE_WITH_CHECK;
+			goto exit;
+		}
+	}
+
+	fetch_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
+			GFP_ATOMIC);
+	if (fetch_message == NULL) {
+		ret = VM_FAULT_OOM;
+		goto exit_fetching_page;
+	}
+
+	fetch_message->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
+	fetch_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+	fetch_message->address = address;
+	fetch_message->tgroup_home_cpu = tgroup_home_cpu;
+	fetch_message->tgroup_home_id = tgroup_home_id;
+	fetch_message->is_write = fetching_page->is_write;
+	fetch_message->is_fetch= 1;
+	fetch_message->vma_operation_index= current->mm->vma_operation_index;
+
+	PSPRINTK("Fetch %i address %lu\n", fetch, address);
+
+	spin_unlock(ptl);
+	up_read(&mm->mmap_sem);
+	/*PTE UNLOCKED*/
+
+	fetching_page->arrived_response= 0;
+	reachable= 0;
+
+	memory_t* memory= find_memory_entry(current->tgroup_home_cpu,
+			current->tgroup_home_id);
+
+	down_read(&memory->kernel_set_sem);
+
+#ifndef SUPPORT_FOR_CLUSTERING
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
+		// Skip the current cpu
+		if(i == _cpu) continue;
+
+#else
+		// the list does not include the current processor group descirptor (TODO)
+		struct list_head *iter;
+		_remote_cpu_info_list_t *objPtr;
+		list_for_each(iter, &rlist_head) {
+			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+			i = objPtr->_data._processor;
+
+#endif
+			if(memory->kernel_set[i]==1)
+				if(strcmp(current->comm,"IS") == 0){
+					trace_printk("se\n");
+				}
+
+			if ((ret=pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (fetch_message),sizeof(data_request_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr)))
+					!= -1) {
+				// Message delivered
+				reachable++;
+				other_cpu= i;
+				if(reachable>1)
+					printk("ERROR: using optimized algorithm for 2 kernels with more than two kernels\n");
+			}
+		}
+
+		up_read(&memory->kernel_set_sem);
+
+		if(reachable>0){
+			while (fetching_page->arrived_response==0) {
+
+				set_task_state(current, TASK_UNINTERRUPTIBLE);
+
+				if (fetching_page->arrived_response==0) {
+					schedule();
+				}
+
+				set_task_state(current, TASK_RUNNING);
+			}
+			if(strcmp(current->comm,"IS") == 0){
+				trace_printk("r\n");
+			}
+
+		}
+
+		if(strcmp(current->comm,"IS") == 0){
+			trace_printk("ls\n");
+		}
+
+		down_read(&mm->mmap_sem);
+		spin_lock(ptl);
+		/*PTE LOCKED*/
+		if(strcmp(current->comm,"IS") == 0){
+			trace_printk("l\n");
+		}
+
+		PSPRINTK("Out wait fetch %i address %lu \n", fetch, address);
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+		//only the client has to update the vma
+		if(tgroup_home_cpu!=_cpu)
+#endif
+
+		{
+			ret = do_mapping_for_distributed_process(fetching_page, mm, address, ptl);
+			if (ret != 0)
+				goto exit_fetch_message;
+				
+			PSPRINTK("Mapping end\n");
+
+			vma = find_vma(mm, address);
+			if (!vma || address >= vma->vm_end || address < vma->vm_start) {
+				vma = NULL;
+			} else if (unlikely(is_vm_hugetlb_page(vma))
+					|| unlikely(transparent_hugepage_enabled(vma))) {
+				printk("ERROR: Installed a vma with HUGEPAGE\n");
+				ret = VM_FAULT_VMA;
+				goto exit_fetch_message;
+			}
+
+			if (vma == NULL) {
+				//PSPRINTK
+				dump_stack();
+				printk(KERN_ALERT"%s: ERROR: no vma for address %lu in the system {%d} \n",__func__, address,current->pid);
+				ret = VM_FAULT_VMA;
+				goto exit_fetch_message;
+			}
+
+		}
+
+		if(_cpu==tgroup_home_cpu && fetching_page->address_present == 0){
+			printk("ERROR: No response for a marked page\n");
+			ret = VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit_fetch_message;
+		}
+
+		if (fetching_page->address_present == 1) {
+
+			struct page* page;
+			spin_unlock(ptl);
+			/*PTE UNLOCKED*/
+
+			if (unlikely(anon_vma_prepare(vma))) {
+				spin_lock(ptl);
+				/*PTE LOCKED*/
+				ret = VM_FAULT_OOM;
+				goto exit_fetch_message;
+			}
+
+			page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
+			if (!page) {
+				spin_lock(ptl);
+				/*PTE LOCKED*/
+				ret = VM_FAULT_OOM;
+				goto exit_fetch_message;
+			}
+
+			__SetPageUptodate(page);
+
+			if (mem_cgroup_newpage_charge(page, mm, GFP_ATOMIC)) {
+				page_cache_release(page);
+				spin_lock(ptl);
+				/*PTE LOCKED*/
+				ret = VM_FAULT_OOM;
+				goto exit_fetch_message;
+			}
+
+#if STATISTICS
+			pages_allocated++;
+#endif
+			spin_lock(ptl);
+			/*PTE LOCKED*/
+
+			int status;
+			void *vto;
+			void *vfrom;
+
+			//if nobody changed the pte
+			if (likely(pte_same(*pte, value_pte))) {
+
+				if(fetching_page->is_write){ //if I am doing a write
+
+					status= REPLICATION_STATUS_WRITTEN;
+					if(fetching_page->owner==0){
+						printk("ERROR: copy of a page sent to a write fetch request without ownership\n");
+						pcn_kmsg_free_msg(fetching_page->data);
+						ret = VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit_fetch_message;
+					}
+
+				}
+				else{
+
+					status= REPLICATION_STATUS_VALID;
+					if(fetching_page->owner==1){
+						printk("ERROR: copy of a page sent to a read fetch request with ownership\n");
+						pcn_kmsg_free_msg(fetching_page->data);
+						ret = VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit_fetch_message;
+					}
+				}
+
+				if (fetching_page->data->address != address) {
+					printk("ERROR: trying to copy wrong address!");
+					pcn_kmsg_free_msg(fetching_page->data);
+					ret = VM_FAULT_REPLICATION_PROTOCOL;
+					goto exit_fetch_message;
+				}
+
+
+#if DIFF_PAGE
+
+				if(fetching_page->data->diff==1){
+					printk("ERROR: answered to a fetch with diff data\n");
+					pcn_kmsg_free_msg(fetching_page->data);
+					ret = VM_FAULT_REPLICATION_PROTOCOL;
+					goto exit_fetch_message;
+				}
+
+				// Ported to Linux 3.12 
+				//vto = kmap_atomic(page, KM_USER0);
+				vto = kmap_atomic(page);
+				vfrom = &(fetching_page->data->data);
+
+				if(fetching_page->data->data_size==PAGE_SIZE)
+					copy_user_page(vto, vfrom, address, page);
+				else{
+					WKdm_decompress(vfrom,vto);
+				}
+
+				// Ported to Linux 3.12 
+				//kunmap_atomic(vto, KM_USER0);
+				kunmap_atomic(vto);
+
+				if(status==REPLICATION_STATUS_WRITTEN){
+					if(page->old_page_version==NULL){
+						page->old_page_version= kmalloc(sizeof(char)*PAGE_SIZE,
+								GFP_ATOMIC);
+						if(page->old_page_version==NULL){
+							printk("ERROR: impossible to kmalloc old diff page\n");
+							pcn_kmsg_free_msg(fetching_page->data);
+							ret = VM_FAULT_REPLICATION_PROTOCOL;
+							goto exit_fetch_message;
+						}
+					}
+
+					vto = page->old_page_version;
+					// Ported to Linux 3.12 
+					//vfrom = kmap_atomic(page, KM_USER0);
+					vfrom = kmap_atomic(page);
+					memcpy(vto, vfrom, PAGE_SIZE);
+					// Ported to Linux 3.12 
+					//kunmap_atomic(vto, KM_USER0);
+					kunmap_atomic(vto);
+				}
+#else
+				// Ported to Linux 3.12 
+				//vto = kmap_atomic(page, KM_USER0);
+				vto = kmap_atomic(page);
+				vfrom = &(fetching_page->data->data);
+				copy_user_page(vto, vfrom, address, page);
+				// Ported to Linux 3.12 
+				//kunmap_atomic(vto, KM_USER0);
+				kunmap_atomic(vto);
+#if READ_PAGE
+				int ct=0;
+				if(address == PAGE_ADDR)
+					for(ct=0;ct<8;ct++){
+						printk(KERN_ALERT"{%lx} ",(unsigned long) *(((unsigned long *)vfrom)+ct));
+					}
+			}
+#endif
+
+#if CHECKSUM
+			// Ported to Linux 3.12 
+			//vto= kmap_atomic(page, KM_USER0);
+			vto= kmap_atomic(page);
+			__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
+			// Ported to Linux 3.12 
+			//kunmap_atomic(vto, KM_USER0);
+			kunmap_atomic(vto);
+			__wsum check2= csum_partial(&(fetching_page->data->data), PAGE_SIZE, 0);
+
+
+			if(check1!=check2) {
+				printk("ERROR: page just copied is not matching, address %lu\n",address);
+				pcn_kmsg_free_msg(fetching_page->data);
+				ret= VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_fetch_message;
+			}
+			if(check1!=fetching_page->data->checksum) {
+				printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
+				pcn_kmsg_free_msg(fetching_page->data);
+				ret= VM_FAULT_REPLICATION_PROTOCOL;
+				goto exit_fetch_message;
+			}
+#endif
+
+#endif
+
+			pcn_kmsg_free_msg(fetching_page->data);
+
+			pte_t entry = mk_pte(page, vma->vm_page_prot);
+
+			//if the page is read only no need to keep replicas coherent
+			if (vma->vm_flags & VM_WRITE) {
+
+				page->replicated = 1;
+
+				if(fetching_page->is_write){
+					page->last_write = fetching_page->last_write+1;
+				}
+				else
+					page->last_write = fetching_page->last_write;
+
+#if STATISTICS
+				if(page->last_write> most_written_page)
+					most_written_page= page->last_write;
+#endif
+				page->owner = fetching_page->owner;
+
+				page->status = status;
+
+				if (status == REPLICATION_STATUS_VALID) {
+					entry = pte_clear_flags(entry, _PAGE_RW);
+				} else {
+					entry = pte_set_flags(entry, _PAGE_RW);
+				}
+
+			} else {
+				if(fetching_page->is_write)
+					printk("ERROR: trying to write a read only page\n");
+
+				if(fetching_page->owner==1)
+					printk("ERROR: received ownership with a copy of a read only page\n");
+
+				page->replicated = 0;
+				page->owner= 0;
+				page->status= REPLICATION_STATUS_NOT_REPLICATED;
+
+			}
+
+			entry = pte_set_flags(entry, _PAGE_PRESENT);
+			page->other_owners[_cpu]=1;
+			page->other_owners[other_cpu]=1;
+			page->futex_owner = fetching_page->futex_owner;//akshay
+
+			flush_cache_page(vma, address, pte_pfn(*pte));
+
+			entry = pte_set_flags(entry, _PAGE_USER);
+			entry = pte_set_flags(entry, _PAGE_ACCESSED);
+
+
+			ptep_clear_flush(vma, address, pte);
+
+
+
+			page_add_new_anon_rmap(page, vma, address);
+			set_pte_at_notify(mm, address, pte, entry);
+
+			update_mmu_cache(vma, address, pte);
+#if PRINT_PAGE
+			unsigned char *print_ptr = vto;
+			int i = 0;
+			printk("\n====================================================");
+			printk("\nPAGE WRITTEN:(0x%x)\n", address);
+			for(i = 0; i < PAGE_SIZE;  i++) {
+				if((i%32) == 0) {
+					printk("\n");
+				}
+				printk("%02x ", *print_ptr);
+				print_ptr++;
+			}                       
+			printk("\n====================================================\n");
+#endif
+
+		} else {
+			printk("pte changed while fetching\n");
+			status = REPLICATION_STATUS_INVALID;
+			mem_cgroup_uncharge_page(page);
+			page_cache_release(page);
+			pcn_kmsg_free_msg(fetching_page->data);
+
+		}
+
+		PSPRINTK("End fetching address %lu \n", address);
+		ret= 0;
+		goto exit_fetch_message;
+
+	}
+
+	//copy not present on the other kernel
+	else {
+
+#if STATISTICS
+		local_fetch++;
+#endif
+		PSPRINTK("Copy not present in the other kernel, local fetch %d of address %lu\n", local_fetch, address);
+		PSMINPRINTK("Local fetch for address %lu\n",address);
+		kfree(fetch_message);
+		ret = VM_CONTINUE_WITH_CHECK;
+		goto exit;
+	}
+
+exit_fetch_message:
+
+	kfree(fetch_message);
+
+exit_fetching_page:
+
+	remove_mapping_entry(fetching_page);
+	kfree(fetching_page);
+
+exit:
+	if(strcmp(current->comm,"IS") == 0){
+		trace_printk("e\n");
+	}
+
+	return ret;
+}
+
+#else
+/* Fetch a page from the system => ask other kernels if they have a copy of the page at address "address" on the
+ * virtual mapping of the process identified by "tgroup_home_cpu" and "tgroup_home_id".
+ *
+ * down_read(&mm->mmap_sem) must be held.
+ * pte lock must be held.
+ *
+ *return types:
+ *VM_FAULT_OOM, problem allocating memory.
+ *VM_FAULT_VMA, error vma management.
+ *VM_FAULT_REPLICATION_PROTOCOL, general error.
+ *VM_CONTINUE_WITH_CHECK, fetch the page locally.
+ *0, remotely fetched;
+ *-1, invalidated while fetching;
+ * */
+static int do_remote_fetch(int tgroup_home_cpu, int tgroup_home_id,
+		struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
+		unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, pte_t value_pte,
+		spinlock_t* ptl) {
+
+	mapping_answers_t* fetching_page;
+	data_request_t* fetch_message;
+	int i;
+	unsigned long flags;
+	int ret = 0;
+	char lpath[512];
+
+	/* I need to keep the information that this address is currently on a fetch phase.
+	 * Store the info in an appropriate list.
+	 * This allows the handlers of invalidation and request to maintain an updated status for the future page.
+	 * Plus the answers to my fetch will update this object.
+	 * Plus it will prevent multiple fetch of the same address.
+	 */
+
+	fetching_page = (mapping_answers_t*) kmalloc(sizeof(mapping_answers_t),
+			GFP_ATOMIC);
+	if (fetching_page == NULL) {
+		ret = VM_FAULT_OOM;
+		goto exit;
+	}
+	fetching_page->address = address;
+	fetching_page->tgroup_home_cpu = tgroup_home_cpu;
+	fetching_page->tgroup_home_id = tgroup_home_id;
+	fetching_page->address_present = REPLICATION_STATUS_INVALID;
+	fetching_page->data = NULL;
+	fetching_page->fetching = 0;
+	fetching_page->last_invalid = -1;
+	fetching_page->last_write = 0;
+	fetching_page->owner = -1;
+	memset(fetching_page->owners, 0, sizeof(int) * MAX_KERNEL_IDS);
+	fetching_page->vma_present = 0;
+	fetching_page->vaddr_start = 0;
+	fetching_page->vaddr_size = 0;
+	fetching_page->vm_flags = 0;
+	fetching_page->pgoff = 0;
+	memset(fetching_page->path,0,sizeof(char)*512);
+	memset(&(fetching_page->prot),0,sizeof(pgprot_t));
+	raw_spin_lock_init(&(fetching_page->lock));
+	fetching_page->responses = 0;
+	fetching_page->waiting = current;
+
+	// Insert the object in the appropriate list.
+	add_mapping_entry(fetching_page);
+
+	//create the message to broadcast to other kernels
+	fetch_message = (data_request_t*) kmalloc(sizeof(data_request_t),
+			GFP_ATOMIC);
+	if (fetch_message == NULL) {
+		ret = VM_FAULT_OOM;
+		goto exit_fetching_page;
+	}
+
+	fetch_message->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
+	fetch_message->header.prio = PCN_KMSG_PRIO_NORMAL;
+	fetch_message->address = address;
+	fetch_message->tgroup_home_cpu = tgroup_home_cpu;
+	fetch_message->tgroup_home_id = tgroup_home_id;
+	fetch_message->read_for_write = 0;
+	fetch_message->vma_operation_index= current->mm->vma_operation_index;
+
+#if STATISTICS
+	fetch++;
+#endif
+	PSPRINTK("Fetch %i address %lu \n", fetch, address);
+	PSMINPRINTK("Fetch %i address %lu \n", fetch, address);
+
+	spin_unlock(ptl);
+	up_read(&mm->mmap_sem);
+	/*PTE UNLOCKED*/
+
+	//send to all cpus
+	fetching_page->expected_responses = 0;
+
+	memory_t* memory= find_memory_entry(current->tgroup_home_cpu,
+			current->tgroup_home_id);
+
+	down_read(&memory->kernel_set_sem);
+
+#ifndef SUPPORT_FOR_CLUSTERING
+	for(i = 0; i < MAX_KERNEL_IDS; i++) {
+		// Skip the current cpu
+		if(i == _cpu) continue;
+
+#else
+		// the list does not include the current processor group descirptor (TODO)
+		struct list_head *iter;
+		_remote_cpu_info_list_t *objPtr;
+		list_for_each(iter, &rlist_head) {
+			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
+			i = objPtr->_data._processor;
+#endif
+			if(memory->kernel_set[i]==1)
+				if (pcn_kmsg_send(i, (struct pcn_kmsg_message*) (fetch_message))
+						!= -1) {
+					// Message delivered
+					fetching_page->expected_responses++;
+				}
+		}
+
+		up_read(&memory->kernel_set_sem);
+
+		//wait while all the reachable cpus send back an answer
+		while (fetching_page->expected_responses != fetching_page->responses) {
+
+			set_task_state(current, TASK_UNINTERRUPTIBLE);
+
+			if (fetching_page->expected_responses != fetching_page->responses) {
+				schedule();
+			}
+
+			set_task_state(current, TASK_RUNNING);
+		}
+
+		down_read(&mm->mmap_sem);
+		spin_lock(ptl);
+		/*PTE LOCKED*/
+
+		PSPRINTK("Out wait fetch %i address %lu \n", fetch, address);
+
+		raw_spin_lock_irqsave(&(fetching_page->lock), flags);
+		raw_spin_unlock_irqrestore(&(fetching_page->lock), flags);
+
+#if NOT_REPLICATED_VMA_MANAGEMENT
+		//only the client has to update the vma
+		if(tgroup_home_cpu!=_cpu)
+#endif
+
+		{
+			ret = do_mapping_for_distributed_process(fetching_page, mm, address, ptl);
+			if (ret != 0)
+				goto exit_fetch_message;
+
+			vma = find_vma(mm, address);
+			if (!vma || address >= vma->vm_end || address < vma->vm_start) {
+				vma = NULL;
+			} else if (unlikely(is_vm_hugetlb_page(vma))
+					|| unlikely(transparent_hugepage_enabled(vma))) {
+				printk("ERROR: Installed a vma with HUGEPAGE\n");
+				ret = VM_FAULT_VMA;
+				goto exit_fetch_message;
+			}
+
+			if (vma == NULL) {
+				PSPRINTK("ERROR: no vma for address %lu in the system\n", address);
+				ret = VM_FAULT_VMA;
+				goto exit_fetch_message;
+			}
+		}
+		/*Check if someone sent a copy of the page.
+		 *If there not exist valid copies, a copy is locally fetched.
+		 */
+		if (fetching_page->address_present != REPLICATION_STATUS_INVALID) {
+			struct page* page;
+			spin_unlock(ptl);
+			/*PTE UNLOCKED*/
+
+			if (unlikely(anon_vma_prepare(vma))) {
+				spin_lock(ptl);
+				/*PTE LOCKED*/
+				ret = VM_FAULT_OOM;
+				goto exit_fetch_message;
+			}
+
+			page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
+			if (!page) {
+				spin_lock(ptl);
+				/*PTE LOCKED*/
+				ret = VM_FAULT_OOM;
+				goto exit_fetch_message;
+			}
+
+			__SetPageUptodate(page);
+
+			if (mem_cgroup_newpage_charge(page, mm, GFP_ATOMIC)) {
+				page_cache_release(page);
+				spin_lock(ptl);
+				/*PTE LOCKED*/
+				ret = VM_FAULT_OOM;
+				goto exit_fetch_message;
+			}
+
+			//process_server_clean_page(page);
+#if STATISTICS
+			pages_allocated++;
+#endif
+			spin_lock(ptl);
+			/*PTE LOCKED*/
+
+			int status;
+			//if nobody changed the pte
+			if (likely(pte_same(*pte, value_pte))) {
+
+				/*If an invalid message arrived for the oldest copy that I received,
+				 *the copy should be discarded and not installed.
+				 */
+				if (fetching_page->last_invalid >= fetching_page->last_write) {
+					status = REPLICATION_STATUS_INVALID;
+					PSPRINTK("Page will be installed as invalid\n");
+				} else
+					status = REPLICATION_STATUS_VALID;
+
+				void *vto;
+				void *vfrom;
+				//copy into the page the copy received
+				if (status == REPLICATION_STATUS_VALID) {
+
+					if (fetching_page->data->address != address) {
+						printk("ERROR: trying to copy wrong address!");
+						pcn_kmsg_free_msg(fetching_page->data);
+						ret = VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit_fetch_message;
+					}
+					// Ported to Linux 3.12 
+					//vto = kmap_atomic(page, KM_USER0);
+					vto = kmap_atomic(page);
+					vfrom = fetching_page->data->data;
+					copy_user_page(vto, vfrom, address, page);
+					// Ported to Linux 3.12 
+					//kunmap_atomic(vto, KM_USER0);
+					kunmap_atomic(vto);
+
+#if CHECKSUM
+					// Ported to Linux 3.12 
+					//vto= kmap_atomic(page, KM_USER0);
+					vto= kmap_atomic(page);
+					__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
+					// Ported to Linux 3.12 
+					//kunmap_atomic(vto, KM_USER0);
+					kunmap_atomic(vto);
+					__wsum check2= csum_partial(fetching_page->data->data, PAGE_SIZE, 0);
+					if(check1!=check2) {
+						printk("ERROR: page just copied is not matching, address %lu\n",address);
+						pcn_kmsg_free_msg(fetching_page->data);
+						ret= VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit_fetch_message;
+					}
+					if(check1!=fetching_page->data->checksum) {
+						printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
+						pcn_kmsg_free_msg(fetching_page->data);
+						ret= VM_FAULT_REPLICATION_PROTOCOL;
+						goto exit_fetch_message;
+					}
+#endif
+
+				}
+
+				pcn_kmsg_free_msg(fetching_page->data);
+
+				pte_t entry = mk_pte(page, vma->vm_page_prot);
+
+				//if the page is read only no need to keep replicas coherent
+				if (vma->vm_flags & VM_WRITE) {
+
+					page->replicated = 1;
+
+					page->last_write = fetching_page->last_write;
+
+#if STATISTICS
+					if(page->last_write> most_written_page)
+						most_written_page= page->last_write;
+#endif
+
+					memcpy(page->other_owners, fetching_page->owners,
+							sizeof(int) * MAX_KERNEL_IDS);
+					page->other_owners[_cpu] = 1;
+					page->owner = fetching_page->owner;
+
+					if (status == REPLICATION_STATUS_VALID) {
+						page->status = REPLICATION_STATUS_VALID;
+						entry = pte_set_flags(entry, _PAGE_PRESENT);
+						entry = pte_clear_flags(entry, _PAGE_RW);
+					} else {
+						entry = pte_clear_flags(entry, _PAGE_PRESENT);
+						page->status = REPLICATION_STATUS_INVALID;
+					}
+
+				} else {
+					page->replicated = 0;
+					memcpy(page->other_owners, fetching_page->owners,
+							sizeof(int) * MAX_KERNEL_IDS);
+					page->other_owners[_cpu] = 1;
+					entry = pte_set_flags(entry, _PAGE_PRESENT);
+				}
+
+				flush_cache_page(vma, address, pte_pfn(*pte));
+
+				entry = pte_set_flags(entry, _PAGE_USER);
+				entry = pte_set_flags(entry, _PAGE_ACCESSED);
+
+				ptep_clear_flush(vma, address, pte);
+
+				page_add_new_anon_rmap(page, vma, address);
+
+				set_pte_at_notify(mm, address, pte, entry);
+
+				update_mmu_cache(vma, address, pte);
+
+				//flush_tlb_page(vma, address);
+
+				//flush_tlb_fix_spurious_fault(vma, address);
+
+			} else {
+				status = REPLICATION_STATUS_INVALID;
+				mem_cgroup_uncharge_page(page);
+				page_cache_release(page);
+				pcn_kmsg_free_msg(fetching_page->data);
+			}
+
+			PSPRINTK("End fetching address %lu \n", address);
+			if (status == REPLICATION_STATUS_INVALID)
+				ret = -1;
+			else
+				ret = 0;
+			goto exit_fetch_message;
+
+		}
+
+		//copies not present on other kernels
+		else {
+			//I am the only using it => no need of replication until someone asks for it
+#if STATISTICS
+			local_fetch++;
+#endif
+			PSPRINTK(
+					"Copy not present in the system, local fetch %d of address %lu\n", local_fetch, address);
+
+			kfree(fetch_message);
+			ret = VM_CONTINUE_WITH_CHECK;
+			goto exit;
+		}
+
+exit_fetch_message:
+
+		kfree(fetch_message);
+
+exit_fetching_page:
+
+		remove_mapping_entry(fetching_page);
+		kfree(fetching_page);
+
+exit:
+
+		return ret;
+
+}
+
+#endif
+
 extern int access_error(unsigned long error_code, struct vm_area_struct *vma);
 
 /**
@@ -4064,7 +7938,7 @@ start: if (pte == NULL || pte_none(value_pte)) {
 
 #if FOR_2_KERNELS
 	       ret = do_remote_fetch_for_2_kernels(tsk->tgroup_home_cpu, tsk->tgroup_home_id, mm,
-						   vma, address, page_fault_flags, pmd, pte, value_pte, ptl, _cpu);
+			       vma, address, page_fault_flags, pmd, pte, value_pte, ptl);
 
 #else
 
@@ -4370,7 +8244,7 @@ check:
 
 #if FOR_2_KERNELS
 				       ret = do_remote_write_for_2_kernels(tgroup_home_cpu, tgroup_home_id, mm, vma,
-									   address, page_fault_flags, pmd, pte, ptl, page,0, _cpu);
+						       address, page_fault_flags, pmd, pte, ptl, page,0);
 #else
 				       ret = do_remote_write(tgroup_home_cpu, tgroup_home_id, mm, vma,
 						       address, page_fault_flags, pmd, pte, ptl, page);
@@ -4466,10 +8340,10 @@ check:
 #if FOR_2_KERNELS
 				       if (page_fault_flags & FAULT_FLAG_WRITE)
 					       ret = do_remote_write_for_2_kernels(tgroup_home_cpu, tgroup_home_id, mm, vma,
-										   address, page_fault_flags, pmd, pte, ptl, page,1, _cpu);
+							       address, page_fault_flags, pmd, pte, ptl, page,1);
 				       else
 					       ret = do_remote_read_for_2_kernels(tgroup_home_cpu, tgroup_home_id, mm, vma,
-										  address, page_fault_flags, pmd, pte, ptl, page, _cpu);
+							       address, page_fault_flags, pmd, pte, ptl, page);
 #else
 				       /* case REPLICATION_STATUS_INVALID
 					* both read and write need to remote-read the page.
@@ -4823,23 +8697,21 @@ int do_migration(struct task_struct* task, int dst_cpu,
 * PROCESS_SERVER_CLONE_SUCCESS otherwise.
 */
 int process_server_do_migration(struct task_struct* task, int dst_cpu,
-				struct pt_regs * regs) {
+	       struct pt_regs * regs) {
 
-	int first = 0;
-	int back = 0;
-	int ret = 0;
+       int first = 0;
+       int back= 0;
+       int ret= 0;
 
-	printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",
-	       __func__, current->pid, current->tgid, task->tgroup_home_id,
-	       task->tgroup_home_cpu);
-
-	if (strcmp(current->comm,"IS") == 0){
-		trace_printk("s\n");
-	}
+       printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
+       if(strcmp(current->comm,"IS") == 0){
+	       trace_printk("s\n");
+       }
 
 #if TIMING
-	unsigned long long start= native_read_tsc();
+       unsigned long long start= native_read_tsc();
 #endif
+
 
        /*	sched.c changed so this is not needed anymore
 	*
@@ -4870,33 +8742,34 @@ return -EBUSY;
        }
 #endif*/
 
-	if (task->prev_cpu == dst_cpu) {
-		back = 1;
-		ret = do_back_migration(task, dst_cpu, regs);
-		if (ret == -1)
-			return PROCESS_SERVER_CLONE_FAIL;
-	} else {
-		ret = do_migration(task, dst_cpu, regs,&first);
+
+       if(task->prev_cpu==dst_cpu){
+	       back= 1;
+	       ret= do_back_migration(task, dst_cpu, regs);
+	       if(ret==-1)
+		       return PROCESS_SERVER_CLONE_FAIL;
+       } else{
+		ret= do_migration(task, dst_cpu, regs,&first);
 	}
+
 
 #if TIMING
 	if(ret!=-1){
-		unsigned long long stop = native_read_tsc();
-		unsigned long long elapsed_time = stop-start;
+		unsigned long long stop= native_read_tsc();
+		unsigned long long elapsed_time =stop-start;
 
 		if(first)
-			update_time_migration(elapsed_time, FIRST_MIG_WITH_FORK);
+			update_time_migration(elapsed_time,FIRST_MIG_WITH_FORK);
 		else
 			if(back)
-				update_time_migration(elapsed_time, BACK_MIG);
+				update_time_migration(elapsed_time,BACK_MIG);
 			else
-				update_time_migration(elapsed_time, NORMAL_MIG);
+				update_time_migration(elapsed_time,NORMAL_MIG);
 	}
 	else
-		printk("WARNING in timing for migration ret is %d\n", ret);
+	printk("WARNING in timing for migration ret is %d\n",ret);
 #endif
-
-	if (strcmp(current->comm,"IS") == 0){
+	if(strcmp(current->comm,"IS") == 0){
 		trace_printk("e\n");
 	}
 
@@ -6805,7 +10678,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 
        push_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock, (data_header_t *)my_thread_pull);
 
-       /* int count= count_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock); */
+       int count= count_data((data_header_t**)&(thread_pull_head), &thread_pull_head_lock);
 
        // Sharath: Increased the thread pool size
        for (i = 0; i < THREAD_POOL_SIZE; i++) {
