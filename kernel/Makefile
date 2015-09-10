@@ -28,7 +28,7 @@ obj-y += printk/
 obj-y += cpu/
 obj-y += irq/
 
-obj-$(CONFIG_POPCORN) += kinit.o cpu_namespace.o \
+obj-$(CONFIG_POPCORN) += kinit.o \
 			 WKdmCompress.o WKdmDecompress.o futex_remote.o \
 			 global_spinlock.o proc_remote.o
 obj-$(CONFIG_POPCORN) += popcorn/
