@@ -1085,6 +1085,7 @@ static unsigned long zap_pte_range(struct mmu_gather *tlb,
 	spinlock_t *ptl;
 	pte_t *start_pte;
 	pte_t *pte;
+	struct page *page;
 
 again:
 	init_rss_vec(rss);
@@ -1098,9 +1099,9 @@ again:
 		}
 
 		if (pte_present(ptent)) {
-			struct page *page;
 
 			page = vm_normal_page(vma, addr, ptent);
+
 			if (unlikely(details) && page) {
 				/*
 				 * unmap_shared_mapping_pages() wants to
@@ -1171,7 +1172,6 @@ again:
 				continue;
 			}
 
-			struct page *page;
 			page= pte_page(ptent);
 
 			if(page!=vm_normal_page(vma, addr, ptent))
@@ -1239,7 +1239,6 @@ again:
 			if (!non_swap_entry(entry))
 				rss[MM_SWAPENTS]--;
 			else if (is_migration_entry(entry)) {
-				struct page *page;
 
 				page = migration_entry_to_page(entry);
 
