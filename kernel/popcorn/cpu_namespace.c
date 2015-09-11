@@ -35,7 +35,7 @@ static struct cpu_namespace *create_cpu_namespace(struct cpu_namespace *parent_c
 {
 	struct cpu_namespace *ns;
 	unsigned int level = parent_cpu_ns->level +1; // ?
-	int i, err = -ENOMEM;
+	int err = -ENOMEM;
 
 	ns = kmem_cache_zalloc(cpu_ns_cachep, GFP_KERNEL);
 	if (ns == NULL)
@@ -62,9 +62,7 @@ static struct cpu_namespace *create_cpu_namespace(struct cpu_namespace *parent_c
 	 */
 	return ns;
 
-out_put_parent_cpu_ns:
 	put_cpu_ns(parent_cpu_ns);
-out_free:
 	kmem_cache_free(cpu_ns_cachep, ns);
 out:
 	return ERR_PTR(err);
@@ -72,8 +70,6 @@ out:
 
 static void destroy_cpu_namespace(struct cpu_namespace *ns)
 {
-	int i;
-
 	//something
 	kmem_cache_free(cpu_ns_cachep, ns);
 }
@@ -213,14 +209,14 @@ extern unsigned int offset_cpus; //from kernel/smp.c
 // NOTE this will modify the global variable popcorn_ns (so, no need to pass in anything)
 int build_popcorn_ns( int force)
 {
-	int cnr_cpus =0;
 	int cnr_cpu_ids =0;
 
 	struct list_head *iter;
 	_remote_cpu_info_list_t *objPtr;
 	struct cpumask *pcpum =0;
 	unsigned long * summary, * tmp;
-	int size, offset, error;
+	int size, offset;
+	int cpuid;
 
 	//    if (kref says that no one is using it continue) // TODO
 	//        return -EBUSY;
@@ -232,7 +228,7 @@ int build_popcorn_ns( int force)
 	// current kernel
 	cnr_cpu_ids += cpumask_weight(cpu_online_mask); // or nr_cpu_ids
 	// other kernels  
-	int cpuid =-1;
+	cpuid = -1;
 	list_for_each(iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		pcpum = &(objPtr->_data.cpumask); //&(objPtr->_data._cpumask);
