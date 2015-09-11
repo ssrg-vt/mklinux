@@ -177,6 +177,8 @@ struct net_filter_info{
 	volatile int primary_accept_id;
         int local_accept_id;
 	struct tcp_init_param tcp_param;
+
+	int discard_packet;
 };
 void get_ft_filter(struct net_filter_info* filter);
 void put_ft_filter(struct net_filter_info* filter);
@@ -206,6 +208,10 @@ struct msghdr;
 int ft_before_syscall_send_family(struct kiocb *iocb, struct socket *sock,
                                        struct msghdr *msg, size_t size, int* ret);
 int ft_after_syscall_send_family(int ret);
+int ft_before_syscall_rcv_family(struct kiocb *iocb, struct socket *sock,
+                                       struct msghdr *msg, size_t size, int flags, int* ret);
+int ft_after_syscall_rcv_family(struct kiocb *iocb, struct socket *sock,
+                                       struct msghdr *msg, size_t size, int flags, int ret);
 
 #define DUMMY_DRIVER "ft_dummy_driver"
 

@@ -479,6 +479,7 @@ next:	if(fake_filter){
         	filter->local_connect_id= fake_filter->local_connect_id;
 		filter->primary_accept_id= fake_filter->primary_accept_id;
                 filter->local_accept_id= fake_filter->local_accept_id;
+		filter->discard_packet= fake_filter->discard_packet;
 
 		filter->tcp_param= fake_filter->tcp_param;
 		
@@ -664,6 +665,7 @@ static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_chil
 	filter->primary_accept_id= 0;
         filter->local_accept_id= 0;
 
+	filter->discard_packet= 1;
 	if(is_child){
                 filter->type|= FT_FILTER_CHILD;
                 filter->tcp_param.daddr= daddr;
@@ -687,6 +689,7 @@ static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_chil
 void ft_grown_mini_filter(struct sock* sk, struct request_sock *req){
 	if(req->ft_filter){
 		get_ft_filter(req->ft_filter);
+		req->ft_filter->discard_packet= 1;
 		req->ft_filter->ft_sock= sk;
 		req->ft_filter->ft_req= NULL;
 		sk->ft_filter= req->ft_filter;
@@ -750,7 +753,7 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
 
                 filter->primary_accept_id= 0;
                 filter->local_accept_id= 0;
-
+		filter->discard_packet=0;
 
 		if(filter->type & FT_FILTER_SECONDARY_REPLICA){
                 	add_filter_coping_pending(filter);
@@ -838,6 +841,7 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority){
 		
 		filter->primary_accept_id= 0;
 	        filter->local_accept_id= 0;
+		filter->discard_packet= 0;
 
 		memset(&filter->tcp_param,0,sizeof(filter->tcp_param));
 	
@@ -1594,16 +1598,19 @@ again:	spin_lock(&filter->lock);
 		/* Wait to be aligned with the primary replica for the delivery of the packet.
 		 * => wait to reach the same number of sent pckts.
 		 */
-		while( (filter->type & FT_FILTER_FAKE) || (filter->local_tx < msg->local_tx)){
+	//	while( (filter->type & FT_FILTER_FAKE) || (filter->local_tx < msg->local_tx)){
+		while( (filter->type & FT_FILTER_FAKE) || ((filter->discard_packet==0) && (filter->local_tx < msg->local_tx))){
 			timeout = msecs_to_jiffies(WAIT_CROSS_FILTER_MAX) + 1;
 			where_to_wait= filter->wait_queue;
 			spin_unlock(&filter->lock);
 
-			wait_event_timeout(*where_to_wait, !(filter->type & FT_FILTER_ENABLE) || ( !(filter->type & FT_FILTER_FAKE) && (filter->local_tx >= msg->local_tx)), timeout);
+			//wait_event_timeout(*where_to_wait, !(filter->type & FT_FILTER_ENABLE) || ( !(filter->type & FT_FILTER_FAKE) && (filter->local_tx >= msg->local_tx)), timeout);
+			wait_event_timeout(*where_to_wait, !(filter->type & FT_FILTER_ENABLE) || ( !(filter->type & FT_FILTER_FAKE) && (filter->discard_packet==0) && (filter->local_tx >= msg->local_tx)), timeout);
 
 			spin_lock(&filter->lock);
             
-			if ( !(filter->type & FT_FILTER_FAKE) && (filter->local_tx >= msg->local_tx) )
+			//if ( !(filter->type & FT_FILTER_FAKE) && (filter->local_tx >= msg->local_tx) )
+			if ( !(filter->type & FT_FILTER_FAKE) && (filter->discard_packet==0) && (filter->local_tx >= msg->local_tx) )
 				goto done;
 
 			if(!(filter->type & FT_FILTER_ENABLE)){
@@ -1651,6 +1658,30 @@ done:	spin_unlock(&filter->lock);
 		put_ft_filter(filter);
 		goto out;
 	}
+
+	/* When to discard packet in tcp?when the handshake is compleate.
+	 * If I am a server, the handshake is performed by the listening socket, that should never discard packets.
+	 * the function that is creating the socket from a minisocket will set discard packet to active for the incoming connections.
+	 * If I am a client I have to send SYN, receive SYN ACK, and send ACK=> after receiving one SYN packet, discard all of them.
+ 	 */
+	if(filter->discard_packet==1 || !filter->ft_sock){
+		//case discard active or minisocket
+		put_ft_filter(filter);
+                goto out;
+	}
+	else{
+		if(filter->ft_sock->sk_state!=TCP_LISTEN){
+			/*mmm... do not think is 100% correct.
+			 *Can I receive more that one SYN ACK packet? if my ACK get lost maybe....
+			 */
+			if(filter->primary_rx>=1){
+				filter->discard_packet=1;
+				put_ft_filter(filter);
+		                goto out;
+			}
+		}
+	}
+		
 
 	skb= create_skb_from_rx_copy_msg(msg, filter);
         if(IS_ERR(skb)){
@@ -1893,10 +1924,23 @@ static int rx_filter_primary(struct net_filter_info *filter, struct sk_buff *skb
  	 */
 	spin_unlock(&filter->lock);
 
+	filter_id_printed= print_filter_id(filter);
+        if(filter->ft_sock->sk_protocol == IPPROTO_TCP){
+        	int iphdrlen;
+        	struct iphdr *network_header;	
+		if(get_iphdr(skb, &network_header, &iphdrlen))
+			goto out;
+
+	        printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
+        	put_iphdr(skb, iphdrlen);
+	}
+out:	if(filter_id_printed)
+                kfree(filter_id_printed);
+
         return 0;
 }
 
-static int rx_filter_secondary(struct net_filter_info *filter){
+static int rx_filter_secondary(struct net_filter_info *filter, struct sk_buff* skb){
 	long long pckt_id;
 	long long primary_rx;
 	char* filter_id_printed;
@@ -1934,6 +1978,19 @@ static int rx_filter_secondary(struct net_filter_info *filter){
 		if(filter_id_printed)
                 	kfree(filter_id_printed);
 	}
+
+	filter_id_printed= print_filter_id(filter);
+        if(filter->ft_sock->sk_protocol == IPPROTO_TCP){
+                int iphdrlen;
+                struct iphdr *network_header;
+                if(get_iphdr(skb, &network_header, &iphdrlen))
+                        goto out;
+
+                printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
+                put_iphdr(skb, iphdrlen);
+        }
+out:        if(filter_id_printed)
+                kfree(filter_id_printed);
 	return 0;
 }
 
@@ -2315,7 +2372,7 @@ int net_ft_rx_filter(struct sk_buff *skb){
 	}
 
 	if(filter->type & FT_FILTER_SECONDARY_REPLICA){
-		ret= rx_filter_secondary(filter);
+		ret= rx_filter_secondary(filter, skb);
 		goto out;
 	}
 
