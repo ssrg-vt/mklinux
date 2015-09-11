@@ -21,8 +21,9 @@
 #include <linux/syscalls.h>
 #include <linux/mmu_notifier.h>
 #include <linux/sched/sysctl.h>
+
 //Multikernel
-#include <linux/process_server.h>
+#include <popcorn/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>

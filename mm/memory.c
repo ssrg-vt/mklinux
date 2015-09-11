@@ -59,7 +59,8 @@
 #include <linux/gfp.h>
 #include <linux/migrate.h>
 #include <linux/string.h>
-#include <linux/process_server.h>
+
+#include <popcorn/process_server.h>
 
 #include <asm/io.h>
 #include <asm/pgalloc.h>

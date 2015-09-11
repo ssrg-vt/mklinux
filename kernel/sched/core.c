@@ -74,7 +74,8 @@
 #include <linux/binfmts.h>
 #include <linux/context_tracking.h>
 #include <linux/cpu_namespace.h>
-#include <linux/process_server.h>
+
+#include <popcorn/process_server.h>
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>

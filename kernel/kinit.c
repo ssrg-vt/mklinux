@@ -23,8 +23,8 @@
 #include <linux/cpufreq.h>
 #include <linux/popcorn_cpuinfo.h>
 #include <linux/bootmem.h>
-//#include <linux/multikernel.h>
-#include <linux/process_server.h>
+
+#include <popcorn/process_server.h>
 
 /*
  * Constant macros

@@ -27,8 +27,9 @@
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
+
 //Multikernel
-#include <linux/process_server.h>
+#include <popcorn/process_server.h>
 #include <linux/rmap.h>
 
 #ifndef pgprot_modify

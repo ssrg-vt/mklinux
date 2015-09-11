@@ -65,7 +65,8 @@
 #include "coredump.h"
 
 #include <trace/events/sched.h>
-#include <linux/process_server.h>
+
+#include <popcorn/process_server.h>
 
 #define POPCORN_DEBUG_EXEC 0
 

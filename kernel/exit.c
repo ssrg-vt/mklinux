@@ -53,7 +53,6 @@
 #include <linux/oom.h>
 #include <linux/writeback.h>
 #include <linux/shm.h>
-#include <linux/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -61,7 +60,9 @@
 #include <asm/mmu_context.h>
 
 #include "futex_remote.h"
+#include <popcorn/process_server.h>
 #include <popcorn/global_spinlock.h>
+
 static void exit_mm(struct task_struct * tsk,long code);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)

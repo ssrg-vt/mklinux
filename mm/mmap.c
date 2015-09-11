@@ -36,8 +36,9 @@
 #include <linux/sched/sysctl.h>
 #include <linux/notifier.h>
 #include <linux/memory.h>
-//Multikernel
-#include <linux/process_server.h>
+
+/* Multikernel */
+#include <popcorn/process_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
