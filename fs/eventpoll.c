@@ -1074,6 +1074,8 @@ static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 	struct epitem *epi;
 	struct ep_pqueue epq;
 
+	//printk("%s: called pid %d fd %d tfile %p\n",__func__,current->pid,fd,tfile);
+
 	user_watches = atomic_long_read(&ep->user->epoll_watches);
 	if (unlikely(user_watches >= max_user_watches))
 		return -ENOSPC;
@@ -1334,6 +1336,8 @@ static int ep_poll(struct eventpoll *ep, struct epoll_event __user *events,
 	wait_queue_t wait;
 	ktime_t expires, *to = NULL;
 
+
+//	printk("%s: pid %d ffd %p\n",__func__,current->pid,ep);
 	if (timeout > 0) {
 		struct timespec end_time = ep_set_mstimeout(timeout);
 

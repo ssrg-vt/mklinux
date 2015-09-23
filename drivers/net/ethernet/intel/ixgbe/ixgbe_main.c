@@ -53,6 +53,9 @@
 #include "ixgbe_sriov.h"
 #include "snull.h"
 
+#define __pika__ 	0
+#define __pop__ 	1
+
 #define s_trace_printk(...) trace_printk(__VA_ARGS__)
 
 static int num_of_hash_buc=0;
@@ -82,11 +85,14 @@ int get_number_ideal()
 	return ideal_num_hash_buc;
 }
 
+#define LOAD_TOLARANCE 1.2
+
 int compare_ideal_curr()
 {
-	return (ideal_num_hash_buc - num_of_hash_buc);
+	return ((ideal_num_hash_buc) - (LOAD_TOLARANCE*num_of_hash_buc));
 }
 
+extern void add_filter(unsigned int src_ip,unsigned int port);
 EXPORT_SYMBOL(inc_num_of_hash_buc);
 EXPORT_SYMBOL(dec_num_of_hash_buc);
 EXPORT_SYMBOL(read_num_of_hash_buc);
@@ -94,6 +100,7 @@ EXPORT_SYMBOL(set_number_ideal);
 EXPORT_SYMBOL(get_number_ideal);
 EXPORT_SYMBOL(compare_ideal_curr);
 
+extern void send_skb_copy(struct sk_buff *skb,int kernel);
 extern void wake_load_banlancer_up(void);
 extern void put_request_to_balance();
 extern void snull_atr_setup_spread_load_balance_one(struct ixgbe_hw *hw, u16 port, u8 queue);
@@ -1283,12 +1290,21 @@ static void ixgbe_receive_skb(struct ixgbe_q_vector *q_vector,
 				*/
 					inc_sync_count();
 			//		printk("%s: sync %d num_of_hash_buc %d ideal_num_hash_buc %d\n",__func__,get_sync_count(),read_num_of_hash_buc(),get_number_ideal());
-					if(get_sync_count()>=LOAD_THRESH &&(compare_ideal_curr()<=0))
+#if __pop__					
+					if(get_sync_count()>=LOAD_THRESH &&(compare_ideal_curr()<0))
 					{
+						;
 						//printk("%s:waking balancer\n",__func__);
 						put_request_to_balance();
 						wake_load_banlancer_up();
 					}
+#endif /*__pop__*/	
+#if __pika__
+				//	if(get_sync_count()>=LOAD_THRESH)
+					{
+						add_filter(ipp->saddr,s_port);	
+					}	
+#endif /*__pika__*/
 				
 				}
 			//	s_port = s_port & 0x0FFF;
@@ -1308,7 +1324,7 @@ static void ixgbe_receive_skb(struct ixgbe_q_vector *q_vector,
 		}
 		else
 		{
-			printk("%s: not TCP source: %d, dest: %d \n",__func__,s_port,d_port);
+		//	printk("%s: not TCP source: %d, dest: %d \n",__func__,s_port,d_port);
 		}
 		put_iphdr(skb, ip_head_len);
 	}
@@ -1331,26 +1347,21 @@ static void ixgbe_receive_skb(struct ixgbe_q_vector *q_vector,
 
 	if (!(adapter->flags & IXGBE_FLAG_IN_NETPOLL))
 	{
-		//if(check_if_primary()==0)
+		
+/*		if (ipp->protocol == IPPROTO_TCP)
 		{
-			//printk("%s: napi \n",__func__);
-			//return;
-		}	
-	//	start= native_read_tsc();
-		napi_gro_receive(napi, skb);
-	//	end= native_read_tsc();
-	//	s_trace_printk("%s:napi time %lld\n",__func__,(end-start));
+			send_skb_copy(skb,1);
+			__kfree_skb(skb);
+		}
+*/ 
+//		else	
+			napi_gro_receive(napi, skb);
+	
+		
 	}
 	else
 	{
-		if(check_if_primary()==0)
-		{
-			printk("%s: not-napi \n",__func__);
-		}
-	//	start= native_read_tsc();	
 		netif_rx(skb);
-		end= native_read_tsc();
-	//	s_trace_printk("netif time %lld\n",(end-start));
 	}
 }
 

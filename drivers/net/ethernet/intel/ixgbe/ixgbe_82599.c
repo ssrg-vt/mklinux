@@ -1264,8 +1264,8 @@ static void snull_atr_setup_spread_load_balance(struct ixgbe_hw *hw,int num_rx_q
 	
 	for (port = 0; port < (1 << 12); port++) 
 	{
-		u8 queue =0 ;
-//		u8 queue = port % num_rx_queues;
+//		u8 queue =0;
+		u8 queue = port % num_rx_queues;
 //		printk("%s: called port %x acttual %x q %d\n",__func__,port,htons(port),queue);
 		snull_atr_setup_spread_load_balance_one(hw, port, queue);
 	}

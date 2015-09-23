@@ -1879,11 +1879,32 @@ EXPORT_SYMBOL(sock_no_sendpage);
 static void sock_def_wakeup(struct sock *sk)
 {
 	struct socket_wq *wq;
+	wait_queue_t *curr, *next;
+	wait_queue_head_t *q;
 
 	rcu_read_lock();
 	wq = rcu_dereference(sk->sk_wq);
-	if (wq_has_sleeper(wq))
-		wake_up_interruptible_all(&wq->wait);
+	q = &wq->wait;
+	struct task_struct *task;
+	struct inet_sock* isk = inet_sk(sk);
+	int i=0;
+/*	if(isk->inet_saddr==(0x2d00a8c0))
+	{
+		printk("%s: called \n",__func__);
+		if (wq_has_sleeper(wq))
+		{
+			 printk("%s: sleepers \n",__func__);
+			 wake_up_interrdmesuptible_pop(&wq->wait);
+	   }
+	   else
+	   {
+		   printk("%s: no sleepers \n",__func__);
+	   }
+	}
+	else{ }
+	*/ 
+		if (wq_has_sleeper(wq))
+			wake_up_interruptible_all(&wq->wait);
 	rcu_read_unlock();
 }
 
@@ -1892,9 +1913,14 @@ static void sock_def_error_report(struct sock *sk)
 	struct socket_wq *wq;
 
 	rcu_read_lock();
+	struct inet_sock* isk = inet_sk(sk);
 	wq = rcu_dereference(sk->sk_wq);
 	if (wq_has_sleeper(wq))
+	{
+//		if(isk->inet_saddr==(0x2d00a8c0))
+//			printk("%s: called \n",__func__);
 		wake_up_interruptible_poll(&wq->wait, POLLERR);
+	}
 	sk_wake_async(sk, SOCK_WAKE_IO, POLL_ERR);
 	rcu_read_unlock();
 }
@@ -1902,12 +1928,16 @@ static void sock_def_error_report(struct sock *sk)
 static void sock_def_readable(struct sock *sk, int len)
 {
 	struct socket_wq *wq;
-
+	struct inet_sock* isk = inet_sk(sk);
 	rcu_read_lock();
 	wq = rcu_dereference(sk->sk_wq);
 	if (wq_has_sleeper(wq))
+	{	
+//		if(isk->inet_saddr==(0x2d00a8c0))
+//			printk("%s: called \n",__func__);
 		wake_up_interruptible_sync_poll(&wq->wait, POLLIN | POLLPRI |
 						POLLRDNORM | POLLRDBAND);
+	}
 	sk_wake_async(sk, SOCK_WAKE_WAITD, POLL_IN);
 	rcu_read_unlock();
 }
@@ -1915,7 +1945,7 @@ static void sock_def_readable(struct sock *sk, int len)
 static void sock_def_write_space(struct sock *sk)
 {
 	struct socket_wq *wq;
-
+	struct inet_sock* isk = inet_sk(sk);
 	rcu_read_lock();
 
 	/* Do not wake up a writer until he can make "significant"
@@ -1923,9 +1953,14 @@ static void sock_def_write_space(struct sock *sk)
 	 */
 	if ((atomic_read(&sk->sk_wmem_alloc) << 1) <= sk->sk_sndbuf) {
 		wq = rcu_dereference(sk->sk_wq);
+		
 		if (wq_has_sleeper(wq))
+		{
+//			if(isk->inet_saddr==(0x2d00a8c0))
+//				printk("%s: called \n",__func__);
 			wake_up_interruptible_sync_poll(&wq->wait, POLLOUT |
 						POLLWRNORM | POLLWRBAND);
+		}
 
 		/* Should agree with poll, otherwise some programs break */
 		if (sock_writeable(sk))

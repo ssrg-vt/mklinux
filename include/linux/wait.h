@@ -154,6 +154,7 @@ static inline void __remove_wait_queue(wait_queue_head_t *head,
 }
 
 void __wake_up(wait_queue_head_t *q, unsigned int mode, int nr, void *key);
+void __wake_up_pop(wait_queue_head_t *q, unsigned int mode, int nr, void *key);
 void __wake_up_locked_key(wait_queue_head_t *q, unsigned int mode, void *key);
 void __wake_up_sync_key(wait_queue_head_t *q, unsigned int mode, int nr,
 			void *key);
@@ -177,6 +178,7 @@ wait_queue_head_t *bit_waitqueue(void *, int);
 #define wake_up_interruptible_all(x)	__wake_up(x, TASK_INTERRUPTIBLE, 0, NULL)
 #define wake_up_interruptible_sync(x)	__wake_up_sync((x), TASK_INTERRUPTIBLE, 1)
 
+#define wake_up_interruptible_pop(x)	__wake_up_pop(x, TASK_INTERRUPTIBLE, 0, NULL)
 /*
  * Wakeup macros to be used to report events to the targets.
  */
