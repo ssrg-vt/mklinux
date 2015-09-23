@@ -581,7 +581,7 @@ long syscall_hook_enter(struct pt_regs *regs)
         // System call number is in orig_ax
         if(ft_is_replicated(current)){
                 current->id_syscall++;
-		printk("%s in system call [%ld] id_syscall %d \n", current->comm, regs->orig_ax, current->id_syscall);
+		//printk("%s in system call [%ld] id_syscall %d \n", current->comm, regs->orig_ax, current->id_syscall);
         }
         return regs->orig_ax;
 }
@@ -590,7 +590,7 @@ void syscall_hook_exit(struct pt_regs *regs)
 {
         // System call number is in ax
         if(ft_is_replicated(current)){
-                printk("%s out[%ld] id_syscall %d \n", current->comm, regs->ax, current->id_syscall);
+                //printk("%s out[%ld] id_syscall %d \n", current->comm, regs->ax, current->id_syscall);
         }
 }
 

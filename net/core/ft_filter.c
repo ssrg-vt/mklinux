@@ -20,6 +20,8 @@
 #include <linux/tcp.h>
 #include <net/route.h>
 #include <net/checksum.h>
+#include <linux/netfilter.h>
+#include <linux/netfilter_ipv4.h>
 
 #define FT_FILTER_VERBOSE 0 
 #if FT_FILTER_VERBOSE
@@ -174,6 +176,8 @@ DEFINE_SPINLOCK(filter_list_lock);
 #define MAX_WQ_POOL	50
 #define THRESHOLD_WQ_POOL	(MAX_WQ_POOL/2)
 struct stack wq_stack;
+
+struct kmem_cache *stable_buffer_entries;
 
 static int get_iphdr(struct sk_buff *skb, struct iphdr** ip_header,int *iphdrlen);
 static void put_iphdr(struct sk_buff *skb, int iphdrlen);
@@ -333,6 +337,535 @@ static void add_filter(struct net_filter_info* filter){
 
 }
 
+/* set the delta to add for the incoming stream.
+ * to compute the incoming seq.
+ */
+void set_idelta_seq(struct net_filter_info* filter, u32 end_seq){
+	filter->idelta_seq= filter->in_initial_seq-end_seq;
+}
+
+void set_odelta_seq(struct net_filter_info* filter, u32 last_ack){
+        filter->odelta_seq= filter->my_initial_out_seq-last_ack;
+}
+
+u32 get_iseq(struct net_filter_info* filter, u32 seq){
+	return seq+ filter->idelta_seq;
+}
+
+u32 get_oseq(struct net_filter_info* filter, u32 last_ack){
+	return last_ack+ filter->odelta_seq;
+}
+
+struct send_buffer{
+        u32 first_byte_to_consume;
+	u32 last_ack;
+        spinlock_t lock;
+        struct list_head send_buffer_head;
+};
+
+struct send_buffer_entry{
+        struct list_head list_entry;
+        int to_consume_start;
+	unsigned int size;
+        char data;
+};
+
+void init_send_buffer(struct send_buffer **send_buffer){
+        struct send_buffer *se_buffer;
+        se_buffer= kmalloc(sizeof(*se_buffer), GFP_ATOMIC);
+        if(se_buffer){
+                se_buffer->first_byte_to_consume= 0;
+		se_buffer->last_ack= 0;
+                spin_lock_init(&se_buffer->lock);
+                INIT_LIST_HEAD(&se_buffer->send_buffer_head);
+                *send_buffer= se_buffer;
+        }
+        else{
+                *send_buffer= NULL;
+        }
+}
+
+void free_send_buffer(struct send_buffer *send_buffer){
+        struct list_head *item, *n;
+        struct list_head *send_buffer_head;
+        struct send_buffer_entry *entry;
+
+        if(send_buffer){
+                spin_lock(&send_buffer->lock);
+
+                send_buffer_head= &send_buffer->send_buffer_head;
+                if(!list_empty(send_buffer_head)){
+                        list_for_each_safe(item, n, send_buffer_head){
+                                        entry= list_entry(item, struct send_buffer_entry, list_entry);
+                                        list_del(item);
+                                        kfree(entry);
+                        }
+                }
+                spin_unlock(&send_buffer->lock);
+
+                kfree(send_buffer);
+        }
+}
+
+int insert_in_send_buffer_and_csum(struct send_buffer *send_buffer, struct iovec *iov, int iovlen, int size, __wsum *csum){
+	struct send_buffer_entry *entry;
+	struct list_head *send_buffer_head;
+	struct list_head *last;
+	char* where_to_copy;
+	int size_to_remove;
+	int i, len, err;
+	int ret= -EFAULT;
+
+	printk("%s inserting %d byte\n", __func__, size);
+
+	if(!send_buffer || !iov || iovlen<=0 || size<=0)
+		return -EFAULT;
+
+	/* TODO: do an early check to see if send_buffer->first_byte_to_consume < send_buffer->last_ack
+	 * and avoid to copy data.	
+	 * Why I didn't do it?! because I do know how to compute the checksum otherwise!
+	 */
+
+	entry= kmalloc(sizeof(*entry)+size+1, GFP_KERNEL);
+	if(!entry)
+		return -ENOMEM;
+
+	entry->to_consume_start= 0;
+	entry->size= size;
+	where_to_copy= &entry->data;
+	*csum= 0;
+	len= 0;
+
+        for(i=0; i< iovlen; i++){
+		len+= iov[i].iov_len;
+		if(len>size){
+			printk("ERROR: %s iov has more bytes (len %d) then size declared (%d) \n", __func__, len, size);
+                        goto out;
+		}
+
+                *csum= csum_and_copy_from_user(iov[i].iov_base, (void*)where_to_copy, iov[i].iov_len, *csum, &err);
+                if(err){
+                         printk("ERROR: %s copy_from_user failed\n", __func__);
+                         goto out;
+
+                }
+
+		where_to_copy+= iov[i].iov_len;
+        }
+	where_to_copy[0]='\0';
+	FTPRINTK("%s: data %s\n", __func__, &entry->data);
+
+	spin_lock(&send_buffer->lock);
+	
+	send_buffer_head= &send_buffer->send_buffer_head;
+
+	/* Case acks arrived but the data was not already added to the send buffer.
+	 * This case can happen only if send buffer is empty.
+	 */
+	if(send_buffer->first_byte_to_consume < send_buffer->last_ack){
+		if(!list_empty(send_buffer_head)){
+			printk("ERROR: %s first_byte_to_consume (%d) < last_ack (%d) but send buffer is not empty\n", __func__, send_buffer->first_byte_to_consume, send_buffer->last_ack);
+			ret= -EFAULT;
+			goto out_lock;
+		}
+		
+		size_to_remove= send_buffer->last_ack - send_buffer->first_byte_to_consume;
+		if(size_to_remove >= size){
+			kfree(entry);
+			send_buffer->first_byte_to_consume+= size;
+		}
+		else{
+			entry->to_consume_start+= size_to_remove;
+			send_buffer->first_byte_to_consume+= size_to_remove;
+			list_add(&entry->list_entry, send_buffer_head);
+		}
+		printk("%s removed %d byte\n", __func__, size_to_remove);
+		ret= 0;
+                goto out_lock;
+	}
+
+	
+        if(!list_empty(send_buffer_head)){
+
+		last = send_buffer_head->prev;
+		__list_add(&entry->list_entry, last, last->next);
+
+	}
+	else{
+                list_add(&entry->list_entry, send_buffer_head);
+                
+        }
+
+out_lock:
+
+        spin_unlock(&send_buffer->lock);
+	ret= 0;
+
+out:
+	return ret;
+	
+}
+
+int remove_from_send_buffer(struct send_buffer *send_buffer, u32 last_ack){
+ 	struct send_buffer_entry *entry;
+        struct list_head *send_buffer_head, *item, *n;
+        int data_to_remove, removed;
+
+	printk("%s called with last ack %u\n", __func__, last_ack);
+
+	spin_lock(&send_buffer->lock);
+
+	/* case not yet initialized, but it should not happen...
+	 *
+	 */
+	if(send_buffer->first_byte_to_consume == 0 ){
+		send_buffer->last_ack= last_ack;
+		spin_unlock(&send_buffer->lock);
+		return 0;
+	}
+
+	if(last_ack > send_buffer->last_ack)
+		send_buffer->last_ack= last_ack;
+
+	if(send_buffer->last_ack > send_buffer->first_byte_to_consume){
+		
+		data_to_remove= send_buffer->last_ack- send_buffer->first_byte_to_consume;
+		send_buffer_head= &send_buffer->send_buffer_head;
+		
+		removed= 0;
+		list_for_each_safe(item, n, send_buffer_head){
+                        entry= list_entry(item, struct send_buffer_entry, list_entry);	
+			if( data_to_remove-removed >=	entry->size- entry->to_consume_start){
+				list_del(item);
+				removed+= entry->size- entry->to_consume_start;
+				kfree(entry);
+			}
+			else{
+				entry->to_consume_start+= data_to_remove-removed;
+				removed= data_to_remove;
+			}
+			
+			if(removed==data_to_remove)
+				goto out;
+		}
+
+out:
+		printk("%s removed %d bytes", __func__, removed);
+
+		send_buffer->first_byte_to_consume+= removed;
+	}	
+
+	spin_unlock(&send_buffer->lock);
+	return 0;
+}
+
+struct stable_buffer{
+	volatile int first_byte_to_consume;
+	spinlock_t lock;
+	struct list_head stable_buffer_head;
+	struct task_struct *waiting;	
+};
+
+struct stable_buffer_entry{
+        struct list_head list_entry;
+        __u32 start;
+        int to_consume_start;
+	int to_consume_end;
+        struct sk_buff *data;
+};
+
+void init_stable_buffer(struct stable_buffer **stable_buffer){
+	struct stable_buffer *st_buffer;
+	st_buffer= kmalloc(sizeof(*st_buffer), GFP_ATOMIC);
+	if(st_buffer){
+		st_buffer->first_byte_to_consume= -1;
+		spin_lock_init(&st_buffer->lock);
+		INIT_LIST_HEAD(&st_buffer->stable_buffer_head);
+		st_buffer->waiting= NULL;
+		*stable_buffer= st_buffer;
+	}
+	else{
+		*stable_buffer= NULL;
+	}	
+}
+
+void free_stable_buffer(struct stable_buffer *stable_buffer){
+	struct list_head *item, *n;
+        struct list_head *stable_buffer_head;
+	struct stable_buffer_entry *entry;
+
+	if(stable_buffer){
+		spin_lock(&stable_buffer->lock);
+		
+		stable_buffer_head= &stable_buffer->stable_buffer_head;
+		if(!list_empty(stable_buffer_head)){
+			list_for_each_safe(item, n, stable_buffer_head){
+					entry= list_entry(item, struct stable_buffer_entry, list_entry);
+					list_del(item);
+					kfree_skb(entry->data);
+					kmem_cache_free(stable_buffer_entries, entry);
+			}
+		}
+		spin_unlock(&stable_buffer->lock);
+
+		kfree(stable_buffer);
+	}
+}
+
+int remove_and_copy_from_stable_buffer(struct stable_buffer *stable_buffer, char __user * buffer, struct iovec *iov, int size){
+	struct list_head *item, *n;
+	struct list_head *stable_buffer_head;
+        struct stable_buffer_entry *entry;
+	int ret= 0, first_byte, len;
+	struct tcphdr *tcph;
+	char* from;
+
+	printk("%s called asking for %d bytes\n", __func__, size);
+
+	if(!stable_buffer || !buffer || size<0)
+		return -EFAULT;
+
+	spin_lock(&stable_buffer->lock);
+
+	if(stable_buffer->waiting != NULL){
+		printk("ERROR (my pid %d): %s thread pid %d is already waiting for data\n", current->pid, __func__, stable_buffer->waiting->pid);
+		spin_unlock(&stable_buffer->lock);
+		return -EFAULT;
+	}
+
+	stable_buffer->waiting= current;
+	
+	/* I need to retrive a consequent stream of bytes, so if there are holes,
+	 * wait for them to be filled.
+	 */
+
+again:
+	stable_buffer_head= &stable_buffer->stable_buffer_head;
+	/* 1. check that there is data
+	 *
+	 */
+	while(stable_buffer->first_byte_to_consume == -1 || list_empty(stable_buffer_head)){		
+
+		local_irq_disable();
+	        preempt_disable();
+		
+		__set_current_state(TASK_INTERRUPTIBLE);
+		spin_unlock(&stable_buffer->lock);
+
+		preempt_enable();
+		local_irq_enable();
+
+		schedule();
+
+		spin_lock(&stable_buffer->lock);
+		
+	}
+
+	/* Check that there are no holes in the first @size bytes
+	 *
+	 */
+	first_byte= stable_buffer->first_byte_to_consume;
+	ret= 0; 
+	list_for_each(item, stable_buffer_head){
+                        entry= list_entry(item, struct stable_buffer_entry, list_entry);
+			
+			if(first_byte != entry->to_consume_start){
+				// Hole!!!
+				local_irq_disable();
+		                preempt_disable();
+                
+                		__set_current_state(TASK_INTERRUPTIBLE);
+                		spin_unlock(&stable_buffer->lock);
+
+                		preempt_enable();
+                		local_irq_enable();
+				
+				schedule();
+
+        		        spin_lock(&stable_buffer->lock);
+
+				goto again;
+				
+			}
+
+			if( size-ret <= entry->to_consume_end - entry->to_consume_start + 1){
+				goto out;
+			}
+			else{
+				ret+= entry->to_consume_end - entry->to_consume_start + 1;
+			}
+
+			first_byte= entry->to_consume_end+ 1;
+	}	
+
+	if(ret<size) {
+		local_irq_disable();
+		preempt_disable();
+
+		__set_current_state(TASK_INTERRUPTIBLE);
+		spin_unlock(&stable_buffer->lock);
+
+		preempt_enable();
+		local_irq_enable();
+		
+		schedule();
+
+		spin_lock(&stable_buffer->lock);
+
+		goto again;
+
+	}
+
+out:
+	ret=0;
+	list_for_each_safe(item, n, stable_buffer_head){
+                        entry= list_entry(item, struct stable_buffer_entry, list_entry);
+
+                        if( size-ret < entry->to_consume_end - entry->to_consume_start +1){
+                                len= size-ret;
+                        }
+                        else{
+                                len= entry->to_consume_end - entry->to_consume_start +1;
+                        }
+
+			skb_copy_datagram_iovec(entry->data, entry->to_consume_start - entry->start, iov, len);	
+			
+                        if(len==entry->to_consume_end - entry->to_consume_start + 1){
+                                printk("%s freeing skb\n",__func__);
+				list_del(item);
+                                kfree_skb(entry->data);
+                                kmem_cache_free(stable_buffer_entries, entry);
+                        }
+                        else{
+                                entry->to_consume_start += len;
+                        }
+
+                        ret+=len;
+
+                        if(ret==size)
+                                goto finish;
+        }
+
+finish:
+	stable_buffer->waiting= NULL;
+	stable_buffer->first_byte_to_consume += ret;
+	spin_unlock(&stable_buffer->lock);
+
+	return ret;
+}
+
+int insert_in_stable_buffer(struct stable_buffer *stable_buffer, struct sk_buff *skb, __u32 start, __u32 end){
+	struct list_head *stable_buffer_head;
+	struct list_head *prev, *n;
+	struct stable_buffer_entry *prev_entry;
+	struct stable_buffer_entry *entry;
+	int ret= 0;
+
+	printk("%s called \n", __func__);
+
+	if(!stable_buffer || !skb)
+		return -EFAULT;
+
+	if(end < start)
+		return -EFAULT;
+
+	entry= kmem_cache_alloc(stable_buffer_entries, GFP_ATOMIC);
+	if(!entry)
+		return -ENOMEM;
+	
+	
+	entry->start= entry->to_consume_start= start;
+	entry->to_consume_end= end;
+	entry->data= skb;
+	__skb_pull(skb, tcp_hdrlen(skb));
+
+	/* try to add element at the end of the list
+	 *
+	 */ 
+	spin_lock(&stable_buffer->lock);
+
+	stable_buffer_head= &stable_buffer->stable_buffer_head;
+
+	if(!list_empty(stable_buffer_head)){
+		
+		list_for_each_prev_safe(prev, n, stable_buffer_head){
+			prev_entry= list_entry(prev, struct stable_buffer_entry, list_entry);
+			
+			/* prev_entry:	s----e
+			 * entry:	        s-----e
+			 *
+			 */
+
+			if(prev_entry->to_consume_end < entry->to_consume_start){
+				 
+				 __list_add(&entry->list_entry, prev, prev->next);
+				 goto out;
+			}
+
+			/* prev_entry:  s---------e
+                         * entry:         s-----e
+                         *
+                         */
+
+			if(prev_entry->to_consume_start <= entry->to_consume_start && prev_entry->to_consume_end >= entry->to_consume_end){
+				kmem_cache_free(stable_buffer_entries, entry);
+				kfree_skb(skb);
+				goto out;
+			}
+
+			/* prev_entry:  s----e
+                         * entry:         s-----e
+                         *
+                         */
+
+			if(prev_entry->to_consume_start <= entry->to_consume_start && prev_entry->to_consume_end <= entry->to_consume_end){
+                                entry->to_consume_start= prev_entry->to_consume_end+1;
+				if(entry->to_consume_end - entry->to_consume_start < 1){
+					kmem_cache_free(stable_buffer_entries, entry);
+					kfree_skb(skb);
+					goto out;
+				}
+				else{ 
+					__list_add(&entry->list_entry, prev, prev->next);
+                                	goto out;
+				}
+                        }
+
+			/* prev_entry:        s----e
+                         * entry:         s-----e
+                         *
+                         */
+
+                        if(prev_entry->to_consume_start <= entry->to_consume_end){
+                                prev_entry->to_consume_start= entry->to_consume_end+1;
+				if(prev_entry->to_consume_end - prev_entry->to_consume_start < 1){
+					list_del(prev);
+					kfree_skb(prev_entry->data);
+					kmem_cache_free(stable_buffer_entries, prev_entry);
+				}
+                                                   
+                        }
+
+
+		}
+	}
+	else{
+		list_add(&entry->list_entry, stable_buffer_head);
+		goto out;
+	}
+
+	kmem_cache_free(stable_buffer_entries, entry);
+	ret= -EFAULT;
+	__skb_push(skb, tcp_hdrlen(skb));
+
+out:
+	if(stable_buffer->waiting)
+		wake_up_process(stable_buffer->waiting);
+
+	spin_unlock(&stable_buffer->lock);
+	return ret;	
+}
+
 static void remove_filter(struct net_filter_info* filter){
         if(!filter)
                 return;
@@ -370,7 +903,12 @@ static void release_filter(struct kref *kref){
 		if(filter->rx_copy_wq){
 			add_wq_to_pool(filter->rx_copy_wq, 1);
 		}
-
+		if(filter->stable_buffer){
+			free_stable_buffer(filter->stable_buffer);
+		}
+		if(filter->send_buffer){
+			free_send_buffer(filter->send_buffer);
+		}
 		kfree(filter);
 	}
 }
@@ -646,6 +1184,8 @@ static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_chil
 	}
 	init_waitqueue_head(filter->wait_queue);
 	INIT_LIST_HEAD(&filter->skbuff_list.list_member);
+	init_stable_buffer(&filter->stable_buffer);	
+	init_send_buffer(&filter->send_buffer);
 	
 	filter->type= FT_FILTER_ENABLE; 
 	filter->type|= FT_FILTER_FAKE;
@@ -689,6 +1229,15 @@ static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_chil
 void ft_grown_mini_filter(struct sock* sk, struct request_sock *req){
 	if(req->ft_filter){
 		get_ft_filter(req->ft_filter);
+		req->ft_filter->stable_buffer->first_byte_to_consume= tcp_sk(sk)->rcv_nxt;
+		req->ft_filter->send_buffer->first_byte_to_consume= tcp_sk(sk)->snd_nxt;
+		printk("%s saving stable buffer first_byte_to_consume %d send buffer first_byte_to_consume %d\n", __func__, req->ft_filter->stable_buffer->first_byte_to_consume, req->ft_filter->send_buffer->first_byte_to_consume);
+
+		req->ft_filter->my_initial_out_seq= tcp_sk(sk)->snd_nxt;
+		req->ft_filter->in_initial_seq= tcp_sk(sk)->rcv_nxt;
+		req->ft_filter->idelta_seq=0;
+		req->ft_filter->odelta_seq=0;
+
 		req->ft_filter->discard_packet= 1;
 		req->ft_filter->ft_sock= sk;
 		req->ft_filter->ft_req= NULL;
@@ -717,7 +1266,8 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
                 }
 
                 INIT_LIST_HEAD(&filter->list_member);
-                atomic_set(&filter->kref.refcount, 1);
+              
+		atomic_set(&filter->kref.refcount, 1);
                 filter->creator= parent_filter->creator;
 		get_ft_pop_rep(parent_filter->ft_popcorn);
                 filter->ft_popcorn= parent_filter->ft_popcorn;
@@ -726,7 +1276,9 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
                 spin_lock_init(&filter->lock);
                 init_waitqueue_head(filter->wait_queue);
                 INIT_LIST_HEAD(&filter->skbuff_list.list_member);
-		
+		init_stable_buffer(&filter->stable_buffer);
+		init_send_buffer(&filter->send_buffer);
+	
 		filter->type= parent_filter->type | FT_FILTER_CHILD;
                 filter->id= parent_filter->id;
 
@@ -815,6 +1367,8 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority){
 		spin_lock_init(&filter->lock);
 		init_waitqueue_head(filter->wait_queue);
 		INIT_LIST_HEAD(&filter->skbuff_list.list_member);
+		init_stable_buffer(&filter->stable_buffer);
+		init_send_buffer(&filter->send_buffer);
 
 		/* NOTE: target applications are deterministic, so all replicas will do the same actions 
                  * on the same order.
@@ -1659,28 +2213,20 @@ done:	spin_unlock(&filter->lock);
 		goto out;
 	}
 
-	/* When to discard packet in tcp?when the handshake is compleate.
-	 * If I am a server, the handshake is performed by the listening socket, that should never discard packets.
-	 * the function that is creating the socket from a minisocket will set discard packet to active for the incoming connections.
-	 * If I am a client I have to send SYN, receive SYN ACK, and send ACK=> after receiving one SYN packet, discard all of them.
- 	 */
-	if(filter->discard_packet==1 || !filter->ft_sock){
-		//case discard active or minisocket
+	
+	/*if(filter->discard_packet==1 || !filter->ft_sock){
 		put_ft_filter(filter);
                 goto out;
 	}
 	else{
 		if(filter->ft_sock->sk_state!=TCP_LISTEN){
-			/*mmm... do not think is 100% correct.
-			 *Can I receive more that one SYN ACK packet? if my ACK get lost maybe....
-			 */
 			if(filter->primary_rx>=1){
 				filter->discard_packet=1;
 				put_ft_filter(filter);
 		                goto out;
 			}
 		}
-	}
+	}*/
 		
 
 	skb= create_skb_from_rx_copy_msg(msg, filter);
@@ -1915,6 +2461,20 @@ static int rx_filter_primary(struct net_filter_info *filter, struct sk_buff *skb
         if(filter_id_printed)
                 kfree(filter_id_printed);
 
+	filter_id_printed= print_filter_id(filter);
+        if(filter->ft_sock->sk_protocol == IPPROTO_TCP){
+                int iphdrlen;
+                struct iphdr *network_header;
+                if(get_iphdr(skb, &network_header, &iphdrlen))
+                        goto out;
+
+                printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
+                if(tcp_hdr(skb)->syn && !tcp_hdr(skb)->ack && filter->ft_sock->sk_state!= TCP_LISTEN)
+			printk("%s AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAaa this should be dropped\n", __func__);
+
+		put_iphdr(skb, iphdrlen);
+        }
+
 	send_skb_copy(filter, pckt_id, local_tx, skb);
 	
 	/* Do not know if it is correct to send msgs while holding this lock,
@@ -1924,16 +2484,6 @@ static int rx_filter_primary(struct net_filter_info *filter, struct sk_buff *skb
  	 */
 	spin_unlock(&filter->lock);
 
-	filter_id_printed= print_filter_id(filter);
-        if(filter->ft_sock->sk_protocol == IPPROTO_TCP){
-        	int iphdrlen;
-        	struct iphdr *network_header;	
-		if(get_iphdr(skb, &network_header, &iphdrlen))
-			goto out;
-
-	        printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
-        	put_iphdr(skb, iphdrlen);
-	}
 out:	if(filter_id_printed)
                 kfree(filter_id_printed);
 
@@ -1943,7 +2493,7 @@ out:	if(filter_id_printed)
 static int rx_filter_secondary(struct net_filter_info *filter, struct sk_buff* skb){
 	long long pckt_id;
 	long long primary_rx;
-	char* filter_id_printed;
+	char* filter_id_printed= NULL;
 #if FT_FILTER_VERBOSE
         char* ft_pid_printed;
 #endif
@@ -1964,7 +2514,7 @@ static int rx_filter_secondary(struct net_filter_info *filter, struct sk_buff* s
 	}
 #endif
 
-        filter_id_printed= print_filter_id(filter);
+        /*filter_id_printed= print_filter_id(filter);
         printk("%s: pid %d received pckt %llu in filter %s\n", __func__, current->pid, pckt_id, filter_id_printed);
         if(filter_id_printed){
                 kfree(filter_id_printed);
@@ -1975,11 +2525,13 @@ static int rx_filter_secondary(struct net_filter_info *filter, struct sk_buff* s
 	if(pckt_id > primary_rx){
 		filter_id_printed= print_filter_id(filter);
 		printk("%s: ERROR pckt id is %llu primary rx is %llu in filter %s\n", __func__, pckt_id, primary_rx, filter_id_printed);
-		if(filter_id_printed)
+		if(filter_id_printed){
                 	kfree(filter_id_printed);
+			filter_id_printed= NULL;
+		}
 	}
-
-	filter_id_printed= print_filter_id(filter);
+	*/
+	/*filter_id_printed= print_filter_id(filter);
         if(filter->ft_sock->sk_protocol == IPPROTO_TCP){
                 int iphdrlen;
                 struct iphdr *network_header;
@@ -1989,8 +2541,10 @@ static int rx_filter_secondary(struct net_filter_info *filter, struct sk_buff* s
                 printk(" syn %u ack %u fin %u seq %u ack_seq %u\n", tcp_hdr(skb)->syn, tcp_hdr(skb)->ack, tcp_hdr(skb)->fin, tcp_hdr(skb)->seq, tcp_hdr(skb)->ack_seq);
                 put_iphdr(skb, iphdrlen);
         }
-out:        if(filter_id_printed)
-                kfree(filter_id_printed);
+out:
+*/	
+        /*if(filter_id_printed)
+                kfree(filter_id_printed);*/
 	return 0;
 }
 
@@ -2271,7 +2825,7 @@ static void put_iphdr(struct sk_buff *skb, int iphdrlen){
 	__skb_push(skb, iphdrlen);
 }
 
-static struct net_filter_info* try_get_ft_filter(struct sk_buff *skb){
+static struct net_filter_info* try_get_ft_filter(struct sk_buff *skb, struct iphdr *iph){
 	struct net_filter_info* ret= NULL;
 	__be16 type;
 	int iphdrlen;
@@ -2286,8 +2840,13 @@ static struct net_filter_info* try_get_ft_filter(struct sk_buff *skb){
 		//|| type == cpu_to_be16(ETH_P_IPV6)
 		){
 
-		if(get_iphdr(skb, &network_header, &iphdrlen))
-			goto out;
+		if(iph){
+			network_header= iph;
+		}
+		else{		
+			if(get_iphdr(skb, &network_header, &iphdrlen))
+				goto out;
+		}
 
 		if(network_header->protocol == IPPROTO_UDP
 			|| network_header->protocol == IPPROTO_TCP){
@@ -2317,7 +2876,6 @@ static struct net_filter_info* try_get_ft_filter(struct sk_buff *skb){
 				if (!pskb_may_pull(skb, sizeof(struct tcphdr)))
 					goto out_push;
 
-				//tcp_header= (struct tcphdr *) ((char*)network_header+ network_header->ihl*4);
 				tcp_header= tcp_hdr(skb);
 				
 				if (tcp_header->doff < sizeof(struct tcphdr) / 4)
@@ -2347,14 +2905,16 @@ static struct net_filter_info* try_get_ft_filter(struct sk_buff *skb){
 			
 
 		}	
-		put_iphdr(skb, iphdrlen);
+		if(!iph)
+			put_iphdr(skb, iphdrlen);
 	}
 
 out:
 	return ret;
 
 out_push:
-	put_iphdr(skb, iphdrlen);
+	if(!iph)
+		put_iphdr(skb, iphdrlen);
 	goto out;
 }
 
@@ -2362,7 +2922,7 @@ int net_ft_rx_filter(struct sk_buff *skb){
 	int ret= 0;
 	struct net_filter_info * filter;
 
-	filter= try_get_ft_filter(skb);
+	filter= try_get_ft_filter(skb, NULL);
 	if(!filter)
 		goto out;
 
@@ -2399,6 +2959,326 @@ int ft_check_tcp_timestamp(struct sock* sk){
 	return 1;
 }
 
+struct nf_hook_ops ft_before_transport_hook;
+
+extern void tcp_fin(struct sock *sk);
+/* Steal pckts that are not needed to open a connection and save them in the stable buffer.
+ * Check also ack sent by the other part of the connection to free the send buffer.
+ */
+unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter_info *filter){
+	struct tcphdr *tcp_header;
+	struct iphdr *iph;
+	struct sock *sk;
+	char *filter_id_printed;
+	__u32 start,end,size;
+	unsigned int ret, stolen= 0;
+
+	/* The idea is to just let transit packets needed to establish connections.
+	 * If a socket is in TCP_LISTEN, it just establishes connections, so let transit everything.
+	 * If status is TCP_ESTABLISHED, steal the packet and save it on the stable buffer.
+	 */
+        sk= filter->ft_sock;
+
+	if(!sk){
+                /* This can happen only if it is a minisocket.
+		 * But a minisocket should not be select by tcp for delivering pckts....
+		 */ 
+		filter_id_printed= print_filter_id(filter);
+                printk("ERROR in %s, ft_sock is null in filter %s", __func__, filter_id_printed);	
+		if(filter_id_printed)
+			kfree(filter_id_printed);
+
+                goto out;
+        }
+        else{
+		switch (sk->sk_state) {
+                
+		case TCP_ESTABLISHED:
+			{
+			/* Stop packets. Do not inject them in the tcp state machine,
+			 * but save them in stable buffer.
+			 */
+
+			/* Code copied from tcp_v4_rcv.
+			 * It checks that the pckt is valid.
+			 */
+
+        		if (skb->pkt_type != PACKET_HOST)
+                		goto out;
+			
+			if (!pskb_may_pull(skb, sizeof(struct tcphdr)))
+				goto out;
+			
+			tcp_header= tcp_hdr(skb);
+			
+			if (tcp_header->doff < sizeof(struct tcphdr) / 4)
+                 		goto out;
+		
+		        if (!pskb_may_pull(skb, tcp_header->doff * 4))
+			        goto out;
+			
+			//if (!skb_csum_unnecessary(skb) && tcp_v4_checksum_init(skb))
+                 	//	goto out;
+		
+		        tcp_header = tcp_hdr(skb);
+			iph = ip_hdr(skb);
+			TCP_SKB_CB(skb)->seq = ntohl(tcp_header->seq);
+			TCP_SKB_CB(skb)->end_seq = (TCP_SKB_CB(skb)->seq + tcp_header->syn + tcp_header->fin +
+	                                  skb->len - tcp_header->doff * 4);
+		
+	     		TCP_SKB_CB(skb)->ack_seq = ntohl(tcp_header->ack_seq);
+	     		TCP_SKB_CB(skb)->when    = 0;
+	     		TCP_SKB_CB(skb)->ip_dsfield = ipv4_get_dsfield(iph);
+	     		TCP_SKB_CB(skb)->sacked  = 0;
+
+	     		if (unlikely(iph->ttl < inet_sk(sk)->min_ttl)) {
+                 		goto out;
+			}
+
+		        //if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb))
+	                //	goto out;
+			
+			nf_reset(skb);
+
+			if (sk_filter(sk, skb))
+				goto out;
+			
+			//skb->dev = NULL;
+
+			start= TCP_SKB_CB(skb)->seq;
+	                end=  TCP_SKB_CB(skb)->end_seq;
+        	        size= end-start;			
+			
+			/* update deltas*/
+			set_idelta_seq(filter, end);
+                        set_odelta_seq(filter, TCP_SKB_CB(skb)->ack_seq);
+
+			/* remove eventually stored data in the send buffer*/ 
+			remove_from_send_buffer(filter->send_buffer, TCP_SKB_CB(skb)->ack_seq);
+	           	
+			/* save the packet in the stable buffer only if there is actual payload*/
+			if(size && !(size==1 && tcp_header->fin) ){
+
+				FTPRINTK("%s saving pckt on stable buffer: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size, ntohl( tcp_header->ack_seq));
+
+				ret= insert_in_stable_buffer(filter->stable_buffer, skb, start, end-1);	
+				if(ret){
+					printk("ERROR %s impossible to save in stable buffer\n", __func__);
+					goto out;
+				}
+				else{
+					stolen= 1;
+				}
+			}
+
+			/*start closing socket if fin is active*/
+                        if(tcp_header->fin){
+				/*TODO this was a static function... copy it on a new one*/
+                                tcp_fin(sk);
+                        }
+	
+			if(stolen)
+				return NF_STOLEN;
+			else
+				return NF_DROP;
+                	
+			}
+
+		case TCP_SYN_SENT:
+		case TCP_SYN_RECV:
+		case TCP_LISTEN:
+			{
+
+			/* Let packets transit as they are to open connections.
+			 *
+			 */
+
+			tcp_header= tcp_hdr(skb);
+
+			start= ntohl(tcp_header->seq);
+	                end=  ntohl(tcp_header->seq)+ tcp_header->syn+ tcp_header->fin+ skb->len- tcp_header->doff*4;
+        	        size= end-start;
+
+			FTPRINTK("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq));
+
+			return NF_ACCEPT;
+
+			}
+
+		case TCP_FIN_WAIT1:
+		case TCP_FIN_WAIT2:
+		case TCP_CLOSE_WAIT:
+		case TCP_CLOSING:
+		case TCP_LAST_ACK:
+			{
+			 
+			 /* Let the packet transit to close connections 
+			  * but change seq/ack_seq
+			  */
+
+			 tcp_header= tcp_hdr(skb);
+			 tcp_header->seq= htonl(get_iseq(filter, ntohl(tcp_header->seq))); 
+			 tcp_header->ack_seq= htonl(get_oseq(filter, ntohl(tcp_header->ack_seq)));
+			 
+			 //recompute checksum
+			 tcp_v4_send_check(filter->ft_sock, skb);
+
+			 FTPRINTK("in one of the fin status seq %u ack seq %u tp rcv next %u\n", ntohl(tcp_header->seq), ntohl(tcp_header->ack_seq), tcp_sk(sk)->rcv_nxt);
+
+			 return NF_ACCEPT;
+			}
+
+		case TCP_CLOSE:
+			return NF_DROP;
+		}	
+        }
+
+out:
+	return NF_DROP;
+}
+
+
+unsigned int ft_hook_before_tcp(struct sk_buff *skb, struct net_filter_info *ft_filter){
+	unsigned int ret= NF_ACCEPT; 
+#if FT_FILTER_VERBOSE
+        char *filter_id_printed;
+#endif
+        if(ft_filter){
+		get_ft_filter(ft_filter);
+
+                if(ft_filter->type & FT_FILTER_SECONDARY_REPLICA){
+
+#if FT_FILTER_VERBOSE
+			filter_id_printed= print_filter_id(ft_filter);
+                        FTPRINTK("%s: Received tcp pckt in filter %s of secondary replica\n", __func__, filter_id_printed);
+			if(filter_id_printed)
+                        	kfree(filter_id_printed);
+#endif
+
+			ret= ft_hook_before_tcp_secondary(skb, ft_filter);	
+			
+                }
+                else{
+                        if(ft_filter->type & FT_FILTER_PRIMARY_REPLICA){
+				/* Primary replica does not need to do anything...
+				 * Simply let the pckt be deliver to tcp.
+				 */
+#if FT_FILTER_VERBOSE
+				filter_id_printed= print_filter_id(ft_filter);
+				FTPRINTK("%s: Received tcp pckt in filter %s of primary replica\n", __func__, filter_id_printed);
+				if(filter_id_printed)
+                        		kfree(filter_id_printed);
+#endif
+                        }
+                }
+
+		put_ft_filter(ft_filter);
+        }
+
+        return ret;
+}
+
+unsigned int ft_hook_before_udp(struct sk_buff *skb, struct net_filter_info *ft_filter){
+	
+	char *filter_id_printed;
+
+	if(ft_filter){
+		filter_id_printed= print_filter_id(ft_filter);
+		if(ft_filter->type & FT_FILTER_SECONDARY_REPLICA){
+                	printk("%s: Received udp pckt in filter %s of secondary replica\n", __func__, filter_id_printed);
+        	}
+		else{
+        		if(ft_filter->type & FT_FILTER_PRIMARY_REPLICA){
+        			printk("%s: Received udp pckt in filter %s of primary replica\n", __func__, filter_id_printed);
+			}	
+		}
+		if(filter_id_printed)
+                        kfree(filter_id_printed);
+	}
+
+	return NF_ACCEPT;
+}
+
+unsigned int ft_hook_func_before_transport_layer(unsigned int hooknum,
+                                 struct sk_buff *skb,
+                                 const struct net_device *in,
+                                 const struct net_device *out,
+                                 int (*okfn)(struct sk_buff *)){
+
+	struct iphdr *iph;
+	unsigned int ret= NF_ACCEPT;
+	struct udphdr *udp_header;
+	struct tcphdr *tcp_header;
+	struct sock *sk;
+
+	
+	if(hooknum != NF_INET_LOCAL_IN){
+		printk("ERROR: %s has been called at hooknum %d\n", __func__, hooknum);
+		goto out;
+	}
+
+	/* I should be in IP, just before calling the transport layer,
+	 * so in skb the pointer to ip header should already be set correctly,
+	 * but pull is not already been done, so transport header may not point 
+	 * to the correct position.
+	 */
+
+	iph= ip_hdr(skb);
+
+	/* Replica information, if there, are stored in a field of struct sock;
+	 * try to retrive the sock struct to extract ft_filter,
+	 * if not possible simply accept the pckt.
+	 */
+	if(iph->protocol == IPPROTO_UDP
+                        || iph->protocol == IPPROTO_TCP){
+
+
+                        if (skb_dst(skb) == NULL) {
+				/* Routing decitions should have already been made.
+				 * => this field should be correctly populated.
+				 */
+                        	printk("ERROR: %s skb_dst is NULL\n", __func__);
+				goto out;
+			}
+			
+			/* IP did not finish yet, so transport header is not set...
+			 * undo things after!!!
+			 */
+			__skb_pull(skb, ip_hdrlen(skb));
+                        skb_reset_transport_header(skb);
+                        
+			if (iph->protocol == IPPROTO_UDP){
+				udp_header= udp_hdr(skb);
+                                sk = udp4_lib_lookup(dev_net(skb_dst(skb)->dev), iph->saddr, udp_header->source,
+                                     iph->daddr, udp_header->dest, inet_iif(skb));
+                                if(sk){
+					ret= ft_hook_before_udp(skb, sk->ft_filter);
+					sock_put(sk);
+				}
+                        }
+                        else{
+				tcp_header= tcp_hdr(skb);
+                                sk = find_tcp_sock(skb, tcp_header);
+                                
+				if(sk){
+					ret= ft_hook_before_tcp(skb, sk->ft_filter);
+	                               	sock_put(sk);
+				}
+
+                        }
+			
+			/*AAA do not undu if it is been stolen! 
+			 *It will use tcph, so do not move iph!!
+			 */			
+			if(ret!=NF_STOLEN)
+				__skb_push(skb, ip_hdrlen(skb));
+
+	}
+
+out:
+	return ret;
+}
+
 static int __init ft_filter_init(void){
 
 	spin_lock_init(&wq_stack.stack_lock);
@@ -2417,10 +3297,25 @@ static int __init ft_filter_init(void){
 
 	print_log_buf_info();
 
-	printk("%s:  TCP_DELACK_MAX %d\n", __func__, TCP_DELACK_MAX);
-	printk("%s:  TCP_DELACK_MIN %d\n", __func__, TCP_DELACK_MIN);
-	printk("%s:  TCP_TIMEOUT_INIT %d\n", __func__, TCP_TIMEOUT_INIT);
-	printk("%s:  TCP_SYNQ_INTERVAL %d\n",__func__, TCP_SYNQ_INTERVAL);
+	/* Slab cache for stable buffers.
+	 * For now it is one for each kernel, but it can be changed and set
+	 * one for each socket.
+	 */	
+
+	stable_buffer_entries= kmem_cache_create("stable_buffers_cache", sizeof(struct stable_buffer_entry), 0, SLAB_PANIC, NULL);
+	if(!stable_buffer_entries)
+		printk("%s ERROR cannot create stable buffer cache\n", __func__);
+
+	/* Register netfilter hooks
+	 *
+	 */
+	ft_before_transport_hook.hook= ft_hook_func_before_transport_layer;
+	ft_before_transport_hook.pf= PF_INET;
+	ft_before_transport_hook.priority= NF_IP_PRI_LAST;
+	ft_before_transport_hook.hooknum= NF_INET_LOCAL_IN;
+	
+	nf_register_hook(&ft_before_transport_hook);
+
 	return 0;
 }
 

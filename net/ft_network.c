@@ -88,7 +88,7 @@ static int after_syscall_rcv_family_primary(struct kiocb *iocb, struct socket *s
 				goto out;
 			}
 			where_to_copy[data_size]='\0';
-			FTPRINTK("%s: data %s\n", __func__, where_to_copy);
+			FTPRINTK("%s: data %s size %d\n", __func__, where_to_copy, data_size);
 	}
 	
 	/*TODO
@@ -96,7 +96,11 @@ static int after_syscall_rcv_family_primary(struct kiocb *iocb, struct socket *s
          * but for udp msg the fields  msg_name/msg_namelen should be copied too.
          */
 
-        FTPRINTK("%s pid %d syscall_id %d sending size %d flags %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info->size, syscall_info->flags, syscall_info->csum, syscall_info->ret);
+        /* NOTE: multiple threads could call rcv simultaneusly. On tcp_rcvmsg the socket is locked therefore they are serialized. 
+	 * In here the lock already have been released, but the data was copied while holding it.
+	 * In secondary replicas, if retriving data from the stable buffer, the same order of access to the stable buffer must be ensured.
+	 */
+	FTPRINTK("%s pid %d syscall_id %d sending size %d flags %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info->size, syscall_info->flags, syscall_info->csum, syscall_info->ret);
         //ft_send_syscall_info_from_work(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info)+ data_size);
 	ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info)+ data_size);
 
@@ -170,6 +174,7 @@ static int before_syscall_rcv_family_primary(struct kiocb *iocb, struct socket *
 static int before_syscall_rcv_family_secondary(struct kiocb *iocb, struct socket *sock,
                                        struct msghdr *msg, size_t size, int flags, int* ret){
 
+	struct sock *sk;
         struct rcv_fam_info *syscall_info_primary= NULL;
 	int data_size;
         __wsum my_csum;
@@ -178,6 +183,11 @@ static int before_syscall_rcv_family_secondary(struct kiocb *iocb, struct socket
 
         FTPRINTK("%s started for pid %d syscall_id %d\n", __func__, current->pid, current->id_syscall);
 
+	sk= sock->sk;
+	if(!sk){
+		printk("ERROR: %s sock struct is NULL\n", __func__);
+		return -EFAULT;
+	}
         syscall_info_primary= (struct rcv_fam_info *) ft_wait_for_syscall_info(&current->ft_pid, current->id_syscall);
         if(!syscall_info_primary){
                 printk("ERROR: %s for pid %d no rcv info from primary\n", __func__, current->pid);
@@ -203,7 +213,15 @@ static int before_syscall_rcv_family_secondary(struct kiocb *iocb, struct socket
         
 	if(data_size){
 			ubuf= msg->msg_iov->iov_base;
-			memcpy_toiovec(msg->msg_iov, &syscall_info_primary->data, data_size);
+	//		memcpy_toiovec(msg->msg_iov, &syscall_info_primary->data, data_size);
+			err= remove_and_copy_from_stable_buffer(sk->ft_filter->stable_buffer, ubuf, msg->msg_iov, data_size);
+			if(err < 0)
+				return err;
+			if(err != data_size){
+				printk("ERROR: %s asked %d bytes from stable buffere but received %d\n", __func__, data_size, err);
+				return -EFAULT;
+			}
+
 			char* app= kmalloc(data_size+1, GFP_KERNEL);
 			if(!app)
 				return -ENOMEM;
@@ -214,7 +232,7 @@ static int before_syscall_rcv_family_secondary(struct kiocb *iocb, struct socket
 			       	goto out;
 			}
                        	app[data_size]='\0';
-			FTPRINTK("%s: data %s\n", __func__, app);
+			FTPRINTK("%s: data %s size %d\n", __func__, app, data_size);
 			kfree(app);
 			
                 
@@ -346,10 +364,15 @@ static int before_syscall_send_family_secondary(struct kiocb *iocb, struct socke
 	iovlen = msg->msg_iovlen;
         iov = msg->msg_iov;
 
+	err= insert_in_send_buffer_and_csum(sock->sk->ft_filter->send_buffer, iov, iovlen, size, &my_csum);
+	if(err){
+		printk("ERROR %s Impossible to insert in send buffer\n", __func__);
+		goto out;
+	}
 	/* TODO copy this data to stable buffer.
 	 *
 	 */
-	for(i=0; i< iovlen; i++){
+	/*for(i=0; i< iovlen; i++){
 		char* app= kmalloc(iov[i].iov_len + 1, GFP_KERNEL);
 		my_csum= csum_and_copy_from_user(iov[i].iov_base, (void*)app, iov[i].iov_len, my_csum, &err);
 		if(err){
@@ -361,7 +384,7 @@ static int before_syscall_send_family_secondary(struct kiocb *iocb, struct socke
 		app[iov[i].iov_len]='\0';
 		FTPRINTK("%s: data %s\n",__func__,app);
 		kfree(app);
-	}
+	}*/
 
 	if(my_csum != sycall_info_primary->csum){
 		printk("ERROR: %s for pid %d csum of send (syscall id %d) not matching between primary(%d) and secondary(%d)\n", __func__, current->pid, current->id_syscall, sycall_info_primary->csum, my_csum);
