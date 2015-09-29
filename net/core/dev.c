@@ -137,7 +137,6 @@
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
 #include <linux/net_tstamp.h>
-#include <linux/ft_replication.h>
 
 #include "net-sysfs.h"
 
@@ -2175,22 +2174,10 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 	const struct net_device_ops *ops = dev->netdev_ops;
 	int rc = NETDEV_TX_OK;
 	unsigned int skb_len;
-#ifdef FT_POPCORN
-	struct sock* sk= NULL;
-#endif
 
 	if (likely(!skb->next)) {
 		u32 features;
 
-#ifdef FT_POPCORN
-	        sk= skb->sk;
-        	if(sk){
-                	sock_hold(sk);
-        	}
-        	else{
-                	//printk("WARNING: %s sending a skb without sock struct from pid %d\n",__func__, current->pid);
-        	}
-#endif
 		/*
 		 * If device doesn't need skb->dst, release it right now while
 		 * its hot in this cpu cache
@@ -2239,26 +2226,8 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 
 		skb_len = skb->len;
 
-#ifdef FT_POPCORN 
-		if(net_ft_tx_filter(sk, skb) == FT_TX_DROP){
-			rc = NETDEV_TX_OK;
-			skb_orphan(skb);
-			nf_reset(skb);
-		}
-		else{
-			rc = ops->ndo_start_xmit(skb, dev);
-                	trace_net_dev_xmit(skb, rc, dev, skb_len);
-		}
-		
-		if(sk){
-			__sock_put(sk);
-			sk= NULL;
-		}				
-#else
-
 		rc = ops->ndo_start_xmit(skb, dev);
 		trace_net_dev_xmit(skb, rc, dev, skb_len);
-#endif
 
 		if (rc == NETDEV_TX_OK)
 			txq_trans_update(txq);
@@ -2266,12 +2235,6 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 	}
 
 gso:
-#ifdef FT_POPCORN
-	if(sk){
-		__sock_put(sk);
-		sk= NULL;
-	}
-#endif
 	do {
 		struct sk_buff *nskb = skb->next;
 
@@ -2287,34 +2250,8 @@ gso:
 
 		skb_len = nskb->len;
 
-#ifdef FT_POPCORN 
-		sk= nskb->sk;
-        	if(sk){
-                	sock_hold(sk);
-        	}
-        	else{
-                	//printk("WARNING: %s sending a skb without sock struct from pid %d\n",__func__, current->pid);
-        		
-		}
-
-                if(net_ft_tx_filter(sk, skb) == FT_TX_DROP){
-                        rc = NETDEV_TX_OK;
-                        skb_orphan(nskb);
-                        nf_reset(nskb);
-                }
-                else{
-                        rc = ops->ndo_start_xmit(nskb, dev);
-                        trace_net_dev_xmit(nskb, rc, dev, skb_len);
-                }
-
-                if(sk){
-                        __sock_put(sk);
-			sk= NULL;
-                }
-#else
                 rc = ops->ndo_start_xmit(nskb, dev);
                 trace_net_dev_xmit(nskb, rc, dev, skb_len);
-#endif
 
 		if (unlikely(rc != NETDEV_TX_OK)) {
 			if (rc & ~NETDEV_TX_MASK)
@@ -2334,11 +2271,6 @@ out_kfree_gso_skb:
 out_kfree_skb:
 	kfree_skb(skb);
 out:
-#ifdef FT_POPCORN
-	if(sk){
-        	__sock_put(sk);
-	}
-#endif
 	return rc;
 }
 
@@ -3303,9 +3235,6 @@ static int __netif_receive_skb(struct sk_buff *skb)
 	int ret = NET_RX_DROP;
 	__be16 type;
 
-#ifdef FT_POPCORN
-	net_ft_rx_filter(skb);
-#endif
 	if (!netdev_tstamp_prequeue)
 		net_timestamp_check(skb);
 
@@ -3323,10 +3252,6 @@ static int __netif_receive_skb(struct sk_buff *skb)
 	skb_reset_transport_header(skb);
 	skb_reset_mac_len(skb);
 
-#ifdef FT_POPCORN
-	//not sure is the correct thing to do...	
-	skb_orphan(skb);
-#endif
 	pt_prev = NULL;
 
 	rcu_read_lock();

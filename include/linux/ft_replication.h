@@ -224,17 +224,13 @@ int ft_before_syscall_rcv_family(struct kiocb *iocb, struct socket *sock,
 int ft_after_syscall_rcv_family(struct kiocb *iocb, struct socket *sock,
                                        struct msghdr *msg, size_t size, int flags, int ret);
 
-int remove_and_copy_from_stable_buffer(struct stable_buffer *stable_buffer, char __user * buffer, struct iovec* iov, int size);
+int remove_and_copy_from_stable_buffer(struct stable_buffer *stable_buffer, struct iovec* iov, int size);
 int insert_in_send_buffer_and_csum(struct send_buffer *send_buffer, struct iovec *iov, int iovlen, int size, __wsum *csum);
 
 #define DUMMY_DRIVER "ft_dummy_driver"
 
 struct tcp_request_sock;
 
-#define FT_TX_OK 0
-#define FT_TX_DROP 1
-int net_ft_tx_filter(struct sock* sk, struct sk_buff *skb);
-int net_ft_rx_filter(struct sk_buff *skb);
 int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority);
 //int create_filter_accept(struct task_struct *task, struct socket *newsock,struct socket *sock);
 void ft_grown_mini_filter(struct sock* sk, struct request_sock *req);

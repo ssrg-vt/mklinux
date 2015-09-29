@@ -10,7 +10,7 @@
 #include <linux/net.h>
 #include <net/sock.h>
 
-#define FT_NET_VERBOSE 1
+#define FT_NET_VERBOSE 0
 #if FT_NET_VERBOSE
 #define FTPRINTK(...) printk(__VA_ARGS__)
 #else
@@ -172,22 +172,17 @@ static int before_syscall_rcv_family_primary(struct kiocb *iocb, struct socket *
 }
 
 static int before_syscall_rcv_family_secondary(struct kiocb *iocb, struct socket *sock,
-                                       struct msghdr *msg, size_t size, int flags, int* ret){
+                                       struct msghdr *msg, size_t size, int flags, int* syscall_ret){
 
 	struct sock *sk;
         struct rcv_fam_info *syscall_info_primary= NULL;
 	int data_size;
+	__user char* ubuf;
         __wsum my_csum;
-	void* __user ubuf;
-        int err;
+        int err, ret= FT_SYSCALL_DROP;
 
         FTPRINTK("%s started for pid %d syscall_id %d\n", __func__, current->pid, current->id_syscall);
 
-	sk= sock->sk;
-	if(!sk){
-		printk("ERROR: %s sock struct is NULL\n", __func__);
-		return -EFAULT;
-	}
         syscall_info_primary= (struct rcv_fam_info *) ft_wait_for_syscall_info(&current->ft_pid, current->id_syscall);
         if(!syscall_info_primary){
                 printk("ERROR: %s for pid %d no rcv info from primary\n", __func__, current->pid);
@@ -201,34 +196,48 @@ static int before_syscall_rcv_family_secondary(struct kiocb *iocb, struct socket
 
 	if(syscall_info_primary->size != size){
                 printk("ERROR: %s for pid %d size of rcv (syscall id %d) not matching between primary(%d) and secondary(%d)\n", __func__, current->pid, current->id_syscall, syscall_info_primary->size, (int) size);
+		ret= -EFAULT;
    		goto out;
 	 }
 
 	if(syscall_info_primary->flags != flags){
                 printk("ERROR: %s for pid %d flags of rcv (syscall id %d) not matching between primary(%d) and secondary(%d)\n", __func__, current->pid, current->id_syscall, syscall_info_primary->flags, flags);
+		ret= -EFAULT;
         	goto out;
 	}
 
 	my_csum= 0;
-        
+        ubuf= msg->msg_iov->iov_base;
 	if(data_size){
-			ubuf= msg->msg_iov->iov_base;
-	//		memcpy_toiovec(msg->msg_iov, &syscall_info_primary->data, data_size);
-			err= remove_and_copy_from_stable_buffer(sk->ft_filter->stable_buffer, ubuf, msg->msg_iov, data_size);
-			if(err < 0)
-				return err;
+			sk= sock->sk;
+		        if(!sk || !sk->ft_filter){
+                		printk("ERROR: %s sock struct or sk->ft_filter is NULL\n", __func__);
+                		ret= -EFAULT;
+				goto out;
+        		}
+		
+			err= remove_and_copy_from_stable_buffer(sk->ft_filter->stable_buffer, msg->msg_iov, data_size);
+			if(err < 0){
+				ret= err;
+				goto out;
+			}
+			
 			if(err != data_size){
 				printk("ERROR: %s asked %d bytes from stable buffere but received %d\n", __func__, data_size, err);
-				return -EFAULT;
+				ret= -EFAULT;
+				goto out;
 			}
 
 			char* app= kmalloc(data_size+1, GFP_KERNEL);
-			if(!app)
-				return -ENOMEM;
+			if(!app){
+				ret= -ENOMEM;
+				goto out;
+			}
                         my_csum= csum_and_copy_from_user(ubuf, app, data_size, my_csum, &err);
 			if(err){
 				printk("ERROR: %s copy_from_user failed\n", __func__);
-                        	kfree(app);
+                        	ret= -EFAULT;
+				kfree(app);
 			       	goto out;
 			}
                        	app[data_size]='\0';
@@ -240,19 +249,20 @@ static int before_syscall_rcv_family_secondary(struct kiocb *iocb, struct socket
 	
 	/*TODO
 	 * NOTE: for tcp msg it is not important
-	 * but for udp msg the fields  msg_name/msg_namelen should be copied too.
+	 * but for udp msg the fields msg_name/msg_namelen should be copied too.
 	 */
 
 	if(my_csum != syscall_info_primary->csum){
                 printk("ERROR: %s for pid %d csum of send (syscall id %d) not matching between primary(%d) and secondary(%d)\n", __func__, current->pid, current->id_syscall, syscall_info_primary->csum, my_csum);
-        }
+        	ret= -EFAULT;
+	}
 
 out:
-        *ret= syscall_info_primary->ret;
+        *syscall_ret= syscall_info_primary->ret;
 
         kfree(syscall_info_primary);
 
-        return FT_SYSCALL_DROP;
+        return ret;
 }
 
 static int before_syscall_rcv_family_replicated_sock(struct kiocb *iocb, struct socket *sock,
@@ -305,8 +315,8 @@ static int after_syscall_send_family_primary(int ret){
 
 	FTPRINTK("%s pid %d syscall_id %d sending size %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info->size, syscall_info->csum, syscall_info->ret);
 	
-	//ft_send_syscall_info_from_work(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info));
 	ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info));
+	
 	kfree(syscall_info);
 	current->useful= NULL;
 	
@@ -369,22 +379,6 @@ static int before_syscall_send_family_secondary(struct kiocb *iocb, struct socke
 		printk("ERROR %s Impossible to insert in send buffer\n", __func__);
 		goto out;
 	}
-	/* TODO copy this data to stable buffer.
-	 *
-	 */
-	/*for(i=0; i< iovlen; i++){
-		char* app= kmalloc(iov[i].iov_len + 1, GFP_KERNEL);
-		my_csum= csum_and_copy_from_user(iov[i].iov_base, (void*)app, iov[i].iov_len, my_csum, &err);
-		if(err){
-			 printk("ERROR: %s copy_from_user failed\n", __func__);
-			 kfree(app);
-                         goto out;
-
-		}
-		app[iov[i].iov_len]='\0';
-		FTPRINTK("%s: data %s\n",__func__,app);
-		kfree(app);
-	}*/
 
 	if(my_csum != sycall_info_primary->csum){
 		printk("ERROR: %s for pid %d csum of send (syscall id %d) not matching between primary(%d) and secondary(%d)\n", __func__, current->pid, current->id_syscall, sycall_info_primary->csum, my_csum);
