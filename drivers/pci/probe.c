@@ -1295,6 +1295,85 @@ int pci_dev_list_add(int compatible, char *vendor, char *model,
        return i;
 }
 
+int pci_dev_list_remove(int compatible, char *vendor, char *model,
+               char* slot, char *strflags, int flags)
+{
+        int i;
+	unsigned int pci_slot =~0, pci_func =~0;
+	char *tmp;
+	unsigned short vendor_nr;
+ 	unsigned short device_nr;
+	vendor_nr= (unsigned short)simple_strtoul(vendor, NULL, 0);
+	device_nr= (unsigned short)simple_strtoul(model, NULL, 0);
+	
+	if (slot) {
+    		if ((tmp = strchr(slot,'.'))) {
+      			if (tmp != &(slot[0])) {
+       				tmp = strsep(&slot, ".");
+        		if (tmp)
+                		pci_slot = simple_strtoul(tmp, NULL, 0);
+        		if (slot[0] != 0)
+                		pci_func = simple_strtoul(slot, NULL, 0);
+      		}
+      		else
+        		if (slot[1] != 0)
+          			pci_func = simple_strtoul(slot +1, NULL, 0);
+    	}
+    	else
+        	pci_slot = simple_strtoul(slot, NULL, 0);
+    	}
+
+	for (i=0; i<pci_dev_blacklist_elements; i++)
+                if (vendor_nr == pci_dev_blacklist[i].vendor &&
+                    device_nr == pci_dev_blacklist[i].device) {
+
+                        if ((pci_dev_blacklist[i].slot == ~0) &&
+                            (pci_dev_blacklist[i].func == ~0)){
+				pci_dev_blacklist[i].vendor= ~0;
+				pci_dev_blacklist[i].device= ~0;
+				pci_dev_blacklist[i].slot= ~0;
+				pci_dev_blacklist[i].func= ~0;
+                                return (i +1);
+			}
+
+                        if ((pci_dev_blacklist[i].slot != ~0) &&
+                            (pci_dev_blacklist[i].func != ~0)) {
+                                if ((pci_slot == pci_dev_blacklist[i].slot) &&
+                                    (pci_func == pci_dev_blacklist[i].func)){
+				       	pci_dev_blacklist[i].vendor= ~0;
+	                                pci_dev_blacklist[i].device= ~0;
+        	                        pci_dev_blacklist[i].slot= ~0;
+                	                pci_dev_blacklist[i].func= ~0;
+					return (i +1);
+				}
+                                else
+                                        return 0;
+                        }
+
+                        if ((pci_dev_blacklist[i].slot != ~0) &&
+                            (pci_slot == pci_dev_blacklist[i].slot)){
+			       	pci_dev_blacklist[i].vendor= ~0;
+                                pci_dev_blacklist[i].device= ~0;
+                                pci_dev_blacklist[i].slot= ~0;
+                                pci_dev_blacklist[i].func= ~0;
+				return (i +1);
+			}
+                        if ((pci_dev_blacklist[i].func != ~0) &&
+                            (pci_func == pci_dev_blacklist[i].func)){
+				pci_dev_blacklist[i].vendor= ~0;
+                                pci_dev_blacklist[i].device= ~0;
+                                pci_dev_blacklist[i].slot= ~0;
+                                pci_dev_blacklist[i].func= ~0;
+			       	return (i +1);
+			}
+                }
+
+	return i;
+
+}
+
+EXPORT_SYMBOL(pci_dev_list_remove);
+
 /*
  * The list must be in the format
  * pci_dev_flags=vendor:device:flags,[v,d,f]

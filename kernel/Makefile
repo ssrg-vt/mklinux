@@ -12,7 +12,7 @@ obj-y     = sched.o fork.o exec_domain.o panic.o printk.o \
 	    notifier.o ksysfs.o sched_clock.o cred.o \
 	    async.o range.o multikernel.o process_server.o \
 	    popcorn_namespace.o ft_replication.o ft_time.o \
-	    ft_uts.o ft_common_syscall_management.o
+	    ft_uts.o ft_common_syscall_management.o ft_crash_kernel.o
 
 obj-y += groups.o
 

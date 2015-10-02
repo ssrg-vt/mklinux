@@ -1615,20 +1615,3 @@ static int __init ft_replication_init(void) {
 
 late_initcall(ft_replication_init);
 
-/*long syscall_hook_enter(struct pt_regs *regs)
-{
-	// System call number is in orig_ax
-	if(ft_is_replicated(current)){
-		printk("%s in system call [%ld]\n", current->comm, regs->orig_ax, regs->ax);
-		current->id_syscall++;
-	}
-	return regs->orig_ax;
-}
-
-void syscall_hook_exit(struct pt_regs *regs)
-{
-	// System call number is in ax
-	if(ft_is_replicated(current)){
-                printk("%s out[%ld] [%ld]\n", current->comm, regs->orig_ax, regs->ax);
-	}
-}*/

@@ -871,4 +871,5 @@ asmlinkage long sys_popcorn_test_kmsg(enum pcn_kmsg_test_op op,
 
 asmlinkage long sys_popcorn_test_ipi_latency(int cpu);
 
+asmlinkage long sys_ft_crash_kernel(void);
 #endif
