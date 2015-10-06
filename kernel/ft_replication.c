@@ -673,7 +673,6 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			tsk->next_pid_to_use= 0;
 			tsk->next_id_resources= 0;
 			tsk->id_syscall= 0;
-                	tsk->ft_pid.id_array= NULL;
 			tsk->useful= NULL;
 
 			return 0;
@@ -689,7 +688,6 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 				 */	
 	
 				tsk->ft_pid.level= 0;
-		                tsk->ft_pid.id_array= NULL;
                 		tsk->next_pid_to_use= 0;
                 		tsk->next_id_resources= 0;
                 		tsk->id_syscall= 0;
@@ -741,15 +739,15 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			 * Note that same replicas in different kernel will end up with the same ft_pid.
 			 */
 			tsk->ft_pid.level= current->ft_pid.level+1;
-			tsk->ft_pid.ft_pop_id= tsk->ft_popcorn->id;
-			tsk->next_pid_to_use= 0;
-			tsk->ft_pid.id_array= kmalloc(sizeof(int)*(tsk->ft_pid.level),GFP_KERNEL);
-			if(!tsk->ft_pid.id_array){
-				return -ENOMEM;
+			if(tsk->ft_pid.level > MAX_GENERATION_LENGTH){
+				printk("%s ERROR Too many child of child, encrease MAX_GENERATION_LENGTH\n", __func__);	
+				return -1;
 			}
-			
-			if(current->ft_pid.id_array){
-				memcpy(tsk->ft_pid.id_array,current->ft_pid.id_array,sizeof(int)*current->ft_pid.level);
+			tsk->ft_pid.ft_pop_id= tsk->ft_popcorn->id;
+                        tsk->next_pid_to_use= 0;
+
+			if(tsk->ft_pid.level){
+				memcpy(tsk->ft_pid.id_array, current->ft_pid.id_array, sizeof(int)*current->ft_pid.level);
 			}
 			
 			tsk->ft_pid.id_array[current->ft_pid.level]= current->next_pid_to_use++;
@@ -761,7 +759,6 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 	}
 	else{
 		tsk->ft_pid.level= 0;
-		tsk->ft_pid.id_array= NULL;	
 		tsk->next_pid_to_use= 0;
 		tsk->next_id_resources= 0;
 		tsk->replica_type= NOT_REPLICATED;

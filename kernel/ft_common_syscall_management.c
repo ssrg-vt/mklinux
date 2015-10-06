@@ -303,10 +303,7 @@ struct wait_syscall{
 struct send_syscall_work{
         struct work_struct work;
         struct ft_pop_rep *replica_group; //to know secondary replicas to whom send the msg
-        /* ft_pid fields to id the replica*/
-        struct ft_pop_rep_id ft_pop_id;
-        int level;
-	int* id_array;
+	struct ft_pid sender; 
 	int syscall_id; //syscall id for that ft_pid replica
 	unsigned int private_data_size; //size of the private data of the syscall
 	char* private;
@@ -317,11 +314,13 @@ struct syscall_msg{
         /*the following is pid_t linearized*/
         struct ft_pop_rep_id ft_pop_id;
         int level;
-	//int* id_array; this is size variable so included in data field
+	int id_array[MAX_GENERATION_LENGTH]; 
+
         int syscall_id;
 	unsigned int syscall_info_size;
+	
 	/*this must be the last field of the struct*/
-        char data; /*contains id_array followed by syscall_info*/
+        char data; /*contains syscall_info*/
 };
 
 static int create_syscall_msg(struct ft_pop_rep_id* primary_ft_pop_id, int primary_level, int* primary_id_array, int syscall_id, char* syscall_info, unsigned int syscall_info_size, struct syscall_msg** message, int *msg_size){
@@ -330,7 +329,7 @@ static int create_syscall_msg(struct ft_pop_rep_id* primary_ft_pop_id, int prima
         int size;
 	char* variable_data;
 
-        size= sizeof(*msg) + primary_level*sizeof(int) + syscall_info_size;
+        size= sizeof(*msg) + syscall_info_size;
         msg= kmalloc(size, GFP_KERNEL);
         if(!msg)
                 return -ENOMEM;
@@ -341,14 +340,13 @@ static int create_syscall_msg(struct ft_pop_rep_id* primary_ft_pop_id, int prima
         msg->ft_pop_id= *primary_ft_pop_id;
         msg->level= primary_level;
 	
+	if(primary_level)
+		memcpy(msg->id_array, primary_id_array, primary_level*sizeof(int));
+
 	msg->syscall_id= syscall_id;
 	msg->syscall_info_size= syscall_info_size;
 
 	variable_data= &msg->data;
-	if(primary_level){
-		memcpy(variable_data, primary_id_array, primary_level*sizeof(int));
-		variable_data+= primary_level*sizeof(int);
-	}
 	
 	if(syscall_info_size){
 		memcpy(variable_data, syscall_info, syscall_info_size);
@@ -377,11 +375,10 @@ static void send_syscall_info_to_secondary_replicas(struct ft_pop_rep *replica_g
 static void send_syscall_info_to_secondary_replicas_from_work(struct work_struct* work){
         struct send_syscall_work *my_work= (struct send_syscall_work*) work;
 
-        send_syscall_info_to_secondary_replicas(my_work->replica_group, &my_work->ft_pop_id, my_work->level, (int*) &my_work->id_array, my_work->syscall_id, my_work->private, my_work->private_data_size);
+        send_syscall_info_to_secondary_replicas(my_work->replica_group, &my_work->sender.ft_pop_id, my_work->sender.level, my_work->sender.id_array, my_work->syscall_id, my_work->private, my_work->private_data_size);
 
         put_ft_pop_rep(my_work->replica_group);
 	
-	kfree(my_work->id_array);
 	kfree(my_work->private);
         kfree(my_work);
 
@@ -413,26 +410,13 @@ void ft_send_syscall_info_from_work(struct ft_pop_rep *replica_group, struct ft_
 	get_ft_pop_rep(replica_group);
 	work->replica_group= replica_group;
 
-	/* Do a copy of ft_pid because potentially it may exit on the mean while
-	 * and the pointer could not be valid anymore...
-	 */
-	work->ft_pop_id= primary_pid->ft_pop_id;
-	work->level= primary_pid->level;
-	if(primary_pid->level){
-		work->id_array= kmalloc(primary_pid->level*sizeof(int), GFP_KERNEL);
-		if(!work->id_array){
-			kfree(work);
-			return;
-		}
-                memcpy(work->id_array, primary_pid->id_array, primary_pid->level*sizeof(int));
-        }
+	work->sender= *primary_pid;
 	
 	/* Do a copy of syscall_info */
 	work->private_data_size= syscall_info_size;
 	if(syscall_info_size){
 		work->private= kmalloc(syscall_info_size, GFP_KERNEL);
 		if(!work->private){
-			kfree(work->id_array);
 			kfree(work);
 			return;
 		}
@@ -522,20 +506,13 @@ static int handle_syscall_info_msg(struct pcn_kmsg_message* inc_msg){
         struct wait_syscall* wait_info;
         struct wait_syscall* present_info= NULL;
         char* key;
-	int* id_array;
 	char* private;
 
-	/* retrive variable data length fields (id_array and syscall_info)*/
-	id_array= (int*) &msg->data;
-	if(msg->level){
-		private= &msg->data+ msg->level*sizeof(int);
-	}	
-	else{
-		private= &msg->data;
-	}
+	/* retrive variable data length field (syscall_info)*/
+	private= &msg->data;
 
 	/* retrive key for this syscall in hash_table*/
-        key= ft_syscall_get_key(&msg->ft_pop_id, msg->level, id_array, msg->syscall_id);
+        key= ft_syscall_get_key(&msg->ft_pop_id, msg->level, msg->id_array, msg->syscall_id);
         if(!key)
                 return -ENOMEM;
 
@@ -560,7 +537,7 @@ static int handle_syscall_info_msg(struct pcn_kmsg_message* inc_msg){
 		wait_info->private= NULL;
 
         wait_info->task= NULL;
-        wait_info->populated=1;
+        wait_info->populated= 1;
 
         if((present_info= ((struct wait_syscall*) ft_syscall_hash_add(key, (void*) wait_info)))){
                 present_info->private= wait_info->private;
