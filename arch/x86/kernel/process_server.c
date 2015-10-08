@@ -108,18 +108,12 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 		PSPRINTK("%s: fs %lx thread %lx\n", __func__, fs, arch->thread_fs);
 		arch->thread_fs = fs;
 	}
-//printk(KERN_EMERG"%s: task %p arch %p\n", __func__, task, arch);
-//printk(KERN_EMERG"%s: %s FS task %lx[%lx] saved %lx[%lx] content %lx\n",
-printk(KERN_EMERG"%s: %s FS task %lx[%lx] saved %lx[%lx] current %lx[%lx]\n",
+
+	printk(KERN_EMERG"%s: %s FS task %lx[%lx] saved %lx[%lx] current %lx[%lx]\n",
 	__func__, task->comm, 
 	(unsigned long)task->thread.fs, (unsigned long)task->thread.fsindex,
 	(unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
 	(unsigned long)fs, (unsigned long)fsindex);
-//, fs ? *(unsigned long*)fs : 0x12345678l);
-
-unsigned long content;
-	get_user(content, ((unsigned long*) fs) );
-printk(KERN_EMERG"%s: FS %lx content %lx\n", __func__, fs, content);
 
 	arch->thread_gs = task->thread.gs;
 	rdmsrl(MSR_KERNEL_GS_BASE, gs);
