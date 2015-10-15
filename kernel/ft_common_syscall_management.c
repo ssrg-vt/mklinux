@@ -434,6 +434,32 @@ void ft_send_syscall_info_from_work(struct ft_pop_rep *replica_group, struct ft_
 	
 }
 
+/* Supposed to be called by primary after secondary replicas to get syscall data sent by the primary replica before failing if any.
+ * The data returned is the one identified by the ft_pid of the replica and the syscall_id.
+ */
+void* ft_get_pending_syscall_info(struct ft_pid *pri_after_sec, int id_syscall){
+        struct wait_syscall* present_info= NULL;
+        char* key;
+        void* ret= NULL;
+         
+        FTPRINTK("%s called from pid %s\n", __func__, current->pid);
+        
+        key= ft_syscall_get_key_from_ft_pid(pri_after_sec, id_syscall);
+        if(!key)
+                return ERR_PTR(-ENOMEM);
+
+	present_info= ft_syscall_hash_remove(key);
+
+	if(present_info){
+		ret= present_info->private;
+		kfree(present_info);
+	}
+
+        kfree(key);
+	
+	return ret;
+}
+
 /* Supposed to be called by secondary replicas to wait for syscall data sent by the primary replica.
  * The data returned is the one identified by the ft_pid of the replica and the syscall_id.
  * It may put the current thread to sleep.
@@ -459,6 +485,7 @@ void* ft_wait_for_syscall_info(struct ft_pid *secondary, int id_syscall){
 
         wait_info->task= current;
         wait_info->populated= 0;
+	wait_info->private= NULL;
 
         if((present_info= ((struct wait_syscall*) ft_syscall_hash_add(key, (void*) wait_info)))){
 		FTPRINTK("%s data present, no need to wait\n", __func__);
@@ -499,6 +526,107 @@ out:
         return ret;
 
 
+}
+
+struct flush_pckt_work{
+        struct work_struct work;
+        atomic_t* counter;
+        struct task_struct *waiting;
+};
+
+static void notify_flush_received(struct work_struct* work){
+        struct flush_pckt_work *my_work= (struct flush_pckt_work *)work;
+
+        atomic_dec(my_work->counter);
+        wake_up_process(my_work->waiting);
+
+        kfree(my_work);
+}
+
+static int ft_wake_up_primary_after_secondary(void){
+	int ret= 0, i;
+	list_entry_t *head, *app;
+	struct wait_syscall* wait_info;
+
+	spin_lock(&syscall_hash->spinlock);
+        
+	for(i=0; i<syscall_hash->size; i++){
+		head= syscall_hash->table[i];
+		if(head){
+			list_for_each_entry(app, &head->list, list){
+				if(!app->obj){
+					ret= -EFAULT;
+					printk("ERROR: %s no obj field\n", __func__);
+					goto out;
+				}
+				wait_info= (struct wait_syscall*) app->obj;
+				if(ft_is_primary_after_secondary_replica(wait_info->task)){
+					wait_info->populated= 1;
+			                wake_up_process(wait_info->task);
+				}
+			}
+		}
+	}
+
+out:        
+	spin_unlock(&syscall_hash->spinlock);
+	return ret;
+	
+}
+
+static int flush_sys_wq(void){
+	struct flush_pckt_work *work;
+        atomic_t sys_wq_to_wait= ATOMIC_INIT(0);
+        int ret= 0, wake;
+
+        work= kmalloc(sizeof(*work), GFP_ATOMIC);
+        if(!work){
+                ret= -ENOMEM;
+                return ret;
+        }
+
+        INIT_WORK( (struct work_struct*)work, notify_flush_received);
+        work->counter= &sys_wq_to_wait;
+        work->waiting= current;
+        //NOTE this because it is a syngle thread wq
+        queue_work(ft_syscall_info_wq, (struct work_struct*)work);
+
+        atomic_inc(&sys_wq_to_wait);
+
+        wake= 0;
+        while(atomic_read(&sys_wq_to_wait)!=0){
+                local_irq_disable();
+                preempt_disable();
+
+                __set_current_state(TASK_INTERRUPTIBLE);
+                if(atomic_read(&sys_wq_to_wait)==0)
+                        wake= 1;
+
+                preempt_enable();
+                local_irq_enable();
+
+                if(!wake)
+                        schedule();
+
+        }
+
+	return ret;
+}
+
+/* Flush any pending syscall info still to be consumed by worker thread
+ * and wake up all primary_after_secondary replicas that are waiting for a syscall info.
+ * NOTE: this is supposed to be called after update_replica_type_after_failure.
+ */
+int flush_syscall_info(void){
+	int ret;
+
+	ret= flush_sys_wq();
+	if(ret)
+		return ret;
+
+	ret= ft_wake_up_primary_after_secondary();
+
+	return ret;
 }
 
 static int handle_syscall_info_msg(struct pcn_kmsg_message* inc_msg){

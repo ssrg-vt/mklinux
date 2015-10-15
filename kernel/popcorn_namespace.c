@@ -126,7 +126,7 @@ int read_notify_popcorn_ns(char *page, char **start, off_t off, int count, int *
 	return len;
 }
 
-int associate_to_popcorn_ns(struct task_struct * tsk, int replication_degree)
+int associate_to_popcorn_ns(struct task_struct * tsk, int replication_degree, int type)
 {
 	struct popcorn_namespace* pop;
 
@@ -149,7 +149,8 @@ int associate_to_popcorn_ns(struct task_struct * tsk, int replication_degree)
 	spin_lock(&ft_lock);
 	if(pop->activate==0){
 		pop->root= tsk->pid;
-		tsk->replica_type= ROOT_POT_PRIMARY_REPLICA;
+		//tsk->replica_type= ROOT_POT_PRIMARY_REPLICA;
+		ft_modify_replica_type(tsk, type);
 		pop->replication_degree= replication_degree;
 		pop->activate=1;
 	}
@@ -169,7 +170,7 @@ int write_notify_popcorn_ns(struct file *file, const char __user *buffer, unsign
 
 		get_task_struct(current);
 
-		if((associate_to_popcorn_ns(current, replication_degree))==-1) {
+		if((associate_to_popcorn_ns(current, replication_degree, FT_ROOT_POT_PRIMARY_REPLICA))==-1) {
 			printk("associate_to_popcorn_ns failed for pid %d\n", current->pid);
 		}
 		else{

@@ -94,21 +94,21 @@ out:
 }
 
 long ft_gettimeofday(struct timeval __user * tv, struct timezone __user * tz){
-	struct task_struct *ancestor;
-
-	ancestor= find_task_by_vpid(current->tgid);
-
-	if(ancestor->replica_type == PRIMARY_REPLICA || ancestor->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT){
+	
+	if(ft_is_primary_replica(current)){
 		return ft_gettimeofday_primary(tv, tz);	
 	}
 	else{
-		if(ancestor->replica_type == SECONDARY_REPLICA || ancestor->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT){
+		if(ft_is_secondary_replica(current)){
 			return ft_gettimeofday_secondary(tv, tz);
 		}
 		else{
-			//BUG();
-			printk("%s: ERROR ancestor pid %d tgid %d has replica type %d (current pid %d tgid %d)\n", __func__, ancestor->pid, ancestor->tgid, ancestor->replica_type, current->pid, current->tgid);
-			return -EFAULT;
+			if(ft_is_primary_after_secondary_replica(current)){
+				printk("%s called by primary after secondary\n", __func__);
+				return 0;
+			}
+			else
+				return -EFAULT;
 		}
 
 	}

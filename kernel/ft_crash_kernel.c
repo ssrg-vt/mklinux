@@ -19,6 +19,8 @@ struct crash_kernel_notification_msg{
         struct pcn_kmsg_hdr header;
 };
 
+static struct workqueue_struct *crash_wq;
+
 extern int _cpu;
 extern int pci_dev_list_remove(int compatible, char *vendor, char *model,
                char* slot, char *strflags, int flags);
@@ -32,7 +34,7 @@ unsigned int inet_addr(char *str)
     return *(unsigned int *)arr;
 }
 
-static int handle_crash_kernel_notification(struct pcn_kmsg_message* inc_msg){
+static void process_crash_kernel_notification(struct work_struct *work){
 	struct pci_dev *dev;
 	struct pci_dev *prev;
 	int found, fd, offset;
@@ -43,7 +45,8 @@ static int handle_crash_kernel_notification(struct pcn_kmsg_message* inc_msg){
 	unsigned int *addr;
 	
 	printk("%s called\n", __func__);
-	
+	kfree(work);
+
 	//reenable device
 	pci_dev_list_remove(0,"0x8086","0x10c9","0.0","", 0);
 	
@@ -65,13 +68,32 @@ static int handle_crash_kernel_notification(struct pcn_kmsg_message* inc_msg){
 
         if(!dev){
                 printk("ERROR: %s device not found\n", __func__);
-                return -1;
+                return;
         }
 
 	if(!dev->driver){
                 printk("ERROR: %s driver not found\n", __func__);
-                return -1;
+                return;
         }
+
+	if(flush_pending_pckt_in_filters()){
+		printk("ERROR: %s impossible to flush filters\n", __func__);
+                return;
+	}	
+
+	printk("filters flushed\n");
+	
+	if(trim_stable_buffer_in_filters()){
+		printk("ERROR: %s impossible to trim filters\n", __func__);
+                return;
+	}	
+	printk("stable buffer trimmed\n");
+
+	if(flush_send_buffer_in_filters()){
+                printk("ERROR: %s impossible to flush send buffers\n", __func__);
+                return;
+        }
+        printk("send buffer flushed\n");
 	
 	//set the net device up
 	//the idea is to emulate what ifconfig does
@@ -85,7 +107,7 @@ static int handle_crash_kernel_notification(struct pcn_kmsg_message* inc_msg){
 	fd= sock_create_kern( PF_INET, SOCK_DGRAM, IPPROTO_IP, &sock);
 	if(!sock || !sock->ops ||  !sock->ops->ioctl){
 		printk("ERROR: %s impossible create socket\n", __func__);
-		return -1;
+		return;
 	}
 
 	//fs needs to be changed to be able to call ioctl from kernel space
@@ -114,7 +136,47 @@ static int handle_crash_kernel_notification(struct pcn_kmsg_message* inc_msg){
 
 	sock->ops->ioctl(sock, SIOCSIFADDR, (long unsigned int)&ifr);	
 
-  	set_fs(fs); /* restore before returning to user space */	
+  
+	set_fs(fs); /* restore before returning to user space */	
+
+	printk("network up\n");
+
+	update_replica_type_after_failure();
+	printk("replica type updated\n");
+
+	fs = get_fs();     /* save previous value */
+        set_fs (get_ds()); /* use kernel limit */
+
+        memset(&ifr,0,sizeof(ifr));
+
+        memcpy(ifr.ifr_name, DUMMY_DRIVER, sizeof(DUMMY_DRIVER));
+        ifr.ifr_addr.sa_family= (sa_family_t) AF_INET;
+
+        ifr.ifr_flags= IFF_BROADCAST|IFF_RUNNING|IFF_MULTICAST;
+
+        sock->ops->ioctl(sock,  SIOCSIFFLAGS, (long unsigned int)&ifr);
+        
+        set_fs(fs); /* restore before returning to user space */
+
+	printk("dummy_driver down\n");
+
+	flush_syscall_info();
+	printk("syscall info updated\n");
+
+	return;
+}
+
+static int handle_crash_kernel_notification(struct pcn_kmsg_message* inc_msg){
+	struct work_struct* work;
+	
+	work= kmalloc(sizeof(*work), GFP_ATOMIC);
+	if(!work)
+		return -1;
+
+	INIT_WORK(work, process_crash_kernel_notification);
+        queue_work(crash_wq, work);
+
+	pcn_kmsg_free_msg(inc_msg);
 
 	return 0;
 }
@@ -179,6 +241,7 @@ asmlinkage long sys_ft_crash_kernel(void)
 static int __init ft_crash_kernel_init(void) {
 
         pcn_kmsg_register_callback(PCN_KMGS_TYPE_FT_CRASH_KERNEL, handle_crash_kernel_notification);
+	crash_wq= create_singlethread_workqueue("crash_wq");
 
         return 0;
 }

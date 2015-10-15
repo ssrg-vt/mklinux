@@ -74,7 +74,11 @@
 #include <net/netdma.h>
 #include <linux/ft_replication.h> 
 
+#ifdef FT_POPCORN
+int sysctl_tcp_timestamps __read_mostly = 0;
+#else
 int sysctl_tcp_timestamps __read_mostly = 1;
+#endif 
 int sysctl_tcp_window_scaling __read_mostly = 1;
 int sysctl_tcp_sack __read_mostly = 1;
 int sysctl_tcp_fack __read_mostly = 1;

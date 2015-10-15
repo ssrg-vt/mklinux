@@ -63,10 +63,7 @@ int sync_uts(struct task_struct *task)
 		return 0;
 	}
 
-	ancestor = find_task_by_vpid(task->tgid);
-
-	if (ancestor->replica_type == PRIMARY_REPLICA ||
-			ancestor->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT) {
+	if(ft_is_primary_replica(task)){
 		// Sync the secondary replicas from the primary one
 		level = task->ft_pid.level;
 		msg_size = sizeof(struct uts_msg) + level * sizeof(int);
@@ -82,9 +79,12 @@ int sync_uts(struct task_struct *task)
 		memcpy(&msg->info.utsname, &task->nsproxy->uts_ns->ft_name, sizeof(struct new_utsname));
 		send_to_all_secondary_replicas(task->ft_popcorn, (struct pcn_kmsg_long_message*) msg, msg_size);
 		FTPRINTK("FT UTS sync out on %d\n", task->ft_pid);
-	} else if (ancestor->replica_type == SECONDARY_REPLICA ||
-			ancestor->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT) {
+	} 
+	else{
 		// Secondary one? Halt it.
+		if(ft_is_secondary_replica(task)){
+			// Secondary one? Halt it.
+		}
 	}
 }
 

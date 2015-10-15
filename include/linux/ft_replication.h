@@ -17,15 +17,18 @@
 /* int replica_type of struct task_struct can be only one of the 
  * following:
  */
-#define NOT_REPLICATED 0
-#define PRIMARY_REPLICA 1
-#define SECONDARY_REPLICA 2
-#define POTENTIAL_PRIMARY_REPLICA 3
-#define POTENTIAL_SECONDARY_REPLICA 4
-#define ROOT_POT_PRIMARY_REPLICA 5
-#define REPLICA_DESCENDANT 6
-#define NEW_PRIMARY_REPLICA_DESCENDANT 7
-#define NEW_SECONDARY_REPLICA_DESCENDANT 8
+#define FT_NOT_REPLICATED 0
+#define FT_PRIMARY_REPLICA 1
+#define FT_SECONDARY_REPLICA 2
+#define FT_POTENTIAL_PRIMARY_REPLICA 3
+#define FT_POTENTIAL_SECONDARY_REPLICA 4
+#define FT_ROOT_POT_PRIMARY_REPLICA 5
+#define FT_REPLICA_DESCENDANT 6
+#define FT_NEW_PRIMARY_REPLICA_DESCENDANT 7
+#define FT_NEW_SECONDARY_REPLICA_DESCENDANT 8
+#define FT_PRIMARY_AFTER_SECONDARY 9
+#define FT_NEW_PRIMARY_AFTER_SECONDARY_DESCENDANT 10
+#define FT_POTENTIAL_PRIMARY_REPLICA_AFTER_SECONDARY 11
 /****/
 
 #define WAIT_ANSWER_TIMEOUT_SECOND 5
@@ -48,6 +51,7 @@
  */
 #define FT_FILTER_SECONDARY_REPLICA 0x2
 #define FT_FILTER_PRIMARY_REPLICA 0x4
+#define FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA 0x40
 
 #define FT_FILTER_FAKE 0x8
 #define FT_FILTER_CHILD 0x10
@@ -199,6 +203,9 @@ char* print_filter_id(struct net_filter_info *filter);
 int ft_is_replicated(struct task_struct *task);
 int ft_is_primary_replica(struct task_struct *task);
 int ft_is_secondary_replica(struct task_struct *task);
+int ft_is_primary_after_secondary_replica(struct task_struct *task);
+void ft_modify_replica_type(struct task_struct *tsk, int type);
+int update_replica_type_after_failure(void);
 struct pcn_kmsg_long_message;
 void send_to_all_secondary_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_kmsg_long_message* msg, int msg_size);
 
@@ -211,6 +218,8 @@ int copy_replication(unsigned long flags, struct task_struct *tsk);
 void ft_send_syscall_info(struct ft_pop_rep *replica_group, struct ft_pid *primary_pid, int syscall_id, char* syscall_info, unsigned int syscall_info_size);
 void ft_send_syscall_info_from_work(struct ft_pop_rep *replica_group, struct ft_pid *primary_pid, int syscall_id, char* syscall_info, unsigned int syscall_info_size);
 void* ft_wait_for_syscall_info(struct ft_pid *secondary, int id_syscall);
+void* ft_get_pending_syscall_info(struct ft_pid *pri_after_sec, int id_syscall);
+int flush_syscall_info(void);
 
 struct timeval;
 struct timezone;
@@ -227,6 +236,9 @@ int ft_after_syscall_rcv_family(struct kiocb *iocb, struct socket *sock,
 
 int remove_and_copy_from_stable_buffer(struct stable_buffer *stable_buffer, struct iovec* iov, int size);
 int insert_in_send_buffer_and_csum(struct send_buffer *send_buffer, struct iovec *iov, int iovlen, int size, __wsum *csum);
+int remove_and_copy_from_stable_buffer_no_wait(struct stable_buffer *stable_buffer, struct iovec *iov, int size);
+int trim_stable_buffer_in_filters(void);
+int flush_send_buffer_in_filters(void);
 
 #define DUMMY_DRIVER "ft_dummy_driver"
 
@@ -239,5 +251,7 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
 void ft_check_tcp_init_param(struct net_filter_info* filter, struct sock* sk, struct request_sock *req);
 int ft_check_tcp_timestamp(struct sock* sk);
 void ft_activate_grown_filter(struct net_filter_info* filter);
+int flush_pending_pckt_in_filters(void);
+int update_filter_type_after_failure(void);
 
 #endif

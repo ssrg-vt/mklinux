@@ -19,6 +19,7 @@
 #include <asm/ptrace.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
+#include <linux/rwlock_types.h>
 
 #define FT_REPLICATION_VERBOSE 0
 #if FT_REPLICATION_VERBOSE
@@ -522,21 +523,151 @@ void send_to_all_secondary_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_km
 
 }
 
+DEFINE_RWLOCK(replica_type_lock);
+#define MAX_FT_POP_REP 5
+
+int update_replica_type_after_failure(void){
+	struct task_struct *task;
+	struct list_head *iter= NULL;
+	struct ft_pop_rep* ft_popcorn;
+	struct replica_id_list *new_primary,*objPtr;
+	int i,ret= 0;
+	unsigned long checked_ft_popcorn[MAX_FT_POP_REP];
+	int checked, nr_ft_pop= 0;
+
+	write_lock(&replica_type_lock);
+	for_each_process(task){
+		switch(task->replica_type){
+		
+		case FT_NOT_REPLICATED:
+		case FT_PRIMARY_REPLICA:
+		case FT_POTENTIAL_PRIMARY_REPLICA:
+		case FT_ROOT_POT_PRIMARY_REPLICA:
+		case FT_REPLICA_DESCENDANT:
+		case FT_NEW_PRIMARY_REPLICA_DESCENDANT:
+			break;
+
+		case FT_SECONDARY_REPLICA:
+		case FT_NEW_SECONDARY_REPLICA_DESCENDANT:
+		{
+			ft_popcorn= task->ft_popcorn;
+			if(!ft_popcorn){
+				printk("%s Impossible to find ft_popcorn\n", __func__);
+                                ret= -EFAULT;
+                                goto out;
+			}
+
+			/* Quick way to check if ft_popcorn was already updated
+			 * TODO
+			 * change with somenthing better.
+			 */
+			checked= 0;
+			for(i=0;i<nr_ft_pop;i++){
+				if(checked_ft_popcorn[i]== (unsigned long) ft_popcorn){
+					checked= 1;
+					break;
+				}
+			}
+			if(!checked){
+				if(nr_ft_pop==MAX_FT_POP_REP){
+					printk("%s too many ft_pop_rep encrease MAX_FT_POP_REP\n", __func__);
+					ret= -EFAULT;
+					goto out;
+				}
+				checked_ft_popcorn[nr_ft_pop++]= (unsigned long) ft_popcorn;
+			}
+		
+			
+			if(!checked){
+				new_primary= list_first_entry( &ft_popcorn->secondary_replicas_head.replica_list_member, struct replica_id_list, replica_list_member);
+				if(!new_primary){
+					printk("%s Impossible to find a new primary\n", __func__);
+					ret= -EFAULT;
+					goto out;
+				}
+
+				ft_popcorn->primary_replica.pid= new_primary->replica.pid;
+				ft_popcorn->primary_replica.kernel= new_primary->replica.kernel;
+			
+				list_del(&new_primary->replica_list_member);
+				kfree(new_primary);
+				
+				printk("%s: New replica list of pid %d\n", __func__, task->pid);
+				printk("new primary: {pid: %d, kernel %d}, secondary: ", ft_popcorn->primary_replica.pid, ft_popcorn->primary_replica.kernel);
+				list_for_each(iter, &ft_popcorn->secondary_replicas_head.replica_list_member) {
+					objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
+					printk("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
+				}
+				printk("\n");
+			}
+
+			if(ft_popcorn->primary_replica.kernel == _cpu){
+				if(task->replica_type == FT_SECONDARY_REPLICA)
+					task->replica_type= FT_PRIMARY_AFTER_SECONDARY;
+				else
+					task->replica_type= FT_NEW_PRIMARY_AFTER_SECONDARY_DESCENDANT;
+			}
+
+			break;
+		}
+		
+		case FT_POTENTIAL_SECONDARY_REPLICA:
+			task->replica_type= FT_POTENTIAL_PRIMARY_REPLICA_AFTER_SECONDARY;
+			break;
+		default:
+			break;
+
+		}
+	}
+
+	ret= update_filter_type_after_failure();
+	
+out:	write_unlock(&replica_type_lock);
+	return ret;
+}
+
+void ft_modify_replica_type(struct task_struct *tsk, int type){
+	read_lock(&replica_type_lock);
+	tsk->replica_type= type;
+	read_unlock(&replica_type_lock);
+}
+
+/* Returns 1 in case task is a primary replica elected after a failure or replica descendant of 
+ * a primary replica elected after a failure.
+ */
+int ft_is_primary_after_secondary_replica(struct task_struct *task){
+        struct task_struct *ancestor;
+        int ret= 0;
+
+        ancestor= find_task_by_vpid(task->tgid);
+
+        read_lock(&replica_type_lock);
+        if(ancestor->replica_type == FT_PRIMARY_AFTER_SECONDARY
+                || ancestor->replica_type == FT_NEW_PRIMARY_AFTER_SECONDARY_DESCENDANT){
+                ret= 1;
+        }
+        read_unlock(&replica_type_lock);
+
+        return ret;
+}
+
 /* Returns 1 in case task is a secondary replica or secondary replica descendant.
  *
  */
 int ft_is_secondary_replica(struct task_struct *task){
         struct task_struct *ancestor;
+	int ret= 0;
 
         ancestor= find_task_by_vpid(task->tgid);
 
-        if(ancestor->replica_type == SECONDARY_REPLICA
-                || ancestor->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT){
-
-                return 1;
+	read_lock(&replica_type_lock);
+        if(ancestor->replica_type == FT_SECONDARY_REPLICA
+                || ancestor->replica_type == FT_NEW_SECONDARY_REPLICA_DESCENDANT){
+		ret= 1;
         }
+	read_unlock(&replica_type_lock);
 
-        return 0;
+        return ret;
 }
 
 /* Returns 1 in case task is an primary replica or primary replica descendant.
@@ -544,33 +675,41 @@ int ft_is_secondary_replica(struct task_struct *task){
  */
 int ft_is_primary_replica(struct task_struct *task){
 	struct task_struct *ancestor;
+	int ret= 0;
 
         ancestor= find_task_by_vpid(task->tgid);
-
-        if(ancestor->replica_type == PRIMARY_REPLICA
-                || ancestor->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT){
+	
+	read_lock(&replica_type_lock);
+        if(ancestor->replica_type == FT_PRIMARY_REPLICA
+                || ancestor->replica_type == FT_NEW_PRIMARY_REPLICA_DESCENDANT){
                 
-                return 1;
+                ret= 1;
         }
+	read_unlock(&replica_type_lock);
 
-        return 0;
+        return ret;
 }
 
 /* Returns 1 in cast task is ft replicated, 0 otherwise.
  *
  */
 int ft_is_replicated(struct task_struct *task){
+	int ret= 0;
 
-	if(task->replica_type == PRIMARY_REPLICA
-                || task->replica_type == SECONDARY_REPLICA
-                || task->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT
-                || task->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT
-                || task->replica_type == REPLICA_DESCENDANT){	
+	read_lock(&replica_type_lock);
+	if(task->replica_type == FT_PRIMARY_REPLICA
+                || task->replica_type == FT_SECONDARY_REPLICA
+                || task->replica_type == FT_NEW_PRIMARY_REPLICA_DESCENDANT
+                || task->replica_type == FT_NEW_SECONDARY_REPLICA_DESCENDANT
+                || task->replica_type == FT_REPLICA_DESCENDANT
+		|| task->replica_type == FT_PRIMARY_AFTER_SECONDARY
+		|| task->replica_type == FT_NEW_PRIMARY_AFTER_SECONDARY_DESCENDANT){	
 		
-		return 1;
+		ret= 1;
 	}
+	read_unlock(&replica_type_lock);
 
-	return 0;
+	return ret;
 }
 
 /* Checks if two struct ft_pid are equals.
@@ -663,11 +802,15 @@ out_clean:
 int copy_replication(unsigned long flags, struct task_struct *tsk){
 	struct popcorn_namespace *pop;
 	struct task_struct* ancestor;
+	int ret= 0;
 
 	pop= tsk->nsproxy->pop_ns;
 	if(is_popcorn_namespace_active(pop)){
-		if(current->pid == pop->root && current->replica_type == ROOT_POT_PRIMARY_REPLICA){
-			tsk->replica_type= POTENTIAL_PRIMARY_REPLICA;
+		
+		read_lock(&replica_type_lock);
+
+		if(current->pid == pop->root && current->replica_type == FT_ROOT_POT_PRIMARY_REPLICA){
+			tsk->replica_type= FT_POTENTIAL_PRIMARY_REPLICA;
 			tsk->ft_popcorn= NULL;
 			tsk->ft_pid.level= 0;
 			tsk->next_pid_to_use= 0;
@@ -675,7 +818,8 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			tsk->id_syscall= 0;
 			tsk->useful= NULL;
 
-			return 0;
+			ret= 0;
+			goto out;
 		}
 		else{
 		
@@ -691,11 +835,12 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
                 		tsk->next_pid_to_use= 0;
                 		tsk->next_id_resources= 0;
                 		tsk->id_syscall= 0;
-				tsk->replica_type= NOT_REPLICATED;
+				tsk->replica_type= FT_NOT_REPLICATED;
                 		tsk->ft_popcorn= NULL;
 				tsk->useful= NULL;
 
-				return 0;
+				ret= 0;
+				goto out;
 			}
 
 			/* All forked threads should have the same ft_popcorn because all have as ancestor 
@@ -710,29 +855,31 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 				get_ft_pop_rep(tsk->ft_popcorn);
 				
 				ancestor= find_task_by_vpid(current->tgid);
-				if(ancestor->replica_type == PRIMARY_REPLICA
-					|| ancestor->replica_type == NEW_PRIMARY_REPLICA_DESCENDANT){
+				
+				if(ancestor->replica_type == FT_PRIMARY_REPLICA
+					|| ancestor->replica_type == FT_NEW_PRIMARY_REPLICA_DESCENDANT){
 					
-					tsk->replica_type= NEW_PRIMARY_REPLICA_DESCENDANT;
-					printk("%s: created NEW_PRIMARY_REPLICA_DESCENDANT from (pid %d tgid %d)\n",__func__, tsk->pid, tsk->tgid);
+					tsk->replica_type= FT_NEW_PRIMARY_REPLICA_DESCENDANT;
+					printk("%s: created FT_NEW_PRIMARY_REPLICA_DESCENDANT from (pid %d tgid %d)\n",__func__, tsk->pid, tsk->tgid);
 				}
 				else{
-					if(ancestor->replica_type == SECONDARY_REPLICA
-                                        	|| ancestor->replica_type == NEW_SECONDARY_REPLICA_DESCENDANT){
+					if(ancestor->replica_type == FT_SECONDARY_REPLICA
+                                        	|| ancestor->replica_type == FT_NEW_SECONDARY_REPLICA_DESCENDANT){
                                         
-						tsk->replica_type= NEW_SECONDARY_REPLICA_DESCENDANT;
-						printk("%s: created NEW_SECONDARY_REPLICA_DESCENDANT from (pid %d tgid %d)\n", __func__, tsk->pid, tsk->tgid);
+						tsk->replica_type= FT_NEW_SECONDARY_REPLICA_DESCENDANT;
+						printk("%s: created FT_NEW_SECONDARY_REPLICA_DESCENDANT from (pid %d tgid %d)\n", __func__, tsk->pid, tsk->tgid);
                                 	}
 					else{
 						//BUG();
 						printk("%s: ERROR ancestor (pid %d) replica type is %d",__func__, ancestor->pid, ancestor->replica_type);
-						return -1;
+						ret= -1;
+						goto out;
 					}
 				}
 			}
 			else{
-				tsk->replica_type= REPLICA_DESCENDANT;
-				printk("%s: created REPLICA_DESCENDANT from (pid %d tgid %d)\n", __func__, tsk->pid, tsk->tgid);
+				tsk->replica_type= FT_REPLICA_DESCENDANT;
+				printk("%s: created FT_REPLICA_DESCENDANT from (pid %d tgid %d)\n", __func__, tsk->pid, tsk->tgid);
 			}
 
 			/* Compute the ft_pid.
@@ -741,7 +888,8 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			tsk->ft_pid.level= current->ft_pid.level+1;
 			if(tsk->ft_pid.level > MAX_GENERATION_LENGTH){
 				printk("%s ERROR Too many child of child, encrease MAX_GENERATION_LENGTH\n", __func__);	
-				return -1;
+				ret= -1;
+				goto out;
 			}
 			tsk->ft_pid.ft_pop_id= tsk->ft_popcorn->id;
                         tsk->next_pid_to_use= 0;
@@ -756,17 +904,20 @@ int copy_replication(unsigned long flags, struct task_struct *tsk){
 			tsk->id_syscall= 0;
 			tsk->useful= NULL;
 		}
+
+out:		read_unlock(&replica_type_lock);
+		return ret;
 	}
 	else{
 		tsk->ft_pid.level= 0;
 		tsk->next_pid_to_use= 0;
 		tsk->next_id_resources= 0;
-		tsk->replica_type= NOT_REPLICATED;
+		tsk->replica_type= FT_NOT_REPLICATED;
 		tsk->ft_popcorn= NULL;
 		tsk->useful= NULL;
 	}
 	
-	return 0;
+	return ret;
 }
 
 static int _send_update_to_primary_replica(struct replica_id* primary_replica_to, struct replica_id* secondary_replica_from, int error){
@@ -842,7 +993,7 @@ static void send_error_to_primary_replica(struct replica_id* primary_replica, in
 
 /* see ____call_usermodehelper of kernel/kmod.h
  * 
- * Associates the current thread to Popcorn namespace, set the replica_type to POTENTIAL_SECONDARY_REPLICA
+ * Associates the current thread to Popcorn namespace, set the replica_type to FT_POTENTIAL_SECONDARY_REPLICA
  * and tries to execve the current thread with exec path, argv and env of the primary replica stored in data.
  * 
  * In case of error it sends an "error" message to the primary replica.
@@ -872,12 +1023,12 @@ static int exec_to_secondary_replica(void *data){
     	new->cap_inheritable = CAP_FULL_SET;
         commit_creds(new);
 	
-	retval= associate_to_popcorn_ns(current, msg->replication_degree);
+	retval= associate_to_popcorn_ns(current, msg->replication_degree, FT_POTENTIAL_SECONDARY_REPLICA);
 	if(retval){
 		goto fail;
 	}
 
-	current->replica_type= POTENTIAL_SECONDARY_REPLICA;
+//	current->replica_type= FT_POTENTIAL_SECONDARY_REPLICA;
 	current->useful= msg;
 
 	exe_pathp= (char *) &msg->data;
@@ -1496,12 +1647,12 @@ out:	if(answer_collection->secondary_replica_list)
  * Returns 0 in case no errors occured, a value < 0 otherwise.
  * When replication requirements are not met,-ENOFTREP is returned.
  * 
- * If replica_type is POTENTIAL_PRIMARY_REPLICA, it tries to create n-1 secondary replicas in other kernels, 
- * where n is the replication_degree of the namespace, and set the replica_type to PRIMARY_REPLICA in
+ * If replica_type is FT_POTENTIAL_PRIMARY_REPLICA, it tries to create n-1 secondary replicas in other kernels, 
+ * where n is the replication_degree of the namespace, and set the replica_type to FT_PRIMARY_REPLICA in
  * case of success.    
  *
- * If replica_type is POTENTIAL_SECONDARY_REPLICA, it notifies the correlated primary replica that a secondary copy
- * was succesfully created, and set the replica_type to SECONDARY_REPLICA in case of success.
+ * If replica_type is FT_POTENTIAL_SECONDARY_REPLICA, it notifies the correlated primary replica that a secondary copy
+ * was succesfully created, and set the replica_type to FT_SECONDARY_REPLICA in case of success.
  * 
  * In both above cases, in case of success, the current's ft_popcorn field is allocated and populated 
  * with a list of all secondary replicas and the current primary replica.
@@ -1518,7 +1669,7 @@ int maybe_create_replicas(void){
 	pop= current->nsproxy->pop_ns;
 
 	if(is_popcorn_namespace_active(pop)){
-		if(current->replica_type == POTENTIAL_PRIMARY_REPLICA){
+		if(current->replica_type == FT_POTENTIAL_PRIMARY_REPLICA){
 
 			ft_popcorn= create_ft_pop_rep(pop->replication_degree, 1, NULL);	
 				
@@ -1528,7 +1679,7 @@ int maybe_create_replicas(void){
 
 			ret= create_replicas(current,pop->replication_degree, &ft_popcorn->id, &ft_popcorn->secondary_replicas_head.replica_list_member);			
 			if(ret == 0){
-				current->replica_type= PRIMARY_REPLICA;	
+				current->replica_type= FT_PRIMARY_REPLICA;	
 				ft_popcorn->primary_replica.pid= current->pid;
 				ft_popcorn->primary_replica.kernel= _cpu;
 				current->ft_popcorn= ft_popcorn;
@@ -1549,7 +1700,7 @@ int maybe_create_replicas(void){
 			
 		}
 		else{
-			if(current->replica_type == POTENTIAL_SECONDARY_REPLICA){
+			if(current->replica_type == FT_POTENTIAL_SECONDARY_REPLICA){
 				secondary.pid= current->pid;
 				secondary.kernel= _cpu;
 			
@@ -1564,20 +1715,29 @@ int maybe_create_replicas(void){
 
 				ret= notify_primary_replica(&msg->primary_replica, &secondary, &ft_popcorn->secondary_replicas_head.replica_list_member);
 	                        if(ret == 0){
-        	                        current->replica_type= SECONDARY_REPLICA;
-					ft_popcorn->primary_replica.pid= msg->primary_replica.pid;
-	                                ft_popcorn->primary_replica.kernel= msg->primary_replica.kernel;
+					/* NOTE:
+					 * if the primary replica failed before or while calling notify_primary_replica,
+					 * notify_primary_replica will fail.
+					 */
 					current->ft_popcorn= ft_popcorn;
-					current->ft_pid.ft_pop_id= ft_popcorn->id;
+                                        current->ft_pid.ft_pop_id= ft_popcorn->id;
+					
+					read_lock(&replica_type_lock);
+        	                        if(current->replica_type == FT_POTENTIAL_SECONDARY_REPLICA){
+						current->replica_type= FT_SECONDARY_REPLICA;
+						ft_popcorn->primary_replica.pid= msg->primary_replica.pid;
+						ft_popcorn->primary_replica.kernel= msg->primary_replica.kernel;
 
-					printk("%s: Replica list of %s pid %d\n", __func__, current->comm, current->pid);
-                                	printk("primary: {pid: %d, kernel %d}, secondary: ", ft_popcorn->primary_replica.pid, ft_popcorn->primary_replica.kernel);
-					list_for_each(iter, &ft_popcorn->secondary_replicas_head.replica_list_member) {
-                                        	objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
-                                        	printk("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
-                                	}       
-                                	printk("\n");
-		
+						printk("%s: Replica list of %s pid %d\n", __func__, current->comm, current->pid);
+						printk("primary: {pid: %d, kernel %d}, secondary: ", ft_popcorn->primary_replica.pid, ft_popcorn->primary_replica.kernel);
+						list_for_each(iter, &ft_popcorn->secondary_replicas_head.replica_list_member) {
+							objPtr = list_entry(iter, struct replica_id_list, replica_list_member);
+							printk("{pid: %d, kernel %d} ", objPtr->replica.pid, objPtr->replica.kernel);
+						}       
+						printk("\n");
+					}
+					read_unlock(&replica_type_lock);
+
 					pcn_kmsg_free_msg(msg);
                 	        }
 				else{
@@ -1586,10 +1746,16 @@ int maybe_create_replicas(void){
 
 		
 			}
+			else{
+				if(current->replica_type == FT_POTENTIAL_PRIMARY_REPLICA_AFTER_SECONDARY){
+					//I was a secondary replica, but the primary failed while I was been execve
+					ret= -ENOFTREP;
+				}
+			}
 		}		
 	}	
 
-	if(current->replica_type != NOT_REPLICATED)
+	if(current->replica_type != FT_NOT_REPLICATED)
 		printk("comm: %s pid %d\n", current->comm, current->pid);
 	return ret;
 }
