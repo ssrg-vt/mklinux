@@ -278,7 +278,7 @@ static int proc_pid_wchan(struct task_struct *task, char *buffer)
 		else
 			return sprintf(buffer, "%lu", wchan);
 	else
-		return sprintf(buffer, "%s", symname);
+		return sprintf(buffer, "%s %lx %pB", symname, wchan, wchan);
 }
 #endif /* CONFIG_KALLSYMS */
 
