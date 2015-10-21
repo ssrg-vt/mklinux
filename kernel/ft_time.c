@@ -44,7 +44,7 @@ static long ft_gettimeofday_primary(struct timeval __user * tv, struct timezone 
         }
         if (unlikely(tz != NULL)) {
                 memcpy(&get_time->tz, &sys_tz, sizeof(struct timezone));
-                if (copy_to_user(tz, &get_time->tv, sizeof(struct timezone))){
+                if (copy_to_user(tz, &get_time->tz, sizeof(struct timezone))){
                         ret= -EFAULT;
                         goto out;
                 }
@@ -60,6 +60,39 @@ out:
 
 }
 
+static long ft_gettimeofday_primary_after_secondary(struct timeval __user * tv, struct timezone __user * tz){
+        long ret= 0;
+	struct get_time_info *primary_info= NULL;
+
+        FTPRINTK("%s called from pid %d\n", __func__, current->pid);
+
+        primary_info= (struct get_time_info *)ft_get_pending_syscall_info(&current->ft_pid, current->id_syscall);
+
+        if(!primary_info){
+                return ft_gettimeofday_primary(tv, tz);
+        }
+
+	if (likely(tv != NULL)) {
+                if (copy_to_user(tv, (void*) &primary_info->tv, sizeof(struct timeval))){
+                        ret= -EFAULT;
+                        goto out;
+                }
+        }
+
+        if (unlikely(tz != NULL)) {
+                if (copy_to_user(tz, (void*) &primary_info->tz, sizeof(struct timezone))){
+                        ret= -EFAULT;
+                        goto out;
+                }
+        }
+
+out:
+        kfree(primary_info);
+
+        return 0;
+
+}
+
 static long ft_gettimeofday_secondary(struct timeval __user * tv, struct timezone __user * tz){
 	long ret=0;
 	struct get_time_info *primary_info= NULL;
@@ -69,8 +102,7 @@ static long ft_gettimeofday_secondary(struct timeval __user * tv, struct timezon
 	primary_info= (struct get_time_info *)ft_wait_for_syscall_info( &current->ft_pid, current->id_syscall);
 
 	if(!primary_info){
-		printk("ERROR: %s no data returned from primary\n", __func__);
-		return -EFAULT;
+		return ft_gettimeofday_primary(tv, tz);
 	}
 
 	if (likely(tv != NULL)) {
@@ -104,8 +136,7 @@ long ft_gettimeofday(struct timeval __user * tv, struct timezone __user * tz){
 		}
 		else{
 			if(ft_is_primary_after_secondary_replica(current)){
-				printk("%s called by primary after secondary\n", __func__);
-				return 0;
+				return ft_gettimeofday_primary_after_secondary(tv, tz);
 			}
 			else
 				return -EFAULT;

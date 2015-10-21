@@ -76,11 +76,15 @@
 
 #ifdef FT_POPCORN
 int sysctl_tcp_timestamps __read_mostly = 0;
+int sysctl_tcp_sack __read_mostly = 0;
+int sysctl_tcp_window_scaling __read_mostly = 0;
 #else
 int sysctl_tcp_timestamps __read_mostly = 1;
-#endif 
-int sysctl_tcp_window_scaling __read_mostly = 1;
 int sysctl_tcp_sack __read_mostly = 1;
+int sysctl_tcp_window_scaling __read_mostly = 1;
+#endif 
+
+
 int sysctl_tcp_fack __read_mostly = 1;
 int sysctl_tcp_reordering __read_mostly = TCP_FASTRETRANS_THRESH;
 EXPORT_SYMBOL(sysctl_tcp_reordering);
@@ -5847,6 +5851,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 			goto discard;
 
 		if (th->syn) {
+			
 			if (icsk->icsk_af_ops->conn_request(sk, skb) < 0)
 				return 1;
 

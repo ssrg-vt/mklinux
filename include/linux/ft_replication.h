@@ -239,6 +239,7 @@ int insert_in_send_buffer_and_csum(struct send_buffer *send_buffer, struct iovec
 int remove_and_copy_from_stable_buffer_no_wait(struct stable_buffer *stable_buffer, struct iovec *iov, int size);
 int trim_stable_buffer_in_filters(void);
 int flush_send_buffer_in_filters(void);
+int send_zero_window_in_filters(void);
 
 #define DUMMY_DRIVER "ft_dummy_driver"
 
