@@ -567,7 +567,7 @@ static inline int __sock_sendmsg_nosec(struct kiocb *iocb, struct socket *sock,
 	ret= sock->ops->sendmsg(iocb, sock, msg, size);
 
 #ifdef FT_POPCORN
-	ft_after_syscall_send_family(ret);
+	ft_after_syscall_send_family(sock, ret);
 #endif	
 	return ret;
 }

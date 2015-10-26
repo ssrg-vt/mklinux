@@ -47,6 +47,35 @@ static void process_crash_kernel_notification(struct work_struct *work){
 	printk("%s called\n", __func__);
 	kfree(work);
 
+	 //reenable device
+        pci_dev_list_remove(0,"0x8086","0x10c9","0.0","", 0);
+
+        bus = NULL;
+        while ((bus = pci_find_next_bus(bus)) != NULL)
+                         pci_rescan_bus(bus);
+
+	//scan the buses to activate the device
+        dev= NULL;
+        prev= NULL;
+        found= 0;
+        do{
+                dev= pci_get_device(0x8086, 0x10c9, prev);
+                if( dev && (PCI_SLOT(dev->devfn)== 0 && (PCI_FUNC(dev->devfn)== 0)))
+                        found= 1;
+                prev= dev;
+
+        }while(dev!= NULL && !found);
+
+        if(!dev){
+                printk("ERROR: %s device not found\n", __func__);
+                return;
+        }
+
+        if(!dev->driver){
+                printk("ERROR: %s driver not found\n", __func__);
+                return;
+        }
+
 	if(flush_pending_pckt_in_filters()){
 		printk("ERROR: %s impossible to flush filters\n", __func__);
                 return;
@@ -73,35 +102,6 @@ static void process_crash_kernel_notification(struct work_struct *work){
 
 	//NOTE for now net dev name (eth1) and desired address (10.1.1.48) are hardcoded
 	//TODO extract dev name from net_dev
-
-	 //reenable device
-        pci_dev_list_remove(0,"0x8086","0x10c9","0.0","", 0);
-
-        bus = NULL;
-        while ((bus = pci_find_next_bus(bus)) != NULL)
-                         pci_rescan_bus(bus);
-
-        //scan the buses to activate the device
-        dev= NULL;
-        prev= NULL;
-        found= 0;
-        do{
-                dev= pci_get_device(0x8086, 0x10c9, prev);
-                if( dev && (PCI_SLOT(dev->devfn)== 0 && (PCI_FUNC(dev->devfn)== 0)))
-                        found= 1;
-                prev= dev;
-
-        }while(dev!= NULL && !found);
-
-        if(!dev){
-                printk("ERROR: %s device not found\n", __func__);
-                return;
-        }
-
-        if(!dev->driver){
-                printk("ERROR: %s driver not found\n", __func__);
-                return;
-        }
 
 	sock= NULL;
 	fd= sock_create_kern( PF_INET, SOCK_DGRAM, IPPROTO_IP, &sock);

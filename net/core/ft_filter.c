@@ -24,10 +24,19 @@
 #include <linux/netfilter_ipv4.h>
 
 #define FT_FILTER_VERBOSE 0 
+#define FT_FILTER_MINIMAL_VERBOSE 0
+
 #if FT_FILTER_VERBOSE
+#define FT_FILTER_MINIMAL_VERBOSE 1
 #define FTPRINTK(...) printk(__VA_ARGS__)
 #else
 #define FTPRINTK(...) ;
+#endif
+
+#if FT_FILTER_MINIMAL_VERBOSE
+#define FTMPRINTK(...) printk(__VA_ARGS__)
+#else
+#define FTMPRINTK(...) ;
 #endif
 
 struct ft_sk_buff_tcp_list{
@@ -363,6 +372,9 @@ struct send_buffer_entry{
         char data;
 };
 
+/* Creates a send_buffer and store it in *@send_buffer.
+ * It initializes fields to default values.
+ */
 void init_send_buffer(struct send_buffer **send_buffer){
         struct send_buffer *se_buffer;
         se_buffer= kmalloc(sizeof(*se_buffer), GFP_ATOMIC);
@@ -378,6 +390,8 @@ void init_send_buffer(struct send_buffer **send_buffer){
         }
 }
 
+/* Frees a send buffer.
+ */
 void free_send_buffer(struct send_buffer *send_buffer){
         struct list_head *item, *n;
         struct list_head *send_buffer_head;
@@ -400,6 +414,31 @@ void free_send_buffer(struct send_buffer *send_buffer){
         }
 }
 
+/* Set the first_byte_to_consume field of @send_buffer to @value.
+ *
+ * This is supposed to be called by secondary replicas when the tcp handshake finish
+ * to identify the next value that will be stored on the send_buffer.
+ *
+ * It must be coherent with the value used to remove data from the send_buffer.
+ */
+void init_first_byte_to_consume_send_buffer(struct send_buffer *send_buffer, u32 value){
+	if(send_buffer){
+		send_buffer->first_byte_to_consume= value;
+	}
+}
+
+/* Return the last_ack field of @send_buffer.
+ *
+ */
+u32 get_last_ack_send_buffer(struct send_buffer *send_buffer){
+	return send_buffer->last_ack;
+}
+
+/* Adds @size bytes copied from @iov to the @send_buffer. It also computes the csum of the data and stores it in *@csum.  
+ *
+ * NOTE: if last_ack received is greater than first_byte_to_consume, the first last_ack-first_byte_to_consume bytes of @iov won't be copied
+ * in the send_buffer.
+ */
 int insert_in_send_buffer_and_csum(struct send_buffer *send_buffer, struct iovec *iov, int iovlen, int size, __wsum *csum){
 	struct send_buffer_entry *entry;
 	struct list_head *send_buffer_head;
@@ -413,8 +452,8 @@ int insert_in_send_buffer_and_csum(struct send_buffer *send_buffer, struct iovec
 		return -EFAULT;
 
 	/* TODO: do an early check to see if send_buffer->first_byte_to_consume < send_buffer->last_ack
-	 * and avoid to copy data.	
-	 * Why I didn't do it?! because I do know how to compute the checksum otherwise!
+	 * because in that case the data should not be saved in the send_buffer and thus it should be avoided to copy it.	
+	 * Why I didn't do it?! because I do know how to compute the checksum without coping the data!!!
 	 */
 
 	entry= kmalloc(sizeof(*entry)+size+1, GFP_KERNEL);
@@ -444,7 +483,7 @@ int insert_in_send_buffer_and_csum(struct send_buffer *send_buffer, struct iovec
 		where_to_copy+= iov[i].iov_len;
         }
 	where_to_copy[0]='\0';
-	printk("%s: data %s size %d\n", __func__, &entry->data, len);
+	FTMPRINTK("%s: data %s size %d\n", __func__, &entry->data, len);
 
 	spin_lock(&send_buffer->lock);
 	
@@ -486,16 +525,25 @@ int insert_in_send_buffer_and_csum(struct send_buffer *send_buffer, struct iovec
                 
         }
 
-out_lock:
-
-        spin_unlock(&send_buffer->lock);
 	ret= 0;
+
+out_lock:
+	spin_unlock(&send_buffer->lock);
 
 out:
 	return ret;
 	
 }
 
+/* Removes all the data stored in the @send_buffer up to @last_ack.
+ *
+ * NOTE: data stored in the send_buffer are identified by the value of first_byte_to_consume.
+ * e.g.: if the send_buffer has N bytes, those bytes are labeled from first_byte_to_consume to first_byte_to_consume+N.
+ * 
+ * If @last_ack is greater then first_byte_to_consume, @last_byte-first_byte_to_consume bytes will be remove from the
+ * stable_buffer and first_byte_to_consume will be updated. If stable_buffer does not have that amount fo bytes, 
+ * the next insert_in_send_buffer will not copy the "removed" bytes.
+ */
 int remove_from_send_buffer(struct send_buffer *send_buffer, u32 last_ack){
  	struct send_buffer_entry *entry;
         struct list_head *send_buffer_head, *item, *n;
@@ -549,28 +597,27 @@ out:
 	return removed;
 }
 
+/* Checks if @send_buffer is empty.
+ *
+ */
 int send_buffer_empty(struct send_buffer *send_buffer){
 	return list_empty(&send_buffer->send_buffer_head);
 }
 
 /* Flush of the send buffer:
- * if any data is present it will be sent on the socket
- * NOTE: to be called before updating replica type and flush syscall info.
+ * All data that is stored in @send_buffer will be removed and sent over the network through @sock.
+ * 
+ * NOTE: this is suppose to be called upon failure of the primary and if this replica has been elected new primary.
+ * To be called before updating replica type and flush syscall info.
  */
 int flush_send_buffer(struct send_buffer *send_buffer, struct sock* sock){
 	struct msghdr msg;
-	struct iovec iov;
+	struct kvec iov;
 	struct send_buffer_entry *entry;
         struct list_head *send_buffer_head, *item, *n;
 	int ret, len, removed;
 
 	spin_lock(&send_buffer->lock);
-
-	/*printk("rcv window %d\n", tcp_sk(sock)->rcv_wnd);
-        if(tcp_sk(sock)->rcv_wnd==17520)
-                tcp_sk(sock)->rcv_wnd= 20440;
-        if(tcp_sk(sock)->rcv_wnd==14600)
-                tcp_sk(sock)->rcv_wnd= 17520;*/
 
         /* case not yet initialized, but it should not happen...
          *
@@ -594,23 +641,34 @@ int flush_send_buffer(struct send_buffer *send_buffer, struct sock* sock){
 		if (len > INT_MAX)
 			len = INT_MAX;
 
-		entry->to_consume_start+= len;
-		removed+= len;
-
-		iov.iov_base = &entry->data + entry->to_consume_start;
+		iov.iov_base = (void*) ( (char*) &entry->data + entry->to_consume_start);
 		iov.iov_len = len;
 		msg.msg_name = NULL;
-		msg.msg_iov = &iov;
-		msg.msg_iovlen = 1;
+		//msg.msg_iov = &iov;
+		//msg.msg_iovlen = 1;
 		msg.msg_control = NULL;
 		msg.msg_controllen = 0;
 		msg.msg_namelen = 0;
 		msg.msg_flags = MSG_DONTWAIT;
 
-		ret= sock_sendmsg(sock->sk_socket, &msg, len);
+		/* remove kernel_sendmsg if you don't want to retrasmit the date stored in the send buffer
+		 * over the network, but enable the line at the bottom of the function to update
+		 * the odelt_seq if you do so.
+		 * Why? the data in send buffer might be already sent from the primary. If you assume that you don't
+		 * need to retransmit them becose the primary sent them AND the client received them, then you have to
+		 * update your delta.
+		 * But you should not assume that, that's why I am resending everything.
+		 */
+		ret= kernel_sendmsg(sock->sk_socket, &msg, &iov, 1, len);
 		if(ret!=len){
 			printk("%s ERROR sock send msg returned %d instead of %d\n", __func__, ret, len);
 		}
+
+		FTMPRINTK("%s: %d %s\n", __func__, entry->to_consume_start, (char*) ( (char*) &entry->data + entry->to_consume_start));
+
+		entry->to_consume_start+= len;
+                removed+= len;
+
 		if(entry->size- entry->to_consume_start == 0){
                 	list_del(item);
                         kfree(entry);
@@ -645,6 +703,9 @@ struct stable_buffer_entry{
         struct sk_buff *data;
 };
 
+/* Creates a stable_buffer and store it in *@stable_buffer.
+ * It initializes fields to default values.
+ */
 void init_stable_buffer(struct stable_buffer **stable_buffer){
 	struct stable_buffer *st_buffer;
 	st_buffer= kmalloc(sizeof(*st_buffer), GFP_ATOMIC);
@@ -661,6 +722,8 @@ void init_stable_buffer(struct stable_buffer **stable_buffer){
 	}	
 }
 
+/* Frees a stable buffer.
+ */
 void free_stable_buffer(struct stable_buffer *stable_buffer){
 	struct list_head *item, *n;
         struct list_head *stable_buffer_head;
@@ -684,8 +747,35 @@ void free_stable_buffer(struct stable_buffer *stable_buffer){
 	}
 }
 
-/* Erase all the data stored after a hole =>
- * stable buffer will havve only contiguous data after this call.
+/* Set the first_byte_to_consume field of @stable_buffer to @value.
+ *
+ * This is supposed to be called by secondary replicas when the tcp handshake finish
+ * to identify the next value that will be stored on the stable_buffer.
+ *
+ * It must be coherent with the value used to insert data after in the stable_buffer to check if there are holes.
+ */
+void init_first_byte_to_consume_stable_buffer(struct stable_buffer *stable_buffer, u32 value){
+        if(stable_buffer){
+                stable_buffer->first_byte_to_consume= value;
+        }
+}
+
+/* Returns the last byte stored (and not trimmed) in @stable_buffer.
+ *
+ * To be called only after calling trim_stable_buffer on @stable_buffer.
+ */
+u32 get_last_byte_received_stable_buffer(struct stable_buffer *stable_buffer){ 
+	return stable_buffer->last_byte;
+}
+
+/* Discards all the data stored in @stable_buffer after the first hole =>
+ * stable buffer will have only contiguous data after this call.
+ *
+ * This function will also set the value of @stable_buffer->last_byte as the id of
+ * the last byte that is stored in @stable_buffer after the trim. 
+ *  
+ * NOTE: this function is supposed to be called upon failure of the primary and only if the
+ * current replica is elected new primary.
  */
 static int trim_stable_buffer(struct stable_buffer *stable_buffer){
 	struct list_head *item, *n;
@@ -709,12 +799,9 @@ static int trim_stable_buffer(struct stable_buffer *stable_buffer){
 	stable_buffer_head= &stable_buffer->stable_buffer_head;
 	last_byte= stable_buffer->first_byte_to_consume;
 
-	/* 1. check that there is data
-	 *
+	/* check that there is data
 	 */
 	if(stable_buffer->first_byte_to_consume == 0 || list_empty(stable_buffer_head)){
-                //if(list_empty(stable_buffer_head))
-		//	last_byte= stable_buffer->first_byte_to_consume- 1;
 		ret= 0;
                 goto finish;
         }
@@ -748,14 +835,18 @@ static int trim_stable_buffer(struct stable_buffer *stable_buffer){
 finish:
 	stable_buffer->last_byte= last_byte- 1;
 	spin_unlock(&stable_buffer->lock);
-	printk("%s first byte %u last byte %u\n", __func__, stable_buffer->first_byte_to_consume, stable_buffer->last_byte);
+	FTMPRINTK("%s first byte %u last byte %u\n", __func__, stable_buffer->first_byte_to_consume, stable_buffer->last_byte);
 	return ret;
 
 }
 
-/* To use only after trimming the stable buffer, it assumes thet there are no holes.
+/* Copies the first contiguous bytes from @stable_buffer to iov up to @size bytes.
+ * 
+ * This function will update first_byte_to_consume of the amount of data copied. 
  *
+ * NOTE: To use only after trimming the stable buffer, because it assumes that there are no holes.
  */
+
 int remove_and_copy_from_stable_buffer_no_wait(struct stable_buffer *stable_buffer, struct iovec *iov, int size){
 	struct list_head *item, *n;
 	struct list_head *stable_buffer_head;
@@ -774,16 +865,15 @@ int remove_and_copy_from_stable_buffer_no_wait(struct stable_buffer *stable_buff
 	}
 
 	stable_buffer_head= &stable_buffer->stable_buffer_head;
-	/* 1. check that there is data
-	 *
+	
+	/* check that there is data
 	 */
 	if(stable_buffer->first_byte_to_consume == 0 || list_empty(stable_buffer_head)){		
 		ret= 0;
 		goto finish;
 	}
 
-	/* Check that there are no holes in the first @size bytes
-	 *
+	/* Check that there are no holes in the first contiguous bytes.
 	 */
 	first_byte= stable_buffer->first_byte_to_consume;
 	ret= 0; 
@@ -843,6 +933,14 @@ finish:
 
 }
 
+/* Copies the first contiguous @size bytes from @stable_buffer to iov.
+ * 
+ * If @size contiguous bytes are not yet present in @stable_buffer, this function will sleep waiting for them.
+ * This function will update first_byte_to_consume of the amount of data copied. 
+ *
+ * NOTE: only one thread at a time can wait for data on a @stable_buffer, if another thread is found that id waiting for data 
+ * on the same @stable_buffer error is returned.
+ */
 int remove_and_copy_from_stable_buffer(struct stable_buffer *stable_buffer, struct iovec *iov, int size){
 	struct list_head *item, *n;
 	struct list_head *stable_buffer_head;
@@ -868,8 +966,9 @@ int remove_and_copy_from_stable_buffer(struct stable_buffer *stable_buffer, stru
 
 again:
 	stable_buffer_head= &stable_buffer->stable_buffer_head;
-	/* 1. check that there is data
-	 *
+	
+	/* 1. check that there is data,
+	 * if not, wait for it.
 	 */
 	while(stable_buffer->first_byte_to_consume == 0 || list_empty(stable_buffer_head)){		
 
@@ -897,7 +996,9 @@ again:
                         entry= list_entry(item, struct stable_buffer_entry, list_entry);
 			
 			if(first_byte != entry->to_consume_start){
-				// Hole!!!
+				/* Hole!!!
+				 * wait for it to be filled.
+				 */
 				local_irq_disable();
 		                preempt_disable();
                 
@@ -926,6 +1027,9 @@ again:
 	}	
 
 	if(ret<size) {
+		/* not enough data!!
+		 * wait for it...
+		 */
 		local_irq_disable();
 		preempt_disable();
 
@@ -944,6 +1048,9 @@ again:
 	}
 
 out:
+	/* Yeeee! finally copy!
+	 *
+	 */
 	ret=0;
 	list_for_each_safe(item, n, stable_buffer_head){
                         entry= list_entry(item, struct stable_buffer_entry, list_entry);
@@ -980,6 +1087,14 @@ finish:
 	return ret;
 }
 
+/* Inserts bytes from @start to @end (both inclusive) in @stable_buffer.
+ * @start and @end must be compatible with the value used to init the fist_byte_to_consume of @stable_buffer.
+ * 
+ * This function will steal the @skb and saves pointer relative to the current configuration=>
+ * do not push/pull from it after calling this function. 
+ *
+ * NOTE it assumes that tcph has not been pulled from the @skb, but iph has been.
+ */
 int insert_in_stable_buffer(struct stable_buffer *stable_buffer, struct sk_buff *skb, __u32 start, __u32 end){
 	struct list_head *stable_buffer_head;
 	struct list_head *prev, *n;
@@ -1004,7 +1119,6 @@ int insert_in_stable_buffer(struct stable_buffer *stable_buffer, struct sk_buff 
 	__skb_pull(skb, tcp_hdrlen(skb));
 
 	/* try to add element at the end of the list
-	 *
 	 */ 
 	spin_lock(&stable_buffer->lock);
 
@@ -1114,21 +1228,21 @@ static void remove_filter(struct net_filter_info* filter){
 
 static void release_filter(struct kref *kref){
 	struct net_filter_info* filter;
-//#if FT_FILTER_VERBOSE
+#if FT_FILTER_VERBOSE
 	char* filter_printed;
-//#endif
+#endif
 	filter= container_of(kref, struct net_filter_info, kref);
 	if (filter){
 		if(!(filter->type & FT_FILTER_FAKE)){
 			remove_filter(filter);
 		}
-/*#if FT_FILTER_VERBOSE
+#if FT_FILTER_VERBOSE
                 filter_printed= print_filter_id(filter);
                 FTPRINTK("%s: deleting %s filter %s\n", __func__, (filter->type & FT_FILTER_FAKE)?"fake":"", filter_printed);
                 if(filter_printed)
                         kfree(filter_printed);
-#endif*/
-                filter_printed= print_filter_id(filter);
+#endif
+                char* filter_printed= print_filter_id(filter);
                 printk("%s: deleting %s filter %s pckt rcv %lld pckt snt %lld\n", __func__, (filter->type & FT_FILTER_FAKE)?"fake":"", filter_printed, filter->local_rx, filter->local_tx);
 
 		if(filter_printed)
@@ -1159,6 +1273,18 @@ void get_ft_filter(struct net_filter_info* filter){
  */
 void put_ft_filter(struct net_filter_info* filter){
 	kref_put(&filter->kref, release_filter);
+}
+
+int ft_is_filter_primary(struct net_filter_info* filter){
+	return filter->type & FT_FILTER_PRIMARY_REPLICA;
+}
+
+int ft_is_filter_primary_after_secondary(struct net_filter_info* filter){
+        return filter->type & FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA;
+}
+
+int ft_is_filter_secondary(struct net_filter_info* filter){
+        return filter->type & FT_FILTER_SECONDARY_REPLICA;
 }
 
 static struct net_filter_info* find_and_get_filter(struct ft_pid *creator, int filter_id, int is_child, __be32 daddr, __be16 dport){
@@ -1205,13 +1331,15 @@ out: 	spin_unlock(&filter_list_lock);
  * If a fake_filter is found with the same id of filter, fake_filter's counters are copied
  * on filter before adding it.
  * Fake_filter is then removed from the list.
+ * Returns 1 in case a fake_filter was found while adding @filter, 0 otherwise.
  */
-static void add_filter_coping_pending(struct net_filter_info* filter){
+static int add_filter_coping_pending(struct net_filter_info* filter){
 	struct net_filter_info* fake_filter= NULL;
         struct list_head *iter= NULL;
         struct net_filter_info *objPtr= NULL;
 	int is_child= (filter->type & FT_FILTER_CHILD);
 	struct workqueue_struct *filter_wq;
+	int ret= 0;
 
         spin_lock(&filter_list_lock);
 
@@ -1240,6 +1368,7 @@ static void add_filter_coping_pending(struct net_filter_info* filter){
 	}
 
 next:	if(fake_filter){
+		ret= 1;
 
 		if(!(fake_filter->type & FT_FILTER_FAKE))
 			printk("ERROR %s: substituting a real filter\n",__func__);
@@ -1297,7 +1426,7 @@ next:	if(fake_filter){
 		put_ft_filter(fake_filter);
 	}
 
-	return ;
+	return ret;
 
 }
 
@@ -1523,7 +1652,7 @@ void ft_grown_mini_filter(struct sock* sk, struct request_sock *req){
 		req->ft_filter->my_initial_out_seq= tcp_sk(sk)->snd_nxt;
 		req->ft_filter->in_initial_seq= tcp_sk(sk)->rcv_nxt;
 
-		printk("init out seq %u init in seq %u \n", req->ft_filter->my_initial_out_seq,req->ft_filter->in_initial_seq);
+		FTMPRINTK("init out seq %u init in seq %u \n", req->ft_filter->my_initial_out_seq,req->ft_filter->in_initial_seq);
 		req->ft_filter->idelta_seq= 0;
 		req->ft_filter->odelta_seq= 0;
 
@@ -1579,8 +1708,16 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
 	                        	filter->type |= FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA;
 				}
 			}
-			else
-				add_filter_coping_pending(filter);
+			else{
+				//the listening socket is a PRIMARY_AFTER_SECONDARY=>
+				//create the mini-socket as PRIMARY, nothing can be pending
+				filter->type &= ~FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA;
+                                filter->type |= FT_FILTER_PRIMARY_REPLICA;
+				
+				if(add_filter_coping_pending(filter)){
+					printk("ERROR %s a filter was found while creating a FT_FILTER_PRIMARY minifilter from a FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA\n", __func__);
+				}
+			}
 		}
 
 		req->ft_filter= filter;
@@ -1661,9 +1798,13 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority){
 
 				if(ft_is_primary_after_secondary_replica(task)){
 					filter->type= FT_FILTER_ENABLE;
-	                                filter->type |= FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA;
         	                        /*maybe the primary replica alredy sent me some notifications or msg before failing*/
-                	                add_filter_coping_pending(filter);
+                	                if(add_filter_coping_pending(filter)){
+						filter->type |= FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA;
+					}
+					else{
+						filter->type |= FT_FILTER_PRIMARY_REPLICA;
+					}
 
 				}
 				else{
@@ -1775,7 +1916,7 @@ static unsigned int ft_hook_after_network_layer_secondary_tcp(struct net_filter_
         if(filter_id_printed)
                 kfree(filter_id_printed);
 #endif
-	printk("%s dropping packt\n", __func__);
+	FTMPRINTK("%s dropping packt\n", __func__);
 
 	kfree_skb(skb);
         return NF_STOLEN;
@@ -2069,7 +2210,6 @@ static unsigned int ft_hook_after_network_layer_primary_tcp(struct net_filter_in
         char* ft_pid_printed;
         char* filter_id_printed;
 #endif
-	printk("%s called\n", __func__);
 
         spin_lock(&filter->lock);
 
@@ -2077,14 +2217,14 @@ static unsigned int ft_hook_after_network_layer_primary_tcp(struct net_filter_in
 
         spin_unlock(&filter->lock);
 
-	//if(filter->type & FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA){
-		struct iphdr *iph = ip_hdr(skb);
+	/* IP protocol numbers all packt that it sends sequentially from a rand number and saves
+	 * this value in id.
+	 * To hide the failure of the primary, set id to 0 always.
+	 */
+	struct iphdr *iph = ip_hdr(skb);
 	
-		//if(iph->frag_off==0){
-			iph->id= 0;
-			ip_send_check(iph);
-		//}
-	//}
+	iph->id= 0;
+	ip_send_check(iph);
 
 #if FT_FILTER_VERBOSE
         ft_pid_printed= print_ft_pid(&current->ft_pid);
@@ -3048,6 +3188,55 @@ struct tcp_out_options {
          __u8 *hash_location;    /* temporary pointer, overloaded */
 };
 
+/* For value of ip_summed check include/linux/skbuff.h
+ *
+ */
+__sum16 checksum_tcp_rx(struct sk_buff *skb, int len, struct iphdr *iph, struct tcphdr *tcph){
+	__sum16 ret= 0;
+	
+	/*NOTE tcp_v4_check calls csum_tcpudp_magic for tcp.
+	 *csum_tcpudp_magic adds to the checksum provided the saddr and daddr  
+	 */
+	ret= tcp_v4_check(len, iph->saddr, iph->daddr, csum_partial((char *)tcph, len, 0));
+	
+	/* this should tell tcp to not check the th->checksum against the one stored in skb->csum
+	 * =>as if the hardware already check it.
+	 */
+	skb->ip_summed = CHECKSUM_UNNECESSARY;
+	return ret; 
+}
+
+__sum16 checksum_tcp_tx(struct sk_buff *skb, int len, struct iphdr *iph, struct tcphdr *tcph){
+	__sum16 ret= 0;
+	if ((skb_dst(skb) && skb_dst(skb)->dev) && (!(skb_dst(skb)->dev->features & NETIF_F_V4_CSUM))) {
+		//no hw checksum
+		skb->ip_summed = CHECKSUM_COMPLETE;
+		//_wsum csum = skb_checksum(skb, 0, skb->len - ip_hdrlen(skb), 0);
+		//tcp_header->check = csum_tcpudp_magic(iph->saddr,iph->daddr, skb->len - ip_hdrlen(skb), IPPROTO_TCP, csum);
+
+		ret= tcp_v4_check(len, iph->saddr, iph->daddr, csum_partial((char *)tcph, len, 0));
+		if (ret == 0)
+                        ret = CSUM_MANGLED_0;
+
+	} else {
+		/*
+		skb->ip_summed = CHECKSUM_PARTIAL;
+		skb->csum_start = tcph;
+		skb->csum_offset = offsetof(struct tcphdr, check);
+		//ret= ~csum_tcpudp_magic(inet->ineinet->inet_daddr, len, IPPROTO_TCP, 0);
+		ret= ~tcp_v4_check(len, iph->saddr, iph->daddr, csum_partial((char *)tcph, len, 0));
+		*/
+		skb->csum_start = skb_transport_header(skb) - skb->head;
+        	skb->csum_offset = offsetof(struct tcphdr, check);
+        	skb->ip_summed = CHECKSUM_PARTIAL;
+
+		ret= ~csum_tcpudp_magic(iph->saddr, iph->daddr, len, IPPROTO_TCP, 0);
+
+	}
+
+	return ret;
+}
+
 void send_ack(struct sock* sk, u32 seq, u32 ack_seq, u32 window){
 
 	 struct sk_buff *skb;
@@ -3200,6 +3389,12 @@ void send_ack(struct sock* sk, u32 seq, u32 ack_seq, u32 window){
  */
 extern void tcp_fin(struct sock *sk);
 
+/* This is the core of the tcp filter hook after that a failure occured and the secondary replica has been elected primary.
+ * 
+ * It modifies the tcp header of the packets that needs to be delivered to hide th.
+ *
+ * NOTE: it assumes that the iphdr has been pulled from the skbuff->data.
+ */
 unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, struct net_filter_info *filter){
 	struct tcphdr *tcp_header;
 	struct iphdr *iph;
@@ -3208,10 +3403,14 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
 	__u32 start,end,size;
 	struct request_sock **prev;
         struct request_sock *req;
+	int actual_data_size, data_to_keep;
 
 	
 	/* The idea is to just let transit all packets but change the seq 
-	 * and ack_seq to restore the same connection of the previous primary.
+	 * and ack_seq to be aligned with the status on the current socket.
+	 * Why? if the connection was established by the primary before failing,
+	 * the current socket was left inactive after the handshake while the primary was
+	 * dealing with the client. 
 	 */
 	 
         sk= filter->ft_sock;
@@ -3232,9 +3431,6 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
                 
 		case TCP_ESTABLISHED:
 			{
-			/* Stop packets. Do not inject them in the tcp state machine,
-			 * but save them in stable buffer.
-			 */
 
 			/* Code copied from tcp_v4_rcv.
 			 * It checks that the pckt is valid.
@@ -3280,7 +3476,7 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
 			if (sk_filter(sk, skb))
 				goto out;
 			
-			//NOTE send buffer has been initialized with primary seq, so it is safe to not apply any delta to the used ack.
+			//NOTE send buffer should have been flushed before changing replicas/filters type.
 			if(!send_buffer_empty(filter->send_buffer)){
 				printk("%s ERROR send buffer not empty\n",__func__);
 			}
@@ -3288,54 +3484,57 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
 			/* Let the packet transit 
                          * but change seq/ack_seq
                          */
-			printk("%s status %d before : syn %u ack %u fin %u seq %u end %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl(tcp_header->seq), TCP_SKB_CB(skb)->end_seq, ntohl( tcp_header->ack_seq));
+			FTMPRINTK("%s status %d before : syn %u ack %u fin %u seq %u end %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl(tcp_header->seq), TCP_SKB_CB(skb)->end_seq, ntohl( tcp_header->ack_seq));
 
-			if( TCP_SKB_CB(skb)->seq <= filter->stable_buffer->last_byte){
-				//the client is resending already received data during change between secondary
-				//to primary
+			if(TCP_SKB_CB(skb)->seq <= get_last_byte_received_stable_buffer(filter->stable_buffer)){
+				//the client is resending data already received
 
-				if( TCP_SKB_CB(skb)->ack_seq > filter->send_buffer->last_ack){
-
-					printk("%s CHE TU SIA MALEDETTO last ack %u ack seq %u", __func__,filter->send_buffer->last_ack,TCP_SKB_CB(skb)->ack_seq);
-
+				if( TCP_SKB_CB(skb)->ack_seq > get_last_ack_send_buffer(filter->send_buffer)){
+					FTMPRINTK("%s acking new data: last ack %u ack seq %u", __func__, get_last_ack_send_buffer(filter->send_buffer), TCP_SKB_CB(skb)->ack_seq);
 				} 
-				
-/*				
-				if(TCP_SKB_CB(skb)->end_seq > filter->stable_buffer->last_byte){
+			
+				/*				
+					
+				//code for sending and ack for the retransmitted data directly from here.
+				//it acks just old received data
+
+				if(TCP_SKB_CB(skb)->end_seq > filter->stable_buffer->last_byte+1){
 					printk("%s WARINIG: client is retrasmitting old data with new one\n", __func__);
 				}
 
-				if(TCP_SKB_CB(skb)->end_seq > filter->stable_buffer->last_byte)
+				if(TCP_SKB_CB(skb)->end_seq > filter->stable_buffer->last_byte+1)
 					send_ack(sk, TCP_SKB_CB(skb)->ack_seq + filter->idelta_seq, filter->stable_buffer->last_byte + filter->odelta_seq);
 				else
 					send_ack(sk, TCP_SKB_CB(skb)->ack_seq + filter->idelta_seq, TCP_SKB_CB(skb)->end_seq + filter->odelta_seq);
-*/				
+
+				*/				
 			
 				//remove the previous data and let it transit with same ack
-				int tot_data_size=  TCP_SKB_CB(skb)->end_seq -TCP_SKB_CB(skb)->seq;
-				int data_to_keep= filter->stable_buffer->last_byte - TCP_SKB_CB(skb)->end_seq;
+				actual_data_size=  TCP_SKB_CB(skb)->end_seq -TCP_SKB_CB(skb)->seq- tcp_header->syn- tcp_header->fin;
+				data_to_keep= get_last_byte_received_stable_buffer(filter->stable_buffer)+1 - TCP_SKB_CB(skb)->end_seq;
 				if(data_to_keep){
-					printk("%s TODO KEEP THE DATA!!", __func__);
+					//Not sure if during retransmission you can send new data within the same pckt...
+					printk("ERROR %s new data with old one (dropping)!!! TODO KEEP THE DATA!!\n", __func__);
 					return NF_DROP;
 				}
 
 				TCP_SKB_CB(skb)->seq= TCP_SKB_CB(skb)->end_seq;
 				tcp_header->seq= htonl(TCP_SKB_CB(skb)->seq);
-				 ___pskb_trim(skb, skb->len-tot_data_size);
-				tcp_header= tcp_hdr(skb);					
+				if(actual_data_size){
+					___pskb_trim(skb, skb->len- actual_data_size);
+					tcp_header= tcp_hdr(skb);			
+					iph= ip_hdr(skb);
+				}		
 			}
  
 			tcp_header->seq= htonl(get_iseq_in(filter, ntohl(tcp_header->seq)));
                         tcp_header->ack_seq= htonl(get_oseq_in(filter, ntohl(tcp_header->ack_seq)));
 
 			//recompute checksum
-                        //tcp_v4_send_check(filter->ft_sock, skb);
 			tcp_header->check = 0;
-                        //tcp_header->check = csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len - ip_hdrlen(skb), iph->protocol, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                        tcp_header->check = tcp_v4_check(skb->len - ip_hdrlen(skb), iph->saddr, iph->daddr, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                        skb->ip_summed = CHECKSUM_UNNECESSARY;
+			tcp_header->check= checksum_tcp_rx(skb, skb->len, iph, tcp_header);
 
-			printk("%s status estab %d after transition: syn %u ack %u fin %u seq %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl(tcp_header->seq), ntohl( tcp_header->ack_seq));
+			FTMPRINTK("%s status estab %d after transition: syn %u ack %u fin %u seq %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl(tcp_header->seq), ntohl( tcp_header->ack_seq));
 
 			return NF_ACCEPT;
                 	
@@ -3354,7 +3553,7 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
 			iph = ip_hdr(skb);
 
 			start= ntohl(tcp_header->seq);
-	                end=  ntohl(tcp_header->seq)+ tcp_header->syn+ tcp_header->fin+ skb->len- tcp_header->doff*4;
+	                end= ntohl(tcp_header->seq)+ tcp_header->syn+ tcp_header->fin+ skb->len- tcp_header->doff*4;
         	        size= end-start;
 			
 			req = inet_csk_search_req(sk, &prev, tcp_header->source, iph->saddr, iph->daddr);
@@ -3364,29 +3563,31 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
 				 */
 				if(tcp_header->syn || size){
 					//this msg is not ending the handshake
+					printk("ERROR %s received a unexpected packet during handshake, dropping it.\n", __func__);
 					goto out;
 				}
 
+				
 				/*set first byte to consume in both receive and send buffer*/
+
 				//stable buffer stores data sent by the client with seq number chosen by the client itself.
 				//init first_byte_to_consume with the seq chosen by the client.
-                                req->ft_filter->stable_buffer->first_byte_to_consume= end;
+				init_first_byte_to_consume_stable_buffer(req->ft_filter->stable_buffer, end);
+				
 				//send buffer stores data sent by the server. The seq number changes between replicas, but the client will always ack the seq 
 				//chosen by the primary replica, so init first_byte_to_consume with the seq of the primary. 
-                                req->ft_filter->send_buffer->first_byte_to_consume= ntohl(tcp_header->ack_seq);
+				init_first_byte_to_consume_send_buffer(req->ft_filter->send_buffer, ntohl(tcp_header->ack_seq));
 
 				//NOTE, this  msg is acking the seq sent by the primary replica, change it with the correct ack_seq.
                                 tcp_header->ack_seq= htonl(tcp_rsk(req)->snt_isn+ 1);
-                                //recompute checksum
-                                //tcp_v4_send_check(filter->ft_sock, skb);
+                                
+				//recompute checksum
 				tcp_header->check = 0;
-                                //tcp_header->check = csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len - ip_hdrlen(skb), iph->protocol, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                                tcp_header->check = tcp_v4_check(skb->len - ip_hdrlen(skb), iph->saddr, iph->daddr, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                                skb->ip_summed = CHECKSUM_UNNECESSARY;
+                        	tcp_header->check= checksum_tcp_rx(skb, skb->len, iph, tcp_header);
 
 			}
 			
-			printk("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq));
+			FTMPRINTK("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq));
 
 			return NF_ACCEPT;
 
@@ -3401,7 +3602,8 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
 			
 			tcp_header= tcp_hdr(skb); 
 			iph = ip_hdr(skb);
-			printk("in one of the fin status seq %u ack seq %u tp rcv next %u\n", ntohl(tcp_header->seq), ntohl(tcp_header->ack_seq), tcp_sk(sk)->rcv_nxt);
+			FTMPRINTK("in one of the fin status seq %u ack seq %u tp rcv next %u\n", ntohl(tcp_header->seq), ntohl(tcp_header->ack_seq), tcp_sk(sk)->rcv_nxt);
+			 
 			 /* Let the packet transit to close connections 
 			  * but change seq/ack_seq
 			  */
@@ -3410,13 +3612,10 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
 			 tcp_header->ack_seq= htonl(get_oseq_in(filter, ntohl(tcp_header->ack_seq)));
 			 
 			 //recompute checksum
-			 //tcp_v4_send_check(filter->ft_sock, skb);
 			 tcp_header->check = 0;
-                         //tcp_header->check = csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len - ip_hdrlen(skb), iph->protocol, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                         tcp_header->check = tcp_v4_check(skb->len - ip_hdrlen(skb), iph->saddr, iph->daddr, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                         skb->ip_summed = CHECKSUM_UNNECESSARY;
+                         tcp_header->check= checksum_tcp_rx(skb, skb->len, iph, tcp_header);
 
-			 printk("in one of the fin status seq %u ack seq %u tp rcv next %u\n", ntohl(tcp_header->seq), ntohl(tcp_header->ack_seq), tcp_sk(sk)->rcv_nxt);
+			 FTMPRINTK("in one of the fin status seq %u ack seq %u tp rcv next %u\n", ntohl(tcp_header->seq), ntohl(tcp_header->ack_seq), tcp_sk(sk)->rcv_nxt);
 
 			 return NF_ACCEPT;
 			}
@@ -3439,6 +3638,8 @@ out:
  * of the primary failure.
  * 
  * It also checks acks sent to this socket to free items stored by send syscalls in the send buffer.
+ *
+ * NOTE: it assumes that the iphdr has been pulled from the skbuff->data
  */
 unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter_info *filter){
 	struct tcphdr *tcp_header;
@@ -3533,13 +3734,13 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
                         set_odelta_seq(filter, TCP_SKB_CB(skb)->ack_seq);
 
 			/* remove data stored in the send buffer */ 
-			//NOTE send buffer has been initialized with primary seq, so it is safe to not apply any delta to teh used ack.
+			//NOTE send buffer has been initialized with primary seq, so it is safe to not apply any delta to the used ack.
 			remove_from_send_buffer(filter->send_buffer, TCP_SKB_CB(skb)->ack_seq);
 	           	
 			/* save the packet in the stable buffer only if there is actual payload*/
 			if(size && !(size==1 && tcp_header->fin) ){
 
-				printk("%s saving pckt on stable buffer: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size, ntohl( tcp_header->ack_seq));
+				FTMPRINTK("%s saving pckt on stable buffer: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size, ntohl( tcp_header->ack_seq));
 
 				ret= insert_in_stable_buffer(filter->stable_buffer, skb, start, end-1);	
 				if(ret){
@@ -3587,33 +3788,34 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
 				 */
 				if(tcp_header->syn || size){
 					//this msg is not ending the handshake
+					printk("ERROR %s received a unexpected packet during handshake, dropping it.\n", __func__);
 					goto out;
 				}
 
-				printk("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq));
+				FTMPRINTK("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq));
 
 				/*set first byte to consume in both receive and send buffer*/
+				
 				//stable buffer stores data sent by the client with seq number chosen by the client itself.
 				//init first_byte_to_consume with the seq chosen by the client.
-                                req->ft_filter->stable_buffer->first_byte_to_consume= end;
+                                //req->ft_filter->stable_buffer->first_byte_to_consume= end;
+				init_first_byte_to_consume_stable_buffer(req->ft_filter->stable_buffer, end);
+	
 				//send buffer stores data sent by the server. The seq number changes between replicas, but the client will always ack the seq 
 				//chosen by the primary replica, so init first_byte_to_consume with the seq of the primary. 
-                                req->ft_filter->send_buffer->first_byte_to_consume= ntohl(tcp_header->ack_seq);
-
+                                //req->ft_filter->send_buffer->first_byte_to_consume= ntohl(tcp_header->ack_seq);
+				init_first_byte_to_consume_send_buffer(req->ft_filter->send_buffer, ntohl(tcp_header->ack_seq));
+				
 				//NOTE, this  msg is acking the seq sent by the primary replica, change it with the correct ack_seq.
                                 tcp_header->ack_seq= htonl(tcp_rsk(req)->snt_isn+ 1);
-                                //recompute checksum
-                               // tcp_v4_send_check(filter->ft_sock, skb);
-
-				//tcplen = (skb->len - (ip_header->ihl << 2));
+                              
+				//recompute checksum
 				tcp_header->check = 0;
-    				//tcp_header->check = csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len - ip_hdrlen(skb), iph->protocol, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-    				tcp_header->check = tcp_v4_check(skb->len - ip_hdrlen(skb), iph->saddr, iph->daddr, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0)); 
-				skb->ip_summed = CHECKSUM_UNNECESSARY;
+                        	tcp_header->check= checksum_tcp_rx(skb, skb->len, iph, tcp_header);
 
 			}
 			
-			printk("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq));
+			FTMPRINTK("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq));
 
 			return NF_ACCEPT;
 
@@ -3631,19 +3833,17 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
 			  */
 			 tcp_header= tcp_hdr(skb);
 			 iph= ip_hdr(skb);
-			 printk("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl( tcp_header->seq) , ntohl( tcp_header->ack_seq));
+			 
+			 FTMPRINTK("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl( tcp_header->seq) , ntohl( tcp_header->ack_seq));
 
 			 tcp_header->seq= htonl(get_iseq_in(filter, ntohl(tcp_header->seq))); 
 			 tcp_header->ack_seq= htonl(get_oseq_in(filter, ntohl(tcp_header->ack_seq)));
 			 
 			 //recompute checksum
-			 //tcp_v4_send_check(filter->ft_sock, skb);
 			 tcp_header->check = 0;
-                         //tcp_header->check = csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len - ip_hdrlen(skb), iph->protocol, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                         tcp_header->check = tcp_v4_check(skb->len - ip_hdrlen(skb), iph->saddr, iph->daddr, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                         skb->ip_summed = CHECKSUM_UNNECESSARY;
+                         tcp_header->check= checksum_tcp_rx(skb, skb->len, iph, tcp_header);
 
-			 printk("in one of the fin status seq %u ack seq %u tp rcv next %u\n", ntohl(tcp_header->seq), ntohl(tcp_header->ack_seq), tcp_sk(sk)->rcv_nxt);
+			 FTMPRINTK("in one of the fin status seq %u ack seq %u tp rcv next %u\n", ntohl(tcp_header->seq), ntohl(tcp_header->ack_seq), tcp_sk(sk)->rcv_nxt);
 
 			 return NF_ACCEPT;
 			}
@@ -3701,7 +3901,7 @@ unsigned int ft_hook_before_tcp(struct sk_buff *skb, struct net_filter_info *ft_
                         	                kfree(filter_id_printed);
 #endif
 
-					//if the filter is fake, means that the apllication didnot create the socket yet,
+					//if the filter is fake, means that the aplication did not create the socket yet,
 					//so we cannot deliver packts... 
 					//TODO
 					//save them???
@@ -3863,27 +4063,27 @@ unsigned int ft_hook_after_transport_layer_primary_after_secondary(struct net_fi
 			{
 		        tcp_header = tcp_hdr(skb);
 			iph= ip_hdr(skb);
-			printk("%s BEFORE: syn %u ack %u fin %u seq %u ack_seq %u\n", __func__, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl(tcp_header->seq), ntohl( tcp_header->ack_seq));
 
-			printk("%s filter->odelta_seq %u filter->idelta_seq %u\n", __func__, filter->odelta_seq, filter->idelta_seq);
+			FTMPRINTK("%s BEFORE: syn %u ack %u fin %u seq %u ack_seq %u\n", __func__, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl(tcp_header->seq), ntohl( tcp_header->ack_seq));
+
+			FTMPRINTK("%s filter->odelta_seq %u filter->idelta_seq %u\n", __func__, filter->odelta_seq, filter->idelta_seq);
 
                         tcp_header->seq= htonl(get_oseq_out(filter, ntohl(tcp_header->seq)));
-                        max_ack= ((get_iseq_out(filter, ntohl(tcp_header->ack_seq))) > filter->stable_buffer->last_byte)? get_iseq_out(filter, ntohl(tcp_header->ack_seq)): filter->stable_buffer->last_byte;
+                        max_ack= ((get_iseq_out(filter, ntohl(tcp_header->ack_seq))) > get_last_byte_received_stable_buffer(filter->stable_buffer))? get_iseq_out(filter, ntohl(tcp_header->ack_seq)): get_last_byte_received_stable_buffer(filter->stable_buffer);
 			tcp_header->ack_seq= htonl(max_ack);
-			/*if(tcp_header->window== htons(17520)){
+
+			/* code for changing outgoing window size.
+			if(tcp_header->window== htons(17520)){
 				printk("CHANGING\n");
 				tcp_header->window= htons(20440);	
-			}	*/	
-                        //recompute checksum
-			// tcp_v4_send_check(filter->ft_sock, skb);
-                        //inet_csk(sk)->icsk_af_ops->send_check(filter->ft_sock, skb);
-			
+			}
+			*/	
+                        
+			//recompute checksum
 			tcp_header->check = 0;
-                         //tcp_header->check = csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len - ip_hdrlen(skb), iph->protocol, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                        tcp_header->check = tcp_v4_check(skb->len - ip_hdrlen(skb), iph->saddr, iph->daddr, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                        skb->ip_summed = CHECKSUM_UNNECESSARY;
+			tcp_header->check= checksum_tcp_tx(skb, skb->len - ip_hdrlen(skb), iph, tcp_header);
 
-			printk("%s AFTER: syn %u ack %u fin %u seq %u ack_seq %u\n", __func__, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl(tcp_header->seq), ntohl( tcp_header->ack_seq));
+			FTMPRINTK("%s AFTER: syn %u ack %u fin %u seq %u ack_seq %u\n", __func__, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl(tcp_header->seq), ntohl( tcp_header->ack_seq));
 
 			return NF_ACCEPT;
                 	
@@ -3894,7 +4094,7 @@ unsigned int ft_hook_after_transport_layer_primary_after_secondary(struct net_fi
 		case TCP_LISTEN:
 			{
 
-			printk("in one of listen\n");
+			FTMPRINTK("%s in one of listen, What to do?Modify?\n", __func__);
 			return NF_ACCEPT;
 
 			}
@@ -3910,24 +4110,20 @@ unsigned int ft_hook_after_transport_layer_primary_after_secondary(struct net_fi
 			  * but change seq/ack_seq
 			  */
 
-			 tcp_header= tcp_hdr(skb);
+			tcp_header= tcp_hdr(skb);
 			iph= ip_hdr(skb);
-			 tcp_header->seq= htonl(get_oseq_out(filter, ntohl(tcp_header->seq))); 
-			// tcp_header->ack_seq= htonl(get_iseq_out(filter, ntohl(tcp_header->ack_seq)));
-			  max_ack= ((get_iseq_out(filter, ntohl(tcp_header->ack_seq))) > filter->stable_buffer->last_byte)? get_iseq_out(filter, ntohl(tcp_header->ack_seq)): filter->stable_buffer->last_byte;
-                        tcp_header->ack_seq= htonl(max_ack);
 
-			 //recompute checksum
-			// tcp_v4_send_check(filter->ft_sock, skb);
-			// inet_csk(sk)->icsk_af_ops->send_check(filter->ft_sock, skb);
-			tcp_header->check = 0;
-                         //tcp_header->check = csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len - ip_hdrlen(skb), iph->protocol, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                        tcp_header->check = tcp_v4_check(skb->len - ip_hdrlen(skb), iph->saddr, iph->daddr, csum_partial((char *)tcp_header, skb->len - ip_hdrlen(skb), 0));
-                        skb->ip_summed = CHECKSUM_UNNECESSARY;
- 
-			printk("in one of the fin status seq %u ack seq %u tp rcv next %u\n", ntohl(tcp_header->seq), ntohl(tcp_header->ack_seq), tcp_sk(sk)->rcv_nxt);
+			tcp_header->seq= htonl(get_oseq_out(filter, ntohl(tcp_header->seq))); 
+                        max_ack= ((get_iseq_out(filter, ntohl(tcp_header->ack_seq))) > get_last_byte_received_stable_buffer(filter->stable_buffer))? get_iseq_out(filter, ntohl(tcp_header->ack_seq)): get_last_byte_received_stable_buffer(filter->stable_buffer);
+			tcp_header->ack_seq= htonl(max_ack);
 
-			 return NF_ACCEPT;
+			//recompute checksum
+ 			tcp_header->check = 0;
+                        tcp_header->check= checksum_tcp_tx(skb, skb->len - ip_hdrlen(skb), iph, tcp_header);
+
+			FTMPRINTK("in one of the fin status seq %u ack seq %u tp rcv next %u\n", ntohl(tcp_header->seq), ntohl(tcp_header->ack_seq), tcp_sk(sk)->rcv_nxt);
+
+			return NF_ACCEPT;
 			}
 
 		case TCP_CLOSE:

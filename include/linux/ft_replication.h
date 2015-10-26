@@ -228,7 +228,7 @@ struct kiocb;
 struct msghdr;
 int ft_before_syscall_send_family(struct kiocb *iocb, struct socket *sock,
                                        struct msghdr *msg, size_t size, int* ret);
-int ft_after_syscall_send_family(int ret);
+int ft_after_syscall_send_family(struct socket *sock, int ret);
 int ft_before_syscall_rcv_family(struct kiocb *iocb, struct socket *sock,
                                        struct msghdr *msg, size_t size, int flags, int* ret);
 int ft_after_syscall_rcv_family(struct kiocb *iocb, struct socket *sock,
@@ -254,5 +254,8 @@ int ft_check_tcp_timestamp(struct sock* sk);
 void ft_activate_grown_filter(struct net_filter_info* filter);
 int flush_pending_pckt_in_filters(void);
 int update_filter_type_after_failure(void);
+int ft_is_filter_primary(struct net_filter_info* filter);
+int ft_is_filter_primary_after_secondary(struct net_filter_info* filter);
+int ft_is_filter_secondary(struct net_filter_info* filter);
 
 #endif

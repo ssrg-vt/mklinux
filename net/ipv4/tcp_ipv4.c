@@ -1349,14 +1349,7 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 	if (want_cookie && !tmp_opt.saw_tstamp)
 		tcp_clear_options(&tmp_opt);
 
-//#ifdef FT_POPCORN
-//	if(req->ft_filter)
-//		tmp_opt.tstamp_ok = 0;
-//	else
-//		tmp_opt.tstamp_ok = tmp_opt.saw_tstamp;
-//#else
 	tmp_opt.tstamp_ok = tmp_opt.saw_tstamp;
-//#endif
 	tcp_openreq_init(req, &tmp_opt, skb);
 
 	ireq = inet_rsk(req);
