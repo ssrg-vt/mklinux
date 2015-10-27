@@ -276,11 +276,7 @@ void popcorn_init(void)
 
 static int __init cpu_info_handler_init(void)
 {
-#ifndef SUPPORT_FOR_CLUSTERING
-  _cpu = smp_processor_id();
-#else
   _cpu = my_cpu;
-#endif
   INIT_LIST_HEAD(&rlist_head);
   offset_cpus=Kernel_Id;
   printk("%s: inside , offsetcpus %d \n",__func__,offset_cpus);

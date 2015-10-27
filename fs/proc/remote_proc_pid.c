@@ -726,11 +726,7 @@ static int __init pid_handler_init(void)
 {
 
 /*
-#ifndef SUPPORT_FOR_CLUSTERING
-      _cpu= smp_processor_id();
-#else
       _cpu= cpumask_first(cpu_present_mask);
-#endif
 */
 	uint16_t copy_cpu = 0;
 	if(pcn_kmsg_get_node_ids(NULL, 0, &copy_cpu)==-1)

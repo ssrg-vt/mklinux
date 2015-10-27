@@ -8,8 +8,6 @@
 #ifndef PROCESS_SERVER_MACRO_H_
 #define PROCESS_SERVER_MACRO_H_
 
-#define SUPPORT_FOR_CLUSTERING
-
 #define READ_PAGE 0
 #define PAGE_ADDR 0
 

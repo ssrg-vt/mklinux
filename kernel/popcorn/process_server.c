@@ -768,11 +768,6 @@ int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t
 	down_read(&mm_data->kernel_set_sem);
 
 	//printk("%s before sending data->expected_responses %d data->responses %d\n",__func__,data->expected_responses,data->responses);
-#ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < MAX_KERNEL_IDS; i++) {
-		// Skip the current cpu
-		if(i == _cpu) continue;
-#else
 	// the list does not include the current processor group descirptor (TODO)
 	struct list_head *iter;
 	_remote_cpu_info_list_t *objPtr;
@@ -780,7 +775,7 @@ int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t
 	list_for_each(iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
-#endif
+
 		if(mm_data->kernel_set[i]==1){
 			// Send the request to this cpu.
 			//s = pcn_kmsg_send(i, (struct pcn_kmsg_message*) (&request));
@@ -977,16 +972,11 @@ static void _create_thread_pull(struct work_struct* work){
 	msg->header.type= PCN_KMSG_TYPE_PROC_SRV_CREATE_THREAD_PULL;
 	msg->header.prio= PCN_KMSG_PRIO_NORMAL;
 
-#ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < MAX_KERNEL_IDS; i++) {
-		if(i == _cpu) continue;
-#else
 	struct list_head *iter;
 	_remote_cpu_info_list_t *objPtr;
 	list_for_each(iter, &rlist_head) {
 		objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
-#endif
 		pcn_kmsg_send_long(i,(struct pcn_kmsg_long_message*) (msg),
 				sizeof(create_thread_pull_t)-sizeof(struct pcn_kmsg_hdr));
 
@@ -1153,18 +1143,12 @@ find:
 					exit_notification->header.prio = PCN_KMSG_PRIO_NORMAL;
 					exit_notification->tgroup_home_cpu = current->tgroup_home_cpu;
 					exit_notification->tgroup_home_id = current->tgroup_home_id;
-#ifndef SUPPORT_FOR_CLUSTERING
-					for(i = 0; i < MAX_KERNEL_IDS; i++) {
-						// Skip the current cpu
-						if(i == _cpu) continue;
-#else
 						// the list does not include the current processor group descirptor (TODO)
 					struct list_head *iter;
 					_remote_cpu_info_list_t *objPtr;
 					list_for_each(iter, &rlist_head) {
 							objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 							i = objPtr->_data._processor;
-#endif
 						pcn_kmsg_send_long(i,(struct pcn_kmsg_long_message*)(exit_notification),sizeof(thread_group_exited_notification_t)- sizeof(struct pcn_kmsg_hdr));
 
 					}
@@ -3357,12 +3341,6 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	int sent= 0;
 	reading_page->arrived_response=0;
 
-#ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < MAX_KERNEL_IDS; i++) {
-		// Skip the current cpu
-		if(i == _cpu) continue;
-
-#else
 		// the list does not include the current processor group descirptor (TODO)
 		struct list_head *iter;
 		_remote_cpu_info_list_t *objPtr;
@@ -3370,7 +3348,6 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		list_for_each(iter, &rlist_head) {
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
-#endif
 			if (page->other_owners[i] == 1){
 				if(strcmp(current->comm,"IS") == 0){
 					trace_printk("se\n");
@@ -3592,19 +3569,12 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		spin_unlock(ptl);
 		up_read(&mm->mmap_sem);
 		/*PTE UNLOCKED*/
-#ifndef SUPPORT_FOR_CLUSTERING
-		for(i = 0; i < MAX_KERNEL_IDS; i++) {
-			// Skip the current cpu
-			if(i == _cpu) continue;
-
-#else
 			// the list does not include the current processor group descirptor (TODO)
 			struct list_head *iter;
 			_remote_cpu_info_list_t *objPtr;
 			list_for_each(iter, &rlist_head) {
 				objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 				i = objPtr->_data._processor;
-#endif
 				if (page->other_owners[i] == 1) {
 					if(strcmp(current->comm,"IS") == 0){
 						trace_printk("se\n");
@@ -3723,19 +3693,12 @@ exit_answers:
 			int sent= 0;
 			writing_page->arrived_response=0;
 
-#ifndef SUPPORT_FOR_CLUSTERING
-			for(i = 0; i < MAX_KERNEL_IDS; i++) {
-				// Skip the current cpu
-				if(i == _cpu) continue;
-
-#else
 				// the list does not include the current processor group descirptor (TODO)
 				struct list_head *iter;
 				_remote_cpu_info_list_t *objPtr;
 				list_for_each(iter, &rlist_head) {
 					objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 					i = objPtr->_data._processor;
-#endif
 					if (page->other_owners[i] == 1) {
 						if(strcmp(current->comm,"IS") == 0){
 							trace_printk("se\n");
@@ -4360,12 +4323,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 	down_read(&memory->kernel_set_sem);
 
-#ifndef SUPPORT_FOR_CLUSTERING
-	for(i = 0; i < MAX_KERNEL_IDS; i++) {
-		// Skip the current cpu
-		if(i == _cpu) continue;
-
-#else
 		// the list does not include the current processor group descirptor (TODO)
 		struct list_head *iter;
 		_remote_cpu_info_list_t *objPtr;
@@ -4373,7 +4330,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
 
-#endif
 			if(memory->kernel_set[i]==1)
 				if(strcmp(current->comm,"IS") == 0){
 					trace_printk("se\n");
@@ -6089,19 +6045,12 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 			} else {
 				PSVMAPRINTK("%s,sending operation %d to all \n",__func__,operation);
-#ifndef SUPPORT_FOR_CLUSTERING
-				for(i = 0; i < MAX_KERNEL_IDS; i++) {
-					// Skip the current cpu
-					if(i == _cpu) continue;
-
-#else
 					// the list does not include the current processor group descirptor (TODO)
 					struct list_head *iter;
 					_remote_cpu_info_list_t *objPtr;
 					list_for_each(iter, &rlist_head) {
 						objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 						i = objPtr->_data._processor;
-#endif
 						if(entry->kernel_set[i]==1)
 							pcn_kmsg_send_long(i,
 									(struct pcn_kmsg_long_message*) (entry->message_push_operation),
@@ -6398,19 +6347,12 @@ start: current->mm->distr_vma_op_counter++;
 
 			       down_read(&entry->kernel_set_sem);
 
-#ifndef SUPPORT_FOR_CLUSTERING
-			       for(i = 0; i < MAX_KERNEL_IDS; i++) {
-				       // Skip the current cpu
-				       if(i == _cpu) continue;
-
-#else
 				       // the list does not include the current processor group descirptor (TODO)
 				       struct list_head *iter;
 				       _remote_cpu_info_list_t *objPtr;
 				       list_for_each(iter, &rlist_head) {
 					       objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 					       i = objPtr->_data._processor;
-#endif
 					       if(entry->kernel_set[i]==1){
 						       if (current->mm->distr_vma_op_counter == 3
 								       && i == entry->message_push_operation->from_cpu)
@@ -6464,18 +6406,12 @@ start: current->mm->distr_vma_op_counter++;
 					       || ((operation == VMA_OP_REMAP) && (flags & MREMAP_FIXED))) {
 
 				       PSVMAPRINTK("SERVER MAIN: sending done for operation, we can execute the operation in parallel! %d\n",operation);
-#ifndef SUPPORT_FOR_CLUSTERING
-				       for(i = 0; i < MAX_KERNEL_IDS; i++) {
-					       // Skip the current cpu
-					       if(i == _cpu) continue;
-#else
 					       // the list does not include the current processor group descirptor (TODO)
 					       struct list_head *iter;
 					       _remote_cpu_info_list_t *objPtr;
 					       list_for_each(iter, &rlist_head) {
 						       objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 						       i = objPtr->_data._processor;
-#endif
 						       if(entry->kernel_set[i]==1)
 							       pcn_kmsg_send_long(i,
 									       (struct pcn_kmsg_long_message*) (entry->message_push_operation),sizeof(vma_operation_t)- sizeof(struct pcn_kmsg_hdr));
@@ -6584,18 +6520,12 @@ start: current->mm->distr_vma_op_counter++;
 
 				       down_read(&entry->kernel_set_sem);
 
-#ifndef SUPPORT_FOR_CLUSTERING
-				       for(i = 0; i < MAX_KERNEL_IDS; i++) {
-					       // Skip the current cpu
-					       if(i == _cpu) continue;
-#else
 					       // the list does not include the current processor group descirptor (TODO)
 					       struct list_head *iter;
 					       _remote_cpu_info_list_t *objPtr;
 					       list_for_each(iter, &rlist_head) {
 						       objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 						       i = objPtr->_data._processor;
-#endif
 
 						       if(entry->kernel_set[i]==1){
 							       error = pcn_kmsg_send_long(i,
@@ -6670,18 +6600,13 @@ start: current->mm->distr_vma_op_counter++;
 					       if (!(operation == VMA_OP_REMAP) || (flags & MREMAP_FIXED)) {
 
 						       PSVMAPRINTK("SERVER NOT MAIN: sending done for operation, we can execute the operation in parallel! %d\n",operation);
-#ifndef SUPPORT_FOR_CLUSTERING
-						       for(i = 0; i < MAX_KERNEL_IDS; i++) {
-							       // Skip the current cpu
-							       if(i == _cpu) continue;
-#else
 							       // the list does not include the current processor group descirptor (TODO)
 							       struct list_head *iter;
 							       _remote_cpu_info_list_t * objPtr;
 							       list_for_each(iter, &rlist_head) {
 								       objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 								       i = objPtr->_data._processor;
-#endif
+
 								       if(entry->kernel_set[i]==1)
 									       pcn_kmsg_send_long(i,(struct pcn_kmsg_long_message*) (operation_to_send),
 											       sizeof(vma_operation_t)	- sizeof(struct pcn_kmsg_hdr));
@@ -6923,18 +6848,12 @@ long process_server_do_unmap_start(struct mm_struct *mm, unsigned long start,
 
        int i, error;
 
-#ifndef SUPPORT_FOR_CLUSTERING
-       for(i = 0; i < MAX_KERNEL_IDS; i++) {
-	       // Skip the current cpu
-	       if(i == _cpu) continue;
-#else
        // the list does not include the current processor group descirptor (TODO)
        struct list_head *iter;
        _remote_cpu_info_list_t *objPtr;
        list_for_each(iter, &rlist_head) {
        objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
        i = objPtr->_data._processor;
-#endif
 	       error = pcn_kmsg_send_long(i,
 			       (struct pcn_kmsg_long_message*) (unmap_msg),
 			       sizeof(unmap_message_t) - sizeof(struct pcn_kmsg_hdr));
@@ -7446,12 +7365,6 @@ static int create_kernel_thread_for_distributed_process(void *data) {
        entry->answers = 0;
        raw_spin_lock_init(&(entry->lock_for_answer));
        //inform all kernel that a new distributed process is present here
-#ifndef SUPPORT_FOR_CLUSTERING
-       for(i = 0; i < MAX_KERNEL_IDS; i++) {
-	       // Skip the current cpu
-	       if(i == _cpu) continue;
-
-#else
 	       // the list does not include the current processor group descirptor (TODO)
 	       struct list_head *iter;
 	       _remote_cpu_info_list_t *objPtr;
@@ -7461,7 +7374,6 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 		       printk("sending new kernel message to %d\n",i);
 		       printk("cpu %d id %d\n",new_kernel_msg->tgroup_home_cpu,
 		       new_kernel_msg->tgroup_home_id);
-#endif
 		       //if (pcn_kmsg_send(i, (struct pcn_kmsg_message*) (new_kernel_msg))
 		       //		!= -1) {
 		       if (pcn_kmsg_send_long(i,

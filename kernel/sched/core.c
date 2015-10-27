@@ -91,9 +91,7 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
-#ifdef SUPPORT_FOR_CLUSTERING
 #include <linux/popcorn_cpuinfo.h>
-#endif
 
 #include <process_server_arch.h>
 
@@ -3743,10 +3741,6 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 		cpumask_scnprintf(buf_in, 63, in_mask);
 		cpumask_scnprintf(buf_present, 63, cpu_present_mask);
 
-#ifndef SUPPORT_FOR_CLUSTERING
-		for(i = 0; i < NR_CPUS; i++) {
-			if( (cpu_isset(i,*in_mask) ) && (current_cpu != i) ) {
-#else
 		struct list_head *iter;
 		_remote_cpu_info_list_t *objPtr;
 		struct cpumask *pcpum;
@@ -3756,7 +3750,7 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 			i = objPtr->_data._processor;
 			pcpum = &(objPtr->_data._cpumask);
 			if ( cpumask_intersects(in_mask, pcpum) ) {
-#endif
+
 				// do the migration
 				get_task_struct(p);
 				rcu_read_unlock();
