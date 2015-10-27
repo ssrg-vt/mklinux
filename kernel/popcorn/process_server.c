@@ -130,102 +130,6 @@ static unsigned long get_file_offset(struct file* file, int start_addr);
 ktime_t migration_start, migration_end;
 #endif
 
-/* For timing measurements
- * */
-#if TIMING
-time_values_t times[NR_TYPES];
-time_values_t migration_times[NR_MIG];
-
-static void update_time(unsigned long long time_elapsed, int type){
-
-	if(type<0 || type>=NR_TYPES)
-		return;
-
-	spin_lock(&(times[type].spinlock));
-	times[type].tot+=time_elapsed;
-	times[type].count++;
-	if(time_elapsed>times[type].max)
-		times[type].max=time_elapsed;
-	if(times[type].min==0)
-		times[type].min=time_elapsed;
-	else
-		if(time_elapsed<times[type].min)
-			times[type].min=time_elapsed;
-	spin_unlock(&(times[type].spinlock));
-
-}
-
-static void update_time_migration(unsigned long long time_elapsed, int type){
-
-
-	if(type<0 || type>=NR_MIG)
-		return;
-
-	spin_lock(&(migration_times[type].spinlock));
-	migration_times[type].tot+=time_elapsed;
-	migration_times[type].count++;
-	if(time_elapsed>migration_times[type].max)
-		migration_times[type].max=time_elapsed;
-	if(migration_times[type].min==0)
-		migration_times[type].min=time_elapsed;
-	else
-		if(time_elapsed<migration_times[type].min)
-			migration_times[type].min=time_elapsed;
-	spin_unlock(&(migration_times[type].spinlock));
-
-}
-
-
-static void print_time(){
-	int i;
-	printk("\nPage fault times:\n");
-	/*printk(" #define FRL 0 //fetch read local\n"
-	  "#define FWL 1 //fetch write local\n"
-	  "#define FRR 2 //fetch read remote\n"
-	  "#define FWR 3 //fetch write remote\n"
-	  "#define VW 4 // write on a valid copy\n"
-	  "#define VR 5 // read on a valid copy (in multithread)\n"
-	  "#define MW 6 // write on a mofified copy (in multithread)\n"
-	  "#define MR 7 // read on a mofified copy (in multithread) \n"
-	  "#define IW 8 // write on a invalid copy (only 2 kernels)\n"
-	  "#define IR 9 // read invalid copy\n"
-	  "#define NRR 10 //read on a not replicated copy (in multithread)\n"
-	  "# NRW 11 // write on a not replicated copy (in multithread)\n\n");*/
-	for(i=0;i<NR_TYPES;i++){
-		spin_lock(&(times[i].spinlock));
-		unsigned long long avg=0;
-		if(times[i].count!=0)
-			avg= times[i].tot/times[i].count;
-		printk("Type %d avg %lu max %lu min %lu count %lu tot %lu\n", i, avg, times[i].max, times[i].min, times[i].count, times[i].tot);
-		times[i].max=0; times[i].min=0;times[i].tot=0;times[i].count=0;
-		spin_unlock(&(times[i].spinlock));
-	}
-}
-
-
-static void print_migration_time(){
-	int i;
-	printk("\nMigration times:\n");
-	/*printk(" #define FIRST_MIG 0"
-	 * "#define NORMAL_MIG 1"
-	 * "#define BACK_MIG 2"
-	 * "#define NR_MIG 3"
-	 * "\n\n");*/
-	for(i=0;i<NR_MIG;i++){
-		spin_lock(&(migration_times[i].spinlock));
-		unsigned long long avg=0;
-		if(migration_times[i].count!=0)
-			avg= migration_times[i].tot/migration_times[i].count;
-		printk("Type %d avg %lu max %lu min %lu count %lu tot %lu\n", i, avg, migration_times[i].max, migration_times[i].min, migration_times[i].count, migration_times[i].tot);
-		migration_times[i].max=0; migration_times[i].min=0;migration_times[i].tot=0;migration_times[i].count=0;
-		spin_unlock(&(migration_times[i].spinlock));
-	}
-}
-
-
-#endif
-
-
 static void push_data(data_header_t** phead, raw_spinlock_t* spinlock,
 		data_header_t* entry) {
 	unsigned long flags;
@@ -1210,10 +1114,6 @@ find:
 				      page_fault_mio,fetch,local_fetch,write,read,most_long_read,invalid,ack,answer_request,answer_request_void, request_data,most_written_page, concurrent_write,most_long_write, pages_allocated,compressed_page_sent,not_compressed_page,not_compressed_diff_page);
 #endif
 
-#if TIMING
-			print_time();
-			print_migration_time();
-#endif
 			struct work_struct* work = kmalloc(sizeof(struct work_struct),
 							   GFP_ATOMIC);
 			if (work) {
@@ -3025,11 +2925,6 @@ void process_back_migration(struct work_struct* work) {
 
 		wake_up_process(task);
 
-#if TIMING
-		unsigned long long stop= native_read_tsc();
-		unsigned long long elapsed_time =stop-info_work->start;
-		update_time_migration(elapsed_time,BACK_MIG_R);
-#endif
 	} else{
 
 		printk("ERROR: task not found. Impossible to re-run shadow.");
@@ -3060,16 +2955,10 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg){
 		printk("ERROR: back migration did not find a memory_t struct!!\n");
 	}
 	/*back_mig_work_t* work;
-#if TIMING
-	unsigned long long start= native_read_tsc();
-#endif
 	work = (back_mig_work_t*) kmalloc(sizeof(back_mig_work_t), GFP_ATOMIC);
 	if (work) {
 		INIT_WORK( (struct work_struct*)work, process_back_migration);
 		work->back_mig_request = request;
-#if TIMING
-		work->start= start;
-#endif
 	queue_work(clone_wq, (struct work_struct*) work);
 } */
 
@@ -3095,11 +2984,6 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg){
         printk(KERN_ERR "Time for arm->x86 back migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
 #endif
 
-	#if TIMING
-		unsigned long long stop= native_read_tsc();
-		unsigned long long elapsed_time =stop-info_work->start;
-		update_time_migration(elapsed_time,BACK_MIG_R);
-	#endif
 	} else{
 		printk("ERROR: task not found. Impossible to re-run shadow.");
 	}
@@ -3357,22 +3241,6 @@ retry_cow:
 	spin_unlock(ptl);
 
 out_not_locked:
-#if TIMING
-	if(ret==0){
-		unsigned long long stop= native_read_tsc();
-		unsigned long long time_elapsed= stop-fetched_data->start;
-
-		if(page_fault_flags & FAULT_FLAG_WRITE){
-			update_time(time_elapsed,FWL);
-		}
-		else{
-			update_time(time_elapsed,FRL);
-		}
-	}else
-		printk("WARNING: after updating page ret is %d when updating time\n",ret);
-
-
-#endif
 	remove_mapping_entry(fetched_data);
 	kfree(fetched_data);
 out_not_data:
@@ -4837,10 +4705,6 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	int tgroup_home_id = tsk->tgroup_home_id;
 	int ret;
 
-#if TIMING
-	unsigned long long start= native_read_tsc();
-#endif
-
 	address = page_faul_address & PAGE_MASK;
 
 #if STATISTICS
@@ -4963,30 +4827,6 @@ start:
 	       spin_unlock(ptl);
 	       wake_up(&read_write_wait);
 
-#if TIMING
-	       if(ret==0){//case without check
-		       unsigned long long stop= native_read_tsc();
-		       unsigned long long time_elapsed= stop-start;
-
-		       if(page_fault_flags & FAULT_FLAG_WRITE){
-			       update_time(time_elapsed,FWR);
-		       }
-		       else{
-			       update_time(time_elapsed,FRR);
-		       }
-	       }
-	       else
-		       if(ret==VM_CONTINUE_WITH_CHECK){
-			       mapping_answers_for_2_kernels_t* fetched_data= find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address);
-			       if(fetched_data!=NULL)
-				       fetched_data->start= start;
-			       else
-				       printk("WARNING: after fetch is not possible to find fetched data while trying to store timing\n");
-		       }
-		       else
-			       printk("WARNING: ret from fetch is %d when trying to store timing\n");
-
-#endif
 	       return ret;
 
        }
@@ -5121,20 +4961,6 @@ retry_cow:
 
 			       spin_unlock(ptl);
 
-#if TIMING
-
-			       unsigned long long stop= native_read_tsc();
-			       unsigned long long time_elapsed= stop-start;
-
-			       if(page_fault_flags & FAULT_FLAG_WRITE){
-				       update_time(time_elapsed,NRW);
-			       }
-			       else{
-				       update_time(time_elapsed,NRR);
-			       }
-
-#endif
-
 			       return 0;
 		       }
 
@@ -5154,13 +4980,6 @@ check:
 				*/
 			       if (!(page_fault_flags & FAULT_FLAG_WRITE)) {
 				       spin_unlock(ptl);
-#if TIMING
-				       unsigned long long stop= native_read_tsc();
-				       unsigned long long time_elapsed= stop-start;
-
-				       update_time(time_elapsed,VR);
-
-#endif
 
 				       return 0;
 			       }
@@ -5224,16 +5043,6 @@ check:
 
 				       spin_unlock(ptl);
 				       wake_up(&read_write_wait);
-#if TIMING
-				       if(ret==0){
-					       unsigned long long stop= native_read_tsc();
-					       unsigned long long time_elapsed= stop-start;
-
-					       update_time(time_elapsed,VW);
-
-				       }else
-					       printk("WARNING not possible update time ret is %d in valid write\n",ret);
-#endif
 				       return ret;
 			       }
 		       } else
@@ -5244,15 +5053,6 @@ check:
 			       if (page->status == REPLICATION_STATUS_WRITTEN) {
 				       PSPRINTK("Page status written address %lu \n", address);
 				       spin_unlock(ptl);
-#if TIMING
-				       unsigned long long stop= native_read_tsc();
-				       unsigned long long time_elapsed= stop-start;
-				       if(page_fault_flags & FAULT_FLAG_WRITE){
-					       update_time(time_elapsed,MW);
-				       }
-				       else
-					       update_time(time_elapsed,MR);
-#endif
 
 				       return 0;
 			       }
@@ -5320,19 +5120,6 @@ check:
 				       spin_unlock(ptl);
 				       wake_up(&read_write_wait);
 
-#if TIMING
-
-				       unsigned long long stop= native_read_tsc();
-				       unsigned long long time_elapsed= stop-start;
-
-				       if(page_fault_flags & FAULT_FLAG_WRITE){
-					       update_time(time_elapsed,IW);
-				       }
-				       else{
-					       update_time(time_elapsed,IR);
-				       }
-
-#endif
 				       return ret;
 
 			       }
@@ -5664,10 +5451,6 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	       trace_printk("s\n");
        }
 
-#if TIMING
-       unsigned long long start= native_read_tsc();
-#endif
-
 
        /*	sched.c changed so this is not needed anymore
 	*
@@ -5709,22 +5492,6 @@ return -EBUSY;
 	}
 
 
-#if TIMING
-	if(ret!=-1){
-		unsigned long long stop= native_read_tsc();
-		unsigned long long elapsed_time =stop-start;
-
-		if(first)
-			update_time_migration(elapsed_time,FIRST_MIG_WITH_FORK);
-		else
-			if(back)
-				update_time_migration(elapsed_time,BACK_MIG);
-			else
-				update_time_migration(elapsed_time,NORMAL_MIG);
-	}
-	else
-	printk("WARNING in timing for migration ret is %d\n",ret);
-#endif
 	if(strcmp(current->comm,"IS") == 0){
 		trace_printk("e\n");
 	}
@@ -7425,14 +7192,6 @@ void sleep_shadow() {
        update_fpu_info(current);
 #endif
 
-       /*#if TIMING
-	 unsigned long long stop = native_read_tsc();
-	 unsigned long long elapsed_time = stop - clone_data->start;
-	 if (clone_data->first == 1)
-	 update_time_migration(elapsed_time, FIRST_MIG_R);
-	 else
-	 update_time_migration(elapsed_time, NORMAL_MIG_R);
-#endif*/
 }
 
 //Ajith - to crosscheck
@@ -8048,26 +7807,6 @@ _cpu= cpumask_first(cpu_present_mask);
        compressed_page_sent=0;
        not_compressed_page=0;
        not_compressed_diff_page=0;
-
-#endif
-
-#if TIMING
-       int i=0;
-       for(i=0;i<NR_TYPES;i++){
-	       times[i].max=0;
-	       times[i].min=0;
-	       times[i].tot=0;
-	       times[i].count=0;
-	       spin_lock_init(&(times[i].spinlock));
-       }
-
-       for(i=0;i<NR_MIG;i++){
-	       migration_times[i].max=0;
-	       migration_times[i].min=0;
-	       migration_times[i].tot=0;
-	       migration_times[i].count=0;
-	       spin_lock_init(&(migration_times[i].spinlock));
-       }
 
 #endif
 
