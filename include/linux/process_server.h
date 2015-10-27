@@ -36,7 +36,6 @@ typedef struct _fetching_struct {
 
 } fetching_t;
 
-#if FOR_2_KERNELS
 typedef struct ack_answers_for_2_kernels {
 	struct ack_answers_for_2_kernels* next;
 	struct ack_answers_for_2_kernels* prev;
@@ -49,27 +48,6 @@ typedef struct ack_answers_for_2_kernels {
 	struct task_struct * waiting;
 
 } ack_answers_for_2_kernels_t;
-#else
-typedef struct ack_answers {
-	struct ack_answers* next;
-	struct ack_answers* prev;
-
-	//data_header_t header;
-	int tgroup_home_cpu;
-	int tgroup_home_id;
-	unsigned long address;
-	int responses;
-	int expected_responses;
-	int nack;
-	int concurrent;
-	int writers[MAX_KERNEL_IDS];
-	int owner;
-	unsigned long long time_stamp;
-	raw_spinlock_t lock;
-	struct task_struct * waiting;
-
-} ack_answers_t;
-#endif
 
 #define VMA_OPERATION_FIELDS int tgroup_home_cpu; \
 		int tgroup_home_id; \
@@ -471,8 +449,6 @@ typedef struct {
 
 }__attribute__((packed)) new_kernel_t;
 
-#if FOR_2_KERNELS
-
 #define MAPPING_FIELDS_FOR_2_KERNELS int tgroup_home_cpu; \
 		int tgroup_home_id; \
 		unsigned long address;\
@@ -497,36 +473,6 @@ typedef struct {
 	}__attribute__((packed));
 
 }__attribute__((packed)) data_request_for_2_kernels_t;
-
-#else
-
-#define MAPPING_FIELDS int tgroup_home_cpu; \
-		int tgroup_home_id; \
-		unsigned long address; \
-		int read_for_write; \
-		unsigned int flags;\
-		int vma_operation_index;
-
-struct _mapping {
-	MAPPING_FIELDS
-};
-
-typedef struct {
-	struct pcn_kmsg_hdr header;
-	union {
-		struct {
-			MAPPING_FIELDS
-		};
-
-#define MAPPING_PAD ((sizeof(struct _mapping)>PCN_KMSG_PAYLOAD_SIZE)?PAD_LONG_MESSAGE(sizeof(struct _mapping)):(PCN_KMSG_PAYLOAD_SIZE))
-		char pad[MAPPING_PAD];
-	}__attribute__((packed));
-
-}__attribute__((packed)) data_request_t;
-
-#endif
-
-#if FOR_2_KERNELS
 
 #define INVALID_FIELDS_FOR_2_KERNELS int tgroup_home_cpu;\
 		int tgroup_home_id; \
@@ -647,128 +593,6 @@ typedef struct mapping_answers_2_kernels {
 
 } mapping_answers_for_2_kernels_t;
 
-#else
-
-#define INVALID_FIELDS int tgroup_home_cpu;\
-		int tgroup_home_id; \
-		unsigned long address; \
-		long last_write;\
-		unsigned long long time_stamp;\
-		int vma_operation_index;
-
-struct _invalid {
-	INVALID_FIELDS
-};
-
-typedef struct {
-	struct pcn_kmsg_hdr header;
-	union {
-		struct {
-			INVALID_FIELDS
-		};
-
-#define INVALID_PAD ((sizeof(struct _invalid)>PCN_KMSG_PAYLOAD_SIZE)?PAD_LONG_MESSAGE(sizeof(struct _invalid)):(PCN_KMSG_PAYLOAD_SIZE))
-		char pad[INVALID_PAD];
-	}__attribute__((packed));
-
-} __attribute__((packed)) invalid_data_t;
-
-#define DATA_RESPONSE_FIELDS int tgroup_home_cpu; \
-		int tgroup_home_id;  \
-		unsigned long address; \
-		int address_present;\
-		char data[PAGE_SIZE]; \
-		__wsum checksum; \
-		long last_write;\
-		int owners[MAX_KERNEL_IDS];\
-		int vma_present; \
-		unsigned long vaddr_start;\
-		unsigned long vaddr_size;\
-		pgprot_t prot; \
-		unsigned long vm_flags; \
-		unsigned long pgoff;\
-		char path[512];\
-
-struct _data_response {
-	DATA_RESPONSE_FIELDS
-};
-
-typedef struct {
-	struct pcn_kmsg_hdr header;
-	union {
-		struct {
-			DATA_RESPONSE_FIELDS
-		};
-#define DATA_RESPONSE_PAD ((sizeof(struct _data_response)>PCN_KMSG_PAYLOAD_SIZE)?PAD_LONG_MESSAGE(sizeof(struct _data_response)):(PCN_KMSG_PAYLOAD_SIZE))
-		char pad[DATA_RESPONSE_PAD];
-	}__attribute__((packed));
-
-}__attribute__((packed)) data_response_t;
-
-#define DATA_VOID_RESPONSE_FIELDS int tgroup_home_cpu; \
-		int tgroup_home_id;  \
-		unsigned long address; \
-		int vma_present; \
-		unsigned long vaddr_start;\
-		unsigned long vaddr_size;\
-		unsigned long vm_flags; \
-		unsigned long pgoff;\
-		char path[512];\
-		pgprot_t prot; \
-		int address_present; \
-		int fetching; \
-		int owners[MAX_KERNEL_IDS];\
-		__wsum checksum; \
-
-struct _data_void_response {
-	DATA_VOID_RESPONSE_FIELDS
-};
-
-typedef struct {
-	struct pcn_kmsg_hdr header;
-	union {
-		struct {
-			DATA_VOID_RESPONSE_FIELDS
-		};
-#define DATA_VOID_RESPONSE_PAD ((sizeof(struct _data_void_response)>PCN_KMSG_PAYLOAD_SIZE)?PAD_LONG_MESSAGE(sizeof(struct _data_void_response)):(PCN_KMSG_PAYLOAD_SIZE))
-		char pad[DATA_VOID_RESPONSE_PAD];
-	}__attribute__((packed));
-
-}__attribute__((packed)) data_void_response_t;
-
-typedef struct mapping_answers {
-	struct mapping_answers* next;
-	struct mapping_answers* prev;
-
-	int tgroup_home_cpu;
-	int tgroup_home_id;
-	unsigned long address;
-	int vma_present;
-	unsigned long vaddr_start;
-	unsigned long vaddr_size;
-	unsigned long pgoff;
-	char path[512];
-	pgprot_t prot;
-	unsigned long vm_flags;
-	int address_present;
-	long last_invalid;
-	long last_write;
-	int fetching;
-	int responses;
-	int expected_responses;
-	int owners[MAX_KERNEL_IDS];
-	int owner;
-	data_response_t* data;
-	raw_spinlock_t lock;
-	struct task_struct* waiting;
-#if TIMING
-	unsigned long long start;
-#endif
-} mapping_answers_t;
-
-#endif
-
-
 #define VMA_ACK_FIELDS int tgroup_home_cpu; \
 		int tgroup_home_id; \
 		int vma_operation_index;\
@@ -875,11 +699,7 @@ typedef struct{
 
 typedef struct {
 	struct delayed_work work;
-#if FOR_2_KERNELS
 	data_request_for_2_kernels_t* request;
-#else
-	data_request_t* request;
-#endif
 	unsigned long address;
 	int tgroup_home_cpu;
 	int tgroup_home_id;
@@ -902,11 +722,7 @@ typedef struct {
 
 typedef struct {
 	struct delayed_work work;
-#if FOR_2_KERNELS
 	invalid_data_for_2_kernels_t* request;
-#else
-	invalid_data_t* request;
-#endif
 } invalid_work_t;
 
 typedef struct {

@@ -196,15 +196,8 @@ struct page {
 	//Futex
 	int futex_owner;
 
-#if FOR_2_KERNELS
 #if DIFF_PAGE
 	char* old_page_version;
-#endif
-#else
-	unsigned long long time_stamp;
-	int concurrent_writers;
-	int concurrent_fetch;
-	int need_fetch[MAX_KERNEL_IDS];
 #endif
 }
 /*

@@ -8,11 +8,6 @@
 #ifndef PROCESS_SERVER_MACRO_H_
 #define PROCESS_SERVER_MACRO_H_
 
-#if !FOR_2_KERNELS
-#undef DIFF_PAGE
-#define DIFF_PAGE 0
-#endif
-
 #define SUPPORT_FOR_CLUSTERING
 
 #define READ_PAGE 0

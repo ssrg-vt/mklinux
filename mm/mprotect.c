@@ -190,7 +190,6 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 						page->replicated= 0;
 						page->status= REPLICATION_STATUS_NOT_REPLICATED;
 
-#if FOR_2_KERNELS
 						//add if for 2 kernels
 						if(cpumask_first(cpu_present_mask)==current->tgroup_home_cpu){
 							ptep_get_and_clear(mm, addr, pte);
@@ -200,7 +199,7 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 							ptent = pte_set_flags(ptent, _PAGE_UNUSED1);
 							set_pte_at_notify(mm, addr, pte, ptent);
 						}
-#endif
+
 						int i;
 
 						if (current->mm == mm)
