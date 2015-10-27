@@ -12,16 +12,6 @@
 /*
  * Structures
  */
-#if TIMING
-typedef struct {
-	unsigned long long min;
-	unsigned long long max;
-	unsigned long long tot;
-	unsigned long count;
-	spinlock_t spinlock;
-} time_values_t;
-#endif
-
 typedef struct _fetching_struct {
 	struct _fetching_struct* next;
 	struct _fetching_struct* prev;
@@ -587,10 +577,6 @@ typedef struct mapping_answers_2_kernels {
 	int arrived_response;
 	struct task_struct* waiting;
 	int futex_owner;
-#if TIMING
-	unsigned long long start;
-#endif
-
 } mapping_answers_for_2_kernels_t;
 
 #define VMA_ACK_FIELDS int tgroup_home_cpu; \
@@ -692,9 +678,6 @@ typedef struct {
 typedef struct{
 	struct work_struct work;
 	back_migration_request_t* back_mig_request;
-#if TIMING
-	unsigned long long start;
-#endif
 }back_mig_work_t;
 
 typedef struct {
