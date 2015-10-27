@@ -1128,12 +1128,6 @@ again:
 
 			//Multikernel
 			if(page->replicated==1){
-#if DIFF_PAGE
-				if(page->old_page_version!=NULL){
-					kfree(page->old_page_version);
-					page->old_page_version= NULL;
-				}
-#endif
 				process_server_clean_page(page);
 			}
 
@@ -1203,23 +1197,11 @@ again:
 						print_bad_pte(vma, addr, ptent, page);
 					}
 					force_flush = !__tlb_remove_page(tlb, page);
-#if DIFF_PAGE
-					if(page->old_page_version!=NULL){
-						kfree(page->old_page_version);
-						page->old_page_version= NULL;
-					}
-#endif
 					process_server_clean_page(page);
 					if (force_flush)
 						break;
 					continue;
 				}
-#if DIFF_PAGE
-				if(page->old_page_version!=NULL){
-					kfree(page->old_page_version);
-					page->old_page_version= NULL;
-				}
-#endif
 				process_server_clean_page(page);
 			}
 		}

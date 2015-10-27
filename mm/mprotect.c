@@ -180,11 +180,6 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 							rss[MM_FILEPAGES]--;
 						}
 
-#if DIFF_PAGE
-						if(page->old_page_version!=NULL)
-							kfree(page->old_page_version);
-#endif
-
 						page_remove_rmap(page);
 
 						page->replicated= 0;

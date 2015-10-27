@@ -21,8 +21,6 @@
 //#define MAX_KERNEL_IDS NR_CPUS
 #define MAX_KERNEL_IDS 2
 
-#define DIFF_PAGE 0
-
 #define VMA_OP_NOP 0
 #define VMA_OP_UNMAP 1
 #define VMA_OP_PROTECT 2

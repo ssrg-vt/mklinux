@@ -195,10 +195,6 @@ struct page {
 	int reading;
 	//Futex
 	int futex_owner;
-
-#if DIFF_PAGE
-	char* old_page_version;
-#endif
 }
 /*
  * The struct page can be forced to be double word aligned so that atomic ops

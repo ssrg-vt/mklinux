@@ -2508,11 +2508,7 @@ retry_cow:
 			       }
 		       }
 
-#if DIFF_PAGE
-		       goto resolved_diff;
-#else
 		       goto resolved;
-#endif
 	       }
 
        }
@@ -2525,72 +2521,6 @@ resolved:
        PSPRINTK(
 		       "Page read only?%i Page shared?%i \n", (vma->vm_flags & VM_WRITE)?0:1, (vma->vm_flags & VM_SHARED)?1:0);
 
-#if DIFF_PAGE
-
-       char *app= kmalloc(sizeof(char)*PAGE_SIZE*2, GFP_ATOMIC);
-       if (app == NULL) {
-	       printk("Impossible to kmalloc app.\n");
-	       spin_unlock(ptl);
-	       up_read(&mm->mmap_sem);
-	       pcn_kmsg_free_msg(request);
-	       kfree(work);
-	       return;
-       }
-
-       // Ported to Linux 3.12 
-       //vfrom = kmap_atomic(page, KM_USER0);
-       vfrom = kmap_atomic(page);
-
-       unsigned int compressed_byte= WKdm_compress(vfrom,app);
-
-       if(compressed_byte<((PAGE_SIZE/10)*9)){
-
-#if STATISTICS
-	       compressed_page_sent++;
-#endif
-	       // Ported to Linux 3.12 
-	       //kunmap_atomic(vfrom, KM_USER0);
-	       kunmap_atomic(vfrom);
-	       response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+compressed_byte, GFP_ATOMIC);
-	       if (response == NULL) {
-		       printk("Impossible to kmalloc in process mapping request.\n");
-		       spin_unlock(ptl);
-		       up_read(&mm->mmap_sem);
-		       pcn_kmsg_free_msg(request);
-		       kfree(work);
-		       kfree(app);
-		       return;
-	       }
-	       memcpy(&(response->data),app,compressed_byte);
-	       response->data_size= compressed_byte;
-	       kfree(app);
-       }
-       else{
-
-#if STATISTICS
-	       not_compressed_page++;
-#endif
-
-	       response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
-	       if (response == NULL) {
-		       printk("Impossible to kmalloc in process mapping request.\n");
-		       spin_unlock(ptl);
-		       up_read(&mm->mmap_sem);
-		       pcn_kmsg_free_msg(request);
-		       kfree(work);
-		       kfree(app);
-		       return;
-	       }
-	       void* vto = &(response->data);
-	       copy_page(vto, vfrom);
-	       kunmap_atomic(vfrom, KM_USER0);
-	       response->data_size= PAGE_SIZE;
-	       kfree(app);
-       }
-
-       response->diff=0;
-
-#else
        response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
        if (response == NULL) {
 	       printk("Impossible to kmalloc in process mapping request.\n");
@@ -2667,8 +2597,6 @@ resolved:
 	       printk("page just copied is not matching, address %lu\n",address);
 #endif
 
-#endif
-
        flush_cache_page(vma, address, pte_pfn(*pte));
 
        response->last_write = page->last_write;
@@ -2714,10 +2642,8 @@ resolved:
        spin_unlock(ptl);
        up_read(&mm->mmap_sem);
 
-#if !DIFF_PAGE
 #if CHECKSUM
        response->checksum= csum_partial(&response->data, PAGE_SIZE, 0);
-#endif
 #endif
 
        trace_printk("m\n");
@@ -2750,148 +2676,6 @@ resolved:
        PSPRINTK("Handle request end\n");
        trace_printk("e\n");
        return;
-
-#if DIFF_PAGE
-
-resolved_diff:
-
-       if(page->old_page_version==NULL){
-	       printk("ERROR: no previous version of the page to calculate diff address %lu\n",address);
-	       spin_unlock(ptl);
-	       up_read(&mm->mmap_sem);
-	       pcn_kmsg_free_msg(request);
-	       kfree(work);
-	       return;
-       }
-
-       app= kmalloc(sizeof(char)*PAGE_SIZE*2, GFP_ATOMIC);
-       if (app == NULL) {
-	       printk("Impossible to kmalloc app.\n");
-	       spin_unlock(ptl);
-	       up_read(&mm->mmap_sem);
-	       pcn_kmsg_free_msg(request);
-	       kfree(work);
-	       return;
-       }
-
-       // Ported to Linux 3.12
-       //vfrom = kmap_atomic(page, KM_USER0);
-       vfrom = kmap_atomic(page);
-
-       compressed_byte= WKdm_diff_and_compress (page->old_page_version, vfrom, app);
-
-       if(compressed_byte<((PAGE_SIZE/10)*9)){
-
-#if STATISTICS
-	       compressed_page_sent++;
-#endif
-
-	       // Ported to Linux 3.12 
-	       //kunmap_atomic(vfrom, KM_USER0);
-	       kunmap_atomic(vfrom);
-	       response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+compressed_byte, GFP_ATOMIC);
-	       if (response == NULL) {
-		       printk("Impossible to kmalloc in process mapping request.\n");
-		       spin_unlock(ptl);
-		       up_read(&mm->mmap_sem);
-		       pcn_kmsg_free_msg(request);
-		       kfree(work);
-		       kfree(app);
-		       return;
-	       }
-	       memcpy(&(response->data),app,compressed_byte);
-	       response->data_size= compressed_byte;
-	       kfree(app);
-       }
-       else{
-
-#if STATISTICS
-	       not_compressed_page++;
-	       not_compressed_diff_page++;
-#endif
-
-	       response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
-	       if (response == NULL) {
-		       printk("Impossible to kmalloc in process mapping request.\n");
-		       spin_unlock(ptl);
-		       up_read(&mm->mmap_sem);
-		       pcn_kmsg_free_msg(request);
-		       kfree(work);
-		       kfree(app);
-		       return;
-	       }
-	       void* vto = &(response->data);
-	       copy_page(vto, vfrom);
-	       kunmap_atomic(vfrom, KM_USER0);
-	       response->data_size= PAGE_SIZE;
-	       kfree(app);
-       }
-
-       response->diff=1;
-
-       PSPRINTK(
-		       "Resolved Copy from %s\n", ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"));
-
-       PSPRINTK(
-		       "Page read only?%i Page shared?%i \n", (vma->vm_flags & VM_WRITE)?0:1, (vma->vm_flags & VM_SHARED)?1:0);
-
-       flush_cache_page(vma, address, pte_pfn(*pte));
-
-       response->last_write = page->last_write;
-
-       response->futex_owner = page->futex_owner;//akshay
-
-       response->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE;
-       response->header.prio = PCN_KMSG_PRIO_NORMAL;
-       response->tgroup_home_cpu = request->tgroup_home_cpu;
-       response->tgroup_home_id = request->tgroup_home_id;
-       response->address = request->address;
-       response->owner= owner;
-
-#if NOT_REPLICATED_VMA_MANAGEMENT
-       if (_cpu == request->tgroup_home_cpu && vma != NULL)
-	       //only the vmas SERVER sends the vma
-#else
-#if PARTIAL_VMA_MANAGEMENT
-	       if (vma != NULL)
-#endif
-#endif
-	       {
-
-		       response->vma_present = 1;
-		       response->vaddr_start = vma->vm_start;
-		       response->vaddr_size = vma->vm_end - vma->vm_start;
-		       response->prot = vma->vm_page_prot;
-		       response->vm_flags = vma->vm_flags;
-		       response->pgoff = vma->vm_pgoff;
-		       if (vma->vm_file == NULL) {
-			       response->path[0] = '\0';
-		       } else {
-			       plpath = d_path(&vma->vm_file->f_path, lpath, 512);
-			       strcpy(response->path, plpath);
-		       }
-	       }
-
-	       else
-		       response->vma_present = 0;
-
-       spin_unlock(ptl);
-       up_read(&mm->mmap_sem);
-
-       trace_printk("m\n");
-       // Send response
-       pcn_kmsg_send_long(from_cpu, (struct pcn_kmsg_long_message*) (response),
-		       sizeof(data_response_for_2_kernels_t) - sizeof(struct pcn_kmsg_hdr) + response->data_size);
-       trace_printk("a\n");
-       // Clean up incoming messages
-       pcn_kmsg_free_msg(request);
-       kfree(work);
-       kfree(response);
-       //end= native_read_tsc();
-       PSPRINTK("Handle request end\n");
-       trace_printk("e\n");
-       return;
-#endif
 
 out:
 
@@ -3637,11 +3421,6 @@ void process_server_clean_page(struct page* page) {
 	memset(page->other_owners, 0, MAX_KERNEL_IDS*sizeof(int));
 	page->writing = 0;
 	page->reading = 0;
-
-#if DIFF_PAGE
-	page->old_page_version= NULL;
-#endif
-
 }
 
 /* Read on a REPLICATED page => ask a copy of the page at address "address" on the
@@ -3831,34 +3610,12 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			vto = kmap_atomic(page);
 			vfrom = &(reading_page->data->data);
 
-#if	DIFF_PAGE
-			if(reading_page->data->data_size==PAGE_SIZE){
-				copy_user_page(vto, vfrom, address, page);
-			}
-			else{
-
-				if(reading_page->data->diff==1)
-					WKdm_decompress_and_diff(vfrom,vto);
-				else
-				{
-					kunmap_atomic(vto, KM_USER0);
-					pcn_kmsg_free_msg(reading_page->data);
-					printk(
-							"ERROR: received data not diff in write address %lu\n",address);
-					ret = VM_FAULT_REPLICATION_PROTOCOL;
-					goto exit_reading_page;
-				}
-			}
-
-#else
 			copy_user_page(vto, vfrom, address, page);
-#endif
 
 			// Ported to Linux 3.12
 			//kunmap_atomic(vto, KM_USER0);
 			kunmap_atomic(vto);
 
-#if !DIFF_PAGE
 #if CHECKSUM
 			// Ported to Linux 3.12
 			//vto= kmap_atomic(page, KM_USER0);
@@ -3880,7 +3637,6 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				ret= VM_FAULT_REPLICATION_PROTOCOL;
 				goto exit_reading_page;
 			}
-#endif
 #endif
 			pcn_kmsg_free_msg(reading_page->data);
 
@@ -4242,31 +3998,11 @@ exit_answers:
 					vto = kmap_atomic(page);
 					vfrom = &(writing_page->data->data);
 
-#if	DIFF_PAGE
-					if(writing_page->data->data_size==PAGE_SIZE){
-						copy_user_page(vto, vfrom, address, page);
-					}
-					else{
-						if(writing_page->data->diff==1)
-							WKdm_decompress_and_diff(vfrom,vto);
-						else
-						{
-							kunmap_atomic(vto, KM_USER0);
-							pcn_kmsg_free_msg(writing_page->data);
-							printk(
-									"ERROR: received data not diff in write address %lu\n",address);
-							ret = VM_FAULT_REPLICATION_PROTOCOL;
-							goto exit_writing_page;
-						}
-					}
-
-#else
 					copy_user_page(vto, vfrom, address, page);
-#endif
+
 					// Ported to Linux 3.12 
 					//kunmap_atomic(vto, KM_USER0);
 					kunmap_atomic(vto);
-#if !DIFF_PAGE
 #if CHECKSUM
 					// Ported to Linux 3.12 
 					//vto= kmap_atomic(page, KM_USER0);
@@ -4288,7 +4024,6 @@ exit_answers:
 						ret= VM_FAULT_REPLICATION_PROTOCOL;
 						goto exit_writing_page;
 					}
-#endif
 #endif
 					pcn_kmsg_free_msg(writing_page->data);
 
@@ -4323,28 +4058,6 @@ exit_write_message:
 #if STATISTICS
 			if(page->last_write> most_written_page)
 				most_written_page= page->last_write;
-#endif
-
-#if	DIFF_PAGE
-			if(page->old_page_version==NULL){
-				page->old_page_version= kmalloc(sizeof(char)*PAGE_SIZE,
-						GFP_ATOMIC);
-				if(page->old_page_version==NULL){
-					printk("ERROR: impossible to kmalloc old diff page\n");
-					goto exit;
-				}
-			}
-
-			void *vto;
-			void *vfrom;
-			vto = page->old_page_version;
-			// Ported to Linux 3.12 
-			// vfrom = kmap_atomic(page, KM_USER0);
-			vfrom = kmap_atomic(page);
-			copy_user_page(vto, vfrom, address, page);
-			// Ported to Linux 3.12 
-			//kunmap_atomic(vfrom, KM_USER0);
-			kunmap_atomic(vfrom);
 #endif
 
 			flush_cache_page(vma, address, pte_pfn(*pte));
@@ -5019,52 +4732,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				}
 
 
-#if DIFF_PAGE
-
-				if(fetching_page->data->diff==1){
-					printk("ERROR: answered to a fetch with diff data\n");
-					pcn_kmsg_free_msg(fetching_page->data);
-					ret = VM_FAULT_REPLICATION_PROTOCOL;
-					goto exit_fetch_message;
-				}
-
-				// Ported to Linux 3.12 
-				//vto = kmap_atomic(page, KM_USER0);
-				vto = kmap_atomic(page);
-				vfrom = &(fetching_page->data->data);
-
-				if(fetching_page->data->data_size==PAGE_SIZE)
-					copy_user_page(vto, vfrom, address, page);
-				else{
-					WKdm_decompress(vfrom,vto);
-				}
-
-				// Ported to Linux 3.12 
-				//kunmap_atomic(vto, KM_USER0);
-				kunmap_atomic(vto);
-
-				if(status==REPLICATION_STATUS_WRITTEN){
-					if(page->old_page_version==NULL){
-						page->old_page_version= kmalloc(sizeof(char)*PAGE_SIZE,
-								GFP_ATOMIC);
-						if(page->old_page_version==NULL){
-							printk("ERROR: impossible to kmalloc old diff page\n");
-							pcn_kmsg_free_msg(fetching_page->data);
-							ret = VM_FAULT_REPLICATION_PROTOCOL;
-							goto exit_fetch_message;
-						}
-					}
-
-					vto = page->old_page_version;
-					// Ported to Linux 3.12 
-					//vfrom = kmap_atomic(page, KM_USER0);
-					vfrom = kmap_atomic(page);
-					memcpy(vto, vfrom, PAGE_SIZE);
-					// Ported to Linux 3.12 
-					//kunmap_atomic(vto, KM_USER0);
-					kunmap_atomic(vto);
-				}
-#else
 				// Ported to Linux 3.12 
 				//vto = kmap_atomic(page, KM_USER0);
 				vto = kmap_atomic(page);
@@ -5105,8 +4772,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				ret= VM_FAULT_REPLICATION_PROTOCOL;
 				goto exit_fetch_message;
 			}
-#endif
-
 #endif
 
 			pcn_kmsg_free_msg(fetching_page->data);
