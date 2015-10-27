@@ -2432,22 +2432,6 @@ resolved:
 	//kunmap_atomic(vfrom, KM_USER0);
 	kunmap_atomic(vfrom);
 
-#ifdef PRINT_PAGE
-	unsigned char *print_ptr = vto;
-	int i = 0;
-	printk("\n================================================");
-	printk("\nPAGE COPIED:\n");
-	/* Print the needed code section */
-	print_ptr = vto;
-	for(i = 0; i < PAGE_SIZE;  i++) {
-		if((i%32) == 0){
-			printk("\n");
-		}
-               	printk("%02x ", *print_ptr);
-		print_ptr++;
-	}
-	printk("\n================================================\n");
-#endif
 	response->data_size= PAGE_SIZE;
 
 
@@ -2517,23 +2501,6 @@ resolved:
 	kfree(work);
 	kfree(response);
 	//end= native_read_tsc();
-#if PRINT_PAGE
-	unsigned char *print_ptr = vto;
-	int i = 0;
-	printk("\n=======================================================");
-	printk("\nPAGE COPIED: (0x%x)\n", address);
-	/* Print the needed code section */
-	print_ptr = vto;
-        
-	for(i = 0; i < PAGE_SIZE;  i++) {
-		if((i%32) == 0){
-			printk("\n");
-		}
-		printk("%02x ", *print_ptr);
-		print_ptr++;
-	}
-	printk("\n======================================================\n");        
-#endif
 	PSPRINTK("Handle request end\n");
 	trace_printk("e\n");
 	return;
@@ -4567,20 +4534,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			set_pte_at_notify(mm, address, pte, entry);
 
 			update_mmu_cache(vma, address, pte);
-#if PRINT_PAGE
-			unsigned char *print_ptr = vto;
-			int i = 0;
-			printk("\n====================================================");
-			printk("\nPAGE WRITTEN:(0x%x)\n", address);
-			for(i = 0; i < PAGE_SIZE;  i++) {
-				if((i%32) == 0) {
-					printk("\n");
-				}
-				printk("%02x ", *print_ptr);
-				print_ptr++;
-			}                       
-			printk("\n====================================================\n");
-#endif
 
 		} else {
 			printk("pte changed while fetching\n");
