@@ -1615,12 +1615,6 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 
 	      }
 
-#if CHECKSUM
-	      __wsum check= csum_partial(&response->data, PAGE_SIZE, 0);
-	      if(check!=response->checksum)
-		      printk("Checksum sent: %i checksum computed %i\n",response->checksum,check);
-#endif
-
 	      if (response->vma_present == 1) {
 
 #if NOT_REPLICATED_VMA_MANAGEMENT
@@ -2584,19 +2578,6 @@ resolved:
        }
 #endif
 
-#if CHECKSUM
-       // Ported to Linux 3.12
-       // vfrom= kmap_atomic(page, KM_USER0);
-       vfrom= kmap_atomic(page);
-       __wsum check1= csum_partial(vfrom, PAGE_SIZE, 0);
-       // Ported to Linux 3.12 
-       //kunmap_atomic(vfrom, KM_USER0);
-       kunmap_atomic(vfrom);
-       __wsum check2= csum_partial(&(response->data), PAGE_SIZE, 0);
-       if(check1!=check2)
-	       printk("page just copied is not matching, address %lu\n",address);
-#endif
-
        flush_cache_page(vma, address, pte_pfn(*pte));
 
        response->last_write = page->last_write;
@@ -2641,10 +2622,6 @@ resolved:
 
        spin_unlock(ptl);
        up_read(&mm->mmap_sem);
-
-#if CHECKSUM
-       response->checksum= csum_partial(&response->data, PAGE_SIZE, 0);
-#endif
 
        trace_printk("m\n");
        // Send response
@@ -3616,28 +3593,6 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			//kunmap_atomic(vto, KM_USER0);
 			kunmap_atomic(vto);
 
-#if CHECKSUM
-			// Ported to Linux 3.12
-			//vto= kmap_atomic(page, KM_USER0);
-			vto= kmap_atomic(page);
-			__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
-			// Ported to Linux 3.12
-			//kunmap_atomic(vto, KM_USER0);
-			kunmap_atomic(vto);
-			__wsum check2= csum_partial(&(reading_page->data->data), PAGE_SIZE, 0);
-			if(check1!=check2) {
-				printk("ERROR: page just copied is not matching, address %lu\n",address);
-				pcn_kmsg_free_msg(reading_page->data);
-				ret= VM_FAULT_REPLICATION_PROTOCOL;
-				goto exit_reading_page;
-			}
-			if(check1!=reading_page->data->checksum) {
-				printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
-				pcn_kmsg_free_msg(reading_page->data);
-				ret= VM_FAULT_REPLICATION_PROTOCOL;
-				goto exit_reading_page;
-			}
-#endif
 			pcn_kmsg_free_msg(reading_page->data);
 
 			page->status = REPLICATION_STATUS_VALID;
@@ -4003,28 +3958,6 @@ exit_answers:
 					// Ported to Linux 3.12 
 					//kunmap_atomic(vto, KM_USER0);
 					kunmap_atomic(vto);
-#if CHECKSUM
-					// Ported to Linux 3.12 
-					//vto= kmap_atomic(page, KM_USER0);
-					vto= kmap_atomic(page);
-					__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
-					// Ported to Linux 3.12 
-					//kunmap_atomic(vto, KM_USER0);
-					kunmap_atomic(vto);
-					__wsum check2= csum_partial(&(writing_page->data->data), PAGE_SIZE, 0);
-					if(check1!=check2) {
-						printk("ERROR: page just copied is not matching, address %lu\n",address);
-						pcn_kmsg_free_msg(writing_page->data);
-						ret= VM_FAULT_REPLICATION_PROTOCOL;
-						goto exit_writing_page;
-					}
-					if(check1!=writing_page->data->checksum) {
-						printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
-						pcn_kmsg_free_msg(writing_page->data);
-						ret= VM_FAULT_REPLICATION_PROTOCOL;
-						goto exit_writing_page;
-					}
-#endif
 					pcn_kmsg_free_msg(writing_page->data);
 
 exit_writing_page:
@@ -4746,31 +4679,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 					for(ct=0;ct<8;ct++){
 						printk(KERN_ALERT"{%lx} ",(unsigned long) *(((unsigned long *)vfrom)+ct));
 					}
-			}
-#endif
-
-#if CHECKSUM
-			// Ported to Linux 3.12 
-			//vto= kmap_atomic(page, KM_USER0);
-			vto= kmap_atomic(page);
-			__wsum check1= csum_partial(vto, PAGE_SIZE, 0);
-			// Ported to Linux 3.12 
-			//kunmap_atomic(vto, KM_USER0);
-			kunmap_atomic(vto);
-			__wsum check2= csum_partial(&(fetching_page->data->data), PAGE_SIZE, 0);
-
-
-			if(check1!=check2) {
-				printk("ERROR: page just copied is not matching, address %lu\n",address);
-				pcn_kmsg_free_msg(fetching_page->data);
-				ret= VM_FAULT_REPLICATION_PROTOCOL;
-				goto exit_fetch_message;
-			}
-			if(check1!=fetching_page->data->checksum) {
-				printk("ERROR: page just copied is not matching the one sent, address %lu\n",address);
-				pcn_kmsg_free_msg(fetching_page->data);
-				ret= VM_FAULT_REPLICATION_PROTOCOL;
-				goto exit_fetch_message;
 			}
 #endif
 

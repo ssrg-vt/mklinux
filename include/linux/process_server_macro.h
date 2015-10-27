@@ -13,7 +13,6 @@
 #define READ_PAGE 0
 #define PAGE_ADDR 0
 
-#define CHECKSUM 0
 #define STATISTICS 0
 #define TIMING 0
 
