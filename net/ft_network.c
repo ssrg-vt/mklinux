@@ -68,52 +68,55 @@ static int after_syscall_rcv_family_primary_after_secondary(struct kiocb *iocb, 
       	else
 		current->useful= NULL;
 
+	if(is_there_any_secondary_replica(current->ft_popcorn)){
 
-	/* in case without errors ret is the actual number of bytes copied.
-	 * size is the maximum bytes allowed to copy.
-	 */
-	if(ret>0)
-		data_size= store_info->size - size + ret;
-	else	
-		data_size= store_info->size - size;
+		/* in case without errors ret is the actual number of bytes copied.
+		 * size is the maximum bytes allowed to copy.
+		 */
+		if(ret>0)
+			data_size= store_info->size - size + ret;
+		else	
+			data_size= store_info->size - size;
 
-	syscall_info= kmalloc( sizeof(*syscall_info) + data_size+ 1, GFP_KERNEL);
-	if(!syscall_info)
-		return -ENOMEM;
+		syscall_info= kmalloc( sizeof(*syscall_info) + data_size+ 1, GFP_KERNEL);
+		if(!syscall_info)
+			return -ENOMEM;
 
-	syscall_info->size= store_info->size;
-	syscall_info->flags= flags;
-	syscall_info->ret= ret;
+		syscall_info->size= store_info->size;
+		syscall_info->flags= flags;
+		syscall_info->ret= ret;
 
-	/* TODO a copy is not needed. It is sent just as a first test.
-         * the data can be retrieved from the secondary from the packet forwarded to the stable buffer.
-         */
-	syscall_info->csum= 0;
-	if(data_size){
-			where_to_copy= &syscall_info->data;	
-			syscall_info->csum= csum_and_copy_from_user(store_info->ubuf, where_to_copy, data_size, syscall_info->csum, &err);
-			if(err){
-				printk("ERROR: %s copy_from_user failed\n", __func__);
-				goto out;
-			}
-			where_to_copy[data_size]='\0';
-			FTPRINTK("%s: data %s size %d\n", __func__, where_to_copy, data_size);
+		/* TODO a copy is not needed. It is sent just as a first test.
+		 * the data can be retrieved from the secondary from the packet forwarded to the stable buffer.
+		 */
+		syscall_info->csum= 0;
+		if(data_size){
+				where_to_copy= &syscall_info->data;	
+				syscall_info->csum= csum_and_copy_from_user(store_info->ubuf, where_to_copy, data_size, syscall_info->csum, &err);
+				if(err){
+					printk("ERROR: %s copy_from_user failed\n", __func__);
+					goto out;
+				}
+				where_to_copy[data_size]='\0';
+				FTPRINTK("%s: data %s size %d\n", __func__, where_to_copy, data_size);
+		}
+		
+		/*TODO
+		 * NOTE: for tcp msg it is not important
+		 * but for udp msg the fields  msg_name/msg_namelen should be copied too.
+		 */
+
+		/* NOTE: multiple threads could call rcv simultaneusly. On tcp_rcvmsg the socket is locked therefore they are serialized. 
+		 * In here the lock already have been released, but the data was copied while holding it.
+		 * In secondary replicas, if retriving data from the stable buffer, the same order of access to the stable buffer must be ensured.
+		 */
+		FTPRINTK("%s pid %d syscall_id %d sending size %d flags %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info->size, syscall_info->flags, syscall_info->csum, syscall_info->ret);
+		ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info)+ data_size);
+
+	out:
+		kfree(syscall_info);
 	}
-	
-	/*TODO
-         * NOTE: for tcp msg it is not important
-         * but for udp msg the fields  msg_name/msg_namelen should be copied too.
-         */
 
-        /* NOTE: multiple threads could call rcv simultaneusly. On tcp_rcvmsg the socket is locked therefore they are serialized. 
-	 * In here the lock already have been released, but the data was copied while holding it.
-	 * In secondary replicas, if retriving data from the stable buffer, the same order of access to the stable buffer must be ensured.
-	 */
-	FTPRINTK("%s pid %d syscall_id %d sending size %d flags %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info->size, syscall_info->flags, syscall_info->csum, syscall_info->ret);
-	ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info)+ data_size);
-
-out:
-        kfree(syscall_info);
 	kfree(store_info);
 	
         return FT_SYSCALL_CONTINUE;
@@ -138,53 +141,54 @@ static int after_syscall_rcv_family_primary(struct kiocb *iocb, struct socket *s
       	else
 		current->useful= NULL;
 
+	if(is_there_any_secondary_replica(current->ft_popcorn)){
 
-	/* in case without errors ret is the actual number of bytes copied.
-	 * size is the maximum bytes allowed to copy.
-	 */
-	if(ret>0)
-		data_size= ret;
-	else	
-		data_size= 0;
+		/* in case without errors ret is the actual number of bytes copied.
+		 * size is the maximum bytes allowed to copy.
+		 */
+		if(ret>0)
+			data_size= ret;
+		else	
+			data_size= 0;
 
-	syscall_info= kmalloc( sizeof(*syscall_info) + data_size+ 1, GFP_KERNEL);
-	if(!syscall_info)
-		return -ENOMEM;
+		syscall_info= kmalloc( sizeof(*syscall_info) + data_size+ 1, GFP_KERNEL);
+		if(!syscall_info)
+			return -ENOMEM;
 
-	syscall_info->size= size;
-	syscall_info->flags= flags;
-	syscall_info->ret= ret;
+		syscall_info->size= size;
+		syscall_info->flags= flags;
+		syscall_info->ret= ret;
 
-	/* TODO a copy is not needed. It is sent just as a first test.
-         * the data can be retrieved from the secondary from the packet forwarded to the stable buffer.
-         */
-	syscall_info->csum= 0;
-	if(data_size){
-			where_to_copy= &syscall_info->data;	
-			syscall_info->csum= csum_and_copy_from_user(store_info->ubuf, where_to_copy, data_size, syscall_info->csum, &err);
-			if(err){
-				printk("ERROR: %s copy_from_user failed\n", __func__);
-				goto out;
-			}
-			where_to_copy[data_size]='\0';
-			FTPRINTK("%s: data %s size %d\n", __func__, where_to_copy, data_size);
+		/* TODO a copy is not needed. It is sent just as a first test.
+		 * the data can be retrieved from the secondary from the packet forwarded to the stable buffer.
+		 */
+		syscall_info->csum= 0;
+		if(data_size){
+				where_to_copy= &syscall_info->data;	
+				syscall_info->csum= csum_and_copy_from_user(store_info->ubuf, where_to_copy, data_size, syscall_info->csum, &err);
+				if(err){
+					printk("ERROR: %s copy_from_user failed\n", __func__);
+					goto out;
+				}
+				where_to_copy[data_size]='\0';
+				FTPRINTK("%s: data %s size %d\n", __func__, where_to_copy, data_size);
+		}
+		
+		/*TODO
+		 * NOTE: for tcp msg it is not important
+		 * but for udp msg the fields  msg_name/msg_namelen should be copied too.
+		 */
+
+		/* NOTE: multiple threads could call rcv simultaneusly. On tcp_rcvmsg the socket is locked therefore they are serialized. 
+		 * In here the lock already have been released, but the data was copied while holding it.
+		 * In secondary replicas, if retriving data from the stable buffer, the same order of access to the stable buffer must be ensured.
+		 */
+		FTPRINTK("%s pid %d syscall_id %d sending size %d flags %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info->size, syscall_info->flags, syscall_info->csum, syscall_info->ret);
+		ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info)+ data_size);
+out:
+		kfree(syscall_info);
 	}
 	
-	/*TODO
-         * NOTE: for tcp msg it is not important
-         * but for udp msg the fields  msg_name/msg_namelen should be copied too.
-         */
-
-        /* NOTE: multiple threads could call rcv simultaneusly. On tcp_rcvmsg the socket is locked therefore they are serialized. 
-	 * In here the lock already have been released, but the data was copied while holding it.
-	 * In secondary replicas, if retriving data from the stable buffer, the same order of access to the stable buffer must be ensured.
-	 */
-	FTPRINTK("%s pid %d syscall_id %d sending size %d flags %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info->size, syscall_info->flags, syscall_info->csum, syscall_info->ret);
-        //ft_send_syscall_info_from_work(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info)+ data_size);
-	ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info)+ data_size);
-
-out:
-        kfree(syscall_info);
 	kfree(store_info);
 	
         return FT_SYSCALL_CONTINUE;
@@ -367,45 +371,50 @@ out:
 
 		data_size= remove_and_copy_from_stable_buffer_no_wait(sk->ft_filter->stable_buffer, msg->msg_iov, size);
                 if(data_size > 0){
-		        FTMPRINTK("%s copied %d bytes from stable buffer\n", __func__, data_size);
+			FTMPRINTK("%s copied %d bytes from stable buffer\n", __func__, data_size);
+	
+			if(is_there_any_secondary_replica(current->ft_popcorn)){			
 
-			syscall_info_primary= kmalloc( sizeof(*syscall_info_primary) + data_size+ 1, GFP_KERNEL);
-			if(!syscall_info_primary)
-				return -ENOMEM;
+				syscall_info_primary= kmalloc( sizeof(*syscall_info_primary) + data_size+ 1, GFP_KERNEL);
+				if(!syscall_info_primary)
+					return -ENOMEM;
 
-			syscall_info_primary->size= size;
-			syscall_info_primary->flags= flags;
-			syscall_info_primary->ret= data_size;
+				syscall_info_primary->size= size;
+				syscall_info_primary->flags= flags;
+				syscall_info_primary->ret= data_size;
 
-			/* TODO a copy is not needed. It is sent just as a first test.
-			* the data can be retrieved from the secondary from the packet forwarded to the stable buffer.
-			*/
-			syscall_info_primary->csum= 0;
-			if(data_size){
-				where_to_copy= &syscall_info_primary->data;
-				syscall_info_primary->csum= csum_and_copy_from_user(ubuf, where_to_copy, data_size, syscall_info_primary->csum, &err);
-				if(err){
-					printk("ERROR: %s copy_from_user failed\n", __func__);
-					goto out2;
+				/* TODO a copy is not needed. It is sent just as a first test.
+				* the data can be retrieved from the secondary from the packet forwarded to the stable buffer.
+				*/
+				syscall_info_primary->csum= 0;
+				if(data_size){
+					where_to_copy= &syscall_info_primary->data;
+					syscall_info_primary->csum= csum_and_copy_from_user(ubuf, where_to_copy, data_size, syscall_info_primary->csum, &err);
+					if(err){
+						printk("ERROR: %s copy_from_user failed\n", __func__);
+						goto out2;
+					}
+					where_to_copy[data_size]='\0';
+					FTPRINTK("%s: data %s size %d\n", __func__, where_to_copy, data_size);
 				}
-				where_to_copy[data_size]='\0';
-				FTPRINTK("%s: data %s size %d\n", __func__, where_to_copy, data_size);
+
+				/*TODO
+				 * NOTE: for tcp msg it is not important
+				 * but for udp msg the fields  msg_name/msg_namelen should be copied too.
+				 */
+
+				/* NOTE: multiple threads could call rcv simultaneusly. On tcp_rcvmsg the socket is locked therefore they are serialized. 
+				 * In here the lock already have been released, but the data was copied while holding it.
+				 * In secondary replicas, if retriving data from the stable buffer, the same order of access to the stable buffer must be ensured.
+				 */
+				FTPRINTK("%s pid %d syscall_id %d sending size %d flags %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info_primary->size, syscall_info_primary->flags, syscall_info_primary->csum, syscall_info_primary->ret);
+				
+				ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info_primary, sizeof(*syscall_info_primary)+ data_size);
+				
+			out2:
+				kfree(syscall_info_primary);
+			
 			}
-
-			/*TODO
-			 * NOTE: for tcp msg it is not important
-			 * but for udp msg the fields  msg_name/msg_namelen should be copied too.
-			 */
-
-			/* NOTE: multiple threads could call rcv simultaneusly. On tcp_rcvmsg the socket is locked therefore they are serialized. 
-			 * In here the lock already have been released, but the data was copied while holding it.
-			 * In secondary replicas, if retriving data from the stable buffer, the same order of access to the stable buffer must be ensured.
-			 */
-			FTPRINTK("%s pid %d syscall_id %d sending size %d flags %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info_primary->size, syscall_info_primary->flags, syscall_info_primary->csum, syscall_info_primary->ret);
-			ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info_primary, sizeof(*syscall_info_primary)+ data_size);
-
-		out2:
-			kfree(syscall_info_primary);
 
 			*syscall_ret= data_size;
 			return FT_SYSCALL_DROP;
@@ -587,9 +596,11 @@ static int after_syscall_send_family_primary(int ret){
 	syscall_info->ret= ret;
 
 	FTPRINTK("%s pid %d syscall_id %d sending size %d csum %d ret %d \n", __func__, current->pid, current->id_syscall, syscall_info->size, syscall_info->csum, syscall_info->ret);
-	
-	ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info));
-	
+
+	if(is_there_any_secondary_replica(current->ft_popcorn)){	
+		ft_send_syscall_info(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) syscall_info, sizeof(*syscall_info));
+	}
+
 	kfree(syscall_info);
 	current->useful= NULL;
 	
@@ -734,7 +745,7 @@ static int before_syscall_send_family_secondary(struct kiocb *iocb, struct socke
 
 	err= insert_in_send_buffer_and_csum(sock->sk->ft_filter->send_buffer, iov, iovlen, size, &my_csum);
 	if(err){
-		printk("ERROR %s Impossible to insert in send buffer\n", __func__);
+		printk("ERROR %s Impossible to insert in send buffer err %d\n", __func__, err);
 		goto out;
 	}
 

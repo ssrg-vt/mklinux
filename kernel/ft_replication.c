@@ -523,6 +523,13 @@ void send_to_all_secondary_replicas(struct ft_pop_rep* ft_popcorn, struct pcn_km
 
 }
 
+/* Checks wheter there is any secondary replica in the system.
+ *
+ */
+int is_there_any_secondary_replica(struct ft_pop_rep* ft_popcorn){
+	return !list_empty(&ft_popcorn->secondary_replicas_head.replica_list_member);
+}
+
 DEFINE_RWLOCK(replica_type_lock);
 #define MAX_FT_POP_REP 5
 

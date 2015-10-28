@@ -3,6 +3,7 @@ How run an application in ft-popcorn:
 PRIMARY:
 
 -- boot primary kernel
+NOTE: the NIC IP of the primary kernel for now is hard-coded in ft_crash_kernel.c for the fail-over. Change it before compiling the kernel!!
 
 NOTE: if you want to debug the secondary kernel with an extra NIC, you need to blacklist that NIC on the boot parameter of the primary kernel e.g.: pci_dev_flags=0x8086:0x10c9:0.1:b.
 
@@ -83,3 +84,6 @@ DEBUG:
 -> to disable NIC checksum computation on both tx and rx:
    sudo ethtool --show-offload  eth0
    sudo ethtool --offload  eth0  rx off  tx off
+
+-> to see printk on serial line
+   echo 7 > /proc/sys/kernel/printk

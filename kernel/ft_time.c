@@ -50,8 +50,9 @@ static long ft_gettimeofday_primary(struct timeval __user * tv, struct timezone 
                 }
         }
 
-	ft_send_syscall_info_from_work(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) get_time, sizeof(*get_time));
-
+	if(is_there_any_secondary_replica(current->ft_popcorn)){
+		ft_send_syscall_info_from_work(current->ft_popcorn, &current->ft_pid, current->id_syscall, (char*) get_time, sizeof(*get_time));
+	}
 out: 
 	if(get_time)
 		kfree(get_time);
