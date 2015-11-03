@@ -221,7 +221,7 @@ static void hang_cpu(void){
 asmlinkage long sys_ft_crash_kernel(void)
 {
        	if(ft_is_replicated(current)){
-		/*if(ft_is_primary_replica(current)){
+		if(ft_is_primary_replica(current)){
 			printk("%s called\n", __func__);
 			//local_bh_disable();
 			//send message to all kernel to notify them that this one is crashing
@@ -233,7 +233,7 @@ asmlinkage long sys_ft_crash_kernel(void)
 
 			//if here something went wrong	
 			printk("ERROR: %s out from hang cpu\n", __func__);						
-		}*/
+		}
 	}
 
 	return 0;

@@ -1259,7 +1259,11 @@ struct sock *sk_clone(const struct sock *sk, const gfp_t priority)
 		filter = rcu_dereference_protected(newsk->sk_filter, 1);
 		if (filter != NULL)
 			sk_filter_charge(newsk, filter);
-
+#ifdef FT_POPCORN
+		if(newsk->ft_filter){
+			get_ft_filter(newsk->ft_filter);
+		}
+#endif
 		if (unlikely(xfrm_sk_clone_policy(newsk))) {
 			/* It is still raw copy of parent, so invalidate
 			 * destructor and make plain sk_free() */

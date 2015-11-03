@@ -472,7 +472,7 @@ static int create_primary_replica_answer_msg(struct replica_id* primary_replica_
 		message_size= sizeof(*msg);
 	}
 
-	msg= kmalloc(message_size,GFP_KERNEL);
+	msg= kmalloc(message_size, GFP_ATOMIC);
         if(!msg)
                 return -ENOMEM;
 

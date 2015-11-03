@@ -186,7 +186,12 @@ struct net_filter_info{
         int local_accept_id;
 	struct tcp_init_param tcp_param;
 
-	int discard_packet;
+	/* deliver_packets can be 
+	 * 0: do not deliver pckt
+	 * 1: always deliver pckt:
+	 * 2: inforce same order of primary (used by udp)
+	 */
+	int deliver_packets;
 	struct stable_buffer *stable_buffer;
 	struct send_buffer *send_buffer;
 	
