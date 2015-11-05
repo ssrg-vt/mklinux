@@ -254,9 +254,11 @@ char* ft_syscall_get_key(struct ft_pop_rep_id* ft_pop_id, int level, int* id_arr
         const int size= 1024;
         int pos,i;
 
-        string= kmalloc(size, GFP_KERNEL);
-        if(!string)
+        string= kmalloc(size, GFP_ATOMIC);
+        if(!string){
+		printk("%s impossible to kmalloc\n", __func__);
                 return NULL;
+	}
 
         pos= snprintf(string, size,"%d%d%d", ft_pop_id->kernel, ft_pop_id->id, level);
         if(pos>=size)

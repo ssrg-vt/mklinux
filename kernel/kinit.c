@@ -278,6 +278,8 @@ int send_cpu_info_request(int KernelId)
 	// Send response
 	res = pcn_kmsg_send_long(KernelId, (struct pcn_kmsg_message*) (request),
 			sizeof(_remote_cpu_info_request_t) - sizeof(struct pcn_kmsg_hdr));
+	kfree(request);
+
 	return res;
 }
 

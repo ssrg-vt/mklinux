@@ -463,8 +463,10 @@ int insert_in_send_buffer_and_csum(struct send_buffer *send_buffer, struct iovec
 	 */
 
 	entry= kmalloc(sizeof(*entry)+size+1, GFP_KERNEL);
-	if(!entry)
+	if(!entry){
+		printk("ERROR: %s out of memory\n", __func__);
 		return -ENOMEM;
+	}
 
 	entry->to_consume_start= 0;
 	entry->size= size;
@@ -922,6 +924,7 @@ out:
                         else{
 				new_entry= kmem_cache_alloc(stable_buffer_entries, GFP_ATOMIC);
                                 if(!new_entry){
+					printk("ERROR: %s out of memory\n", __func__);
                                         ret= -ENOMEM;
                                         goto finish;
                                 }
@@ -1120,6 +1123,7 @@ out:
                         else{
 				new_entry= kmem_cache_alloc(stable_buffer_entries, GFP_ATOMIC);
         			if(!new_entry){
+					printk("ERROR: %s out of memory\n", __func__);
                 			ret= -ENOMEM;
 					goto finish;
 				}
@@ -1192,9 +1196,10 @@ int insert_in_stable_buffer(struct stable_buffer *stable_buffer, struct sk_buff 
 		return -EFAULT;
 
 	entry= kmem_cache_alloc(stable_buffer_entries, GFP_ATOMIC);
-	if(!entry)
+	if(!entry){
+		printk("ERROR: %s out of memory\n", __func__);
 		return -ENOMEM;
-	
+	}
 	
 	entry->start= entry->to_consume_start= start;
 	entry->to_consume_end= end;
@@ -1204,7 +1209,7 @@ int insert_in_stable_buffer(struct stable_buffer *stable_buffer, struct sk_buff 
 	/* try to add element at the end of the list
 	 */ 
 	spin_lock_bh(&stable_buffer->lock);
-
+	
 	stable_buffer_head= &stable_buffer->stable_buffer_head;
 
 	if(!list_empty(stable_buffer_head)){
@@ -1219,7 +1224,6 @@ int insert_in_stable_buffer(struct stable_buffer *stable_buffer, struct sk_buff 
 
 			if(prev_entry->to_consume_end < entry->to_consume_start){
 				 __list_add(&entry->list_entry, prev, prev->next);
-				printk("%s inserted new skb\n",__func__); 
 				goto out;
 			}
 
@@ -1240,15 +1244,14 @@ int insert_in_stable_buffer(struct stable_buffer *stable_buffer, struct sk_buff 
                          */
 
 			if(prev_entry->to_consume_start <= entry->to_consume_start && prev_entry->to_consume_end <= entry->to_consume_end){
-                                entry->to_consume_start= prev_entry->to_consume_end+1;
-				if(entry->to_consume_end - entry->to_consume_start < 1){
+				entry->to_consume_start= prev_entry->to_consume_end+1;
+				if(entry->to_consume_end - entry->to_consume_start < 0){
 					kmem_cache_free(stable_buffer_entries, entry);
 					kfree_skb(skb);
 					goto out;
 				}
 				else{ 
 					__list_add(&entry->list_entry, prev, prev->next);
-                                	printk("%s inserted new skb\n",__func__);
 					goto out;
 				}
                         }
@@ -1259,21 +1262,24 @@ int insert_in_stable_buffer(struct stable_buffer *stable_buffer, struct sk_buff 
                          */
 
                         if(prev_entry->to_consume_start <= entry->to_consume_end){
-                                prev_entry->to_consume_start= entry->to_consume_end+1;
-				if(prev_entry->to_consume_end - prev_entry->to_consume_start < 1){
+				prev_entry->to_consume_start= entry->to_consume_end+1;
+				if(prev_entry->to_consume_end - prev_entry->to_consume_start < 0){
 					list_del(prev);
 					kfree_skb(prev_entry->data);
 					kmem_cache_free(stable_buffer_entries, prev_entry);
 				}
                                                    
                         }
-
+			
 
 		}
+
+		//if out of the loop I have reached the head
+		list_add(&entry->list_entry, stable_buffer_head);
+		goto out;
 	}
 	else{
 		list_add(&entry->list_entry, stable_buffer_head);
-		printk("%s inserted new skb\n",__func__);
 		goto out;
 	}
 
@@ -1329,7 +1335,7 @@ static void release_filter(struct kref *kref){
                         kfree(filter_printed);
 #endif
                 char* filter_printed= print_filter_id(filter);
-                printk("%s: deleting %s filter %s pckt rcv %lld pckt snt %lld\n", __func__, (filter->type & FT_FILTER_FAKE)?"fake":"", filter_printed, filter->local_rx, filter->local_tx);
+                //printk("%s: deleting %s filter %s pckt rcv %lld pckt snt %lld\n", __func__, (filter->type & FT_FILTER_FAKE)?"fake":"", filter_printed, filter->local_rx, filter->local_tx);
 
 		if(filter_printed)
                         kfree(filter_printed);
@@ -1476,7 +1482,6 @@ next:	if(fake_filter){
         	filter->local_connect_id= fake_filter->local_connect_id;
 		filter->primary_accept_id= fake_filter->primary_accept_id;
                 filter->local_accept_id= fake_filter->local_accept_id;
-		//filter->deliver_packets= fake_filter->discard_packet;
 
 		filter->tcp_param= fake_filter->tcp_param;
 		
@@ -1630,7 +1635,8 @@ static int init_filter_common(struct net_filter_info* filter){
 
 	filter->wait_queue= kmalloc(sizeof(*filter->wait_queue),GFP_ATOMIC);
         if(!filter->wait_queue){
-                return -ENOMEM;
+            	printk("ERROR: %s out of memory\n", __func__);
+		return -ENOMEM;
         }
 	
 	filter->rx_copy_wq= remove_wq_from_pool();
@@ -1690,9 +1696,10 @@ static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_chil
 #endif
 
 	filter= kmalloc(sizeof(*filter),GFP_ATOMIC);
-	if(!filter)
+	if(!filter){
+		printk("ERROR: %s out of memory\n", __func__);
 		return -ENOMEM;
-
+	}
 	err= init_filter_common(filter);
 	if(err){
 		put_ft_filter(filter);
@@ -1711,7 +1718,6 @@ static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_chil
                 filter->type|= FT_FILTER_CHILD;
                 filter->tcp_param.daddr= daddr;
                 filter->tcp_param.dport= dport;
-                //filter->local_tx= -1;
         }
 
 #if FT_FILTER_VERBOSE
@@ -1736,7 +1742,7 @@ void ft_grown_mini_filter(struct sock* sk, struct request_sock *req){
 		FTMPRINTK("init out seq %u init in seq %u \n", req->ft_filter->my_initial_out_seq,req->ft_filter->in_initial_seq);
 		req->ft_filter->idelta_seq= 0;
 		req->ft_filter->odelta_seq= 0;
-		printk("%s called\n",__func__);
+		//printk("%s called\n",__func__);
 		req->ft_filter->ft_sock= sk;
 		req->ft_filter->ft_req= NULL;
 		if(sk->ft_filter){
@@ -1766,8 +1772,10 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
 
 	if(parent_filter){
 		filter= kmalloc(sizeof(*filter), GFP_ATOMIC);
-                if(!filter)
+                if(!filter){
+			printk("ERROR: %s out of memory\n", __func__);
                         return -ENOMEM;
+		}
 
                 err= init_filter_common(filter);
 		if(err){
@@ -1785,7 +1793,6 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
 		filter->tcp_param.daddr= daddr;
                 filter->tcp_param.dport= dport;
 
-		//filter->local_tx= -1;
 		filter->deliver_packets= 0;
 
 		if(filter->type & FT_FILTER_PRIMARY_REPLICA){
@@ -1848,8 +1855,10 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority){
 	if(ft_is_replicated(task)){
 
 		filter= kmalloc(sizeof(*filter), priority);
-		if(!filter)
+		if(!filter){
+			printk("ERROR: %s out of memory\n", __func__);
 			return -ENOMEM;
+		}
 
 		err= init_filter_common(filter);
 		if(err){
@@ -2016,7 +2025,7 @@ static unsigned int ft_hook_after_network_layer_secondary_tcp(struct net_filter_
                 kfree(filter_id_printed);
 #endif
 	FTMPRINTK("%s dropping packt\n", __func__);
-
+	
 	kfree_skb(skb);
         return NF_STOLEN;
 }
@@ -2197,9 +2206,10 @@ static int create_tx_notify_msg(struct net_filter_info *filter, long long pckt_i
 	struct tx_notify_msg* message;
 	
 	message= kmalloc(sizeof(*message), GFP_ATOMIC);
-	if(!message)
+	if(!message){
+		printk("ERROR: %s out of memory\n", __func__);
 		return -ENOMEM;
-
+	}
 	message->creator= filter->creator;
 	message->filter_id= filter->id;
 	message->is_child= filter->type & FT_FILTER_CHILD;
@@ -2511,9 +2521,10 @@ static struct sk_buff* create_skb_from_rx_copy_msg(struct rx_copy_msg *msg, stru
 	struct sk_buff *skb;
 
         skb= dev_alloc_skb(msg->datalen+ msg->headerlen+ msg->taillen);
-	if(!skb)
+	if(!skb){
+		printk("ERROR: %s out of memory\n", __func__);
 		return ERR_PTR(-ENOMEM);
-
+	}
 
 	/* Set the data pointer */
 	skb_reserve(skb, msg->headerlen);
@@ -2590,7 +2601,7 @@ again:	spin_lock_bh(&filter->lock);
 		// kernels => save a copy to give to them.
 		if(msg->pckt_id != filter->primary_rx+1){
 			filter_id_printed= print_filter_id(filter);
-			printk("%s: ERROR out of order delivery pckt id %llu primary_rx %llu in filetr %s\n", __func__, msg->pckt_id, filter->primary_rx, filter_id_printed);
+			printk("%s: ERROR out of order delivery pckt id %llu primary_rx %llu in filter %s\n", __func__, msg->pckt_id, filter->primary_rx, filter_id_printed);
 			if(filter_id_printed)
 				kfree(filter_id_printed);
 
@@ -2675,7 +2686,8 @@ done:	spin_unlock_bh(&filter->lock);
 	
 	skb= create_skb_from_rx_copy_msg(msg, filter);
         if(IS_ERR(skb)){
-                put_ft_filter(filter);
+             	printk("ERROR %s imposible to allocate more skb\n", __func__);
+		put_ft_filter(filter);
                 goto out;
         }
 
@@ -2689,7 +2701,8 @@ done:	spin_unlock_bh(&filter->lock);
 	/* the network stack rx path is thougth to be executed in softirq
 	 * context...
 	 */
-	
+	//printk("%s truesize %d users %d\n", __func__, skb->truesize,  atomic_read(&skb->users));	
+
 	local_bh_disable();	
 	netif_receive_skb(skb);
 	local_bh_enable();
@@ -2725,7 +2738,8 @@ again:  filter= find_and_get_filter(&msg->creator, msg->filter_id, msg->is_child
 		
 			work= kmalloc(sizeof(*work), GFP_ATOMIC);
 		        if(!work){
-                		ret= -ENOMEM;
+                		printk("ERROR: %s out of memory\n", __func__);
+				ret= -ENOMEM;
                 		goto out_err;
         		}
 
@@ -2786,9 +2800,10 @@ static int create_rx_skb_copy_msg(struct net_filter_info *filter, long long pckt
 	message_size= head_data_len+ sizeof(*message);
 
 	message= kmalloc(message_size, GFP_ATOMIC);
-	if(!message)
+	if(!message){
+		printk("ERROR: %s out of memory\n", __func__);
 		return -ENOMEM;
-
+	}
 	message->creator= filter->creator;
 	message->filter_id= filter->id;
 	message->is_child= filter->type & FT_FILTER_CHILD;
@@ -2945,9 +2960,10 @@ static int create_tcp_init_param_msg(struct net_filter_info* filter, int connect
 	struct tcp_init_param_msg* message;
 
 	message= kmalloc(sizeof(*message), GFP_ATOMIC);
-	if(!message)
+	if(!message){
+		printk("ERROR: %s out of memory\n", __func__);
 		return -ENOMEM;
-
+	}
 	message->header.type= PCN_KMSG_TYPE_FT_TCP_INIT_PARAM;
         message->header.prio= PCN_KMSG_PRIO_NORMAL;
 
@@ -3650,7 +3666,11 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
                  		goto out;
 			}
 
-		        //if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb))
+		        if( tcp_header->syn ) {
+                                goto out;
+                        }
+
+			//if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb))
 	                //	goto out;
 			
 			nf_reset(skb);
@@ -3749,24 +3769,24 @@ unsigned int ft_hook_before_tcp_primary_after_secondary(struct sk_buff *skb, str
 					goto out;
 				}
 
-				
-				/*set first byte to consume in both receive and send buffer*/
+				if(!tcp_header->syn && tcp_header->ack){	
+					/*set first byte to consume in both receive and send buffer*/
 
-				//stable buffer stores data sent by the client with seq number chosen by the client itself.
-				//init first_byte_to_consume with the seq chosen by the client.
-				init_first_byte_to_consume_stable_buffer(req->ft_filter->stable_buffer, end);
-				
-				//send buffer stores data sent by the server. The seq number changes between replicas, but the client will always ack the seq 
-				//chosen by the primary replica, so init first_byte_to_consume with the seq of the primary. 
-				init_first_byte_to_consume_send_buffer(req->ft_filter->send_buffer, ntohl(tcp_header->ack_seq));
+					//stable buffer stores data sent by the client with seq number chosen by the client itself.
+					//init first_byte_to_consume with the seq chosen by the client.
+					init_first_byte_to_consume_stable_buffer(req->ft_filter->stable_buffer, end);
+					
+					//send buffer stores data sent by the server. The seq number changes between replicas, but the client will always ack the seq 
+					//chosen by the primary replica, so init first_byte_to_consume with the seq of the primary. 
+					init_first_byte_to_consume_send_buffer(req->ft_filter->send_buffer, ntohl(tcp_header->ack_seq));
 
-				//NOTE, this  msg is acking the seq sent by the primary replica, change it with the correct ack_seq.
-                                tcp_header->ack_seq= htonl(tcp_rsk(req)->snt_isn+ 1);
-                                
-				//recompute checksum
-				tcp_header->check = 0;
-                        	tcp_header->check= checksum_tcp_rx(skb, skb->len, iph, tcp_header);
-
+					//NOTE, this  msg is acking the seq sent by the primary replica, change it with the correct ack_seq.
+					tcp_header->ack_seq= htonl(tcp_rsk(req)->snt_isn+ 1);
+					
+					//recompute checksum
+					tcp_header->check = 0;
+					tcp_header->check= checksum_tcp_rx(skb, skb->len, iph, tcp_header);
+				}
 			}
 			
 			FTMPRINTK("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq));
@@ -3833,6 +3853,7 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
 	struct request_sock **prev;
         struct request_sock *req;
 
+
 	/* The idea is to just let transit packets needed to establish and close connections.
 	 * If a socket is in TCP_LISTEN, it just establishes connections, so let transit everything.
 	 *
@@ -3897,6 +3918,9 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
                  		goto out;
 			}
 
+			if( tcp_header->syn ) {
+				goto out;
+			}
 		        //if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb))
 	                //	goto out;
 			
@@ -3963,15 +3987,16 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
 	                end=  ntohl(tcp_header->seq)+ tcp_header->syn+ tcp_header->fin+ skb->len- tcp_header->doff*4;
         	        size= end-start;
 			
-			printk("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u port %i\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq), tcp_header->source);
+			//printk("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u port %i\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq), tcp_header->source);
 
 			req = inet_csk_search_req(sk, &prev, tcp_header->source, iph->saddr, iph->daddr);
 			if(req){
+				//printk("%s found pending req\n", __func__);
 				/* ACK received after SYNACK
 				 *
 				 */
 				if((size-tcp_header->syn) > 0){
-					//this msg is not ending the handshake
+					//this msg is not part of the handshake
 					printk("ERROR %s received a unexpected packet during handshake, dropping it.\n", __func__);
 					goto out;
 				}
@@ -3979,24 +4004,25 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
 				FTMPRINTK("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq));
 
 				/*set first byte to consume in both receive and send buffer*/
-				
-				//stable buffer stores data sent by the client with seq number chosen by the client itself.
-				//init first_byte_to_consume with the seq chosen by the client.
-                                //req->ft_filter->stable_buffer->first_byte_to_consume= end;
-				init_first_byte_to_consume_stable_buffer(req->ft_filter->stable_buffer, end);
-	
-				//send buffer stores data sent by the server. The seq number changes between replicas, but the client will always ack the seq 
-				//chosen by the primary replica, so init first_byte_to_consume with the seq of the primary. 
-                                //req->ft_filter->send_buffer->first_byte_to_consume= ntohl(tcp_header->ack_seq);
-				init_first_byte_to_consume_send_buffer(req->ft_filter->send_buffer, ntohl(tcp_header->ack_seq));
-				
-				//NOTE, this  msg is acking the seq sent by the primary replica, change it with the correct ack_seq.
-                                tcp_header->ack_seq= htonl(tcp_rsk(req)->snt_isn+ 1);
-                              
-				//recompute checksum
-				tcp_header->check = 0;
-                        	tcp_header->check= checksum_tcp_rx(skb, skb->len, iph, tcp_header);
 
+				if(!tcp_header->syn && tcp_header->ack){				
+					//stable buffer stores data sent by the client with seq number chosen by the client itself.
+					//init first_byte_to_consume with the seq chosen by the client.
+					//req->ft_filter->stable_buffer->first_byte_to_consume= end;
+					init_first_byte_to_consume_stable_buffer(req->ft_filter->stable_buffer, end);
+		
+					//send buffer stores data sent by the server. The seq number changes between replicas, but the client will always ack the seq 
+					//chosen by the primary replica, so init first_byte_to_consume with the seq of the primary. 
+					//req->ft_filter->send_buffer->first_byte_to_consume= ntohl(tcp_header->ack_seq);
+					init_first_byte_to_consume_send_buffer(req->ft_filter->send_buffer, ntohl(tcp_header->ack_seq));
+					
+					//NOTE, this  msg is acking the seq sent by the primary replica, change it with the correct ack_seq.
+					tcp_header->ack_seq= htonl(tcp_rsk(req)->snt_isn+ 1);
+				      
+					//recompute checksum
+					tcp_header->check = 0;
+					tcp_header->check= checksum_tcp_rx(skb, skb->len, iph, tcp_header);
+				}
 			}
 			
 			return NF_ACCEPT;
@@ -4050,6 +4076,10 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
                                 goto out;
                         }
 
+			if( tcp_header->syn ) {
+                                goto out;
+                        }
+
                         //if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb))
                         //      goto out;
 
@@ -4085,9 +4115,9 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
 					TCP_SKB_CB(skb)->seq= TCP_SKB_CB(skb)->end_seq;
                                 	tcp_header->seq= htonl(TCP_SKB_CB(skb)->seq);
                                 	___pskb_trim(skb, skb->len- size + tcp_header->fin);
+					skb_get(skb);
                                         tcp_header= tcp_hdr(skb);
-                                        iph= ip_hdr(skb);
-                                	
+                                        iph= ip_hdr(skb);         	
 				}
                         }
 
@@ -4425,7 +4455,7 @@ unsigned int ft_hook_func_after_transport_layer(unsigned int hooknum,
                                 filter= sk->ft_filter;
                                 if(filter){
                                         get_ft_filter(filter);
-					
+			
                                         if(filter->type & FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA){
 						ret= ft_hook_after_transport_layer_primary_after_secondary(filter, skb);
 					}
@@ -4563,7 +4593,7 @@ int flush_pending_pckt_in_filters(void){
 
 				if(!filter->rx_copy_wq){
 					printk("%s ERROR no rx_copy_wq\n", __func__);
-					ret= -ENOMEM;
+					ret= -EFAULT;
 					spin_unlock_bh(&filter_list_lock);
 					return ret;
 
@@ -4576,6 +4606,7 @@ int flush_pending_pckt_in_filters(void){
 
 				 work= kmalloc(sizeof(*work), GFP_ATOMIC);
 				 if(!work){
+					printk("ERROR: %s out of memory\n", __func__);
 					ret= -ENOMEM;
 					spin_unlock_bh(&filter_list_lock);
 					return ret;
