@@ -1061,17 +1061,6 @@ find:
 					queue_work(vma_op_wq, (struct work_struct*) work);
 				}
 #else
-#if PARTIAL_VMA_MANAGEMENT
-				vma_unmap_work_t* work = kmalloc(sizeof(vma_unmap_work_t),
-								 GFP_ATOMIC);
-				if (work) {
-					work->fake = 1;
-					work->memory= mm_data;
-					mm_data->arrived_op= 0;
-					INIT_WORK( (struct work_struct*)work, process_vma_op);
-					queue_work(vma_op_wq, (struct work_struct*) work);
-				}
-#endif
 #endif
 				return 1;
 			}
@@ -1171,18 +1160,6 @@ find:
 						queue_work(vma_op_wq, (struct work_struct*) work);
 					}
 #else
-#if PARTIAL_VMA_MANAGEMENT
-					vma_unmap_work_t* work = kmalloc(sizeof(vma_unmap_work_t),
-									 GFP_ATOMIC);
-
-					if (work) {
-						work->fake = 1;
-						work->memory= mm_data;
-						mm_data->arrived_op = 0;
-						INIT_WORK( (struct work_struct*)work, process_vma_op);
-						queue_work(vma_op_wq, (struct work_struct*) work);
-					}
-#endif
 #endif
 					return 1;
 
@@ -2463,9 +2440,6 @@ resolved:
 	if (_cpu == request->tgroup_home_cpu && vma != NULL)
 		//only the vmas SERVER sends the vma
 #else
-#if PARTIAL_VMA_MANAGEMENT
-		if (vma != NULL)
-#endif
 #endif
 		{
 
@@ -2535,9 +2509,6 @@ out:
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	if (_cpu == request->tgroup_home_cpu && vma != NULL)
 #else
-#if PARTIAL_VMA_MANAGEMENT
-		if (vma != NULL)
-#endif
 #endif
 		{
 			void_response->vma_present = 1;
@@ -3998,10 +3969,6 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 					current->mm->distribute_unmap = 0;
 #else
-#if PARTIAL_VMA_MANAGEMENT
-					current->mm->distribute_unmap = 0;
-
-#endif
 #endif
 					/*map_difference should map in such a way that no unmap operations (the only nested operation that mmap can call) are nested called.
 					 * This is important both to not unmap pages that should not be unmapped
@@ -4021,10 +3988,6 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 					current->mm->distribute_unmap = 1;
 #else
-#if PARTIAL_VMA_MANAGEMENT
-					current->mm->distribute_unmap = 1;
-
-#endif
 #endif
 					if (err != fetching_page->vaddr_start) {
 						up_write(&mm->mmap_sem);
@@ -4093,11 +4056,6 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 						current->mm->distribute_unmap = 0;
 #else
-#if PARTIAL_VMA_MANAGEMENT
-
-						current->mm->distribute_unmap = 0;
-
-#endif
 #endif
 
 						PSPRINTK("%s:%d page offset = %d %lx\n", __func__, __LINE__, fetching_page->pgoff, mm->exe_file);
@@ -4131,11 +4089,6 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 						current->mm->distribute_unmap = 1;
 #else
-#if PARTIAL_VMA_MANAGEMENT
-
-						current->mm->distribute_unmap = 1;
-
-#endif
 #endif
 						PSPRINTK("Map difference ended\n");
 						if (err != fetching_page->vaddr_start) {
@@ -5680,59 +5633,6 @@ void process_vma_op(struct work_struct* work) {
 	}
 #else
 
-#if PARTIAL_VMA_MANAGEMENT
-	vma_unmap_work_t* vma_work = (vma_unmap_work_t*) work;
-	unmap_message_t* unmap = vma_work->unmap;
-
-	memory_t* memory;
-
-	//to coordinate with dead of process
-
-	if (vma_work->fake == 1) {
-
-		memory = vma_work->memory;
-		unsigned long flags;
-		memory->arrived_op = 1;
-		lock_task_sighand(memory->main, &flags);
-		memory->main->distributed_exit = EXIT_FLUSHING;
-		unlock_task_sighand(memory->main, &flags);
-		wake_up_process(memory->main);
-		kfree(work);
-		return ;
-	}
-
-	PSPRINTK("Starting unmap\n");
-	memory = find_memory_entry(unmap->tgroup_home_cpu,
-				   unmap->tgroup_home_id);
-
-	if (memory != NULL) {
-		//the main should do it, but to be compliant I'm doing it here
-		down_write(&memory->mm->mmap_sem);
-		memory->mm->distribute_unmap = 0;
-		do_munmap(memory->mm, unmap->start, unmap->len);
-		memory->mm->distribute_unmap = 1;
-		up_write(&memory->mm->mmap_sem);
-	}
-
-	vma_ack_t* ack = (vma_ack_t*) kmalloc(sizeof(vma_ack_t), GFP_ATOMIC);
-	if (ack == NULL)
-		return ;
-	ack->tgroup_home_cpu = unmap->tgroup_home_cpu;
-	ack->tgroup_home_id = unmap->tgroup_home_id;
-	ack->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_ACK;
-	ack->header.prio = PCN_KMSG_PRIO_NORMAL;
-
-	pcn_kmsg_send_long(unmap->header.from_cpu,
-			   (struct pcn_kmsg_long_message*) (ack),
-			   sizeof(vma_ack_t) - sizeof(struct pcn_kmsg_hdr));
-
-	PSPRINTK("Operation done\n");
-
-	pcn_kmsg_free_msg(unmap);
-	kfree(ack);
-	kfree(work);
-	return ;
-#endif
 #endif
 
 }
@@ -5817,10 +5717,6 @@ static int handle_vma_ack(struct pcn_kmsg_message* inc_msg) {
 
 #else
 
-#if PARTIAL_VMA_MANAGEMENT
-		//nothing to do
-#endif
-
 #endif
 		if (ack_holder->responses >= ack_holder->expected_responses)
 			task_to_wake_up = ack_holder->waiting;
@@ -5875,26 +5771,6 @@ static int handle_vma_op(struct pcn_kmsg_message* inc_msg) {
 
 #else
 
-#if PARTIAL_VMA_MANAGEMENT
-
-	unmap_message_t* unmap = (unmap_message_t*) inc_msg;
-	vma_unmap_work_t* work;
-
-	PSPRINTK("Received an unmap from cpu %d\n", unmap->header.from_cpu);
-
-	work = kmalloc(sizeof(vma_unmap_work_t), GFP_ATOMIC);
-
-	if (work) {
-		work->fake = 0;
-		work->unmap = unmap;
-		INIT_WORK( (struct work_struct*)work, process_vma_op);
-		queue_work(vma_op_wq, (struct work_struct*) work);
-	} else {
-		pcn_kmsg_free_msg(inc_msg);
-	}
-
-	return 1;
-#endif
 #endif
 }
 
@@ -6693,280 +6569,84 @@ out: current->mm->distr_vma_op_counter--;
 
 long process_server_do_unmap_start(struct mm_struct *mm, unsigned long start,
 				   size_t len) {
-
-#if PARTIAL_VMA_MANAGEMENT
-
-	unsigned long ret = 0;
-
-	if (current->mm->distribute_unmap == 0) {
-		return ret;
-	}
-
-	PSPRINTK("Asking unmap for pid %d\n", current->pid);
-	/* Other vma operations can be on-going.
-	 * They release the down_write lock to
-	 * send messages.
-	 * Check if it is the case.
-	 */
-	while (current->mm->distr_vma_op_counter > 0) {
-
-		up_write(&current->mm->mmap_sem);
-
-		DEFINE_WAIT(wait);
-		prepare_to_wait(&request_distributed_vma_op, &wait,
-				TASK_UNINTERRUPTIBLE);
-
-		if (current->mm->distr_vma_op_counter > 0) {
-			schedule();
-		}
-
-		finish_wait(&request_distributed_vma_op, &wait);
-
-		down_write(&current->mm->mmap_sem);
-
-	}
-
-	PSPRINTK("Unmap for pid %d\n", current->pid);
-
-	//it is my turn...
-	if (current->mm->distr_vma_op_counter != 0) {
-		printk("ERROR: unmapping started but distr_vma_op_counter is %i\n",
-		       current->mm->distr_vma_op_counter);
-		return -1;
-	}
-
-	current->mm->distr_vma_op_counter++;
-
-	up_write(&current->mm->mmap_sem);
-
-	unmap_message_t* unmap_msg = (unmap_message_t*) kmalloc(
-		sizeof(unmap_message_t), GFP_ATOMIC);
-	if (unmap_msg == NULL) {
-		ret = -1;
-		goto out;
-	}
-	unmap_msg->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_OP;
-	unmap_msg->header.prio = PCN_KMSG_PRIO_NORMAL;
-	unmap_msg->tgroup_home_cpu = current->tgroup_home_cpu;
-	unmap_msg->tgroup_home_id = current->tgroup_home_id;
-	unmap_msg->start = start;
-	unmap_msg->len = len;
-
-	vma_op_answers_t* acks = (vma_op_answers_t*) kmalloc(
-		sizeof(vma_op_answers_t), GFP_ATOMIC);
-	if (acks == NULL) {
-		kfree(unmap_msg);
-		ret = -1;
-		goto out;
-	}
-	acks->tgroup_home_cpu = current->tgroup_home_cpu;
-	acks->tgroup_home_id = current->tgroup_home_id;
-	acks->waiting = current;
-	acks->responses = 0;
-	acks->expected_responses = 0;
-	raw_spin_lock_init(&(acks->lock));
-
-	add_vma_ack_entry(acks);
-
-	int i, error;
-
-	// the list does not include the current processor group descirptor (TODO)
-	struct list_head *iter;
-	_remote_cpu_info_list_t *objPtr;
-	list_for_each(iter, &rlist_head) {
-		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-		i = objPtr->_data._processor;
-		error = pcn_kmsg_send_long(i,
-					   (struct pcn_kmsg_long_message*) (unmap_msg),
-					   sizeof(unmap_message_t) - sizeof(struct pcn_kmsg_hdr));
-		if (error != -1) {
-			acks->expected_responses++;
-		}
-	}
-
-	while (acks->responses != acks->expected_responses) {
-
-		set_task_state(current, TASK_UNINTERRUPTIBLE);
-
-		if (acks->responses != acks->expected_responses) {
-			schedule();
-		}
-
-		set_task_state(current, TASK_RUNNING);
-	}
-
-	unsigned long flags;
-	raw_spin_lock_irqsave(&(acks->lock), flags);
-	raw_spin_unlock_irqrestore(&(acks->lock), flags);
-
-	remove_vma_ack_entry(acks);
-
-	kfree(unmap_msg);
-	kfree(acks);
-
-out: down_write(&current->mm->mmap_sem);
-	current->mm->distr_vma_op_counter--;
-
-	if (current->mm->distr_vma_op_counter != 0) {
-		printk("ERROR: unmapping ending but distr_vma_op_counter is %i\n",
-		       current->mm->distr_vma_op_counter);
-		return -1;
-	}
-
-	wake_up(&request_distributed_vma_op);
-
-	return ret;
-
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	return start_distribute_operation(VMA_OP_UNMAP, start, len, 0, 0, 0, 0,
 					  NULL, 0);
-#endif
 #endif
 }
 
 long process_server_do_unmap_end(struct mm_struct *mm, unsigned long start,
 				 size_t len, int start_ret) {
-
-#if PARTIAL_VMA_MANAGEMENT
-	wake_up(&request_distributed_vma_op);
-	return 0;
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	end_distribute_operation(VMA_OP_UNMAP, start_ret, start);
 	return 0;
 #endif
-#endif
-
 }
 
 long process_server_mprotect_start(unsigned long start, size_t len,
 				   unsigned long prot) {
-
-#if PARTIAL_VMA_MANAGEMENT
-	return 0;
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	return start_distribute_operation(VMA_OP_PROTECT, start, len, prot, 0, 0, 0,
 					  NULL, 0);
 #endif
-#endif
-
 }
 
 long process_server_mprotect_end(unsigned long start, size_t len,
 				 unsigned long prot, int start_ret) {
-
-#if PARTIAL_VMA_MANAGEMENT
-	return 0;
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	end_distribute_operation(VMA_OP_PROTECT, start_ret, start);
 	return 0;
 #endif
-#endif
-
 }
+
 long process_server_do_mmap_pgoff_start(struct file *file, unsigned long addr,
 					unsigned long len, unsigned long prot, unsigned long flags,
 					unsigned long pgoff) {
-
-#if PARTIAL_VMA_MANAGEMENT
-	int ret;
-
-	ret = process_server_do_unmap_start(current->mm, addr, len);
-	if (ret != -1)
-		return addr;
-	else
-		return -1;
-
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	return start_distribute_operation(VMA_OP_MAP, addr, len, prot, 0, 0, flags,
 					  file, pgoff);
 #endif
-#endif
-
 }
 
 long process_server_do_mmap_pgoff_end(struct file *file, unsigned long addr,
 				      unsigned long len, unsigned long prot, unsigned long flags,
 				      unsigned long pgoff, unsigned long start_ret) {
-#if PARTIAL_VMA_MANAGEMENT
-	//nothing to do;
-	return 0;
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	end_distribute_operation(VMA_OP_MAP, start_ret, addr);
 	return 0;
 #endif
-#endif
-
 }
 
 long process_server_do_brk_start(unsigned long addr, unsigned long len) {
-
-#if PARTIAL_VMA_MANAGEMENT
-	int ret;
-
-	ret = process_server_do_unmap_start(current->mm, addr, len);
-	if (ret != -1)
-		return addr;
-	else
-		return -1;
-
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	return start_distribute_operation(VMA_OP_BRK, addr, len, 0, 0, 0, 0, NULL,
 					  0);
 #endif
-#endif
-
 }
 
 long process_server_do_brk_end(unsigned long addr, unsigned long len,
 			       unsigned long start_ret) {
-#if PARTIAL_VMA_MANAGEMENT
-	//nothing to do;
-	return 0;
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	end_distribute_operation(VMA_OP_BRK, start_ret, addr);
 	return 0;
 #endif
-#endif
-
 }
 
 long process_server_do_mremap_start(unsigned long addr, unsigned long old_len,
 				    unsigned long new_len, unsigned long flags, unsigned long new_addr) {
-
-#if PARTIAL_VMA_MANAGEMENT
-	//nothing to do;
-	return 0;
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	return start_distribute_operation(VMA_OP_REMAP, addr, (size_t) old_len, 0,
 					  new_addr, new_len, flags, NULL, 0);
 #endif
-#endif
-
 }
 
 long process_server_do_mremap_end(unsigned long addr, unsigned long old_len,
 				  unsigned long new_len, unsigned long flags, unsigned long new_addr,
 				  unsigned long start_ret) {
-
-#if PARTIAL_VMA_MANAGEMENT
-	//nothing to do;
-	return 0;
-#else
 #if NOT_REPLICATED_VMA_MANAGEMENT
 	end_distribute_operation(VMA_OP_REMAP, start_ret, new_addr);
 	return 0;
 #endif
-#endif
-
 }
 
 void sleep_shadow() {
