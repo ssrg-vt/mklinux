@@ -2580,10 +2580,6 @@ out:
 			spin_unlock(&hb->lock);
 		}
 		else{
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("s\n");
-			}		
-
 			set_current_state(TASK_INTERRUPTIBLE);
 			//server queued it for me if i am the main
 			if(ops != WAIT_MAIN)
@@ -2629,9 +2625,6 @@ out:
 					schedule();	
 					}
 					} */
-			}
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("w\n");
 			}
 		}
 		if(current->tgroup_distributed == 1 && l)
@@ -3762,9 +3755,6 @@ retry:
 		int cmd = op & FUTEX_CMD_MASK;
 		int retn=0;
 
-		if(strcmp(current->comm,"IS") == 0){
-			trace_printk("s %d\n",op);
-		}
 		/*	if(current->tgroup_distributed ==1 || (strcmp(current->comm,"cond")==0)){
 			printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id());
 			}
@@ -3797,9 +3787,6 @@ retry:
 		   printk(KERN_ALERT"%s: END +++++++++++++pid{%d} retn{%d} uaddr{%lx}\n",__func__,current->pid,retn,uaddr);
 		 //		dump_regs(task_pt_regs(current));
 		 }*/
-		 if(strcmp(current->comm,"IS") == 0){
-			 trace_printk("e %d\n",op);
-		 }
 		 return retn;
 	}
 

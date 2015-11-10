@@ -3023,10 +3023,6 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 	struct page* page;
 	int ret = 0;
 
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("s\n");
-	}
-
 	mapping_answers_for_2_kernels_t* fetched_data;
 
 	address = address_not_page & PAGE_MASK;
@@ -3149,10 +3145,6 @@ out_not_data:
 
 	wake_up(&read_write_wait);
 
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("e\n");
-	}
-
 	return ret;
 }
 
@@ -3190,10 +3182,6 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 {
 	pte_t value_pte;
 	int ret=0,i;
-
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("s\n");
-	}
 
 #if STATISTICS
 	read++;
@@ -3266,11 +3254,6 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	list_for_each(iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
-		if (page->other_owners[i] == 1){
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("se\n");
-			}
-		}
 
 		if (!(pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (read_message),
 					 sizeof(data_request_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr)) == -1)) {
@@ -3288,10 +3271,6 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				schedule();
 			set_task_state(current, TASK_RUNNING);
 		}
-
-		if(strcmp(current->comm,"IS") == 0) {
-			trace_printk("r\n");
-		}
 	}
 	else{
 		printk("ERROR: impossible to send read message, no destination kernel\n");
@@ -3301,16 +3280,9 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		goto exit_reading_page;
 	}
 
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("ls\n");
-	}
-
 	down_read(&mm->mmap_sem);
 	spin_lock(ptl);
 	/*PTE LOCKED*/
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("l\n");
-	}
 
 	vma = find_vma(mm, address);
 	if (unlikely(
@@ -3403,9 +3375,7 @@ exit_read_message:
 
 exit:
 	page->reading = 0;
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("e\n");
-	}
+
 	return ret;
 }
 
@@ -3431,9 +3401,6 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	int ret= 0;
 	pte_t value_pte;
 
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("s\n");
-	}
 	page->writing = 1;
 
 #if STATISTICS
@@ -3494,10 +3461,6 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
 			if (page->other_owners[i] == 1) {
-				if(strcmp(current->comm,"IS") == 0){
-					trace_printk("se\n");
-				}
-
 				if (!(pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (invalid_message),sizeof(invalid_data_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr))
 				      == -1)) {
 					// Message delivered
@@ -3515,23 +3478,13 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 					schedule();
 				set_task_state(current, TASK_RUNNING);
 			}
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("r\n");
-			}
 		}
 		else
 			printk("Impossible to send invalid, no destination kernel\n");
 
-		if(strcmp(current->comm,"IS") == 0){
-			trace_printk("ls\n");
-		}
-
 		down_read(&mm->mmap_sem);
 		spin_lock(ptl);
 
-		if(strcmp(current->comm,"IS") == 0){
-			trace_printk("l\n");
-		}
 		/*PTE LOCKED*/
 		vma = find_vma(mm, address);
 		if (unlikely(!vma || address >= vma->vm_end || address < vma->vm_start)) {
@@ -3618,9 +3571,6 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
 			if (page->other_owners[i] == 1) {
-				if(strcmp(current->comm,"IS") == 0){
-					trace_printk("se\n");
-				}
 				if (!(pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (write_message),sizeof(data_request_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr))
 				      == -1)) {
 					// Message delivered
@@ -3638,10 +3588,6 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 					schedule();
 				set_task_state(current, TASK_RUNNING);
 			}
-
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("r\n");
-			}
 		} else {
 			printk("ERROR: impossible to send write message, no destination kernel\n");
 			ret= VM_FAULT_REPLICATION_PROTOCOL;
@@ -3650,17 +3596,9 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			goto exit_writing_page;
 		}
 
-		if(strcmp(current->comm,"IS") == 0){
-			trace_printk("ls\n");
-		}
-
 		down_read(&mm->mmap_sem);
 		spin_lock(ptl);
 		/*PTE LOCKED*/
-
-		if(strcmp(current->comm,"IS") == 0){
-			trace_printk("l\n");
-		}
 
 		vma = find_vma(mm, address);
 		if (unlikely(
@@ -3765,10 +3703,6 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 exit:
 	page->writing = 0;
-
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("e\n");
-	}
 
 	return ret;
 }
@@ -4125,10 +4059,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	data_request_for_2_kernels_t* fetch_message;
 	int ret= 0,i,reachable,other_cpu=-1;
 
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("s\n");
-	}
-
 	PSMINPRINTK("Fetch for address %lu write %i pid %d is local?%d\n", address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),current->pid,pte_none(value_pte));
 #if STATISTICS
 	fetch++;
@@ -4219,11 +4149,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
 
-		if(memory->kernel_set[i]==1)
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("se\n");
-			}
-
 		if ((ret=pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) (fetch_message),sizeof(data_request_for_2_kernels_t)-sizeof(struct pcn_kmsg_hdr)))
 		    != -1) {
 			// Message delivered
@@ -4247,22 +4172,11 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 			set_task_state(current, TASK_RUNNING);
 		}
-		if(strcmp(current->comm,"IS") == 0){
-			trace_printk("r\n");
-		}
-
-	}
-
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("ls\n");
 	}
 
 	down_read(&mm->mmap_sem);
 	spin_lock(ptl);
 	/*PTE LOCKED*/
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("l\n");
-	}
 
 	PSPRINTK("Out wait fetch %i address %lu \n", fetch, address);
 
@@ -4490,10 +4404,6 @@ exit_fetching_page:
 	kfree(fetching_page);
 
 exit:
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("e\n");
-	}
-
 	return ret;
 }
 
@@ -4599,10 +4509,6 @@ start:
 		 */
 		if (find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address) != NULL) {
 
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("s\n");
-			}
-
 			//wait while the fetch is ended
 			spin_unlock(ptl);
 			up_read(&mm->mmap_sem);
@@ -4636,10 +4542,6 @@ start:
 				return VM_FAULT_VMA;
 			}
 
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("w\n");
-			}
-
 			goto start;
 		}
 
@@ -4665,10 +4567,6 @@ start:
 		 */
 		mapping_answers_for_2_kernels_t* fetch= find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address);
 		if (fetch != NULL && fetch->is_fetch==1) {
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("s\n");
-			}
-
 			//wait while the fetch is ended
 			spin_unlock(ptl);
 			up_read(&mm->mmap_sem);
@@ -4702,9 +4600,6 @@ start:
 					"ERROR: vma not valid after waiting for another thread to fetch\n");
 				spin_unlock(ptl);
 				return VM_FAULT_VMA;
-			}
-			if(strcmp(current->comm,"IS") == 0){
-				trace_printk("w\n");
 			}
 
 			goto start;
@@ -4825,9 +4720,6 @@ start:
 				 */
 
 				if (page->writing == 1 || page->reading == 1) {
-					if(strcmp(current->comm,"IS") == 0){
-						trace_printk("s\n");
-					}
 
 					spin_unlock(ptl);
 					up_read(&mm->mmap_sem);
@@ -4855,9 +4747,6 @@ start:
 							"ERROR: vma not valid after waiting for another thread to fetch\n");
 						spin_unlock(ptl);
 						return VM_FAULT_VMA;
-					}
-					if(strcmp(current->comm,"IS") == 0){
-						trace_printk("w\n");
 					}
 
 					goto check;
@@ -4898,9 +4787,6 @@ start:
 				 * they will eventually read a valid copy
 				 */
 				if (page->writing == 1 || page->reading == 1) {
-					if(strcmp(current->comm,"IS") == 0){
-						trace_printk("s\n");
-					}
 
 					spin_unlock(ptl);
 					up_read(&mm->mmap_sem);
@@ -4927,9 +4813,6 @@ start:
 							"ERROR: vma not valid after waiting for another thread to fetch\n");
 						spin_unlock(ptl);
 						return VM_FAULT_VMA;
-					}
-					if(strcmp(current->comm,"IS") == 0){
-						trace_printk("w\n");
 					}
 
 					goto check;
@@ -5057,9 +4940,6 @@ int do_back_migration(struct task_struct* task, int dst_cpu,
 	task->executing_for_remote= 0;
 
 	unlock_task_sighand(task, &flags);
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("s\n");
-	}
 
 	ret = pcn_kmsg_send_long(dst_cpu,(struct pcn_kmsg_long_message*) request,sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
 
@@ -5067,10 +4947,6 @@ int do_back_migration(struct task_struct* task, int dst_cpu,
 	migration_end = ktime_get();
         printk(KERN_ERR "Time for x86->arm back migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
 #endif
-
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("e\n");
-	}
 
 	kfree(request);
 
@@ -5224,9 +5100,6 @@ int do_migration(struct task_struct* task, int dst_cpu,
 	request->tgroup_home_cpu = task->tgroup_home_cpu;
 	request->tgroup_home_id = task->tgroup_home_id;
 
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("s\n");
-	}
 	//dump_processor_regs(&request->regs);
 	tx_ret = pcn_kmsg_send_long(dst_cpu,
 				    (struct pcn_kmsg_long_message*) request,
@@ -5236,10 +5109,6 @@ int do_migration(struct task_struct* task, int dst_cpu,
 	migration_end = ktime_get();
         printk(KERN_ERR "Time for x86->arm migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
 #endif
-
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("e\n");
-	}
 
 	if (first) {
 		printk(KERN_EMERG"%s: Creating kernel thread\n", __func__);
@@ -5273,9 +5142,6 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 	int ret= 0;
 
 	printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("s\n");
-	}
 
 	if (task->prev_cpu==dst_cpu){
 		back= 1;
@@ -5284,11 +5150,6 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 			return PROCESS_SERVER_CLONE_FAIL;
 	} else{
 		ret= do_migration(task, dst_cpu, regs,&first);
-	}
-
-
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("e\n");
 	}
 
 	if (ret != -1) {
@@ -5866,10 +5727,6 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 		}
 
 	PSVMAPRINTK("operation index is %d\n", current->mm->vma_operation_index);
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("e\n");
-	}
-
 }
 
 /*I assume that down_write(&mm->mmap_sem) is held
@@ -5919,9 +5776,6 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 	/*All the operation pushed by the server are executed as not distributed in clients*/
 	if (current->mm->distribute_unmap == 0) {
 		return ret;
-	}
-	if(strcmp(current->comm,"IS") == 0){
-		trace_printk("s\n");
 	}
 
 	PSVMAPRINTK("%s, Starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lu len %lu end %lu\n",
