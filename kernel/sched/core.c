@@ -3727,63 +3727,6 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 	  }*/
 	pid = current->pid;
 
-#define CONFIG_CPU_NAMESPACE
-#ifndef CONFIG_CPU_NAMESPACE
-
-	/*
-	 * Multikernel
-	 */
-	// For now, migrate to the first cpu in the mask that
-	// is not the current cpu
-	if ( !cpumask_intersects(in_mask, cpu_present_mask) ) {
-		char buf_in[64], buf_present[64];
-		memset(buf_in, 0, 64); memset(buf_present, 0, 64);
-		cpumask_scnprintf(buf_in, 63, in_mask);
-		cpumask_scnprintf(buf_present, 63, cpu_present_mask);
-
-		struct list_head *iter;
-		_remote_cpu_info_list_t *objPtr;
-		struct cpumask *pcpum;
-		extern struct list_head rlist_head;
-		list_for_each(iter, &rlist_head) {
-			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-			i = objPtr->_data._processor;
-			pcpum = &(objPtr->_data._cpumask);
-			if ( cpumask_intersects(in_mask, pcpum) ) {
-
-				// do the migration
-				get_task_struct(p);
-				rcu_read_unlock();
-				
-				/*Ajith - taking migration PC from syscall for het migration */
-				p->migration_pc = migration_pc;
-
-				ret= process_server_do_migration(p,i,regs);
-				printk("MIGRATED: PID %d \n", p->pid);
-				put_task_struct(p);
-				put_online_cpus();
-
-				schedule();
-
-				if(ret==PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote){
-					printk("MIGRATED-RET: PID %d \n", p->pid);
-					if(current->group_exit){
-						printk("MIGRATED-RET: PID %d GP EXIT\n", p->pid);
-						do_group_exit(current->distributed_exit_code);
-					}
-					else {
-						printk("MIGRATED-RET: PID %d EXIT\n", p->pid);
-						do_exit(current->distributed_exit_code);
-					}
-				}
-
-				return task_pt_regs(current)->orig_ax;
-			}
-		}
-	}
-#else
-// THIS IS THE PATH CHOOSEN IN ARM-x86
-
 	// TODO if is migrating out of this core put cpus_allowed all to ->0 (or is not required?!)
 	// TODO if we are doing that maybe schedule will not schedule the task back anymore!!!
 	/* the following is similar to intersecting on local */
@@ -3809,37 +3752,19 @@ long sched_setaffinity_on_popcorn(pid_t pid,struct task_struct* p, const struct 
 			bitmap_copy(cbitmap, cpumask_bits(pcpum), objPtr->_data.cpumask_size * 8); // TODO must be variable size
 			bitmap_shift_left(cbitmap, cbitmap, objPtr->_data.cpumask_offset, p->nsproxy->cpu_ns->nr_cpu_ids);
 
-			struct cpu_namespace * ns = current->nsproxy->cpu_ns;	
-			int mask_len=  ( !( ns->nr_cpu_ids > nr_cpu_ids) ) ? cpumask_size() : ns->cpumask_size;	
+			struct cpu_namespace * ns = current->nsproxy->cpu_ns;
+			int mask_len=  ( !( ns->nr_cpu_ids > nr_cpu_ids) ) ? cpumask_size() : ns->cpumask_size;
 			if (len > mask_len)
 				len = mask_len;
 
-			//bitmap_zero(cbitmap2, p->nsproxy->cpu_ns->nr_cpu_ids);
-			//bitmap_copy(cbitmap2, cpumask_bits(in_mask),len * 8);
-
-			// find the first cpumask that intersect
-			//char pippo [128] ;
-			//memset(pippo,0,128);
-			//bitmap_scnprintf(pippo,128,cpumask_bits(in_mask),p->nsproxy->cpu_ns->nr_cpu_ids);
-			//printk("in mask %s\n",pippo);
-			//memset(pippo,0,128);	
-			//bitmap_scnprintf(pippo,128,cbitmap,p->nsproxy->cpu_ns->nr_cpu_ids);
-			//printk("in cbitmap %s\n",pippo);
-			//memset(pippo,0,128);
-			//bitmap_scnprintf(pippo,128,cbitmap2,p->nsproxy->cpu_ns->nr_cpu_ids);
-			//printk("in mask extended %s\n",pippo);
-			//memset(pippo,0,128);
-			//bitmap_scnprintf(pippo,128,cpumask_bits(in_mask),len*8);
-			//  printk("in mask printed with len%s\n",pippo);
-
 			if ( bitmap_intersects(cpumask_bits(in_mask), cbitmap, p->nsproxy->cpu_ns->nr_cpu_ids) ) {
-				// TODO ask the global scheduler if there are multiple affinities    
+				// TODO ask the global scheduler if there are multiple affinities
 				// do the migration
 				get_task_struct(p);
 				rcu_read_unlock();
 
-                /*Ajith - taking migration PC from syscall for het migration */
-                p->migration_pc = migration_pc;
+				/*Ajith - taking migration PC from syscall for het migration */
+				p->migration_pc = migration_pc;
 
 				ret= process_server_do_migration(p,i,regs);
 				printk("MIGRATED: PID %d \n", p->pid);
@@ -3865,19 +3790,10 @@ sleep_again:
 					if(ret==PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote && current->group_exit==-1){
 						//printk("OCCHIO qualche maledetto tenta di svegliarmi (pid %d)\n",current->pid);
 						__set_task_state(current, TASK_UNINTERRUPTIBLE);
-						goto sleep_again;					
+						goto sleep_again;
 					}
 
 				//synchronize_migrations(current->tgroup_home_cpu,current->tgroup_home_id );
-
-unsigned long fs, gs, fsindex, gsindex;
-rdmsrl(MSR_FS_BASE, fs); 
-rdmsrl(MSR_GS_BASE, gs);
-savesegment(fs, fsindex);
-savesegment(gs, gsindex);
-printk(KERN_EMERG"%s: %s fs %lx %lx gs %lx %lx\n",
-	__func__, current->comm, fs, fsindex, gs, gsindex);
-
 
 				return task_pt_regs(current)->orig_ax;
 
@@ -3885,9 +3801,6 @@ printk(KERN_EMERG"%s: %s fs %lx %lx gs %lx %lx\n",
 		}
 	} /* if cpus_allowed_map is not existent or its ns does not point to the current ns DO NOT mig */
 
-#endif
-
-	//printk("not migration\n");
 	/* Prevent p going away */
 	get_task_struct(p);
 	rcu_read_unlock();
