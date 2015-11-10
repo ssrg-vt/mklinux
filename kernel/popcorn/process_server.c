@@ -1050,7 +1050,7 @@ find:
 		if (status == EXIT_PROCESS) {
 			if (flush == 0) {
 				//this is needed to flush the list of pending operation before die
-#if NOT_REPLICATED_VMA_MANAGEMENT
+
 				vma_op_work_t* work = kmalloc(sizeof(vma_op_work_t),
 							      GFP_ATOMIC);
 				if (work) {
@@ -1060,8 +1060,7 @@ find:
 					INIT_WORK( (struct work_struct*)work, process_vma_op);
 					queue_work(vma_op_wq, (struct work_struct*) work);
 				}
-#else
-#endif
+
 				return 1;
 			}
 		}
@@ -1148,7 +1147,6 @@ find:
 				if (flush == 0) {
 					//this is needed to flush the list of pending operation before die
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
 					vma_op_work_t* work = kmalloc(sizeof(vma_op_work_t),
 								      GFP_ATOMIC);
 
@@ -1159,8 +1157,6 @@ find:
 						INIT_WORK( (struct work_struct*)work, process_vma_op);
 						queue_work(vma_op_wq, (struct work_struct*) work);
 					}
-#else
-#endif
 					return 1;
 
 				} else {
@@ -1413,11 +1409,9 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 
 	if (response->vma_present == 1) {
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
 		if (response->header.from_cpu != response->tgroup_home_cpu)
-			printk(
-				"ERROR: a kernel that is not the server is sending the mapping\n");
-#endif
+			printk("ERROR: a kernel that is not the server is sending the mapping\n");
+
 		if (fetched_data->vma_present == 0) {
 			PSPRINTK("Set vma\n");
 			fetched_data->vma_present = 1;
@@ -1427,11 +1421,9 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 			fetched_data->pgoff = response->pgoff;
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
-		}
-#if NOT_REPLICATED_VMA_MANAGEMENT
-		else
+		} else {
 			printk("ERROR: received more than one mapping\n");
-#endif
+		}
 	}
 
 	if(fetched_data->arrived_response!=0)
@@ -1478,11 +1470,9 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 
 	if (response->vma_present == 1) {
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
 		if (response->header.from_cpu != response->tgroup_home_cpu)
-			printk(
-				"ERROR: a kernel that is not the server is sending the mapping\n");
-#endif
+			printk("ERROR: a kernel that is not the server is sending the mapping\n");
+
 		PSPRINTK("response->vma_pesent %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->fowner %d\n",
 			 response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
 
@@ -1495,11 +1485,9 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 			fetched_data->pgoff = response->pgoff;
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
-		}
-#if NOT_REPLICATED_VMA_MANAGEMENT
-		else
+		} else {
 			printk("ERROR: received more than one mapping\n");
-#endif
+		}
 	}
 
 	if (response->owner == 1) {
@@ -2436,31 +2424,26 @@ resolved:
 
 	response->futex_owner = (!page) ? 0 : page->futex_owner;//akshay
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
-	if (_cpu == request->tgroup_home_cpu && vma != NULL)
+	if (_cpu == request->tgroup_home_cpu && vma != NULL) {
 		//only the vmas SERVER sends the vma
-#else
-#endif
-		{
 
-			response->vma_present = 1;
-			response->vaddr_start = vma->vm_start;
-			response->vaddr_size = vma->vm_end - vma->vm_start;
-			response->prot = vma->vm_page_prot;
-			response->vm_flags = vma->vm_flags;
-			response->pgoff = vma->vm_pgoff;
-			if (vma->vm_file == NULL) {
-				response->path[0] = '\0';
-			} else {
-				plpath = d_path(&vma->vm_file->f_path, lpath, 512);
-				strcpy(response->path, plpath);
-			}
-			PSPRINTK("response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->futex_owner %d\n",
-				 response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
+		response->vma_present = 1;
+		response->vaddr_start = vma->vm_start;
+		response->vaddr_size = vma->vm_end - vma->vm_start;
+		response->prot = vma->vm_page_prot;
+		response->vm_flags = vma->vm_flags;
+		response->pgoff = vma->vm_pgoff;
+		if (vma->vm_file == NULL) {
+			response->path[0] = '\0';
+		} else {
+			plpath = d_path(&vma->vm_file->f_path, lpath, 512);
+			strcpy(response->path, plpath);
 		}
-
-		else
-			response->vma_present = 0;
+		PSPRINTK("response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->futex_owner %d\n",
+			 response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
+	} else {
+		response->vma_present = 0;
+	}
 
 	spin_unlock(ptl);
 	up_read(&mm->mmap_sem);
@@ -2506,25 +2489,22 @@ out:
 	void_response->futex_owner = 0;//TODO: page->futex_owner;//akshay
 
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
-	if (_cpu == request->tgroup_home_cpu && vma != NULL)
-#else
-#endif
-		{
-			void_response->vma_present = 1;
-			void_response->vaddr_start = vma->vm_start;
-			void_response->vaddr_size = vma->vm_end - vma->vm_start;
-			void_response->prot = vma->vm_page_prot;
-			void_response->vm_flags = vma->vm_flags;
-			void_response->pgoff = vma->vm_pgoff;
-			if (vma->vm_file == NULL) {
-				void_response->path[0] = '\0';
-			} else {
-				plpath = d_path(&vma->vm_file->f_path, lpath, 512);
-				strcpy(void_response->path, plpath);
-			}
-		} else
-			void_response->vma_present = 0;
+	if (_cpu == request->tgroup_home_cpu && vma != NULL) {
+		void_response->vma_present = 1;
+		void_response->vaddr_start = vma->vm_start;
+		void_response->vaddr_size = vma->vm_end - vma->vm_start;
+		void_response->prot = vma->vm_page_prot;
+		void_response->vm_flags = vma->vm_flags;
+		void_response->pgoff = vma->vm_pgoff;
+		if (vma->vm_file == NULL) {
+			void_response->path[0] = '\0';
+		} else {
+			plpath = d_path(&vma->vm_file->f_path, lpath, 512);
+			strcpy(void_response->path, plpath);
+		}
+	} else {
+		void_response->vma_present = 0;
+	}
 
 	if(lock){
 		spin_unlock(ptl);
@@ -3959,7 +3939,6 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 					    + fetching_page->vaddr_size))) {
 					PSPRINTK(
 						"Mapping anonimous vma start %lu end %lu \n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
-#if NOT_REPLICATED_VMA_MANAGEMENT
 
 					/*Note:
 					 * This mapping is caused because when a thread migrates it does not have any vma
@@ -3968,8 +3947,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 					 * */
 
 					current->mm->distribute_unmap = 0;
-#else
-#endif
+
 					/*map_difference should map in such a way that no unmap operations (the only nested operation that mmap can call) are nested called.
 					 * This is important both to not unmap pages that should not be unmapped
 					 * but also because otherwise the vma protocol will deadlock!
@@ -3984,11 +3962,8 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 							     | ((fetching_page->vm_flags & VM_GROWSDOWN) ?
 								MAP_GROWSDOWN : 0), 0);
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
-
 					current->mm->distribute_unmap = 1;
-#else
-#endif
+
 					if (err != fetching_page->vaddr_start) {
 						up_write(&mm->mmap_sem);
 						down_read(&mm->mmap_sem);
@@ -4047,7 +4022,6 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						PSPRINTK(
 							"Mapping file vma start %lu end %lu\n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
 						/*Note:
 						 * This mapping is caused because when a thread migrates it does not have any vma
 						 * so during fetch vma can be pushed.
@@ -4055,8 +4029,6 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						 * */
 
 						current->mm->distribute_unmap = 0;
-#else
-#endif
 
 						PSPRINTK("%s:%d page offset = %d %lx\n", __func__, __LINE__, fetching_page->pgoff, mm->exe_file);
 						fetching_page->pgoff = get_file_offset(mm->exe_file, fetching_page->vaddr_start);
@@ -4085,11 +4057,8 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 									  MAP_HUGETLB : 0),
 								       fetching_page->pgoff << PAGE_SHIFT);
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
-
 						current->mm->distribute_unmap = 1;
-#else
-#endif
+
 						PSPRINTK("Map difference ended\n");
 						if (err != fetching_page->vaddr_start) {
 							up_write(&mm->mmap_sem);
@@ -4297,16 +4266,12 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 	PSPRINTK("Out wait fetch %i address %lu \n", fetch, address);
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
 	//only the client has to update the vma
-	if(tgroup_home_cpu!=_cpu)
-#endif
-
-	{
+	if(tgroup_home_cpu!=_cpu) {
 		ret = do_mapping_for_distributed_process(fetching_page, mm, address, ptl);
 		if (ret != 0)
 			goto exit_fetch_message;
-				
+
 		PSPRINTK("Mapping end\n");
 
 		vma = find_vma(mm, address);
@@ -4326,7 +4291,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			ret = VM_FAULT_VMA;
 			goto exit_fetch_message;
 		}
-
 	}
 
 	if(_cpu==tgroup_home_cpu && fetching_page->address_present == 0){
@@ -5335,10 +5299,8 @@ int process_server_do_migration(struct task_struct* task, int dst_cpu,
 		return PROCESS_SERVER_CLONE_FAIL;
 }
 
-void process_vma_op(struct work_struct* work) {
-
-#if	NOT_REPLICATED_VMA_MANAGEMENT
-
+void process_vma_op(struct work_struct* work)
+{
 	vma_op_work_t* vma_work = (vma_op_work_t*) work;
 	vma_operation_t* operation = vma_work->operation;
 	memory_t* memory = vma_work->memory;
@@ -5631,10 +5593,6 @@ void process_vma_op(struct work_struct* work) {
 		return ;
 
 	}
-#else
-
-#endif
-
 }
 
 void process_vma_lock(struct work_struct* work) {
@@ -5705,19 +5663,13 @@ static int handle_vma_ack(struct pcn_kmsg_message* inc_msg) {
 
 		ack_holder->responses++;
 
-#if	NOT_REPLICATED_VMA_MANAGEMENT
-
 		ack_holder->address = ack->addr;
 
 		if (ack_holder->vma_operation_index == -1)
 			ack_holder->vma_operation_index = ack->vma_operation_index;
 		else if (ack_holder->vma_operation_index != ack->vma_operation_index)
-			printk(
-				"ERROR: receiving an ack vma for a different operation index\n");
+			printk("ERROR: receiving an ack vma for a different operation index\n");
 
-#else
-
-#endif
 		if (ack_holder->responses >= ack_holder->expected_responses)
 			task_to_wake_up = ack_holder->waiting;
 
@@ -5733,10 +5685,8 @@ static int handle_vma_ack(struct pcn_kmsg_message* inc_msg) {
 	return 1;
 }
 
-static int handle_vma_op(struct pcn_kmsg_message* inc_msg) {
-
-#if	NOT_REPLICATED_VMA_MANAGEMENT
-
+static int handle_vma_op(struct pcn_kmsg_message* inc_msg)
+{
 	vma_operation_t* operation = (vma_operation_t*) inc_msg;
 	vma_op_work_t* work;
 
@@ -5768,10 +5718,6 @@ static int handle_vma_op(struct pcn_kmsg_message* inc_msg) {
 	}
 
 	return 1;
-
-#else
-
-#endif
 }
 
 void end_distribute_operation(int operation, long start_ret, unsigned long addr) {
@@ -6568,85 +6514,75 @@ out: current->mm->distr_vma_op_counter--;
 }
 
 long process_server_do_unmap_start(struct mm_struct *mm, unsigned long start,
-				   size_t len) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+				   size_t len)
+{
 	return start_distribute_operation(VMA_OP_UNMAP, start, len, 0, 0, 0, 0,
 					  NULL, 0);
-#endif
 }
 
 long process_server_do_unmap_end(struct mm_struct *mm, unsigned long start,
-				 size_t len, int start_ret) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+				 size_t len, int start_ret)
+{
 	end_distribute_operation(VMA_OP_UNMAP, start_ret, start);
 	return 0;
-#endif
 }
 
 long process_server_mprotect_start(unsigned long start, size_t len,
-				   unsigned long prot) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+				   unsigned long prot)
+{
 	return start_distribute_operation(VMA_OP_PROTECT, start, len, prot, 0, 0, 0,
 					  NULL, 0);
-#endif
 }
 
 long process_server_mprotect_end(unsigned long start, size_t len,
-				 unsigned long prot, int start_ret) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+				 unsigned long prot, int start_ret)
+{
 	end_distribute_operation(VMA_OP_PROTECT, start_ret, start);
 	return 0;
-#endif
 }
 
 long process_server_do_mmap_pgoff_start(struct file *file, unsigned long addr,
 					unsigned long len, unsigned long prot, unsigned long flags,
-					unsigned long pgoff) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+					unsigned long pgoff)
+{
 	return start_distribute_operation(VMA_OP_MAP, addr, len, prot, 0, 0, flags,
 					  file, pgoff);
-#endif
 }
 
 long process_server_do_mmap_pgoff_end(struct file *file, unsigned long addr,
 				      unsigned long len, unsigned long prot, unsigned long flags,
-				      unsigned long pgoff, unsigned long start_ret) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+				      unsigned long pgoff, unsigned long start_ret)
+{
 	end_distribute_operation(VMA_OP_MAP, start_ret, addr);
 	return 0;
-#endif
 }
 
-long process_server_do_brk_start(unsigned long addr, unsigned long len) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+long process_server_do_brk_start(unsigned long addr, unsigned long len)
+{
 	return start_distribute_operation(VMA_OP_BRK, addr, len, 0, 0, 0, 0, NULL,
 					  0);
-#endif
 }
 
 long process_server_do_brk_end(unsigned long addr, unsigned long len,
-			       unsigned long start_ret) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+			       unsigned long start_ret)
+{
 	end_distribute_operation(VMA_OP_BRK, start_ret, addr);
 	return 0;
-#endif
 }
 
 long process_server_do_mremap_start(unsigned long addr, unsigned long old_len,
-				    unsigned long new_len, unsigned long flags, unsigned long new_addr) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+				    unsigned long new_len, unsigned long flags, unsigned long new_addr)
+{
 	return start_distribute_operation(VMA_OP_REMAP, addr, (size_t) old_len, 0,
 					  new_addr, new_len, flags, NULL, 0);
-#endif
 }
 
 long process_server_do_mremap_end(unsigned long addr, unsigned long old_len,
 				  unsigned long new_len, unsigned long flags, unsigned long new_addr,
-				  unsigned long start_ret) {
-#if NOT_REPLICATED_VMA_MANAGEMENT
+				  unsigned long start_ret)
+{
 	end_distribute_operation(VMA_OP_REMAP, start_ret, new_addr);
 	return 0;
-#endif
 }
 
 void sleep_shadow() {

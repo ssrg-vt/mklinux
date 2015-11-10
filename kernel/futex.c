@@ -449,24 +449,23 @@ out:
 	{
 		struct mm_struct *mm = current->mm;
 		int ret;
-#if NOT_REPLICATED_VMA_MANAGEMENT
 		int lock_aquired= 0;
 		if(current->tgroup_distributed==1){
 			down_read(&mm->distribute_sem);
 			lock_aquired= 1;
-		}
-		else
+		} else {
 			lock_aquired= 0;
-#endif
+		}
+
 		down_read(&mm->mmap_sem);
 		ret = fixup_user_fault(current, mm, (unsigned long)uaddr,
 				FAULT_FLAG_WRITE);
 		up_read(&mm->mmap_sem);
-#if NOT_REPLICATED_VMA_MANAGEMENT
+
 		if(current->tgroup_distributed==1 && lock_aquired){
 			up_read(&mm->distribute_sem);
 		}
-#endif
+
 		return ret < 0 ? ret : 0;
 
 	}
@@ -477,24 +476,23 @@ out:
 		struct mm_struct *mm = tgid->mm;
 		int ret;
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
 		int lock_aquired= 0;
 		if(current->tgroup_distributed==1){
 			down_read(&mm->distribute_sem);
 			lock_aquired= 1;
-		}
-		else
+		} else {
 			lock_aquired= 0;
-#endif
+		}
+
 		down_read(&mm->mmap_sem);
 		ret = fixup_user_fault(tgid, mm, (unsigned long)uaddr,
 				FAULT_FLAG_WRITE);
 		up_read(&mm->mmap_sem);
-#if NOT_REPLICATED_VMA_MANAGEMENT
+
 		if(current->tgroup_distributed==1 && lock_aquired){
 			up_read(&mm->distribute_sem);
 		}
-#endif
+
 		return ret < 0 ? ret : 0;
 
 	}
