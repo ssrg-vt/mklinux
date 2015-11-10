@@ -254,6 +254,11 @@ static int before_syscall_rcv_family_primary(struct kiocb *iocb, struct socket *
 
         current->useful= (void*) store_info;
 
+	/*char* filter_print= print_filter_id(sock->sk->ft_filter);
+        printk("%s for pid %d in filter %s\n", __func__, current->pid, filter_print);
+        if(filter_print)
+        	kfree(filter_print);
+	*/
         return FT_SYSCALL_CONTINUE;
 
 }
@@ -345,7 +350,7 @@ static int before_syscall_rcv_family_primary_after_secondary(struct kiocb *iocb,
                 	printk("ERROR: %s for pid %d csum of send (syscall id %d) not matching between primary(%d) and secondary(%d)\n", __func__, current->pid, current->id_syscall, syscall_info_primary->csum, my_csum);
         		ret= -EFAULT;
 		}
-
+		
 out:
         	*syscall_ret= syscall_info_primary->ret;
 
@@ -530,10 +535,19 @@ static int before_syscall_rcv_family_secondary(struct kiocb *iocb, struct socket
 	 */
 
 	if(my_csum != syscall_info_primary->csum){
-                printk("ERROR: %s for pid %d csum of send (syscall id %d) not matching between primary(%d) and secondary(%d)\n", __func__, current->pid, current->id_syscall, syscall_info_primary->csum, my_csum);
+		char* filter_print= print_filter_id(sock->sk->ft_filter);
+                printk("ERROR: %s for pid %d csum of rcv (syscall id %d) not matching between primary(%d) and secondary(%d) in filter %s\n", __func__, current->pid, current->id_syscall, syscall_info_primary->csum, my_csum, filter_print);
+		if(filter_print)
+			kfree(filter_print);
         	ret= -EFAULT;
 	}
-
+	
+	/*
+	char* filter_print= print_filter_id(sock->sk->ft_filter);
+        printk("%s for pid %d in filter %s\n", __func__, current->pid, filter_print);
+        if(filter_print)
+        	kfree(filter_print);
+	*/
 out:
         *syscall_ret= syscall_info_primary->ret;
 

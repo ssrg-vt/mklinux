@@ -178,7 +178,7 @@ struct list_head filter_list_head;
 DEFINE_SPINLOCK(filter_list_lock);
 
 #define MAX_WQ_POOL	50
-#define THRESHOLD_WQ_POOL	(MAX_WQ_POOL/2)
+#define THRESHOLD_WQ_POOL	(MAX_WQ_POOL/3)
 struct stack wq_stack;
 
 struct kmem_cache *stable_buffer_entries;
@@ -240,6 +240,9 @@ static void create_more_working_queues(struct work_struct* work){
 	while(wq==NULL);
 
 	destroy_workqueue(wq);
+
+	if(work)
+		kfree(work);
 }
 
 static struct workqueue_struct * remove_wq_from_pool(void){
@@ -268,7 +271,7 @@ static struct workqueue_struct * remove_wq_from_pool(void){
 		work= kmalloc(sizeof(*work), GFP_ATOMIC);
 		if(work){
 			INIT_WORK(work, create_more_working_queues);
-		        queue_work(workqueues_creator_wq, (struct work_struct*)work);
+		        queue_work(workqueues_creator_wq, work);
 		}
 	}
 
@@ -1100,8 +1103,8 @@ again:
 	}
 
 out:
-	/* Yeeee! finally copy!
-	 *
+	/* all data is there!!
+	 * steal the data for coping it when releasing the spinlock.
 	 */
 	ret=0;
 	INIT_LIST_HEAD(&entry_to_copy_head);
@@ -1129,7 +1132,6 @@ out:
 				}
 				*new_entry= *entry;
 				skb_get(entry->data);
-				printk("%s get skb\n",__func__);
 				list_add_tail(&new_entry->list_entry, &entry_to_copy_head);
                                 entry->to_consume_start += len;
                         }
@@ -1141,6 +1143,9 @@ out:
         }
 
 finish:
+	/* Yeeee! finally copy!
+         *
+         */
 	stable_buffer->waiting= NULL;
 	stable_buffer->first_byte_to_consume += ret;
 	spin_unlock_bh(&stable_buffer->lock);
@@ -1164,7 +1169,6 @@ finish:
 
 			copied-= len;
 			list_del(item);
-			printk("%s removed skb\n",__func__);
 			kfree_skb(entry->data);
                         kmem_cache_free(stable_buffer_entries, entry); 
 		}
@@ -1210,6 +1214,18 @@ int insert_in_stable_buffer(struct stable_buffer *stable_buffer, struct sk_buff 
 	 */ 
 	spin_lock_bh(&stable_buffer->lock);
 	
+	/*check if this is a retransmition of already consumed data*/
+	if(entry->to_consume_start < stable_buffer->first_byte_to_consume){
+		if(entry->to_consume_end < stable_buffer->first_byte_to_consume){
+			kfree_skb(entry->data);
+                        kmem_cache_free(stable_buffer_entries, entry);
+			goto out;
+		}
+		else{
+			entry->to_consume_start= stable_buffer->first_byte_to_consume;
+		}
+	}
+
 	stable_buffer_head= &stable_buffer->stable_buffer_head;
 
 	if(!list_empty(stable_buffer_head)){
@@ -1335,7 +1351,7 @@ static void release_filter(struct kref *kref){
                         kfree(filter_printed);
 #endif
                 char* filter_printed= print_filter_id(filter);
-                //printk("%s: deleting %s filter %s pckt rcv %lld pckt snt %lld\n", __func__, (filter->type & FT_FILTER_FAKE)?"fake":"", filter_printed, filter->local_rx, filter->local_tx);
+                printk("%s: deleting %s filter %s pckt rcv %lld pckt snt %lld\n", __func__, (filter->type & FT_FILTER_FAKE)?"fake":"", filter_printed, filter->local_rx, filter->local_tx);
 
 		if(filter_printed)
                         kfree(filter_printed);
@@ -1464,8 +1480,9 @@ next:	if(fake_filter){
 
 		if(!(fake_filter->type & FT_FILTER_FAKE))
 			printk("ERROR %s: substituting a real filter\n",__func__);
-		
-		kfree(filter->wait_queue);
+
+		if(filter->wait_queue)		
+			kfree(filter->wait_queue);
 		filter_wq= filter->rx_copy_wq;
 		
 		free_send_buffer(filter->send_buffer);
@@ -1512,8 +1529,10 @@ next:	if(fake_filter){
 	spin_unlock_bh(&filter_list_lock);
         
 	if(fake_filter){
-		add_wq_to_pool(filter_wq, 1);
-		wake_up(filter->wait_queue);
+		if(filter_wq)
+			add_wq_to_pool(filter_wq, 1);
+		if(filter->wait_queue)
+			wake_up(filter->wait_queue);
 		put_ft_filter(fake_filter);
 	}
 
@@ -1599,7 +1618,7 @@ char* print_filter_id(struct net_filter_info *filter){
 	
 	rsize= rsize-ret;
 	if(is_child){
-		ret= snprintf(&string[ret], rsize, ", daddr: %i, dport: %i}", filter->tcp_param.daddr, filter->tcp_param.dport);
+		ret= snprintf(&string[ret], rsize, ", daddr: %i, dport: %i}", filter->tcp_param.daddr, ntohs(filter->tcp_param.dport));
                 if(ret>=rsize)
                         goto out_clean;
 
@@ -1621,7 +1640,7 @@ out_clean:
         return NULL;
 }
 
-static int init_filter_common(struct net_filter_info* filter){
+static int init_filter_common(struct net_filter_info* filter, int primary){
 
 	INIT_LIST_HEAD(&filter->list_member);
         atomic_set(&filter->kref.refcount,1);
@@ -1633,19 +1652,23 @@ static int init_filter_common(struct net_filter_info* filter){
 	filter->stable_buffer= NULL;
 	filter->send_buffer= NULL;	
 
-	filter->wait_queue= kmalloc(sizeof(*filter->wait_queue),GFP_ATOMIC);
-        if(!filter->wait_queue){
-            	printk("ERROR: %s out of memory\n", __func__);
-		return -ENOMEM;
-        }
+	if(!primary){
+		filter->wait_queue= kmalloc(sizeof(*filter->wait_queue),GFP_ATOMIC);
+        	if(!filter->wait_queue){
+            		printk("ERROR: %s out of memory\n", __func__);
+			return -ENOMEM;
+        	}
+		init_waitqueue_head(filter->wait_queue);
+	}
 	
-	filter->rx_copy_wq= remove_wq_from_pool();
-        if(filter->rx_copy_wq == NULL){
-                printk("ERROR: %s not enougth wq available\n", __func__);
-                return -EFAULT;
-        }
+	if(!primary){
+		filter->rx_copy_wq= remove_wq_from_pool();
+        	if(filter->rx_copy_wq == NULL){
+                	printk("ERROR: %s not enougth wq available\n", __func__);
+                	return -EFAULT;
+        	}
+	}
 
-	init_waitqueue_head(filter->wait_queue);
 	INIT_LIST_HEAD(&filter->skbuff_list.list_member);
 
 	memset(&filter->creator, 0, sizeof(filter->creator));
@@ -1654,9 +1677,11 @@ static int init_filter_common(struct net_filter_info* filter){
         filter->ft_req= NULL;
 
         spin_lock_init(&filter->lock);
-        
-        init_stable_buffer(&filter->stable_buffer);
-        init_send_buffer(&filter->send_buffer);
+       
+	if(!primary){ 
+        	init_stable_buffer(&filter->stable_buffer);
+        	init_send_buffer(&filter->send_buffer);
+	}
 
         filter->type= FT_FILTER_DISABLE;
 
@@ -1700,7 +1725,7 @@ static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_chil
 		printk("ERROR: %s out of memory\n", __func__);
 		return -ENOMEM;
 	}
-	err= init_filter_common(filter);
+	err= init_filter_common(filter, 0);
 	if(err){
 		put_ft_filter(filter);
 		return err;
@@ -1777,7 +1802,7 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
                         return -ENOMEM;
 		}
 
-                err= init_filter_common(filter);
+                err= init_filter_common(filter, parent_filter->type & FT_FILTER_PRIMARY_REPLICA || parent_filter->type & FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA);
 		if(err){
 			put_ft_filter(filter);
 			return err;
@@ -1860,7 +1885,7 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority){
 			return -ENOMEM;
 		}
 
-		err= init_filter_common(filter);
+		err= init_filter_common(filter, ft_is_primary_replica(task)||ft_is_primary_after_secondary_replica(task));
 		if(err){
 			put_ft_filter(filter);	
 			return err;
@@ -2606,10 +2631,10 @@ again:	spin_lock_bh(&filter->lock);
 				kfree(filter_id_printed);
 
 			//requeue it
-                        INIT_WORK( work, process_rx_copy_msg);
+                        /*INIT_WORK( work, process_rx_copy_msg);
                         my_work->data= (void*) msg;
                         my_work->filter= filter;
-                        queue_work(filter->rx_copy_wq, work);
+                        queue_work(filter->rx_copy_wq, work);*/kfree(work);pcn_kmsg_free_msg(msg);
 			spin_unlock_bh(&filter->lock);
         		put_ft_filter(filter);
 			return;
@@ -3942,13 +3967,15 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
 			/* remove data stored in the send buffer */ 
 			//NOTE send buffer has been initialized with primary seq, so it is safe to not apply any delta to the used ack.
 			remove_from_send_buffer(filter->send_buffer, TCP_SKB_CB(skb)->ack_seq);
-	           	
+	           
+			//printk("%s pckt on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u port %i\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq), ntohs(tcp_header->source));
+	
 			/* save the packet in the stable buffer only if there is actual payload*/
 			if(size && !(size==1 && tcp_header->fin) ){
 
 				FTMPRINTK("%s saving pckt on stable buffer: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u\n", __func__, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size, ntohl( tcp_header->ack_seq));
 
-				ret= insert_in_stable_buffer(filter->stable_buffer, skb, start, end-1);	
+				ret= insert_in_stable_buffer(filter->stable_buffer, skb, start, end-1-tcp_header->fin);	
 				if(ret){
 					printk("ERROR %s impossible to save in stable buffer ret %d\n", __func__, ret);
 					goto out;
@@ -3987,7 +4014,18 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
 	                end=  ntohl(tcp_header->seq)+ tcp_header->syn+ tcp_header->fin+ skb->len- tcp_header->doff*4;
         	        size= end-start;
 			
-			//printk("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u port %i\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq), tcp_header->source);
+			/*printk("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u port %i\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq), ntohs(tcp_header->source));
+
+			if (inet_csk_reqsk_queue_is_full(sk) ) {
+				printk("%s inet_csk_reqsk_queue_is_full\n",__func__);
+			}
+			if (sk_acceptq_is_full(sk)){
+				 printk("%s sk_acceptq_is_full\n",__func__);
+			}
+			if (inet_csk_reqsk_queue_young(sk) > 1){
+				 printk("%s inet_csk_reqsk_queue_young\n",__func__);
+			}*/
+
 
 			req = inet_csk_search_req(sk, &prev, tcp_header->source, iph->saddr, iph->daddr);
 			if(req){
@@ -4102,10 +4140,12 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
                         //NOTE send buffer has been initialized with primary seq, so it is safe to not apply any delta to the used ack.
                         remove_from_send_buffer(filter->send_buffer, TCP_SKB_CB(skb)->ack_seq);
 
+			//printk("%s letting pckt transiting on status %d: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u port %i\n", __func__, filter->ft_sock->sk_state, tcp_header->syn, tcp_header->ack, tcp_header->fin, start, end, size,ntohl( tcp_header->ack_seq), ntohs(tcp_header->source));
+
                         /* save the packet in the stable buffer only if there is actual payload*/
                         if(size && !(size==1 && tcp_header->fin) ){
 
-                                ret= insert_in_stable_buffer(filter->stable_buffer, skb, start, end-1);
+                                ret= insert_in_stable_buffer(filter->stable_buffer, skb, start, end-1-tcp_header->fin);
                                 if(ret){
                                         printk("ERROR %s impossible to save in stable buffer ret %d\n", __func__, ret);
                                         goto out;
@@ -4136,6 +4176,7 @@ unsigned int ft_hook_before_tcp_secondary(struct sk_buff *skb, struct net_filter
 			}
 
 		case TCP_CLOSE:
+			//printk("%s tcp close\n", __func__);
 			return NF_DROP;
 		}	
         }
@@ -4179,7 +4220,22 @@ unsigned int ft_hook_before_tcp(struct sk_buff *skb, struct net_filter_info *ft_
                         		kfree(filter_id_printed);
 #endif
 
-                        }
+				/*struct tcphdr *tcp_header = tcp_hdr(skb);
+
+	                        printk("%s pckt: syn %u ack %u fin %u seq %u end seq %u size %u ack_seq %u port %i\n", __func__, tcp_header->syn, tcp_header->ack, tcp_header->fin, ntohl(tcp_header->seq), ntohl(tcp_header->seq) + tcp_header->syn + tcp_header->fin + skb->len - tcp_header->doff * 4, tcp_header->syn + tcp_header->fin + skb->len - tcp_header->doff * 4,ntohl( tcp_header->ack_seq), ntohs(tcp_header->source));
+                        	if(ft_filter->ft_sock && ft_filter->ft_sock->sk_state==TCP_LISTEN){
+					if (inet_csk_reqsk_queue_is_full(ft_filter->ft_sock) ) {
+						printk("%s inet_csk_reqsk_queue_is_full\n",__func__);
+					}
+					if (sk_acceptq_is_full(ft_filter->ft_sock)){
+						 printk("%s sk_acceptq_is_full\n",__func__);
+					}
+					if (inet_csk_reqsk_queue_young(ft_filter->ft_sock) > 1){
+                                                 printk("%s inet_csk_reqsk_queue_young\n",__func__);
+                                        }
+
+				}*/
+			}
 			else{
 				if(ft_filter->type & FT_FILTER_PRIMARY_AFTER_SECONDARY_REPLICA){
 #if FT_FILTER_VERBOSE
@@ -4682,7 +4738,8 @@ static int __init ft_filter_init(void){
 	INIT_LIST_HEAD(&wq_stack.stack_head);
 	wq_stack.size= 0;
 	create_more_working_queues(NULL);
-	workqueues_creator_wq= create_workqueue("workqueues_creator_wq");
+	//workqueues_creator_wq= create_workqueue("workqueues_creator_wq");
+	workqueues_creator_wq= alloc_workqueue("workqueues_creator_wq", WQ_MEM_RECLAIM | WQ_HIGHPRI, 1);
 
 	INIT_LIST_HEAD(&filter_list_head);
 

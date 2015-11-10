@@ -561,7 +561,7 @@ static inline int __sock_sendmsg_nosec(struct kiocb *iocb, struct socket *sock,
 
 #ifdef FT_POPCORN
 	ft_ret= ft_before_syscall_send_family(iocb, sock, msg, size, &ret);
-	if(ft_ret==FT_SYSCALL_DROP)
+	if(ft_ret==FT_SYSCALL_DROP || IS_ERR_VALUE(ft_ret))
 		return ret;
 #endif
 	ret= sock->ops->sendmsg(iocb, sock, msg, size);
@@ -723,7 +723,7 @@ static inline int __sock_recvmsg_nosec(struct kiocb *iocb, struct socket *sock,
 
 #ifdef FT_POPCORN
         ft_ret= ft_before_syscall_rcv_family(iocb, sock, msg, size, flags, &ret);
-        if(ft_ret==FT_SYSCALL_DROP)
+        if(ft_ret==FT_SYSCALL_DROP || IS_ERR_VALUE(ft_ret))
                 return ret;
 #endif
 	ret= sock->ops->recvmsg(iocb, sock, msg, size, flags);

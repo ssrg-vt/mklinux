@@ -1276,6 +1276,25 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 	if (skb_rtable(skb)->rt_flags & (RTCF_BROADCAST | RTCF_MULTICAST))
 		goto drop;
 
+#ifdef FT_POPCORN
+	/* TW buckets are converted to open requests without
+         * limitations, they conserve resources and peer is
+         * evidently real one.
+         */
+        if (inet_csk_reqsk_queue_is_full(sk) && !isn && !sk->ft_filter) {
+                want_cookie = tcp_syn_flood_action(sk, skb, "TCP");
+                if (!want_cookie)
+                        goto drop;
+        }
+
+        /* Accept backlog is full. If we have already queued enough
+         * of warm entries in syn queue, drop request. It is better than
+         * clogging syn queue with openreqs with exponentially increasing
+         * timeout.
+         */
+        if (sk_acceptq_is_full(sk) && inet_csk_reqsk_queue_young(sk) > 1  && !sk->ft_filter)
+                goto drop;
+#else
 	/* TW buckets are converted to open requests without
 	 * limitations, they conserve resources and peer is
 	 * evidently real one.
@@ -1293,6 +1312,7 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 	 */
 	if (sk_acceptq_is_full(sk) && inet_csk_reqsk_queue_young(sk) > 1)
 		goto drop;
+#endif
 
 	req = inet_reqsk_alloc(&tcp_request_sock_ops);
 	if (!req)
