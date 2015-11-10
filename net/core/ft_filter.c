@@ -147,8 +147,9 @@ struct tx_notify_work{
 };
 
 struct rx_copy_work{
-        struct work_struct work;
+        struct delayed_work work;
         struct net_filter_info* filter;
+	int count;
 	void* data;
 };
 
@@ -160,7 +161,7 @@ struct tcp_param_work{
 	struct tcp_init_param tcp_param;
 };
 
-struct wq_member{
+/*struct wq_member{
 	struct list_head entry;
 	struct workqueue_struct *wq;
 };
@@ -169,24 +170,30 @@ struct stack{
 	int size;
 	spinlock_t stack_lock;
 	struct list_head stack_head;
-};
+};*/
 
-static struct workqueue_struct *workqueues_creator_wq;
+//static struct workqueue_struct *workqueues_creator_wq;
 static struct workqueue_struct *tx_notify_wq;
 extern int _cpu;
 struct list_head filter_list_head;
 DEFINE_SPINLOCK(filter_list_lock);
 
-#define MAX_WQ_POOL	50
+/*#define MAX_WQ_POOL	50
 #define THRESHOLD_WQ_POOL	(MAX_WQ_POOL/3)
-struct stack wq_stack;
+struct stack wq_stack;*/
+
+#define PCKT_DISP_POOL_SIZE 10
+struct workqueue_struct *pckt_dispatcher_pool[PCKT_DISP_POOL_SIZE];
+DEFINE_SPINLOCK(pckt_dispatcher_pool_lock);
+int next_pckt_dispatcher;
 
 struct kmem_cache *stable_buffer_entries;
+struct kmem_cache *ft_filters_entries;
 
 static int get_iphdr(struct sk_buff *skb, struct iphdr** ip_header,int *iphdrlen);
 static void put_iphdr(struct sk_buff *skb, int iphdrlen);
 
-static struct workqueue_struct * add_wq_to_pool(struct workqueue_struct *wq, int force_add){
+/*static struct workqueue_struct * add_wq_to_pool(struct workqueue_struct *wq, int force_add){
         struct wq_member *new_entry;
         struct workqueue_struct *ret= wq;
         
@@ -214,9 +221,9 @@ static struct workqueue_struct * add_wq_to_pool(struct workqueue_struct *wq, int
 
         return ret;
 
-}
+}*/
 
-static void create_more_working_queues(struct work_struct* work){
+/*static void create_more_working_queues(struct work_struct* work){
 	static atomic_t id= ATOMIC_INIT(0);
 	static const int NAME_SIZE= 200;
 	char name[NAME_SIZE];
@@ -243,9 +250,36 @@ static void create_more_working_queues(struct work_struct* work){
 
 	if(work)
 		kfree(work);
+}*/
+
+static int create_pckt_dispatcher_pool(){
+	int i, ret;
+	static const int NAME_SIZE= 200;
+        char name[NAME_SIZE];
+	struct workqueue_struct *wq;
+
+	next_pckt_dispatcher= 0;
+
+	for(i=0; i<PCKT_DISP_POOL_SIZE; i++){
+		ret= snprintf(name, NAME_SIZE, "ft_wq_%d", i);
+                if(ret==NAME_SIZE){
+                        printk("%s ERROR: name field too small\n", __func__);
+                        return -EFAULT;
+                }
+
+                wq= create_singlethread_workqueue(name);
+                if(wq){
+			pckt_dispatcher_pool[i]= wq;
+		}
+		else
+			return -EFAULT;
+	}
+	
+	
+	return 0;
 }
 
-static struct workqueue_struct * remove_wq_from_pool(void){
+/*static struct workqueue_struct * remove_wq_from_pool(void){
  	struct workqueue_struct *ret= NULL;
         struct wq_member *entry= NULL;
 	int create_more= 0;
@@ -274,6 +308,19 @@ static struct workqueue_struct * remove_wq_from_pool(void){
 		        queue_work(workqueues_creator_wq, work);
 		}
 	}
+
+	return ret;
+}*/
+
+static struct workqueue_struct * peak_wq_from_pckt_dispatcher_pool(void){
+	struct workqueue_struct *ret;
+	
+	spin_lock_bh(&pckt_dispatcher_pool_lock);
+	
+	ret= pckt_dispatcher_pool[next_pckt_dispatcher];
+	next_pckt_dispatcher= (next_pckt_dispatcher+1)%PCKT_DISP_POOL_SIZE;
+	
+	spin_unlock_bh(&pckt_dispatcher_pool_lock);	
 
 	return ret;
 }
@@ -1359,16 +1406,16 @@ static void release_filter(struct kref *kref){
 			put_ft_pop_rep(filter->ft_popcorn);
 		if(filter->wait_queue)
 			kfree(filter->wait_queue);
-		if(filter->rx_copy_wq){
+		/*if(filter->rx_copy_wq){
 			add_wq_to_pool(filter->rx_copy_wq, 1);
-		}
+		}*/
 		if(filter->stable_buffer){
 			free_stable_buffer(filter->stable_buffer);
 		}
 		if(filter->send_buffer){
 			free_send_buffer(filter->send_buffer);
 		}
-		kfree(filter);
+		kmem_cache_free(ft_filters_entries, filter);
 	}
 }
 
@@ -1483,6 +1530,7 @@ next:	if(fake_filter){
 
 		if(filter->wait_queue)		
 			kfree(filter->wait_queue);
+
 		filter_wq= filter->rx_copy_wq;
 		
 		free_send_buffer(filter->send_buffer);
@@ -1529,8 +1577,8 @@ next:	if(fake_filter){
 	spin_unlock_bh(&filter_list_lock);
         
 	if(fake_filter){
-		if(filter_wq)
-			add_wq_to_pool(filter_wq, 1);
+		/*if(filter_wq)
+			add_wq_to_pool(filter_wq, 1);*/
 		if(filter->wait_queue)
 			wake_up(filter->wait_queue);
 		put_ft_filter(fake_filter);
@@ -1661,13 +1709,13 @@ static int init_filter_common(struct net_filter_info* filter, int primary){
 		init_waitqueue_head(filter->wait_queue);
 	}
 	
-	if(!primary){
+	/*if(!primary){
 		filter->rx_copy_wq= remove_wq_from_pool();
         	if(filter->rx_copy_wq == NULL){
                 	printk("ERROR: %s not enougth wq available\n", __func__);
                 	return -EFAULT;
         	}
-	}
+	}*/
 
 	INIT_LIST_HEAD(&filter->skbuff_list.list_member);
 
@@ -1720,7 +1768,7 @@ static int create_fake_filter(struct ft_pid *creator, int filter_id, int is_chil
 	char* filter_id_printed;
 #endif
 
-	filter= kmalloc(sizeof(*filter),GFP_ATOMIC);
+	filter= kmem_cache_alloc(ft_filters_entries, GFP_ATOMIC);
 	if(!filter){
 		printk("ERROR: %s out of memory\n", __func__);
 		return -ENOMEM;
@@ -1796,7 +1844,7 @@ int ft_create_mini_filter(struct request_sock *req, struct sock *sk, struct sk_b
 #endif
 
 	if(parent_filter){
-		filter= kmalloc(sizeof(*filter), GFP_ATOMIC);
+		filter= kmem_cache_alloc(ft_filters_entries, GFP_ATOMIC);
                 if(!filter){
 			printk("ERROR: %s out of memory\n", __func__);
                         return -ENOMEM;
@@ -1879,7 +1927,7 @@ int create_filter(struct task_struct *task, struct sock *sk, gfp_t priority){
 
 	if(ft_is_replicated(task)){
 
-		filter= kmalloc(sizeof(*filter), priority);
+		filter= kmem_cache_alloc(ft_filters_entries, priority);
 		if(!filter){
 			printk("ERROR: %s out of memory\n", __func__);
 			return -ENOMEM;
@@ -2607,6 +2655,121 @@ static struct sk_buff* create_skb_from_rx_copy_msg(struct rx_copy_msg *msg, stru
 	return skb;
 }
 
+static void dispatch_copy_msg(struct work_struct* work){
+        struct rx_copy_work *my_work= (struct rx_copy_work *) work;
+        struct rx_copy_msg *msg= (struct rx_copy_msg *) my_work->data;
+	struct net_filter_info *filter= ( struct net_filter_info *) my_work->filter;
+	struct sk_buff *skb;
+	char* filter_id_printed;
+
+	if(my_work->count > 10){
+		filter_id_printed= print_filter_id(filter);
+                printk("%s: WARNING work count is %d msg->pckt_id %llu primary rx %llu in %s filter %s\n", __func__, my_work->count,  msg->pckt_id, filter->primary_rx,(filter->type & FT_FILTER_FAKE)?"fake":"", filter_id_printed);
+                if(filter_id_printed)
+                	kfree(filter_id_printed);
+
+	}
+
+again:	spin_lock_bh(&filter->lock);
+	if(filter->type & FT_FILTER_ENABLE){
+
+		if(msg->pckt_id != filter->primary_rx+1){
+
+			//requeue it
+                        INIT_DELAYED_WORK( (struct delayed_work *)work, dispatch_copy_msg);
+                        my_work->data= (void*) msg;
+                        my_work->filter= filter;
+			my_work->count++;
+                        queue_delayed_work(filter->rx_copy_wq, (struct delayed_work *)work, msecs_to_jiffies(10));
+			spin_unlock_bh(&filter->lock);
+        		put_ft_filter(filter);
+			return;
+		}
+		
+		/* Wait to be aligned with the primary replica for the delivery of the packet.
+		 * => for tcp means wait to create the same filter
+		 * => for udp wait to reach the same number of sent pckts (on a not fake filter).
+		 */
+
+#define PR_RX_CP_MSG_SLEEP_COND ((filter->type & FT_FILTER_FAKE) || (filter->deliver_packets==0) || ((filter->deliver_packets==2) && (filter->local_tx < msg->local_tx)))
+ 
+		if(PR_RX_CP_MSG_SLEEP_COND){
+           		
+			INIT_DELAYED_WORK( (struct delayed_work *)work, dispatch_copy_msg);
+                        my_work->data= (void*) msg;
+                        my_work->filter= filter;
+                        my_work->count++;
+                        queue_delayed_work(filter->rx_copy_wq, (struct delayed_work *)work,  msecs_to_jiffies(10));
+                        spin_unlock_bh(&filter->lock);
+                        put_ft_filter(filter);
+                        return; 
+
+		}
+
+		filter->primary_rx= msg->pckt_id;
+	}
+	else{
+
+		if(!(filter->type & FT_FILTER_FAKE)){
+			printk("%s: ERROR filter is disable but not fake\n",__func__);
+			goto out_err;
+		}
+
+		spin_unlock_bh(&filter->lock);
+		put_ft_filter(filter);
+
+		filter= find_and_get_filter(&msg->creator, msg->filter_id, msg->is_child, msg->daddr, msg->dport);
+		if(!filter){
+			printk("%s: ERROR no filter\n",__func__);
+			goto out;
+		}
+		else
+			goto again;
+	}
+
+	spin_unlock_bh(&filter->lock);
+
+	if(filter->type & FT_FILTER_FAKE){
+		printk("%s: ERROR trying to delivery pckt to fake filter\n", __func__);
+		put_ft_filter(filter);
+		goto out;
+	}
+
+	
+	skb= create_skb_from_rx_copy_msg(msg, filter);
+        if(IS_ERR(skb)){
+             	printk("ERROR %s imposible to allocate more skb\n", __func__);
+		put_ft_filter(filter);
+                goto out;
+        }
+
+#if FT_FILTER_VERBOSE
+	filter_id_printed= print_filter_id(filter);
+	FTPRINTK("%s: pid %d is going to deliver the packet %llu in filter %s\n\n", __func__, current->pid, msg->pckt_id, filter_id_printed);
+	if(filter_id_printed)
+		kfree(filter_id_printed);
+#endif
+
+	/* the network stack rx path is thougth to be executed in softirq
+	 * context...
+	 */
+
+	local_bh_disable();	
+	netif_receive_skb(skb);
+	local_bh_enable();
+
+	put_ft_filter(filter);
+
+out:	pcn_kmsg_free_msg(msg);
+	kfree(work);
+	return;
+out_err:
+	spin_unlock_bh(&filter->lock);
+        put_ft_filter(filter);
+	goto out;
+
+}
+
 static void process_rx_copy_msg(struct work_struct* work){
         struct rx_copy_work *my_work= (struct rx_copy_work *) work;
         struct rx_copy_msg *msg= (struct rx_copy_msg *) my_work->data;
@@ -2757,7 +2920,12 @@ static int handle_rx_copy(struct pcn_kmsg_message* inc_msg){
 again:  filter= find_and_get_filter(&msg->creator, msg->filter_id, msg->is_child, msg->daddr, msg->dport);
         if(filter){
                 spin_lock_bh(&filter->lock);
-                if(filter->type & FT_FILTER_ENABLE){
+           	
+		if(!filter->rx_copy_wq){
+			filter->rx_copy_wq= peak_wq_from_pckt_dispatcher_pool();
+		}
+
+		if(filter->type & FT_FILTER_ENABLE){
 			rx_copy_wq= filter->rx_copy_wq;
 			spin_unlock_bh(&filter->lock);	
 		
@@ -2768,9 +2936,10 @@ again:  filter= find_and_get_filter(&msg->creator, msg->filter_id, msg->is_child
                 		goto out_err;
         		}
 
-        		INIT_WORK( (struct work_struct*)work, process_rx_copy_msg);
+        		INIT_WORK( (struct work_struct*)work, dispatch_copy_msg);
         		work->data= inc_msg;
 			work->filter= filter;
+			work->count= 0;
         		queue_work(rx_copy_wq, (struct work_struct*)work);
 			
                 }
@@ -4606,7 +4775,7 @@ int send_zero_window_in_filters(void){
         return ret;
 }
 
-
+/*
 struct flush_pckt_work{
 	struct work_struct work;
 	struct net_filter_info *filter;
@@ -4629,9 +4798,6 @@ static void notify_flush_received(struct work_struct* work){
 	kfree(my_work);
 }
 
-/*Flush the working queues used to deliver pckts in filters.
- *This function might put the current thread to sleep.
- */
 int flush_pending_pckt_in_filters(void){
         struct list_head *iter= NULL;
         struct net_filter_info *filter= NULL;
@@ -4654,11 +4820,11 @@ int flush_pending_pckt_in_filters(void){
 					return ret;
 
 				}
-				/* What if the filter is a FAKE_FILTER?
+				 /* What if the filter is a FAKE_FILTER?
 				 * If it is fake it means that a real one had been created on the primary.
 				 * So if we wait for the replicated threads to reach the same point and we deliver all the pending pckts of not fake filters,
 				 * eventually if should become real and beeing able to correctly flush all its pending pckts.
-				 */
+				 
 
 				 work= kmalloc(sizeof(*work), GFP_ATOMIC);
 				 if(!work){
@@ -4702,6 +4868,19 @@ int flush_pending_pckt_in_filters(void){
 
 	return ret;
 	
+}*/
+
+/*Flush the working queues used to deliver pckts in filters.
+ *This function might put the current thread to sleep.
+ */
+int flush_pending_pckt_in_filters(void){
+	int i;
+	
+	for(i=0; i< PCKT_DISP_POOL_SIZE; i++){
+		drain_workqueue(pckt_dispatcher_pool[i]);
+	}
+
+	return 0;
 }
 
 //NOTE:  write_lock(&replica_type_lock) must be held
@@ -4734,12 +4913,14 @@ int update_filter_type_after_failure(void){
 
 static int __init ft_filter_init(void){
 
-	spin_lock_init(&wq_stack.stack_lock);
+	/*spin_lock_init(&wq_stack.stack_lock);
 	INIT_LIST_HEAD(&wq_stack.stack_head);
 	wq_stack.size= 0;
 	create_more_working_queues(NULL);
-	//workqueues_creator_wq= create_workqueue("workqueues_creator_wq");
 	workqueues_creator_wq= alloc_workqueue("workqueues_creator_wq", WQ_MEM_RECLAIM | WQ_HIGHPRI, 1);
+	*/
+	if(create_pckt_dispatcher_pool())
+		printk("%s ERROR cannot create pckt_dispatcher_pool\n", __func__);
 
 	INIT_LIST_HEAD(&filter_list_head);
 
@@ -4759,6 +4940,13 @@ static int __init ft_filter_init(void){
 	stable_buffer_entries= kmem_cache_create("stable_buffers_cache", sizeof(struct stable_buffer_entry), 0, SLAB_PANIC, NULL);
 	if(!stable_buffer_entries)
 		printk("%s ERROR cannot create stable buffer cache\n", __func__);
+
+	/* Slab cache for ft filters (struct net_filter_info).
+         */
+
+	ft_filters_entries= kmem_cache_create("ft_filters_cache", sizeof(struct net_filter_info), 0, SLAB_PANIC, NULL);
+        if(!ft_filters_entries)
+                printk("%s ERROR cannot create ft filters cache\n", __func__);
 
 	/* Register netfilter hooks.
 	 * ft_before_network_hook-> rx path, in first hook called by IP.
