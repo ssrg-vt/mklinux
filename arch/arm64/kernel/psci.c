@@ -17,10 +17,13 @@
 
 #include <linux/init.h>
 #include <linux/of.h>
+#include <linux/smp.h>
 
 #include <asm/compiler.h>
+#include <asm/cpu_ops.h>
 #include <asm/errno.h>
 #include <asm/psci.h>
+#include <asm/smp_plat.h>
 
 struct psci_operations psci_ops;
 
@@ -156,7 +159,7 @@ static const struct of_device_id psci_of_match[] __initconst = {
 	{},
 };
 
-int __init psci_init(void)
+static int __init psci_of_init(void)
 {
 	struct device_node *np;
 	const char *method;
@@ -209,3 +212,116 @@ out_put_node:
 	of_node_put(np);
 	return err;
 }
+
+#if defined(CONFIG_ACPI) && defined(CONFIG_ARCH_VEXPRESS)
+static int __init psci_acpi_init(void)
+{
+	/*
+	 * FIXME: IDs should be probed from ACPI tables. Due to lack of PSCI
+	 * support in ACPI 5.0, function IDs are hard coded.
+	 *
+	 * IDs are taken directly from fvp-base-gicv2-psci.dts as we currently
+	 * support FVP Base model. Also, we do not have ID register unique
+	 * for FVP model, thus we make code dependent on CONFIG_ARCH_VEXPRESS
+	 * too.
+	 */
+#define PSCI_FVP_ID_SUSPEND	0xc4000001
+#define PSCI_FVP_ID_OFF		0x84000002
+#define PSCI_FVP_ID_ON		0xc4000003
+
+	pr_info("Get hard coded PSCI function IDs\n");
+	invoke_psci_fn = __invoke_psci_fn_smc;
+
+	psci_function_id[PSCI_FN_CPU_SUSPEND] = PSCI_FVP_ID_SUSPEND;
+	psci_ops.cpu_suspend = psci_cpu_suspend;
+
+	psci_function_id[PSCI_FN_CPU_OFF] = PSCI_FVP_ID_OFF;
+	psci_ops.cpu_off = psci_cpu_off;
+
+	psci_function_id[PSCI_FN_CPU_ON] = PSCI_FVP_ID_ON;
+	psci_ops.cpu_on = psci_cpu_on;
+
+	return 0;
+}
+#else
+static int __init psci_acpi_init(void)
+{
+	return -ENODEV;
+}
+#endif
+
+int __init psci_init(void)
+{
+	int status;
+
+	status = psci_of_init();
+	if (!status)
+		return status;
+
+	return psci_acpi_init();
+}
+
+#ifdef CONFIG_SMP
+
+static int __init cpu_psci_cpu_init(struct device_node *dn, unsigned int cpu)
+{
+	return 0;
+}
+
+static int __init cpu_psci_cpu_prepare(unsigned int cpu)
+{
+	if (!psci_ops.cpu_on) {
+		pr_err("no cpu_on method, not booting CPU%d\n", cpu);
+		return -ENODEV;
+	}
+
+	return 0;
+}
+
+static int cpu_psci_cpu_boot(unsigned int cpu)
+{
+	int err = psci_ops.cpu_on(cpu_logical_map(cpu), __pa(secondary_entry));
+	if (err)
+		pr_err("psci: failed to boot CPU%d (%d)\n", cpu, err);
+
+	return err;
+}
+
+#ifdef CONFIG_HOTPLUG_CPU
+static int cpu_psci_cpu_disable(unsigned int cpu)
+{
+	/* Fail early if we don't have CPU_OFF support */
+	if (!psci_ops.cpu_off)
+		return -EOPNOTSUPP;
+	return 0;
+}
+
+static void cpu_psci_cpu_die(unsigned int cpu)
+{
+	int ret;
+	/*
+	 * There are no known implementations of PSCI actually using the
+	 * power state field, pass a sensible default for now.
+	 */
+	struct psci_power_state state = {
+		.type = PSCI_POWER_STATE_TYPE_POWER_DOWN,
+	};
+
+	ret = psci_ops.cpu_off(state);
+
+	pr_crit("psci: unable to power off CPU%u (%d)\n", cpu, ret);
+}
+#endif
+
+const struct cpu_operations cpu_psci_ops = {
+	.name		= "psci",
+	.cpu_init	= cpu_psci_cpu_init,
+	.cpu_prepare	= cpu_psci_cpu_prepare,
+	.cpu_boot	= cpu_psci_cpu_boot,
+#ifdef CONFIG_HOTPLUG_CPU
+	.cpu_disable	= cpu_psci_cpu_disable,
+	.cpu_die	= cpu_psci_cpu_die,
+#endif
+};
+
+#endif

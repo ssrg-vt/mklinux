@@ -93,7 +93,7 @@
  *
  * The requirements are:
  *   MMU = off, D-cache = off, I-cache = on or off,
- *   x0 = physical address to the FDT blob.
+ *   x0 = physical address to the FDT blob or UEFI boot parameters
  *
  * This code is mostly position independent so you call this at
  * __pa(PAGE_OFFSET + TEXT_OFFSET).
@@ -107,8 +107,19 @@
 	/*
 	 * DO NOT MODIFY. Image header expected by Linux boot-loaders.
 	 */
+#ifdef CONFIG_EFI_STUB
+	/*
+	 * Magic "MZ" signature for PE/COFF
+	 * Little-endian: add x13, x18, #0x16
+	 */
+efi_head:
+CPU_LE(	.long   0x91005a4d	)
+CPU_BE(	.long	0x4d5a0091	)
+	b	stext
+#else
 	b	stext				// branch to kernel start, magic
 	.long	0				// reserved
+#endif
 	.quad	TEXT_OFFSET			// Image load offset from start of RAM
 	.quad	0				// reserved
 	.quad	0				// reserved
@@ -119,12 +130,111 @@
 	.byte	0x52
 	.byte	0x4d
 	.byte	0x64
+#ifdef CONFIG_EFI_STUB
+	.long	pe_header - efi_head		// Offset to the PE header.
+#else
 	.word	0				// reserved
+#endif
+
+#ifdef CONFIG_EFI_STUB
+	.align 3
+pe_header:
+	.ascii	"PE"
+	.short 	0
+coff_header:
+	.short	0xaa64				// AArch64
+	.short	2				// nr_sections
+	.long	0 				// TimeDateStamp
+	.long	0				// PointerToSymbolTable
+	.long	1				// NumberOfSymbols
+	.short	section_table - optional_header	// SizeOfOptionalHeader
+	.short	0x206				// Characteristics.
+						// IMAGE_FILE_DEBUG_STRIPPED |
+						// IMAGE_FILE_EXECUTABLE_IMAGE |
+						// IMAGE_FILE_LINE_NUMS_STRIPPED
+optional_header:
+	.short	0x20b				// PE32+ format
+	.byte	0x02				// MajorLinkerVersion
+	.byte	0x14				// MinorLinkerVersion
+	.long	__bss_start - stext		// SizeOfCode
+	.long	0				// SizeOfInitializedData
+	.long	0				// SizeOfUninitializedData
+	/*
+	 * EFI entry point is second instruction of the kernel Image.
+	 */
+	.long	efi_stub_entry - efi_head	// AddressOfEntryPoint
+	.long	stext - efi_head		// BaseOfCode
+
+extra_header_fields:
+	.quad	0				// ImageBase
+	.long	0x20				// SectionAlignment
+	.long	0x20				// FileAlignment
+	.short	0				// MajorOperatingSystemVersion
+	.short	0				// MinorOperatingSystemVersion
+	.short	0				// MajorImageVersion
+	.short	0				// MinorImageVersion
+	.short	0				// MajorSubsystemVersion
+	.short	0				// MinorSubsystemVersion
+	.long	0				// Win32VersionValue
+
+	.long	__bss_start - efi_head	// SizeOfImage
+
+	// Everything before the kernel image is considered part of the header
+	.long	stext - efi_head			// SizeOfHeaders
+	.long	0				// CheckSum
+	.short	0xa				// Subsystem (EFI application)
+	.short	0				// DllCharacteristics
+	.quad	0				// SizeOfStackReserve
+	.quad	0				// SizeOfStackCommit
+	.quad	0				// SizeOfHeapReserve
+	.quad	0				// SizeOfHeapCommit
+	.long	0				// LoaderFlags
+	.long	0x0				// NumberOfRvaAndSizes
+
+	// Section table
+section_table:
+
+	/*
+	 * The EFI application loader requires a relocation section
+	 * because EFI applications must be relocatable.  This is a
+	 * dummy section as far as we are concerned.
+	 */
+	.ascii	".reloc"
+	.byte	0
+	.byte	0			// end of 0 padding of section name
+	.long	0
+	.long	0
+	.long	0			// SizeOfRawData
+	.long	0			// PointerToRawData
+	.long	0			// PointerToRelocations
+	.long	0			// PointerToLineNumbers
+	.short	0			// NumberOfRelocations
+	.short	0			// NumberOfLineNumbers
+	.long	0x42100040		// Characteristics (section flags)
+
+
+	.ascii	".text"
+	.byte	0
+	.byte	0
+	.byte	0        		// end of 0 padding of section name
+	.long	__bss_start - stext	// VirtualSize
+	.long	stext - efi_head	// VirtualAddress
+	.long	__bss_start - stext	// SizeOfRawData
+	.long	stext - efi_head	// PointerToRawData
+
+	.long	0		// PointerToRelocations (0 for executables)
+	.long	0		// PointerToLineNumbers (0 for executables)
+	.short	0		// NumberOfRelocations  (0 for executables)
+	.short	0		// NumberOfLineNumbers  (0 for executables)
+	.long	0xe0500020	// Characteristics (section flags)
+	.align 5
+#endif
 
 ENTRY(stext)
 	mov	x21, x0				// x21=FDT
+	bl	el2_setup			// Drop to EL1, w20=cpu_boot_mode
 	bl	__calc_phys_offset		// x24=PHYS_OFFSET, x28=PHYS_OFFSET-PAGE_OFFSET
-	bl	el2_setup			// Drop to EL1
+	bl	set_cpu_boot_mode_flag
 	mrs	x22, midr_el1			// x22=cpuid
 	mov	x0, x22
 	bl	lookup_processor_type
@@ -150,21 +260,30 @@ ENDPROC(stext)
 /*
  * If we're fortunate enough to boot at EL2, ensure that the world is
  * sane before dropping to EL1.
+ *
+ * Returns either BOOT_CPU_MODE_EL1 or BOOT_CPU_MODE_EL2 in x20 if
+ * booted in EL1 or EL2 respectively.
  */
 ENTRY(el2_setup)
 	mrs	x0, CurrentEL
 	cmp	x0, #PSR_MODE_EL2t
 	ccmp	x0, #PSR_MODE_EL2h, #0x4, ne
-	ldr	x0, =__boot_cpu_mode		// Compute __boot_cpu_mode
-	add	x0, x0, x28
-	b.eq	1f
-	str	wzr, [x0]			// Remember we don't have EL2...
+	b.ne	1f
+	mrs	x0, sctlr_el2
+CPU_BE(	orr	x0, x0, #(1 << 25)	)	// Set the EE bit for EL2
+CPU_LE(	bic	x0, x0, #(1 << 25)	)	// Clear the EE bit for EL2
+	msr	sctlr_el2, x0
+	b	2f
+1:	mrs	x0, sctlr_el1
+CPU_BE(	orr	x0, x0, #(3 << 24)	)	// Set the EE and E0E bits for EL1
+CPU_LE(	bic	x0, x0, #(3 << 24)	)	// Clear the EE and E0E bits for EL1
+	msr	sctlr_el1, x0
+	mov	w20, #BOOT_CPU_MODE_EL1		// This cpu booted in EL1
+	isb
 	ret
 
 	/* Hyp configuration. */
-1:	ldr	w1, =BOOT_CPU_MODE_EL2
-	str	w1, [x0, #4]			// This CPU has EL2
-	mov	x0, #(1 << 31)			// 64-bit EL1
+2:	mov	x0, #(1 << 31)			// 64-bit EL1
 	msr	hcr_el2, x0
 
 	/* Generic timers. */
@@ -181,14 +300,15 @@ ENTRY(el2_setup)
 
 	/* sctlr_el1 */
 	mov	x0, #0x0800			// Set/clear RES{1,0} bits
-	movk	x0, #0x30d0, lsl #16
+CPU_BE(	movk	x0, #0x33d0, lsl #16	)	// Set EE and E0E on BE systems
+CPU_LE(	movk	x0, #0x30d0, lsl #16	)	// Clear EE and E0E on LE systems
 	msr	sctlr_el1, x0
 
 	/* Coprocessor traps. */
 	mov	x0, #0x33ff
 	msr	cptr_el2, x0			// Disable copro. traps to EL2
 
-#ifdef CONFIG_COMPAT
+#ifdef CONFIG_AARCH32_EL0
 	msr	hstr_el2, xzr			// Disable CP15 traps to EL2
 #endif
 
@@ -204,8 +324,23 @@ ENTRY(el2_setup)
 		      PSR_MODE_EL1h)
 	msr	spsr_el2, x0
 	msr	elr_el2, lr
+	mov	w20, #BOOT_CPU_MODE_EL2		// This CPU booted in EL2
 	eret
 ENDPROC(el2_setup)
+
+/*
+ * Sets the __boot_cpu_mode flag depending on the CPU boot mode passed
+ * in x20. See arch/arm64/include/asm/virt.h for more info.
+ */
+ENTRY(set_cpu_boot_mode_flag)
+	ldr	x1, =__boot_cpu_mode		// Compute __boot_cpu_mode
+	add	x1, x1, x28
+	cmp	w20, #BOOT_CPU_MODE_EL2
+	b.ne	1f
+	add	x1, x1, #4
+1:	str	w20, [x1]			// This CPU has booted in EL1
+	ret
+ENDPROC(set_cpu_boot_mode_flag)
 
 /*
  * We need to find out the CPU boot mode long after boot, so we need to
@@ -235,8 +370,9 @@ ENTRY(__boot_cpu_mode)
 	 * cores are held until we're ready for them to initialise.
 	 */
 ENTRY(secondary_holding_pen)
-	bl	__calc_phys_offset		// x24=phys offset
-	bl	el2_setup			// Drop to EL1
+	bl	el2_setup			// Drop to EL1, w20=cpu_boot_mode
+	bl	__calc_phys_offset		// x24=PHYS_OFFSET, x28=PHYS_OFFSET-PAGE_OFFSET
+	bl	set_cpu_boot_mode_flag
 	mrs	x0, mpidr_el1
 	ldr     x1, =MPIDR_HWID_BITMASK
 	and	x0, x0, x1
@@ -251,6 +387,16 @@ pen:	ldr	x4, [x3]
 	b	pen
 ENDPROC(secondary_holding_pen)
 	.popsection
+
+	/*
+	 * Secondary entry point that jumps straight into the kernel. Only to
+	 * be used where CPUs are brought online dynamically by the kernel.
+	 */
+ENTRY(secondary_entry)
+	bl	__calc_phys_offset		// x2=phys offset
+	bl	el2_setup			// Drop to EL1
+	b	secondary_startup
+ENDPROC(secondary_entry)
 
 ENTRY(secondary_startup)
 	/*
@@ -376,7 +522,7 @@ ENDPROC(__calc_phys_offset)
  *   - identity mapping to enable the MMU (low address, TTBR0)
  *   - first few MB of the kernel linear mapping to jump to once the MMU has
  *     been enabled, including the FDT blob (TTBR1)
- *   - UART mapping if CONFIG_EARLY_PRINTK is enabled (TTBR1)
+ *   - pgd entry for fixed mappings 
  */
 __create_page_tables:
 	pgtbl	x25, x26, x24			// idmap_pg_dir and swapper_pg_dir addresses
@@ -415,7 +561,7 @@ __create_page_tables:
 
 	/*
 	 * Map the FDT blob (maximum 2MB; must be within 512MB of
-	 * PHYS_OFFSET).
+	 * PHYS_OFFSET) or UEFI parameters
 	 */
 	mov	x3, x21				// FDT phys address
 	and	x3, x3, #~((1 << 21) - 1)	// 2MB aligned
@@ -429,15 +575,12 @@ __create_page_tables:
 	sub	x6, x6, #1			// inclusive range
 	create_block_map x0, x7, x3, x5, x6
 1:
-#ifdef CONFIG_EARLY_PRINTK
 	/*
-	 * Create the pgd entry for the UART mapping. The full mapping is done
-	 * later based earlyprintk kernel parameter.
+	 * Create the pgd entry for the fixed mappings. 
 	 */
-	ldr	x5, =EARLYCON_IOBASE		// UART virtual address
+	ldr	x5, =FIXADDR_TOP		// Fixed mapping virtual address
 	add	x0, x26, #2 * PAGE_SIZE		// section table address
 	create_pgd_entry x26, x0, x5, x6, x7
-#endif
 	ret
 ENDPROC(__create_page_tables)
 	.ltorg

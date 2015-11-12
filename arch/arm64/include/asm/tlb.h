@@ -90,6 +90,14 @@ static inline void __tlb_alloc_page(struct mmu_gather *tlb)
 
 static inline void tlb_flush_mmu(struct mmu_gather *tlb)
 {
+	/*
+	 * Before freeing pages, check to see whether or not
+	 * __get_user_pages_fast is still walking pages in the mm.
+	 * If this is the case, wait until gup has finished.
+	 */
+	while (atomic_read(&tlb->mm->context.gup_readers) != 0)
+		cpu_relax();
+
 	tlb_flush(tlb);
 	free_pages_and_swap_cache(tlb->pages, tlb->nr);
 	tlb->nr = 0;

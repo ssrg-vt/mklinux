@@ -41,17 +41,35 @@
 static inline void arch_spin_lock(arch_spinlock_t *lock)
 {
 	unsigned int tmp;
+	unsigned int midr;
 
-	asm volatile(
-	"	sevl\n"
-	"1:	wfe\n"
-	"2:	ldaxr	%w0, %1\n"
-	"	cbnz	%w0, 1b\n"
-	"	stxr	%w0, %w2, %1\n"
-	"	cbnz	%w0, 2b\n"
-	: "=&r" (tmp), "+Q" (lock->lock)
-	: "r" (1)
-	: "cc", "memory");
+	asm("mrs %0, midr_el1" : "=r" (midr));
+
+	/*
+	 * If not B0 rev, then do not use wfe
+	 */
+	if ((midr & 0x3) < 0x1)
+		asm volatile(
+		"	sevl\n"
+		"1:	/*wfe*/\n"
+		"2:	ldaxr	%w0, %1\n"
+		"	cbnz	%w0, 1b\n"
+		"	stxr	%w0, %w2, %1\n"
+		"	cbnz	%w0, 2b\n"
+		: "=&r" (tmp), "+Q" (lock->lock)
+		: "r" (1)
+		: "cc", "memory");
+	else
+		asm volatile(
+		"	sevl\n"
+		"1:	wfe\n"
+		"2:	ldaxr	%w0, %1\n"
+		"	cbnz	%w0, 1b\n"
+		"	stxr	%w0, %w2, %1\n"
+		"	cbnz	%w0, 2b\n"
+		: "=&r" (tmp), "+Q" (lock->lock)
+		: "r" (1)
+		: "cc", "memory");
 }
 
 static inline int arch_spin_trylock(arch_spinlock_t *lock)
@@ -91,17 +109,35 @@ static inline void arch_spin_unlock(arch_spinlock_t *lock)
 static inline void arch_write_lock(arch_rwlock_t *rw)
 {
 	unsigned int tmp;
+	unsigned int midr;
 
-	asm volatile(
-	"	sevl\n"
-	"1:	wfe\n"
-	"2:	ldaxr	%w0, %1\n"
-	"	cbnz	%w0, 1b\n"
-	"	stxr	%w0, %w2, %1\n"
-	"	cbnz	%w0, 2b\n"
-	: "=&r" (tmp), "+Q" (rw->lock)
-	: "r" (0x80000000)
-	: "cc", "memory");
+	asm("mrs %0, midr_el1" : "=r" (midr));
+
+	/*
+	 * If not B0 rev, then do not use wfe
+	 */
+	if ((midr & 0x3) < 0x1)
+		asm volatile(
+		"	sevl\n"
+		"1:	/*wfe*/\n"
+		"2:	ldaxr	%w0, %1\n"
+		"	cbnz	%w0, 1b\n"
+		"	stxr	%w0, %w2, %1\n"
+		"	cbnz	%w0, 2b\n"
+		: "=&r" (tmp), "+Q" (rw->lock)
+		: "r" (0x80000000)
+		: "cc", "memory");
+	else
+		asm volatile(
+		"	sevl\n"
+		"1:	wfe\n"
+		"2:	ldaxr	%w0, %1\n"
+		"	cbnz	%w0, 1b\n"
+		"	stxr	%w0, %w2, %1\n"
+		"	cbnz	%w0, 2b\n"
+		: "=&r" (tmp), "+Q" (rw->lock)
+		: "r" (0x80000000)
+		: "cc", "memory");
 }
 
 static inline int arch_write_trylock(arch_rwlock_t *rw)
@@ -145,18 +181,37 @@ static inline void arch_write_unlock(arch_rwlock_t *rw)
 static inline void arch_read_lock(arch_rwlock_t *rw)
 {
 	unsigned int tmp, tmp2;
+	unsigned int midr;
 
-	asm volatile(
-	"	sevl\n"
-	"1:	wfe\n"
-	"2:	ldaxr	%w0, %2\n"
-	"	add	%w0, %w0, #1\n"
-	"	tbnz	%w0, #31, 1b\n"
-	"	stxr	%w1, %w0, %2\n"
-	"	cbnz	%w1, 2b\n"
-	: "=&r" (tmp), "=&r" (tmp2), "+Q" (rw->lock)
-	:
-	: "cc", "memory");
+	asm("mrs %0, midr_el1" : "=r" (midr));
+
+	/*
+	 * If not B0 rev, then do not use wfe
+	 */
+	if ((midr & 0x3) < 0x1)
+		asm volatile(
+		"	sevl\n"
+		"1:	/*wfe*/\n"
+		"2:	ldaxr	%w0, %2\n"
+		"	add	%w0, %w0, #1\n"
+		"	tbnz	%w0, #31, 1b\n"
+		"	stxr	%w1, %w0, %2\n"
+		"	cbnz	%w1, 2b\n"
+		: "=&r" (tmp), "=&r" (tmp2), "+Q" (rw->lock)
+		:
+		: "cc", "memory");
+	else
+		asm volatile(
+		"	sevl\n"
+		"1:	wfe\n"
+		"2:	ldaxr	%w0, %2\n"
+		"	add	%w0, %w0, #1\n"
+		"	tbnz	%w0, #31, 1b\n"
+		"	stxr	%w1, %w0, %2\n"
+		"	cbnz	%w1, 2b\n"
+		: "=&r" (tmp), "=&r" (tmp2), "+Q" (rw->lock)
+		:
+		: "cc", "memory");
 }
 
 static inline void arch_read_unlock(arch_rwlock_t *rw)

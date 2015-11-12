@@ -180,6 +180,12 @@ ENDPROC(cpu_pj4b_do_idle)
  *	- cache type register is implemented
  */
 __v7_ca5mp_setup:
+	mov	r10, #(1 << 0)			@ TLB ops broadcasting
+#ifdef CONFIG_ARCH_MSLIM
+	orr	r10, r10, #(1<< 11)		@ DWBST
+	orr	r10, r10, #(1<< 12)		@ RADIS
+#endif
+	b	1f
 __v7_ca9mp_setup:
 __v7_cr7mp_setup:
 	mov	r10, #(1 << 0)			@ Cache/TLB ops broadcasting

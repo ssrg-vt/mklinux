@@ -36,7 +36,7 @@ obj-$(CONFIG_FIQ)		+= fiq.o fiqasm.o
 obj-$(CONFIG_MODULES)		+= armksyms.o module.o
 obj-$(CONFIG_ARTHUR)		+= arthur.o
 obj-$(CONFIG_ISA_DMA)		+= dma-isa.o
-obj-$(CONFIG_PCI)		+= bios32.o isa.o
+obj-$(CONFIG_PCI)		+= bios32.o isa.o pci.o
 obj-$(CONFIG_ARM_CPU_SUSPEND)	+= sleep.o suspend.o
 obj-$(CONFIG_SMP)		+= smp.o
 ifdef CONFIG_MMU
@@ -91,6 +91,8 @@ obj-$(CONFIG_DEBUG_LL)	+= debug.o
 obj-$(CONFIG_EARLY_PRINTK)	+= early_printk.o
 
 obj-$(CONFIG_ARM_VIRT_EXT)	+= hyp-stub.o
+obj-$(CONFIG_EFI)		+= efi.o efi_phys.o
+obj-$(CONFIG_MSI_BITMAP)	+= msi_bitmap.o
 ifeq ($(CONFIG_ARM_PSCI),y)
 obj-y				+= psci.o
 obj-$(CONFIG_SMP)		+= psci_smp.o

@@ -16,31 +16,59 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/of.h>
 #include <linux/smp.h>
 
 #include <asm/cacheflush.h>
+#include <asm/cputype.h>
+#include <asm/smp_plat.h>
+#include <asm/acpi.h>
+#include <asm/cpu_ops.h>
+
+extern void secondary_holding_pen(void);
+volatile unsigned long secondary_holding_pen_release = INVALID_HWID;
 
 static phys_addr_t cpu_release_addr[NR_CPUS];
+static DEFINE_RAW_SPINLOCK(boot_lock);
 
-static int __init smp_spin_table_init_cpu(struct device_node *dn, int cpu)
+/*
+ * Write secondary_holding_pen_release in a way that is guaranteed to be
+ * visible to all observers, irrespective of whether they're taking part
+ * in coherency or not.  This is necessary for the hotplug code to work
+ * reliably.
+ */
+static void write_pen_release(u64 val)
+{
+	void *start = (void *)&secondary_holding_pen_release;
+	unsigned long size = sizeof(secondary_holding_pen_release);
+
+	secondary_holding_pen_release = val;
+	__flush_dcache_area(start, size);
+}
+
+
+static int smp_spin_table_cpu_init(struct device_node *dn, unsigned int cpu)
 {
 	/*
 	 * Determine the address from which the CPU is polling.
 	 */
 	if (of_property_read_u64(dn, "cpu-release-addr",
-				 &cpu_release_addr[cpu])) {
-		pr_err("CPU %d: missing or invalid cpu-release-addr property\n",
-		       cpu);
+				 &cpu_release_addr[cpu])) {				 
+		/* try ACPI way */
+		if (acpi_get_cpu_release_address(cpu, &cpu_release_addr[cpu])) {
+			pr_err("CPU %d: missing or invalid cpu-release-addr property\n",
+				cpu);
 
-		return -1;
+			return -1;
+		}
 	}
 
 	return 0;
 }
 
-static int __init smp_spin_table_prepare_cpu(int cpu)
+static int smp_spin_table_cpu_prepare(unsigned int cpu)
 {
 	void **release_addr;
 
@@ -48,7 +76,7 @@ static int __init smp_spin_table_prepare_cpu(int cpu)
 		return -ENODEV;
 
 	release_addr = __va(cpu_release_addr[cpu]);
-	release_addr[0] = (void *)__pa(secondary_holding_pen);
+	release_addr[0] = (void *) cpu_to_le64(__pa(secondary_holding_pen));
 	__flush_dcache_area(release_addr, sizeof(release_addr[0]));
 
 	/*
@@ -59,8 +87,85 @@ static int __init smp_spin_table_prepare_cpu(int cpu)
 	return 0;
 }
 
-const struct smp_enable_ops smp_spin_table_ops __initconst = {
+static int smp_spin_table_cpu_boot(unsigned int cpu)
+{
+	unsigned long timeout;
+
+	/*
+	 * Set synchronisation state between this boot processor
+	 * and the secondary one
+	 */
+	raw_spin_lock(&boot_lock);
+
+	/*
+	 * Update the pen release flag.
+	 */
+	write_pen_release(cpu_logical_map(cpu));
+	/*
+	 * Send an event, causing the secondaries to read pen_release.
+	 */
+	sev();
+
+	timeout = jiffies + (1 * HZ);
+	while (time_before(jiffies, timeout)) {
+		if (secondary_holding_pen_release == INVALID_HWID)
+			break;
+		udelay(10);
+	}
+
+	/*
+	 * Now the secondary core is starting up let it run its
+	 * calibrations, then wait for it to finish
+	 */
+	raw_spin_unlock(&boot_lock);
+
+	return secondary_holding_pen_release != INVALID_HWID ? -ENOSYS : 0;
+}
+
+void smp_spin_table_cpu_postboot(void)
+{
+	/*
+	 * Let the primary processor know we're out of the pen.
+	 */
+	write_pen_release(INVALID_HWID);
+
+	/*
+	 * Synchronise with the boot thread.
+	 */
+	raw_spin_lock(&boot_lock);
+	raw_spin_unlock(&boot_lock);
+}
+
+#ifdef CONFIG_HOTPLUG_CPU
+static int smp_spin_table_cpu_disable(unsigned int cpu)
+{
+	return arch_disable_cpu(cpu);
+}
+
+static void smp_spin_table_cpu_die(unsigned int cpu)
+{
+	arch_die_cpu(cpu);
+}
+#endif
+
+#ifdef CONFIG_ARM64_CPU_SUSPEND
+static int smp_spin_table_cpu_suspend(unsigned long address)
+{
+	return 0;
+}
+#endif
+
+const struct cpu_operations smp_spin_table_ops = {
 	.name		= "spin-table",
-	.init_cpu 	= smp_spin_table_init_cpu,
-	.prepare_cpu	= smp_spin_table_prepare_cpu,
+	.cpu_init	= smp_spin_table_cpu_init,
+	.cpu_prepare	= smp_spin_table_cpu_prepare,
+	.cpu_boot	= smp_spin_table_cpu_boot,
+	.cpu_postboot	= smp_spin_table_cpu_postboot,
+#ifdef CONFIG_HOTPLUG_CPU
+	.cpu_disable	= smp_spin_table_cpu_disable,
+	.cpu_die	= smp_spin_table_cpu_die,
+#endif
+#ifdef CONFIG_ARM64_CPU_SUSPEND
+	.cpu_suspend	= smp_spin_table_cpu_suspend,
+#endif
 };

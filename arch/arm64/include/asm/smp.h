@@ -39,7 +39,7 @@ extern void show_ipi_list(struct seq_file *p, int prec);
 extern void handle_IPI(int ipinr, struct pt_regs *regs);
 
 /*
- * Setup the set of possible CPUs (via set_cpu_possible)
+ * Platform specific SMP operations
  */
 extern void smp_init_cpus(void);
 
@@ -60,21 +60,23 @@ struct secondary_data {
 	void *stack;
 };
 extern struct secondary_data secondary_data;
-extern void secondary_holding_pen(void);
-extern volatile unsigned long secondary_holding_pen_release;
+extern void secondary_entry(void);
 
+extern void arch_send_wakeup_ipi_mask(const struct cpumask *mask);
 extern void arch_send_call_function_single_ipi(int cpu);
 extern void arch_send_call_function_ipi_mask(const struct cpumask *mask);
 
 struct device_node;
+extern int __cpu_disable(void);
 
-struct smp_enable_ops {
-	const char	*name;
-	int		(*init_cpu)(struct device_node *, int);
-	int		(*prepare_cpu)(int);
-};
+extern void __cpu_die(unsigned int cpu);
+extern void cpu_die(void);
 
-extern const struct smp_enable_ops smp_spin_table_ops;
-extern const struct smp_enable_ops smp_psci_ops;
+#ifdef CONFIG_HOTPLUG_CPU
+extern int arch_kill_cpu(unsigned int cpu);
+extern void arch_die_cpu(unsigned int cpu);
+extern int arch_disable_cpu(unsigned int cpu);
+#endif
+
 
 #endif /* ifndef __ASM_SMP_H */

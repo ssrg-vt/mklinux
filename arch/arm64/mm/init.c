@@ -35,6 +35,7 @@
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/sizes.h>
+#include <asm/compat.h>
 #include <asm/tlb.h>
 
 #include "mm.h"
@@ -171,7 +172,7 @@ void __init arm64_memblock_init(void)
 			break;
 		memblock_reserve(base, size);
 	}
-
+	
 	memblock_allow_resize();
 	memblock_dump_all();
 }

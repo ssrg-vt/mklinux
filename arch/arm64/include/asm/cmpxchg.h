@@ -18,9 +18,12 @@
 #ifndef __ASM_CMPXCHG_H
 #define __ASM_CMPXCHG_H
 
+#include <linux/mmdebug.h>
 #include <linux/bug.h>
 
 #include <asm/barrier.h>
+
+#define __HAVE_ARCH_CMPXCHG 1
 
 static inline unsigned long __xchg(unsigned long x, volatile void *ptr, int size)
 {
@@ -169,6 +172,96 @@ static inline unsigned long __cmpxchg_mb(volatile void *ptr, unsigned long old,
 				       (unsigned long)(o),		\
 				       (unsigned long)(n),		\
 				       sizeof(*(ptr))))
+
+
+
+static inline int __cmpxchg_double(volatile unsigned long *ptr1,
+				   volatile unsigned long *ptr2,
+				   unsigned long old1,
+				   unsigned long old2,
+				   unsigned long new1, unsigned long new2)
+{
+	int res = 0;		/* Return value: 0 if miscompare, else 1. */
+	unsigned long status = 0;	/* STXP status value. */
+	unsigned long act1 = 0, act2 = 0;	/* Actual old values. */
+
+	BUILD_BUG_ON((sizeof(unsigned long) != 4) &&
+		     (sizeof(unsigned long) != 8));
+	VM_BUG_ON((unsigned long)ptr1 % (2 * sizeof(unsigned long)));
+	VM_BUG_ON((unsigned long)(ptr1 + 1) != (unsigned long)ptr2);
+
+	if (sizeof(long) == 4) {
+		asm volatile ("    mov    %[res], #0\n"
+			      "1:\n"
+			      "    ldxp    %w[act1], %w[act2], %[ptr1]\n"
+			      "    cmp    %[act1], %[old1]\n"
+			      "    ccmp    %[act2], %[old2], 0x1, EQ\n"
+			      "    b.ne    2f\n"
+			      "    stxp    %w[status], %w[new1], %w[new2], %[ptr1]\n"
+			      "       cbnz    %[status], 1b\n"
+			      "       mov     %[res], #1\n"
+			      "2:\n":[res] "=&r"(res),
+			      [status] "=&r"(status),
+			      [act1] "=&r"(act1),[act2] "=&r"(act2)
+			      :[old1] "r"(old1),
+			      [old2] "r"(old2),
+			      [new1] "r"(new1),[new2] "r"(new2),[ptr1] "Q"(ptr1)
+			      :"cc", "memory");
+	} else {
+		asm volatile ("    mov    %[res], #0\n"
+			      "1:\n"
+			      "    ldxp    %[act1], %[act2], %[ptr1]\n"
+			      "    cmp    %[act1], %[old1]\n"
+			      "    ccmp    %[act2], %[old2], 0x1, EQ\n"
+			      "    b.ne    2f\n"
+			      "    stxp    %w[status], %[new1], %[new2], %[ptr1]\n"
+			      "       cbnz    %[status], 1b\n"
+			      "       mov     %[res], #1\n"
+			      "2:\n":[res] "=&r"(res),
+			      [status] "=&r"(status),
+			      [act1] "=&r"(act1),[act2] "=&r"(act2)
+			      :[old1] "r"(old1),
+			      [old2] "r"(old2),
+			      [new1] "r"(new1),
+			      [new2] "r"(new2),[ptr1] "Q"(*ptr1)
+			      :"cc", "memory");
+	}
+
+	return res;
+}
+
+static inline int __cmpxchg_double_mb(volatile unsigned long *ptr1,
+				      volatile unsigned long *ptr2,
+				      unsigned long old1,
+				      unsigned long old2,
+				      unsigned long new1, unsigned long new2)
+{
+	int ret;
+	smp_mb();
+	ret = __cmpxchg_double(ptr1, ptr2, old1, old2, new1, new2);
+	smp_mb();
+	return ret;
+}
+
+#define cmpxchg_double(p1, p2, o1, o2, n1, n2)                \
+({                                    \
+    int __ret;                            \
+    unsigned long *__p1 = (unsigned long *)(p1);            \
+    unsigned long *__p2 = (unsigned long *)(p2);            \
+        unsigned long __o1 = (unsigned long)(o1);                       \
+        unsigned long __o2 = (unsigned long)(o2);                       \
+        unsigned long __n1 = (unsigned long)(n1);                       \
+        unsigned long __n2 = (unsigned long)(n2);                       \
+        BUILD_BUG_ON(sizeof(unsigned long) != sizeof(unsigned long *)); \
+        BUILD_BUG_ON(sizeof(o1) != sizeof(unsigned long));              \
+        BUILD_BUG_ON(sizeof(o2) != sizeof(unsigned long));              \
+        BUILD_BUG_ON(sizeof(n1) != sizeof(unsigned long));              \
+        BUILD_BUG_ON(sizeof(n2) != sizeof(unsigned long));              \
+        __ret = __cmpxchg_double_mb(__p1, __p2, __o1, __o2, __n1, __n2);\
+    __ret;                                \
+})
+
+#define system_has_cmpxchg_double()     1
 
 #define cmpxchg64(ptr,o,n)		cmpxchg((ptr),(o),(n))
 #define cmpxchg64_local(ptr,o,n)	cmpxchg_local((ptr),(o),(n))

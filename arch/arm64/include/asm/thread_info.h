@@ -51,6 +51,7 @@ struct thread_info {
 	struct restart_block	restart_block;
 	int			preempt_count;	/* 0 => preemptable, <0 => bug */
 	int			cpu;		/* cpu */
+	__u32			status;		/* thread synchronous flags - ACPI */
 };
 
 #define INIT_THREAD_INFO(tsk)						\
@@ -112,8 +113,9 @@ static inline struct thread_info *current_thread_info(void)
 #define TIF_FREEZE		19
 #define TIF_RESTORE_SIGMASK	20
 #define TIF_SINGLESTEP		21
-#define TIF_32BIT		22	/* 32bit process */
+#define TIF_32BIT		22	/* AARCH32 process */
 #define TIF_SWITCH_MM		23	/* deferred switch_mm */
+#define TIF_32BIT_AARCH64	24	/* 32 bit process on AArch64(ILP32) */
 
 #define _TIF_SIGPENDING		(1 << TIF_SIGPENDING)
 #define _TIF_NEED_RESCHED	(1 << TIF_NEED_RESCHED)
@@ -122,6 +124,18 @@ static inline struct thread_info *current_thread_info(void)
 
 #define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_SIGPENDING | \
 				 _TIF_NOTIFY_RESUME)
+
+/*
+ * Thread-synchronous status (for ACPI)
+ *
+ * This is different from the flags in that nobody else
+ * ever touches our thread-synchronous status, so we don't
+ * have to worry about atomic accesses.
+ */
+#define TS_COMPAT               0x0002  /* 32bit syscall active (64BIT)*/
+#define TS_POLLING              0x0004  /* idle task polling need_resched,
+                                           skip sending interrupt */
+#define TS_RESTORE_SIGMASK      0x0008  /* restore signal mask in do_signal() */
 
 #endif /* __KERNEL__ */
 #endif /* __ASM_THREAD_INFO_H */

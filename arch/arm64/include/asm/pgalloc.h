@@ -81,6 +81,14 @@ static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 static inline void pte_free(struct mm_struct *mm, pgtable_t pte)
 {
 	pgtable_page_dtor(pte);
+	/*
+	 * Before freeing page, check to see whether or not
+	 * __get_user_pages_fast is still walking pages in the mm.
+	 * If this is the case, wait until gup has finished.
+	 */
+	while (atomic_read(&mm->context.gup_readers) != 0)
+		cpu_relax();
+
 	__free_page(pte);
 }
 

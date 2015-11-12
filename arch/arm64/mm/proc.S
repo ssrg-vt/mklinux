@@ -80,6 +80,70 @@ ENTRY(cpu_do_idle)
 	ret
 ENDPROC(cpu_do_idle)
 
+#ifdef CONFIG_ARM64_CPU_SUSPEND
+/**
+ * cpu_do_suspend - save CPU registers context
+ * x0: virtual address of context pointer
+ */
+ENTRY(cpu_do_suspend)
+        mrs     x1, tpidr_el0
+        str     x1, [x0, #CPU_CTX_TPIDR_EL0]
+        mrs     x2, tpidrro_el0
+        str     x2, [x0, #CPU_CTX_TPIDRRO_EL0]
+        mrs     x3, contextidr_el1
+        str     x3, [x0, #CPU_CTX_CTXIDR_EL1]
+        mrs     x4, mair_el1
+        str     x4, [x0, #CPU_CTX_MAIR_EL1]
+        mrs     x5, cpacr_el1
+        str     x5, [x0, #CPU_CTX_CPACR_EL1]
+        mrs     x6, ttbr1_el1
+        str     x6, [x0, #CPU_CTX_TTBR1_EL1]
+        mrs     x7, tcr_el1
+        str     x7, [x0, #CPU_CTX_TCR_EL1]
+        mrs     x8, vbar_el1
+        str     x8, [x0, #CPU_CTX_VBAR_EL1]
+        mrs     x9, sctlr_el1
+        str     x9, [x0, #CPU_CTX_SCTLR_EL1]
+        ret
+ENDPROC(cpu_do_suspend)
+
+/**
+ * cpu_do_resume - registers layout should match the corresponding
+ *                 cpu_do_suspend call
+ *
+ * x0: Physical address of context pointer
+ * x1: Should contain the physical address of identity map page tables
+ *     used to turn on the MMU and complete context restore
+ *
+ * Returns:
+ *      sctlr value in x0
+ */
+ENTRY(cpu_do_resume)
+        tlbi    vmalle1is       // make sure tlb entries are invalid
+        ldr     x2, [x0, #CPU_CTX_TPIDR_EL0]
+        msr     tpidr_el0, x2
+        ldr     x3, [x0, #CPU_CTX_TPIDRRO_EL0]
+        msr     tpidrro_el0, x3
+        ldr     x4, [x0, #CPU_CTX_CTXIDR_EL1]
+        msr     contextidr_el1, x4
+        ldr     x5, [x0, #CPU_CTX_MAIR_EL1]
+        msr     mair_el1, x5
+        ldr     x6, [x0, #CPU_CTX_CPACR_EL1]
+        msr     cpacr_el1, x6
+        msr     ttbr0_el1, x1
+        ldr     x7, [x0, #CPU_CTX_TTBR1_EL1]
+        msr     ttbr1_el1, x7
+        ldr     x8, [x0, #CPU_CTX_TCR_EL1]
+        msr     tcr_el1, x8
+        ldr     x9, [x0, #CPU_CTX_VBAR_EL1]
+        msr     vbar_el1, x9
+        ldr     x0, [x0, #CPU_CTX_SCTLR_EL1]
+        isb
+        dsb     sy
+        ret
+ENDPROC(cpu_do_resume)
+#endif
+
 /*
  *	cpu_switch_mm(pgd_phys, tsk)
  *
@@ -153,6 +217,28 @@ ENTRY(__cpu_setup)
 	orr	x10, x10, TCR_TG1_64K
 #endif
 	msr	tcr_el1, x10
+
+	/* APM Specific: This is PSCR optimization specific only to Storm
+	 * Do not change this unless you know for sure.
+         */
+	mrs     x5, midr_el1			// Read MIDR
+        lsr     x5, x5, #24
+        cmp     x5, #0x50			// APM ?
+        b.ne    skip_apm_opt			// Skip for other implementations
+
+#ifdef CONFIG_ARM64_64K_PAGES
+	ldr	x5, =0x121			// 512M & 64K User Space
+	msr	S3_0_c15_c1_0, x5		// potenza only TB0PSCR_EL1
+	ldr	x5, =0x142			// 512M & 64K Kernel Space
+	msr	S3_0_c15_c1_1, x5		// potenza only TB1PSCR_EL1
+#else
+	ldr	x5, =0x4521			// 2M and 4K and 1G User Space
+	msr	S3_0_c15_c1_0, x5		// potenza only TB0PSCR_EL1
+	ldr	x5, =0x142			// 2M and 4K Kernel Space
+	msr	S3_0_c15_c1_1, x5		// potenza only TB1PSCR_EL1
+#endif
+skip_apm_opt:
+
 	ret					// return to head.S
 ENDPROC(__cpu_setup)
 
@@ -162,9 +248,9 @@ ENDPROC(__cpu_setup)
 	 *       CE0      XWHW CZ     ME TEEA S
 	 * .... .IEE .... NEAI TE.I ..AD DEN0 ACAM
 	 * 0011 0... 1101 ..0. ..0. 10.. .... .... < hardware reserved
-	 * .... .100 .... 01.1 11.1 ..01 0001 1101 < software settings
+	 * .... .1.. .... 01.1 11.1 ..01 0001 1101 < software settings
 	 */
 	.type	crval, #object
 crval:
-	.word	0x030802e2			// clear
+	.word	0x000802e2			// clear
 	.word	0x0405d11d			// set

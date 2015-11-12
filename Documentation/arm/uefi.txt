@@ -1,0 +1,39 @@
+The nomenclature EFI and UEFI are used interchangeably in this document.
+
+The implementation depends on receiving pointers to the UEFI memory map
+and System Table in a Flattened Device Tree - so is only available with
+CONFIG_OF.
+
+It (early) parses the FDT for the following parameters:
+- 'efi-system-table':
+  Physical address of the system table. (required)
+- 'efi-runtime-mmap':
+  Physical address of an EFI memory map, containing at least
+  the regions to be preserved. (required)
+- 'efi-runtime-mmap-size':
+  Size in bytes of the provided memory map. (required)
+- 'efi-mmap-desc-size':
+  Size of each descriptor in the memory map. (override default)
+- 'efi-mmap-desc-ver':
+  Memory descriptor format version. (override default)
+
+Since UEFI firmware on ARM systems are required to use a 1:1 memory map
+even on LPAE-capable systems, the above fields are 32-bit regardless.
+
+It also depends on early_ioremap to parse the memory map and preserve
+the regions required for runtime services.
+
+For actually enabling [U]EFI support, enable:
+- CONFIG_EFI=y
+- CONFIG_EFI_VARS=y or m
+
+After the kernel has mapped the required regions into its address space,
+a SetVirtualAddressMap() call is made into UEFI in order to update
+relocations. This call must be performed with all the code in a 1:1
+mapping. This implementation achieves this by temporarily disabling the
+MMU for the duration of this call. This can only be done safely:
+- before secondary CPUs are brought online.
+- after early_initcalls have completed, sinze it uses setup_mm_for_reboot().
+
+For verbose debug messages, specify 'uefi_debug' on the kernel command
+line.

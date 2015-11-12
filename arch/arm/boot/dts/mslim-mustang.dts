@@ -1,0 +1,19 @@
+/*
+ * APM MSLIM Mustang Board
+ *
+ */
+
+/dts-v1/;
+/include/ "mslim-storm.dtsi"
+
+/ {
+	model = "APM X-Gene MSLIM Mustang";
+	compatible = "apm,mslim";
+
+	memory@50000000 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		device_type = "memory";
+		reg = <0x50000000 0x10000000>;
+	};
+};

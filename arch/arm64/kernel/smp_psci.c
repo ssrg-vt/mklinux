@@ -23,31 +23,63 @@
 #include <asm/psci.h>
 #include <asm/smp_plat.h>
 
-static int __init smp_psci_init_cpu(struct device_node *dn, int cpu)
+static int smp_psci_cpu_init(struct device_node *dn, unsigned int cpu)
 {
 	return 0;
 }
 
-static int __init smp_psci_prepare_cpu(int cpu)
+static int smp_psci_cpu_prepare(unsigned int cpu)
 {
-	int err;
-
 	if (!psci_ops.cpu_on) {
 		pr_err("psci: no cpu_on method, not booting CPU%d\n", cpu);
 		return -ENODEV;
 	}
 
-	err = psci_ops.cpu_on(cpu_logical_map(cpu), __pa(secondary_holding_pen));
-	if (err) {
-		pr_err("psci: failed to boot CPU%d (%d)\n", cpu, err);
-		return err;
-	}
-
 	return 0;
 }
 
-const struct smp_enable_ops smp_psci_ops __initconst = {
+static int smp_psci_cpu_boot(unsigned int cpu)
+{
+	int err = psci_ops.cpu_on(cpu_logical_map(cpu), __pa(secondary_entry));
+	if (err)
+		pr_err("psci: failed to boot CPU%d (%d)\n", cpu, err);
+
+	return err;
+}
+
+#ifdef CONFIG_HOTPLUG_CPU
+static int smp_psci_cpu_disable(unsigned int cpu)
+{
+	/* Fail early if we don't have CPU_OFF support */
+	if (!psci_ops.cpu_off)
+		return -EOPNOTSUPP;
+	return 0;
+}
+
+static void smp_psci_cpu_die(unsigned int cpu)
+{
+	int ret;
+	/*
+	 * There are no known implementations of PSCI actually using the
+	 * power state field, pass a sensible default for now.
+	 */
+	struct psci_power_state state = {
+		.type = PSCI_POWER_STATE_TYPE_POWER_DOWN,
+	};
+
+	ret = psci_ops.cpu_off(state);
+
+	pr_crit("psci: unable to power off CPU%u (%d)\n", cpu, ret);
+}
+#endif
+
+const struct smp_operations smp_psci_ops = {
 	.name		= "psci",
-	.init_cpu	= smp_psci_init_cpu,
-	.prepare_cpu	= smp_psci_prepare_cpu,
+	.cpu_init	= smp_psci_cpu_init,
+	.cpu_prepare	= smp_psci_cpu_prepare,
+	.cpu_boot	= smp_psci_cpu_boot,
+#ifdef CONFIG_HOTPLUG_CPU
+	.cpu_disable	= smp_psci_cpu_disable,
+	.cpu_die	= smp_psci_cpu_die,
+#endif
 };

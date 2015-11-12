@@ -30,13 +30,21 @@
 #include <linux/highmem.h>
 #include <linux/perf_event.h>
 
+#include <linux/process_server.h>
+#include <linux/cpu_namespace.h>
+
 #include <asm/exception.h>
 #include <asm/debug-monitors.h>
 #include <asm/system_misc.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
+#include <asm/compat.h>
+
+#include <linux/delay.h>
 
 static const char *fault_name(unsigned int esr);
+
+extern void dump_instr(const char *lvl, struct pt_regs *regs);
 
 /*
  * Dump out the page tables associated with 'addr' in mm 'mm'.
@@ -152,14 +160,56 @@ static void do_bad_area(unsigned long addr, unsigned int esr, struct pt_regs *re
 #define ESR_CM			(1 << 8)
 #define ESR_LNX_EXEC		(1 << 24)
 
+int access_error(unsigned long esr, struct vm_area_struct *vma)
+{
+	unsigned long mask = VM_READ | VM_WRITE | VM_EXEC;
+
+	if (esr & ESR_LNX_EXEC) {
+		mask = VM_EXEC;
+	} else if ((esr & ESR_WRITE) && !(esr & ESR_CM)) {
+		mask = VM_WRITE;
+	}
+
+	return vma->vm_flags & mask ? 0 : 1;
+}
+
+extern long my_pid;
+
 static int __do_page_fault(struct mm_struct *mm, unsigned long addr,
 			   unsigned int mm_flags, unsigned long vm_flags,
-			   struct task_struct *tsk)
+			   struct task_struct *tsk, unsigned int esr,
+				int retrying)
 {
 	struct vm_area_struct *vma;
-	int fault;
+	int fault, ret_reply;
 
 	vma = find_vma(mm, addr);
+
+	
+	/*if(my_pid == tsk->prev_pid)
+	{
+		printk("coming to page fault for thread %ld\n", tsk->pid, tsk->prev_pid);
+	}*/
+
+	//Ajith - Multikernel changes taken from X86
+	ret_reply = 0;
+	// Nothing to do for a thread group that's not distributed.
+	if(tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0)) {
+		ret_reply = process_server_try_handle_mm_fault(tsk,mm,vma,addr,mm_flags, esr);
+
+		if(ret_reply==0)
+		{
+			goto out_distr;
+		}
+
+		if(unlikely(ret_reply & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL |\
+			 VM_FAULT_ACCESS_ERROR| VM_FAULT_ERROR))){
+			goto out_distr;
+		}
+
+		vma = find_vma(mm, addr);
+	}
+
 	fault = VM_FAULT_BADMAP;
 	if (unlikely(!vma))
 		goto out;
@@ -176,18 +226,22 @@ good_area:
 	 * occurred. If we encountered a write or exec fault, we must have
 	 * appropriate permissions, otherwise we allow any permission.
 	 */
+
 	if (!(vma->vm_flags & vm_flags)) {
 		fault = VM_FAULT_BADACCESS;
 		goto out;
 	}
 
-	return handle_mm_fault(mm, vma, addr & PAGE_MASK, mm_flags);
+	return ret_reply | handle_mm_fault(mm, vma, addr & PAGE_MASK, mm_flags);
 
 check_stack:
 	if (vma->vm_flags & VM_GROWSDOWN && !expand_stack(vma, addr))
 		goto good_area;
 out:
 	return fault;
+
+out_distr:
+	return ret_reply;
 }
 
 static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
@@ -195,11 +249,20 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 {
 	struct task_struct *tsk;
 	struct mm_struct *mm;
-	int fault, sig, code;
+	struct vm_area_struct *vma;
+	int fault, sig, code, retrying = 0, lock_aquired=0;
 	unsigned long vm_flags = VM_READ | VM_WRITE | VM_EXEC;
 	unsigned int mm_flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
 
-	tsk = current;
+	//tsk = current;
+	//Ajith - Multikernel changes taken from X86
+	tsk = (current->surrogate == -1) ? current : 
+		pid_task(find_get_pid(current->surrogate), PIDTYPE_PID);
+
+	if(tsk->tgroup_distributed==1 && tsk->main==1){
+		printk("ERROR: main is having a page fault\n");
+	}
+
 	mm  = tsk->mm;
 
 	/* Enable interrupts if they were enabled in the parent context. */
@@ -223,6 +286,18 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 		mm_flags |= FAULT_FLAG_WRITE;
 	}
 
+	//Ajith - Mutikernel code taken from x86
+#if NOT_REPLICATED_VMA_MANAGEMENT
+	//Multikernel
+	if(tsk->tgroup_distributed==1 && tsk->main==0){
+
+		down_read(&mm->distribute_sem);
+		lock_aquired= 1;
+	}
+	else
+		lock_aquired= 0;
+#endif
+
 	/*
 	 * As per x86, we may deadlock here. However, since the kernel only
 	 * validly references user space from well defined areas of the code,
@@ -245,7 +320,12 @@ retry:
 #endif
 	}
 
-	fault = __do_page_fault(mm, addr, mm_flags, vm_flags, tsk);
+	fault = __do_page_fault(mm, addr, mm_flags, vm_flags, tsk, esr, retrying);
+
+	//Ajith - Return if page is remotely handled
+	if(fault == 0)
+		goto out;
+
 
 	/*
 	 * If we need to retry but a fatal signal is pending, handle the
@@ -253,7 +333,7 @@ retry:
 	 * would already be released in __lock_page_or_retry in mm/filemap.c.
 	 */
 	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
-		return 0;
+		goto out_distr;
 
 	/*
 	 * Major/minor page fault accounting is only done on the initial
@@ -278,9 +358,25 @@ retry:
 			 * starvation.
 			 */
 			mm_flags &= ~FAULT_FLAG_ALLOW_RETRY;
+
+			if(tsk->tgroup_distributed==1)
+				retrying = 1;
+
 			goto retry;
 		}
 	}
+
+
+        if (likely(!(fault & (VM_FAULT_ERROR | VM_FAULT_BADMAP |
+                              VM_FAULT_BADACCESS | VM_FAULT_REPLICATION_PROTOCOL |
+                                VM_FAULT_VMA | VM_FAULT_ACCESS_ERROR)))) {
+
+                vma = find_vma(mm, addr);
+                if((tsk->tgroup_distributed == 1 && tsk->main==0) && (fault & VM_CONTINUE_WITH_CHECK))
+                {
+                        fault = process_server_update_page(tsk,mm,vma,addr,mm_flags);
+                }
+        }
 
 	up_read(&mm->mmap_sem);
 
@@ -288,8 +384,9 @@ retry:
 	 * Handle the "normal" case first - VM_FAULT_MAJOR / VM_FAULT_MINOR
 	 */
 	if (likely(!(fault & (VM_FAULT_ERROR | VM_FAULT_BADMAP |
-			      VM_FAULT_BADACCESS))))
-		return 0;
+			      VM_FAULT_BADACCESS | VM_FAULT_REPLICATION_PROTOCOL |
+				VM_FAULT_VMA | VM_FAULT_ACCESS_ERROR))))
+		goto out_distr;
 
 	/*
 	 * If we are in kernel mode at this point, we have no context to
@@ -305,7 +402,7 @@ retry:
 		 * oom-killed).
 		 */
 		pagefault_out_of_memory();
-		return 0;
+		goto out_distr;
 	}
 
 	if (fault & VM_FAULT_SIGBUS) {
@@ -326,10 +423,28 @@ retry:
 	}
 
 	__do_user_fault(tsk, addr, esr, sig, code, regs);
-	return 0;
+	goto out_distr;
 
 no_context:
 	__do_kernel_fault(mm, addr, esr, regs);
+	goto out_distr;
+
+out:
+	up_read(&mm->mmap_sem);
+
+out_distr:
+#if NOT_REPLICATED_VMA_MANAGEMENT
+	if((tsk->tgroup_distributed == 1 && tsk->main==0) && lock_aquired){
+		up_read(&mm->distribute_sem);
+	}
+#endif
+
+    /*if(my_pid == tsk->prev_pid)
+    {
+	    printk("In %s:%d\n",__func__, __LINE__);
+            dump_instr(KERN_INFO, task_pt_regs(tsk));
+    }*/
+
 	return 0;
 }
 
@@ -354,11 +469,11 @@ static int __kprobes do_translation_fault(unsigned long addr,
 					  unsigned int esr,
 					  struct pt_regs *regs)
 {
-	if (addr < TASK_SIZE)
+	//if (addr < TASK_SIZE)
 		return do_page_fault(addr, esr, regs);
 
-	do_bad_area(addr, esr, regs);
-	return 0;
+	//do_bad_area(addr, esr, regs);
+	//return 0;
 }
 
 /*
@@ -469,6 +584,18 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
 	arm64_notify_die("", regs, &info, esr);
 }
 
+void hook_fault_code(int nr,
+				  int (*fn)(unsigned long, unsigned int, struct pt_regs *),
+				  int sig, int code, const char *name)
+{
+	BUG_ON(nr < 0 || nr >= ARRAY_SIZE(fault_info));
+
+	fault_info[nr].fn	= fn;
+	fault_info[nr].sig	= sig;
+	fault_info[nr].code	= code;
+	fault_info[nr].name	= name;
+}
+
 /*
  * Handle stack alignment exceptions.
  */
@@ -477,6 +604,9 @@ asmlinkage void __exception do_sp_pc_abort(unsigned long addr,
 					   struct pt_regs *regs)
 {
 	struct siginfo info;
+
+	printk(" In %s:%d\n", __func__, __LINE__);
+	printk("SP: %lx PC: %lx\n", regs->user_regs.sp, regs->user_regs.pc);
 
 	info.si_signo = SIGBUS;
 	info.si_errno = 0;

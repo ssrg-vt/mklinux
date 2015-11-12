@@ -26,7 +26,12 @@
 #include <asm/kvm_asm.h>
 #include <asm/kvm_mmio.h>
 
-#define KVM_MAX_VCPUS 4
+#if defined(CONFIG_KVM_ARM_MAX_VCPUS)
+#define KVM_MAX_VCPUS CONFIG_KVM_ARM_MAX_VCPUS
+#else
+#define KVM_MAX_VCPUS 0
+#endif
+
 #define KVM_USER_MEM_SLOTS 32
 #define KVM_PRIVATE_MEM_SLOTS 4
 #define KVM_COALESCED_MMIO_PAGE_OFFSET 1
@@ -79,6 +84,7 @@ struct kvm_mmu_memory_cache {
 struct kvm_vcpu_fault_info {
 	u32 esr_el2;		/* Hyp Syndrom Register */
 	u64 far_el2;		/* Hyp Fault Address Register */
+	u64 par_el2;		/* Result of FAR_EL2 translation */
 	u64 hpfar_el2;		/* Hyp IPA Fault Address Register */
 };
 

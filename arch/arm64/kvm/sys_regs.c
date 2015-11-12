@@ -243,6 +243,13 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	{ Op0(0b11), Op1(0b000), CRn(0b1110), CRm(0b0001), Op2(0b000),
 	  NULL, reset_val, CNTKCTL_EL1, 0},
 
+	/* APM specific */
+	{ Op0(0b11), Op1(0b000), CRn(0b1111), CRm(0b0001), Op2(0b000),
+	  pm_fake },
+	{ Op0(0b11), Op1(0b000), CRn(0b1111), CRm(0b0001), Op2(0b001),
+	  pm_fake },
+
+
 	/* CSSELR_EL1 */
 	{ Op0(0b11), Op1(0b010), CRn(0b0000), CRm(0b0000), Op2(0b000),
 	  NULL, reset_unknown, CSSELR_EL1 },
@@ -303,6 +310,7 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	/* FPEXC32_EL2 */
 	{ Op0(0b11), Op1(0b100), CRn(0b0101), CRm(0b0011), Op2(0b000),
 	  NULL, reset_val, FPEXC32_EL2, 0x70 },
+
 };
 
 /* Trapped cp15 registers */

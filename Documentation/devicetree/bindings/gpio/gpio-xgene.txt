@@ -1,0 +1,21 @@
+APM X-Gene SoC GPIO controller bindings
+
+Required properties:
+- compatible: "apm,xgene-gpio" for X-Gene GPIO controller
+- reg: Physical base address and length of the controller's registers
+- ngpio: Specify the number of GPIOs (default is 32)
+- #gpio-cells: Should be two.
+	- first cell is the pin number
+	- second cell is used to specify optional parameters (unused)
+- gpio-controller: Marks the device node as a GPIO controller
+- clocks: Reference to the clock entry
+
+Example:
+	gpio@1c024000 {
+		compatible = "apm,xgene-gpio";
+		reg = <0x0 0x1c024000 0x0 0x1000>;
+		#gpio-cells = <2>;
+		gpio-controller;
+		#clock-cells = <1>;
+		clocks = <&gpioclk 0>;
+	};

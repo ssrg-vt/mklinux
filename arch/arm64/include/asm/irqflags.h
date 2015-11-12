@@ -87,5 +87,15 @@ static inline int arch_irqs_disabled_flags(unsigned long flags)
 	return flags & PSR_I_BIT;
 }
 
+static inline void arch_safe_halt(void)
+{
+	local_fiq_disable();
+	asm volatile(
+        	"dsb	sy\n\t"
+        	"wfi\n\t"
+	);
+	local_fiq_enable();
+}
+ 
 #endif
 #endif

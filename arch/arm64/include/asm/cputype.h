@@ -30,6 +30,24 @@
 
 #define MPIDR_HWID_BITMASK	0xff00ffffff
 
+#define MPIDR_SMP_BITMASK	(0x1 << 30)
+#define MPIDR_MT_BITMASK	(0x1 << 24)
+
+#define MPIDR_LEVEL_BITS	8
+#define MPIDR_LEVEL_MASK	((1 << MPIDR_LEVEL_BITS) - 1)
+
+#define MPIDR_AFFINITY_LEVEL_0(mpidr) ((mpidr) & MPIDR_LEVEL_MASK)
+#define MPIDR_AFFINITY_LEVEL_1(mpidr) ((mpidr >> 8) & MPIDR_LEVEL_MASK)
+#define MPIDR_AFFINITY_LEVEL_2(mpidr) ((mpidr >> 16) & MPIDR_LEVEL_MASK)
+#define MPIDR_AFFINITY_LEVEL_3(mpidr) ((mpidr >> 32) & MPIDR_LEVEL_MASK)
+
+#define MPIDR_LEVEL_SHIFT(level)        ({                                      \
+                (level == 3) ? 32 : MPIDR_LEVEL_BITS * level;   \
+})
+
+#define MPIDR_AFFINITY_LEVEL(mpidr, level)                              \
+                ((mpidr >> MPIDR_LEVEL_SHIFT(level)) & MPIDR_LEVEL_MASK)
+
 #define read_cpuid(reg) ({						\
 	u64 __val;							\
 	asm("mrs	%0, " reg : "=r" (__val));			\

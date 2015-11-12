@@ -28,6 +28,7 @@
 #include <linux/random.h>
 
 #include <asm/cputype.h>
+#include <asm/compat.h>
 
 /*
  * Leave enough space between the mmap area and the stack to honour ulimit in

@@ -34,7 +34,7 @@ ENTRY(copy_page)
 	ldp	x6, x7, [x1, #32]
 	ldp	x8, x9, [x1, #48]
 	add	x1, x1, #64
-	prfm	pldl1strm, [x1, #64]
+	#prfm	pldl1strm, [x1, #64]
 	stnp	x2, x3, [x0]
 	stnp	x4, x5, [x0, #16]
 	stnp	x6, x7, [x0, #32]

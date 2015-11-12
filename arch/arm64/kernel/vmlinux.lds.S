@@ -9,6 +9,12 @@
 #include <asm/memory.h>
 #include <asm/page.h>
 
+#define IDMAP_TEXT							\
+	ALIGN_FUNCTION();						\
+	VMLINUX_SYMBOL(__idmap_text_start) = .;				\
+	*(.idmap.text)							\
+	VMLINUX_SYMBOL(__idmap_text_end) = .;
+
 #define ARM_EXIT_KEEP(x)
 #define ARM_EXIT_DISCARD(x)	x
 
@@ -63,6 +69,7 @@ SECTIONS
 			SCHED_TEXT
 			LOCK_TEXT
 			HYPERVISOR_TEXT
+			IDMAP_TEXT
 			*(.fixup)
 			*(.gnu.warning)
 		. = ALIGN(16);

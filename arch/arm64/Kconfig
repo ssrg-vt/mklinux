@@ -1,5 +1,6 @@
 config ARM64
 	def_bool y
+	select ACPI_REDUCED_HARDWARE_ONLY if ACPI
 	select ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE
 	select ARCH_WANT_OPTIONAL_GPIOLIB
 	select ARCH_WANT_COMPAT_IPC_PARSE_VERSION
@@ -11,6 +12,7 @@ config ARM64
 	select CLONE_BACKWARDS
 	select COMMON_CLK
 	select GENERIC_CLOCKEVENTS
+	select GENERIC_EARLY_IOREMAP
 	select GENERIC_IOMAP
 	select GENERIC_IRQ_PROBE
 	select GENERIC_IRQ_SHOW
@@ -26,6 +28,7 @@ config ARM64
 	select HAVE_HW_BREAKPOINT if PERF_EVENTS
 	select HAVE_MEMBLOCK
 	select HAVE_PERF_EVENTS
+	select HAVE_OPROFILE if (HAVE_PERF_EVENTS)
 	select IRQ_DOMAIN
 	select MODULES_USE_ELF_RELA
 	select NO_BOOTMEM
@@ -36,6 +39,7 @@ config ARM64
 	select POWER_SUPPLY
 	select RTC_LIB
 	select SPARSE_IRQ
+	select HAVE_POPCON_ARCH_SUPPORT
 	select SYSCTL_EXCEPTION_TRACE
 	help
 	  ARM 64-bit (AArch64) Linux support.
@@ -50,7 +54,7 @@ config MMU
 	def_bool y
 
 config NO_IOPORT
-	def_bool y
+	def_bool n
 
 config STACKTRACE_SUPPORT
 	def_bool y
@@ -98,6 +102,30 @@ config IOMMU_HELPER
 config KERNEL_MODE_NEON
 	def_bool y
 
+config EFI
+	bool "EFI runtime service support"
+        depends on OF
+        select UCS2_STRING
+	select LIBFDT
+	select UEFI_PARAMS_FROM_FDT
+	---help---
+	  This enables the kernel to use UEFI runtime services that are
+	  available (such as the UEFI variable services).
+
+	  This option is only useful on systems that have UEFI firmware.
+	  However, even with this option, the resultant kernel should
+	  continue to boot on existing non-UEFI platforms.
+
+config EFI_STUB
+	bool "EFI stub support"
+	default y
+	depends on OF
+	select LIBFDT
+	---help---
+          This kernel feature allows a bzImage to be loaded directly
+          by EFI firmware without the use of a bootloader.
+          See Documentation/x86/efi-stub.txt for more information.
+
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"
@@ -116,6 +144,10 @@ config ARCH_VEXPRESS
 
 config ARCH_XGENE
 	bool "AppliedMicro X-Gene SOC Family"
+	select NO_GENERIC_PCI_IOPORT_MAP
+	select MFD_SYSCON
+	select PCI
+	select PCI_DOMAINS
 	help
 	  This enables support for AppliedMicro X-Gene SOC Family
 
@@ -125,6 +157,28 @@ menu "Bus support"
 
 config ARM_AMBA
 	bool
+
+config PCI
+	bool "PCI support"
+	def_bool MIGHT_HAVE_PCI
+	help
+	  Find out whether you have a PCI motherboard. PCI is the name of a
+	  bus system, i.e. the way the CPU talks to the other stuff inside
+	  your box. Other bus systems are ISA, EISA, MicroChannel (MCA) or
+	  VESA. If you have PCI, say Y, otherwise N.
+
+config PCI_DOMAINS
+	bool
+	depends on PCI
+
+config PCI_SYSCALL
+	def_bool PCI
+
+source "drivers/pci/Kconfig"
+source "drivers/pci/pcie/Kconfig"
+source "arch/arm64/kernel/Kconfig.pci"
+
+source "drivers/pcmcia/Kconfig"
 
 endmenu
 
@@ -137,6 +191,11 @@ config ARM64_64K_PAGES
 	  allowing only two levels of page tables and faster TLB
 	  look-up. AArch32 emulation is not available when this feature
 	  is enabled.
+
+config CPU_BIG_ENDIAN
+       bool "Build big-endian kernel"
+       help
+         Say Y if you plan on running a kernel in big-endian mode.
 
 config SMP
 	bool "Symmetric Multi-Processing"
@@ -159,6 +218,13 @@ config NR_CPUS
 	# These have to remain sorted largest to smallest
 	default "8" if ARCH_XGENE
 	default "4"
+
+config HOTPLUG_CPU
+        bool "Support for hot-pluggable CPUs"
+        depends on SMP
+        help
+          Say Y here to experiment with turning CPUs off and on.  CPUs
+          can be controlled through /sys/devices/system/cpu.
 
 source kernel/Kconfig.preempt
 
@@ -246,9 +312,13 @@ menu "Userspace binary formats"
 source "fs/Kconfig.binfmt"
 
 config COMPAT
+	def_bool y
+	depends on AARCH32_EL0 || ARM64_ILP32
+	select COMPAT_BINFMT_ELF
+
+config AARCH32_EL0
 	bool "Kernel support for 32-bit EL0"
 	depends on !ARM64_64K_PAGES
-	select COMPAT_BINFMT_ELF
 	select HAVE_UID16
 	select OLD_SIGSUSPEND3
 	select COMPAT_OLD_SIGACTION
@@ -258,17 +328,50 @@ config COMPAT
 	  the user helper functions, VFP support and the ptrace interface are
 	  handled appropriately by the kernel.
 
-	  If you want to execute 32-bit userspace applications, say Y.
+	  If you want to execute Aarch32 userspace applications, say Y.
+
+config ARM64_ILP32
+	bool "Kernel support for ILP32"
+	help
+	  This option enables support for AArch64 ILP32 user space.  ILP32
+	  is an ABI where long and pointers are 32bits but it uses the AARCH64
+	  instruction set.
 
 config SYSVIPC_COMPAT
 	def_bool y
-	depends on COMPAT && SYSVIPC
+	depends on AARCH32_EL0 && SYSVIPC
+
+config HAVE_POPCORN_ARCH_SUPPORT
+	def_bool y
+
+endmenu
+
+menu "Power management options"
+
+source "kernel/power/Kconfig"
+
+config ARCH_SUSPEND_POSSIBLE
+        def_bool y
+
+config ARM64_CPU_SUSPEND
+        def_bool PM_SLEEP
+
+endmenu
+
+menu "CPU Power Management"
+
+source "drivers/cpufreq/Kconfig"
+source "drivers/cpuidle/Kconfig"
 
 endmenu
 
 source "net/Kconfig"
 
 source "drivers/Kconfig"
+
+source "drivers/firmware/Kconfig"
+
+source "drivers/acpi/Kconfig"
 
 source "fs/Kconfig"
 
@@ -281,3 +384,5 @@ source "security/Kconfig"
 source "crypto/Kconfig"
 
 source "lib/Kconfig"
+
+source "kernel/Kconfig.popcorn"

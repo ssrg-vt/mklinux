@@ -29,6 +29,7 @@
 /* set up by the platform code */
 static void __iomem *twd_base;
 
+static bool common_setup_called;
 static struct clk *twd_clk;
 static unsigned long twd_timer_rate;
 static DEFINE_PER_CPU(bool, percpu_setup_called);
@@ -284,7 +285,26 @@ static void twd_timer_setup(void)
 	}
 	per_cpu(percpu_setup_called, cpu) = true;
 
-	twd_calibrate_rate();
+	/*
+	 * This stuff only need to be done once for the entire TWD cluster
+	 * during the runtime of the system.
+	 */
+	if (!common_setup_called) {
+		twd_get_clock(NULL);
+
+		/*
+		 * We use IS_ERR_OR_NULL() here, because if the clock stubs
+		 * are active we will get a valid clk reference which is
+		 * however NULL and will return the rate 0. In that case we
+		 * need to calibrate the rate instead.
+		 */
+		if (!IS_ERR_OR_NULL(twd_clk))
+			twd_timer_rate = clk_get_rate(twd_clk);
+		else
+			twd_calibrate_rate();
+
+		common_setup_called = true;
+	}
 
 	/*
 	 * The following is done once per CPU the first time .setup() is

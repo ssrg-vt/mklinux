@@ -42,6 +42,7 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/personality.h>
 #include <linux/notifier.h>
+#include <linux/cpuidle.h>
 
 #include <asm/compat.h>
 #include <asm/cacheflush.h>
@@ -89,6 +90,16 @@ void arch_cpu_idle_prepare(void)
 	local_fiq_enable();
 }
 
+unsigned long boot_option_idle_override = IDLE_NO_OVERRIDE;
+EXPORT_SYMBOL(boot_option_idle_override);
+
+#ifdef CONFIG_HOTPLUG_CPU
+void arch_cpu_idle_dead(void)
+{
+	cpu_die();
+}
+#endif
+
 /*
  * This is our default idle handler.
  */
@@ -98,7 +109,9 @@ void arch_cpu_idle(void)
 	 * This should do all the clock switching and wait for interrupt
 	 * tricks
 	 */
-	cpu_do_idle();
+	if (cpuidle_idle_call())
+		cpu_do_idle();
+
 	local_irq_enable();
 }
 
@@ -213,7 +226,7 @@ int copy_thread(unsigned long clone_flags, unsigned long stack_start,
 	if (likely(!(p->flags & PF_KTHREAD))) {
 		*childregs = *current_pt_regs();
 		childregs->regs[0] = 0;
-		if (is_compat_thread(task_thread_info(p))) {
+		if (is_a32_compat_thread(task_thread_info(p))) {
 			if (stack_start)
 				childregs->compat_sp = stack_start;
 		} else {
@@ -254,12 +267,12 @@ static void tls_thread_switch(struct task_struct *next)
 {
 	unsigned long tpidr, tpidrro;
 
-	if (!is_compat_task()) {
+	if (!is_a32_compat_task()) {
 		asm("mrs %0, tpidr_el0" : "=r" (tpidr));
 		current->thread.tp_value = tpidr;
 	}
 
-	if (is_compat_thread(task_thread_info(next))) {
+	if (is_a32_compat_thread(task_thread_info(next))) {
 		tpidr = 0;
 		tpidrro = next->thread.tp_value;
 	} else {
@@ -284,6 +297,7 @@ struct task_struct *__switch_to(struct task_struct *prev,
 	fpsimd_thread_switch(next);
 	tls_thread_switch(next);
 	hw_breakpoint_thread_switch(next);
+
 	contextidr_thread_switch(next);
 
 	/*

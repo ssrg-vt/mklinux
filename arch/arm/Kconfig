@@ -37,7 +37,7 @@ config ARM
 	select HAVE_FUNCTION_GRAPH_TRACER if (!THUMB2_KERNEL)
 	select HAVE_FUNCTION_TRACER if (!XIP_KERNEL)
 	select HAVE_GENERIC_DMA_COHERENT
-	select HAVE_HW_BREAKPOINT if (PERF_EVENTS && (CPU_V6 || CPU_V6K || CPU_V7))
+	select HAVE_HW_BREAKPOINT if (PERF_EVENTS && (CPU_V6 || CPU_V6K || CPU_V7) && !ARCH_XGENE)
 	select HAVE_IDE if PCI || ISA || PCMCIA
 	select HAVE_IRQ_TIME_ACCOUNTING
 	select HAVE_KERNEL_GZIP
@@ -303,6 +303,33 @@ config ARCH_MULTIPLATFORM
 	select MULTI_IRQ_HANDLER
 	select SPARSE_IRQ
 	select USE_OF
+
+config ARCH_MSLIM
+        bool "APM MSLIM family"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+	select HAVE_ARM_TWD if SMP
+	select HAVE_ARM_SCU if SMP
+        select CLKDEV_LOOKUP
+        select COMMON_CLK
+        select MULTI_IRQ_HANDLER
+        select GENERIC_CLOCKEVENTS
+        select HAVE_CLK
+        select NO_IOPORT
+        help
+          This enables support for APM MSLIM
+
+config ARCH_XGENE
+        bool "APM X-Gene family"
+        select ARM_AMBA
+        select CLKDEV_LOOKUP
+        select COMMON_CLK
+        select MULTI_IRQ_HANDLER
+        select GENERIC_CLOCKEVENTS
+        select HAVE_CLK
+        select NO_IOPORT
+        help
+          This enables support for APM X-Gene
 
 config ARCH_INTEGRATOR
 	bool "ARM Ltd. Integrator family"
@@ -964,6 +991,8 @@ source "arch/arm/mach-kirkwood/Kconfig"
 
 source "arch/arm/mach-ks8695/Kconfig"
 
+source "arch/arm/mach-mslim/Kconfig"
+
 source "arch/arm/mach-msm/Kconfig"
 
 source "arch/arm/mach-mv78xx0/Kconfig"
@@ -987,6 +1016,8 @@ source "arch/arm/mach-omap2/Kconfig"
 source "arch/arm/mach-orion5x/Kconfig"
 
 source "arch/arm/mach-picoxcell/Kconfig"
+
+source "arch/arm/mach-xgene/Kconfig"
 
 source "arch/arm/mach-pxa/Kconfig"
 source "arch/arm/plat-pxa/Kconfig"
@@ -1846,6 +1877,30 @@ config UACCESS_WITH_MEMCPY
 	  However, if the CPU data cache is using a write-allocate mode,
 	  this option is unlikely to provide any performance gain.
 
+config EFI_STUB
+	bool "EFI stub support"
+	depends on EFI
+	---help---
+	  This kernel feature allows a zImage to be loaded directly
+	  by EFI firmware without the use of a bootloader.  A PE/COFF
+	  header is added to the zImage in a way that makes the binary
+	  both a Linux zImage and an PE/COFF executable that can be
+	  executed directly by EFI firmware.
+	  See Documentation/efi-stub.txt for more information.
+
+config EFI
+	bool "UEFI runtime service support"
+	depends on OF
+	select UCS2_STRING
+	select EARLY_IOREMAP
+	---help---
+	  This enables the kernel to use UEFI runtime services that are
+	  available (such as the UEFI variable services).
+
+	  This option is only useful on systems that have UEFI firmware.
+	  However, even with this option, the resultant kernel should
+	  continue to boot on existing non-UEFI platforms.
+
 config SECCOMP
 	bool
 	prompt "Enable seccomp to safely compute untrusted bytecode"
@@ -2257,6 +2312,7 @@ endmenu
 source "net/Kconfig"
 
 source "drivers/Kconfig"
+source "drivers/firmware/Kconfig"
 
 source "fs/Kconfig"
 

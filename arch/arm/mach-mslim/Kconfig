@@ -1,0 +1,17 @@
+menu "APM MSLIM"
+	depends on ARCH_MSLIM
+
+config ARCH_MSLIM_CORTEX_A5X4
+	bool "APM MSLIM Cortex A5x4"
+	select ARM_GIC
+	select CPU_V7
+	select HAVE_SMP
+	select MIGHT_HAVE_CACHE_L2X0
+	select PCI
+	select ARM_PATCH_PHYS_VIRT
+	select AUTO_ZRELADDR
+	select USE_OF
+	select ARM_ERRATA_720789
+	select PL310_ERRATA_753970 if CACHE_PL310
+
+endmenu

@@ -1,0 +1,5 @@
+config	MSI_BITMAP
+	bool
+	depends on PCI_MSI
+	default y if PCI_XGENE
+

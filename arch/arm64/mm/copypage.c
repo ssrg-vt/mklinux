@@ -21,10 +21,12 @@
 
 #include <asm/page.h>
 #include <asm/cacheflush.h>
+#include <asm/string.h>
 
 void __cpu_copy_user_page(void *kto, const void *kfrom, unsigned long vaddr)
 {
-	copy_page(kto, kfrom);
+	//copy_page(kto, kfrom);
+	memcpy(kto, kfrom, PAGE_SIZE);
 	__flush_dcache_area(kto, PAGE_SIZE);
 }
 

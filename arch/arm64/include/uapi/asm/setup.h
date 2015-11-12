@@ -23,4 +23,6 @@
 
 #define COMMAND_LINE_SIZE	2048
 
+extern unsigned long cpu_freq;
+
 #endif

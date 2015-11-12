@@ -23,4 +23,14 @@ config PID_IN_CONTEXTIDR
 	  instructions during context switch. Say Y here only if you are
 	  planning to use hardware trace tools with this kernel.
 
+config ACPI_USE_CHOSEN_NODE
+	bool "Pass ACPI blob address through /chosen node"
+	depends on ARM || ARM64
+	help
+	  Enabling this allows one to experiment with ACPI tables during
+	  development on non-UEFI systems.  If this is enabled, ACPI will
+	  expect to find /chosen/linux,acpi-start in an FDT passed into
+	  the kernel and use the contents of that node as the physical
+	  address of the RSDP in an ACPI table blob.
+	
 endmenu

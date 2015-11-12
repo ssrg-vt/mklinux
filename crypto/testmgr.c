@@ -503,16 +503,16 @@ static int __test_aead(struct crypto_aead *tfm, int enc,
 				goto out;
 			}
 
-			sg_init_one(&sg[0], input,
-				    template[i].ilen + (enc ? authsize : 0));
-
 			if (diff_dst) {
 				output = xoutbuf[0];
-				output += align_offset;
+                                output += align_offset;
+				sg_init_one(&sg[0], input, template[i].ilen);
 				sg_init_one(&sgout[0], output,
-					    template[i].ilen +
-						(enc ? authsize : 0));
+						template[i].rlen);
 			} else {
+				sg_init_one(&sg[0], input,
+						template[i].ilen +
+						(enc ? authsize : 0));
 				output = input;
 			}
 
@@ -612,12 +612,6 @@ static int __test_aead(struct crypto_aead *tfm, int enc,
 				memcpy(q, template[i].input + temp,
 				       template[i].tap[k]);
 
-				n = template[i].tap[k];
-				if (k == template[i].np - 1 && enc)
-					n += authsize;
-				if (offset_in_page(q) + n < PAGE_SIZE)
-					q[n] = 0;
-
 				sg_set_buf(&sg[k], q, template[i].tap[k]);
 
 				if (diff_dst) {
@@ -625,12 +619,16 @@ static int __test_aead(struct crypto_aead *tfm, int enc,
 					    offset_in_page(IDX[k]);
 
 					memset(q, 0, template[i].tap[k]);
-					if (offset_in_page(q) + n < PAGE_SIZE)
-						q[n] = 0;
 
 					sg_set_buf(&sgout[k], q,
 						   template[i].tap[k]);
 				}
+
+				n = template[i].tap[k];
+                                if (k == template[i].np - 1 && enc)
+					n += authsize;
+                                if (offset_in_page(q) + n < PAGE_SIZE)
+                                        q[n] = 0;
 
 				temp += template[i].tap[k];
 			}
@@ -650,10 +648,10 @@ static int __test_aead(struct crypto_aead *tfm, int enc,
 					goto out;
 				}
 
-				sg[k - 1].length += authsize;
-
 				if (diff_dst)
 					sgout[k - 1].length += authsize;
+				else
+					sg[k - 1].length += authsize;
 			}
 
 			sg_init_table(asg, template[i].anp);
@@ -1811,6 +1809,38 @@ static const struct alg_test_desc alg_test_descs[] = {
 			}
 		}
 	}, {
+		.alg = "authenc(hmac(md5),cbc(aes))",
+		.test = alg_test_aead,
+		.fips_allowed = 1,
+		.suite = {
+			.aead = {
+				.enc = {
+					.vecs = hmac_md5_aes_cbc_enc_tv_template,
+					.count = HMAC_MD5_AES_CBC_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = hmac_md5_aes_cbc_dec_tv_template,
+					.count = HMAC_MD5_AES_CBC_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
+		.alg = "authenc(hmac(md5),cbc(des3_ede))",
+		.test = alg_test_aead,
+		.fips_allowed = 1,
+		.suite = {
+			.aead = {
+				.enc = {
+					.vecs = hmac_md5_des3_ede_cbc_enc_tv_template,
+					.count = HMAC_MD5_DES3_EDE_CBC_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = hmac_md5_des3_ede_cbc_dec_tv_template,
+					.count = HMAC_MD5_DES3_EDE_CBC_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
 		.alg = "authenc(hmac(sha1),cbc(aes))",
 		.test = alg_test_aead,
 		.fips_allowed = 1,
@@ -1819,6 +1849,58 @@ static const struct alg_test_desc alg_test_descs[] = {
 				.enc = {
 					.vecs = hmac_sha1_aes_cbc_enc_tv_template,
 					.count = HMAC_SHA1_AES_CBC_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = hmac_sha1_aes_cbc_dec_tv_template,
+					.count = HMAC_SHA1_AES_CBC_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
+		.alg = "authenc(hmac(sha1),cbc(des3_ede))",
+		.test = alg_test_aead,
+		.fips_allowed = 1,
+		.suite = {
+			.aead = {
+				.enc = {
+					.vecs = hmac_sha1_des3_ede_cbc_enc_tv_template,
+					.count = HMAC_SHA1_DES3_EDE_CBC_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = hmac_sha1_des3_ede_cbc_dec_tv_template,
+					.count = HMAC_SHA1_DES3_EDE_CBC_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
+		.alg = "authenc(hmac(sha224),cbc(aes))",
+		.test = alg_test_aead,
+		.fips_allowed = 1,
+		.suite = {
+			.aead = {
+				.enc = {
+					.vecs = hmac_sha224_aes_cbc_enc_tv_template,
+					.count = HMAC_SHA224_AES_CBC_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = hmac_sha224_aes_cbc_dec_tv_template,
+					.count = HMAC_SHA224_AES_CBC_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
+		.alg = "authenc(hmac(sha224),cbc(des3_ede))",
+		.test = alg_test_aead,
+		.fips_allowed = 1,
+		.suite = {
+			.aead = {
+				.enc = {
+					.vecs = hmac_sha224_des3_ede_cbc_enc_tv_template,
+					.count = HMAC_SHA224_DES3_EDE_CBC_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = hmac_sha224_des3_ede_cbc_dec_tv_template,
+					.count = HMAC_SHA224_DES3_EDE_CBC_DEC_TEST_VECTORS
 				}
 			}
 		}
@@ -1831,6 +1913,26 @@ static const struct alg_test_desc alg_test_descs[] = {
 				.enc = {
 					.vecs = hmac_sha256_aes_cbc_enc_tv_template,
 					.count = HMAC_SHA256_AES_CBC_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = hmac_sha256_aes_cbc_dec_tv_template,
+					.count = HMAC_SHA256_AES_CBC_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
+		.alg = "authenc(hmac(sha256),cbc(des3_ede))",
+		.test = alg_test_aead,
+		.fips_allowed = 1,
+		.suite = {
+			.aead = {
+				.enc = {
+					.vecs = hmac_sha256_des3_ede_cbc_enc_tv_template,
+					.count = HMAC_SHA256_DES3_EDE_CBC_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = hmac_sha256_des3_ede_cbc_dec_tv_template,
+					.count = HMAC_SHA256_DES3_EDE_CBC_DEC_TEST_VECTORS
 				}
 			}
 		}
@@ -2011,6 +2113,22 @@ static const struct alg_test_desc alg_test_descs[] = {
 				.dec = {
 					.vecs = aes_ccm_dec_tv_template,
 					.count = AES_CCM_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
+		.alg = "cfb(des)",
+		.test = alg_test_skcipher,
+		.fips_allowed = 1,
+		.suite = {
+			.cipher = {
+				.enc = {
+					.vecs = des_cfb_enc_tv_template,
+					.count = DES_CFB_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = des_cfb_dec_tv_template,
+					.count = DES_CFB_DEC_TEST_VECTORS
 				}
 			}
 		}
@@ -2555,6 +2673,30 @@ static const struct alg_test_desc alg_test_descs[] = {
 			}
 		}
 	}, {
+		.alg = "f8(kasumi)",
+		.test = alg_test_skcipher,
+		.suite = {
+			.cipher = {
+				.enc = {
+					.vecs = kasumi_f8_enc_tv_template,
+					.count = KASUMI_F8_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = kasumi_f8_dec_tv_template,
+					.count = KASUMI_F8_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
+		.alg = "f9(kasumi)",
+		.test = alg_test_hash,
+		.suite = {
+			.hash = {
+				.vecs = kasumi_f9_tv_template,
+				.count = KASUMI_F9_TEST_VECTORS
+			}
+		}
+	}, {
 		.alg = "gcm(aes)",
 		.test = alg_test_aead,
 		.fips_allowed = 1,
@@ -2664,6 +2806,37 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.hash = {
 				.vecs = hmac_sha512_tv_template,
 				.count = HMAC_SHA512_TEST_VECTORS
+			}
+		}
+	}, {
+		.alg = "icm(aes)",
+		.test = alg_test_skcipher,
+		.fips_allowed = 1,
+		.suite = {
+			.cipher = {
+				.enc = {
+					.vecs = aes_icm_enc_tv_template,
+					.count = AES_ICM_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = aes_icm_dec_tv_template,
+					.count = AES_ICM_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
+		.alg = "kasumi",
+		.test = alg_test_skcipher,
+		.suite = {
+			.cipher = {
+				.enc = {
+					.vecs = kasumi_enc_tv_template,
+					.count = KASUMI_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = kasumi_dec_tv_template,
+					.count = KASUMI_DEC_TEST_VECTORS
+				}
 			}
 		}
 	}, {
@@ -2797,6 +2970,22 @@ static const struct alg_test_desc alg_test_descs[] = {
 				.dec = {
 					.vecs = aes_ofb_dec_tv_template,
 					.count = AES_OFB_DEC_TEST_VECTORS
+				}
+			}
+		}
+	}, {
+		.alg = "ofb(des)",
+		.test = alg_test_skcipher,
+		.fips_allowed = 1,
+		.suite = {
+			.cipher = {
+				.enc = {
+					.vecs = des_ofb_enc_tv_template,
+					.count = DES_OFB_ENC_TEST_VECTORS
+				},
+				.dec = {
+					.vecs = des_ofb_dec_tv_template,
+					.count = DES_OFB_DEC_TEST_VECTORS
 				}
 			}
 		}
@@ -3044,6 +3233,15 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.hash = {
 				.vecs = aes_xcbc128_tv_template,
 				.count = XCBC_AES_TEST_VECTORS
+			}
+		}
+	}, {
+		.alg = "xgene(crc32c)",
+		.test = alg_test_hash,
+		.suite = {
+			.hash = {
+				.vecs = crc32c_tv_template,
+				.count = CRC32C_TEST_VECTORS
 			}
 		}
 	}, {

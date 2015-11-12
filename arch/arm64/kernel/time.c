@@ -33,6 +33,8 @@
 #include <linux/irq.h>
 #include <linux/delay.h>
 #include <linux/clocksource.h>
+#include <linux/efi.h>
+#include <linux/platform_device.h>
 
 #include <clocksource/arm_arch_timer.h>
 
@@ -73,6 +75,10 @@ void __init time_init(void)
 	u32 arch_timer_rate;
 
 	clocksource_of_init();
+	clocksource_acpi_init();
+	/* if can't be initialised from DT, try ACPI way */
+	if (!arch_timer_get_rate())
+		arch_timer_acpi_init();
 
 	arch_timer_rate = arch_timer_get_rate();
 	if (!arch_timer_rate)
@@ -84,3 +90,18 @@ void __init time_init(void)
 	/* Calibrate the delay loop directly */
 	lpj_fine = arch_timer_rate / HZ;
 }
+
+static struct platform_device rtc_efi_dev = {
+	.name = "rtc-efi",
+	.id = -1,
+};
+
+static int __init rtc_init(void)
+{
+	if (efi_enabled(EFI_RUNTIME_SERVICES) &&
+	    platform_device_register(&rtc_efi_dev) < 0)
+		printk(KERN_ERR "unable to register rtc device...\n");
+
+	return 0;
+}
+module_init(rtc_init);

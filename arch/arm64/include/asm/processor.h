@@ -28,17 +28,19 @@
 #ifdef __KERNEL__
 
 #include <linux/string.h>
+#include <linux/thread_info.h>
 
 #include <asm/fpsimd.h>
 #include <asm/hw_breakpoint.h>
 #include <asm/ptrace.h>
 #include <asm/types.h>
 
+
 #ifdef __KERNEL__
 #define STACK_TOP_MAX		TASK_SIZE_64
 #ifdef CONFIG_COMPAT
 #define AARCH32_VECTORS_BASE	0xffff0000
-#define STACK_TOP		(test_thread_flag(TIF_32BIT) ? \
+#define STACK_TOP		(is_compat_task() ? \
 				AARCH32_VECTORS_BASE : STACK_TOP_MAX)
 #else
 #define STACK_TOP		STACK_TOP_MAX
@@ -74,6 +76,24 @@ struct cpu_context {
 	unsigned long pc;
 };
 
+/*
+ * struct cpu_suspend_ctx must be 16-byte aligned since it is allocated on
+ * the stack, which must be 16-byte aligned on v8
+ */
+struct cpu_suspend_ctx {
+	unsigned long tpidr_el0;
+	unsigned long tpidrro_el0;
+	unsigned long contextidr_el1;
+	unsigned long mair_el1;
+	unsigned long cpacr_el1;
+	unsigned long ttbr0_el1;
+	unsigned long ttbr1_el1;
+	unsigned long tcr_el1;
+	unsigned long vbar_el1;
+	unsigned long sctlr_el1;
+	unsigned long sp;
+} __aligned(16);
+
 struct thread_struct {
 	struct cpu_context	cpu_context;	/* cpu context */
 	unsigned long		tp_value;
@@ -103,10 +123,24 @@ static inline void start_thread(struct pt_regs *regs, unsigned long pc,
 static inline void compat_start_thread(struct pt_regs *regs, unsigned long pc,
 				       unsigned long sp)
 {
+#ifdef CONFIG_ARM64_ILP32
+	/* ILP32 thread are started the same way as LP64 threads.
+	   Note we cannot use is_ilp32_compat_task here as that
+	   would introduce a header depency issue.  */
+	if (test_thread_flag(TIF_32BIT_AARCH64)) {
+		start_thread(regs, pc, sp);
+		return;
+	}
+#endif
 	start_thread_common(regs, pc);
 	regs->pstate = COMPAT_PSR_MODE_USR;
 	if (pc & 1)
 		regs->pstate |= COMPAT_PSR_T_BIT;
+
+#ifdef __AARCH64EB__
+	regs->pstate |= COMPAT_PSR_E_BIT;
+#endif
+
 	regs->compat_sp = sp;
 }
 #endif
@@ -156,6 +190,8 @@ static inline void spin_lock_prefetch(const void *x)
 }
 
 #define HAVE_ARCH_PICK_MMAP_LAYOUT
+
+extern unsigned long	boot_option_idle_override;
 
 #endif
 

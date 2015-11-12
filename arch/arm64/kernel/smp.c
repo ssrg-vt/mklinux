@@ -35,10 +35,12 @@
 #include <linux/clockchips.h>
 #include <linux/completion.h>
 #include <linux/of.h>
+#include <linux/acpi.h>
 
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
 #include <asm/cputype.h>
+#include <asm/topology.h>
 #include <asm/mmu_context.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -47,6 +49,8 @@
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
 #include <asm/ptrace.h>
+#include <asm/acpi.h>
+#include <asm/cpu_ops.h>
 
 /*
  * as from 2.5, kernels no longer have an init_tasks structure
@@ -54,31 +58,14 @@
  * where to place its SVC stack
  */
 struct secondary_data secondary_data;
-volatile unsigned long secondary_holding_pen_release = INVALID_HWID;
 
 enum ipi_msg_type {
 	IPI_RESCHEDULE,
 	IPI_CALL_FUNC,
 	IPI_CALL_FUNC_SINGLE,
 	IPI_CPU_STOP,
+	IPI_WAKEUP,
 };
-
-static DEFINE_RAW_SPINLOCK(boot_lock);
-
-/*
- * Write secondary_holding_pen_release in a way that is guaranteed to be
- * visible to all observers, irrespective of whether they're taking part
- * in coherency or not.  This is necessary for the hotplug code to work
- * reliably.
- */
-static void write_pen_release(u64 val)
-{
-	void *start = (void *)&secondary_holding_pen_release;
-	unsigned long size = sizeof(secondary_holding_pen_release);
-
-	secondary_holding_pen_release = val;
-	__flush_dcache_area(start, size);
-}
 
 /*
  * Boot a secondary CPU, and assign it the specified idle task.
@@ -86,38 +73,10 @@ static void write_pen_release(u64 val)
  */
 static int boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
-	unsigned long timeout;
+	if (cpu_ops[cpu]->cpu_boot)
+		return cpu_ops[cpu]->cpu_boot(cpu);
 
-	/*
-	 * Set synchronisation state between this boot processor
-	 * and the secondary one
-	 */
-	raw_spin_lock(&boot_lock);
-
-	/*
-	 * Update the pen release flag.
-	 */
-	write_pen_release(cpu_logical_map(cpu));
-
-	/*
-	 * Send an event, causing the secondaries to read pen_release.
-	 */
-	sev();
-
-	timeout = jiffies + (1 * HZ);
-	while (time_before(jiffies, timeout)) {
-		if (secondary_holding_pen_release == INVALID_HWID)
-			break;
-		udelay(10);
-	}
-
-	/*
-	 * Now the secondary core is starting up let it run its
-	 * calibrations, then wait for it to finish
-	 */
-	raw_spin_unlock(&boot_lock);
-
-	return secondary_holding_pen_release != INVALID_HWID ? -ENOSYS : 0;
+	return -EOPNOTSUPP;
 }
 
 static DECLARE_COMPLETION(cpu_running);
@@ -187,17 +146,10 @@ asmlinkage void secondary_start_kernel(void)
 	preempt_disable();
 	trace_hardirqs_off();
 
-	/*
-	 * Let the primary processor know we're out of the
-	 * pen, then head off into the C entry point
-	 */
-	write_pen_release(INVALID_HWID);
+	if (cpu_ops[cpu]->cpu_postboot)
+		cpu_ops[cpu]->cpu_postboot();
 
-	/*
-	 * Synchronise with the boot thread.
-	 */
-	raw_spin_lock(&boot_lock);
-	raw_spin_unlock(&boot_lock);
+	store_cpu_topology(cpu);
 
 	/*
 	 * OK, now it's safe to let the boot CPU continue.  Wait for
@@ -221,6 +173,103 @@ asmlinkage void secondary_start_kernel(void)
 	cpu_startup_entry(CPUHP_ONLINE);
 }
 
+#ifdef CONFIG_HOTPLUG_CPU
+static int op_cpu_disable(unsigned int cpu)
+{
+	/*
+	 * If we don't have a cpu_die method, abort before we reach the point
+	 * of no return. CPU0 may not have an cpu_ops, so test for it.
+	 */
+	if (!cpu_ops[cpu] || !cpu_ops[cpu]->cpu_die)
+		return -EOPNOTSUPP;
+
+	/*
+	 * We may need to abort a hot unplug for some other mechanism-specific
+	 * reason.
+	 */
+	if (cpu_ops[cpu]->cpu_disable)
+		return cpu_ops[cpu]->cpu_disable(cpu);
+
+	return 0;
+}
+
+/*
+ * __cpu_disable runs on the processor to be shutdown.
+ */
+int __cpu_disable(void)
+{
+	unsigned int cpu = smp_processor_id();
+	int ret;
+
+	ret = op_cpu_disable(cpu);
+	if (ret)
+		return ret;
+
+	/*
+	 * Take this CPU offline.  Once we clear this, we can't return,
+	 * and we must not schedule until we're ready to give up the cpu.
+	 */
+	set_cpu_online(cpu, false);
+
+	/*
+	 * OK - migrate IRQs away from this CPU
+	 */
+	migrate_irqs();
+
+	/*
+	 * Remove this CPU from the vm mask set of all processes.
+	 */
+	clear_tasks_mm_cpumask(cpu);
+
+	return 0;
+}
+
+static DECLARE_COMPLETION(cpu_died);
+
+/*
+ * called on the thread which is asking for a CPU to be shutdown -
+ * waits until shutdown has completed, or it is timed out.
+ */
+void __cpu_die(unsigned int cpu)
+{
+	if (!wait_for_completion_timeout(&cpu_died, msecs_to_jiffies(5000))) {
+		pr_crit("CPU%u: cpu didn't die\n", cpu);
+		return;
+	}
+	pr_notice("CPU%u: shutdown\n", cpu);
+}
+
+/*
+ * Called from the idle thread for the CPU which has been shutdown.
+ *
+ * Note that we disable IRQs here, but do not re-enable them
+ * before returning to the caller. This is also the behaviour
+ * of the other hotplug-cpu capable cores, so presumably coming
+ * out of idle fixes this.
+ */
+void __ref cpu_die(void)
+{
+	unsigned int cpu = smp_processor_id();
+
+	idle_task_exit();
+
+	local_irq_disable();
+	mb();
+
+	/* Tell __cpu_die() that this CPU is now safe to dispose of */
+	complete(&cpu_died);
+
+	/*
+	 * Actually shutdown the CPU. This must never fail. The specific hotplug
+	 * mechanism must perform all required cache maintenance to ensure that
+	 * no dirty lines are lost in the process of shutting down the CPU.
+	 */
+	cpu_ops[cpu]->cpu_die(cpu);
+
+	BUG();
+}
+#endif
+
 void __init smp_cpus_done(unsigned int max_cpus)
 {
 	pr_info("SMP: Total of %d processors activated.\n", num_online_cpus());
@@ -232,38 +281,16 @@ void __init smp_prepare_boot_cpu(void)
 
 static void (*smp_cross_call)(const struct cpumask *, unsigned int);
 
-static const struct smp_enable_ops *enable_ops[] __initconst = {
-	&smp_spin_table_ops,
-	&smp_psci_ops,
-	NULL,
-};
-
-static const struct smp_enable_ops *smp_enable_ops[NR_CPUS];
-
-static const struct smp_enable_ops * __init smp_get_enable_ops(const char *name)
-{
-	const struct smp_enable_ops **ops = enable_ops;
-
-	while (*ops) {
-		if (!strcmp(name, (*ops)->name))
-			return *ops;
-
-		ops++;
-	}
-
-	return NULL;
-}
-
 /*
  * Enumerate the possible CPU set from the device tree and build the
  * cpu logical map array containing MPIDR values related to logical
  * cpus. Assumes that cpu_logical_map(0) has already been initialized.
  */
-void __init smp_init_cpus(void)
+static int __init of_smp_init_cpus(void)
 {
 	const char *enable_method;
 	struct device_node *dn = NULL;
-	int i, cpu = 1;
+	unsigned int i, cpu = 1;
 	bool bootcpu_valid = false;
 
 	while ((dn = of_find_node_by_type(dn, "cpu"))) {
@@ -305,6 +332,8 @@ void __init smp_init_cpus(void)
 			}
 		}
 
+		enable_method = of_get_property(dn, "enable-method", NULL);
+
 		/*
 		 * The numbering scheme requires that the boot CPU
 		 * must be assigned logical id 0. Record it so that
@@ -320,11 +349,12 @@ void __init smp_init_cpus(void)
 
 			bootcpu_valid = true;
 
+			if (enable_method){
+				cpu_ops[0] = cpu_get_ops(enable_method);
+			}
 			/*
-			 * cpu_logical_map has already been
-			 * initialized and the boot cpu doesn't need
-			 * the enable-method so continue without
-			 * incrementing cpu.
+			 * cpu_logical_map has already been initialized so
+			 * continue without incrementing cpu.
 			 */
 			continue;
 		}
@@ -332,25 +362,10 @@ void __init smp_init_cpus(void)
 		if (cpu >= NR_CPUS)
 			goto next;
 
-		/*
-		 * We currently support only the "spin-table" enable-method.
-		 */
-		enable_method = of_get_property(dn, "enable-method", NULL);
-		if (!enable_method) {
-			pr_err("%s: missing enable-method property\n",
-				dn->full_name);
+		if (cpu_of_read_ops(dn, cpu) != 0)
 			goto next;
-		}
 
-		smp_enable_ops[cpu] = smp_get_enable_ops(enable_method);
-
-		if (!smp_enable_ops[cpu]) {
-			pr_err("%s: invalid enable-method property: %s\n",
-			       dn->full_name, enable_method);
-			goto next;
-		}
-
-		if (smp_enable_ops[cpu]->init_cpu(dn, cpu))
+		if (cpu_ops[cpu]->cpu_init(dn, cpu))
 			goto next;
 
 		pr_debug("cpu logical map 0x%llx\n", hwid);
@@ -359,6 +374,10 @@ next:
 		cpu++;
 	}
 
+	/* No device tree or no CPU node in DT */
+	if (cpu == 1 && !bootcpu_valid)
+		return -ENODEV;
+
 	/* sanity check */
 	if (cpu > NR_CPUS)
 		pr_warning("no. of cores (%d) greater than configured maximum of %d - clipping\n",
@@ -366,7 +385,7 @@ next:
 
 	if (!bootcpu_valid) {
 		pr_err("DT missing boot CPU MPIDR, not enabling secondaries\n");
-		return;
+		return -EINVAL;
 	}
 
 	/*
@@ -376,12 +395,159 @@ next:
 	for (i = 0; i < NR_CPUS; i++)
 		if (cpu_logical_map(i) != INVALID_HWID)
 			set_cpu_possible(i, true);
+
+			
+	return 0;
 }
 
-void __init smp_prepare_cpus(unsigned int max_cpus)
+#ifdef CONFIG_ACPI
+
+static int __init
+acpi_smp_check_madt_entry(struct acpi_subtable_header *header,
+			  const unsigned long end)
 {
-	int cpu, err;
-	unsigned int ncores = num_possible_cpus();
+	struct acpi_madt_generic_interrupt *processor;
+
+	if (header->type != ACPI_MADT_TYPE_GENERIC_INTERRUPT)
+		return -EINVAL;
+
+	processor = (struct acpi_madt_generic_interrupt *)header;
+
+	if (BAD_MADT_ENTRY(processor, end) ||
+	    !(processor->flags & ACPI_MADT_ENABLED))
+		return -EINVAL;
+
+	/*
+	 * Non affinity bits must be set to 0 in the CPU UID
+	 */
+	if (processor->uid & ~MPIDR_HWID_BITMASK)
+		return -ENOENT;
+
+	return 0;
+}
+
+#define FOR_EACH_MADT_ENTRY(entry, end)				\
+	for (; (((unsigned long)entry) + sizeof(struct acpi_subtable_header)) < end;					\
+		entry = (struct acpi_subtable_header *)		\
+			((unsigned long)entry + entry->length))
+
+static int __init
+acpi_smp_parse_madt(struct acpi_subtable_header *header, const unsigned long end)
+{
+	struct acpi_madt_generic_interrupt *processor;
+	unsigned int i, status, cpu = 0;
+
+	/* First entry represents boot CPU and needs to be valid */
+	status = acpi_smp_check_madt_entry(header, end);
+	if (status) {
+		pr_err("Failed to parse boot CPU MADT entry\n");
+		return status;
+	}
+
+	processor = (struct acpi_madt_generic_interrupt *)header;
+	if (cpu_logical_map(0) != (u64)processor->uid) {
+		pr_err("Wrong boot CPU placement in MADT\n");
+		return -ENOENT;
+	}
+
+	/*
+	 * Update CPU logic to GIC id mapping.
+	 * cpu_logical_map has already been initialized and the boot CPU doesn't
+	 * need the enable-method so continue.
+	 */
+	cpu_physical_id(cpu++) = processor->gic_id;
+
+	/* Now handle with rest of CPUs */
+	header = (struct acpi_subtable_header *)
+			((unsigned long)header + header->length);
+	FOR_EACH_MADT_ENTRY(header, end) {
+		u64 hwid;
+
+		if (acpi_smp_check_madt_entry(header, end))
+			continue;
+
+		processor = (struct acpi_madt_generic_interrupt *)header;
+		hwid = processor->uid;
+
+		/*
+		 * Duplicate MPIDRs are a recipe for disaster. Scan
+		 * all initialized entries and check for
+		 * duplicates. If any is found just ignore the CPU.
+		 * cpu_logical_map was initialized to INVALID_HWID to
+		 * avoid matching valid MPIDR values.
+		 */
+		for (i = 0; (i < cpu) && (i < NR_CPUS); i++) {
+			if (cpu_logical_map(i) == hwid) {
+				pr_err("Duplicate CPU UID: 0x%x in MADT\n",
+					(int)processor->uid);
+				continue;
+			}
+		}
+
+		if (cpu >= NR_CPUS)
+			continue;
+
+		if (cpu_acpi_read_ops(cpu) != 0)
+			continue;
+
+		if (cpu_ops[cpu]->cpu_init(NULL, cpu))
+			continue;
+
+		pr_debug("CPU logical map [%d] = 0x%lx\n", cpu, (long int)hwid);
+		set_cpu_possible(cpu, true);
+		cpu_logical_map(cpu) = hwid;
+		cpu_physical_id(cpu++) = processor->gic_id;
+	}
+
+	if (cpu > NR_CPUS)
+		pr_warning("no. of cores (%d) greater than configured maximum"
+			   " of %d - clipping\n", cpu, NR_CPUS);
+
+	return 0;
+}
+
+/*
+ * In ACPI mode, the cpu possible map was enumerated before SMP
+ * initialization when MADT table was parsed, so we can get the
+ * possible map here to initialize CPUs.
+ */
+static void __init acpi_smp_init_cpus(void)
+{
+	int count;
+
+	/*
+	 * The GIC corresponding to the boot processor must be the first entry
+	 * in the list of interrupt controller descriptors. If that is true,
+	 * we keep on parsing next ones. While we are here, fill in
+	 * cpu_physical_id map for ACPI processor driver too.
+	 */
+	count = acpi_table_parse_madt(ACPI_MADT_TYPE_GENERIC_INTERRUPT,
+				      acpi_smp_parse_madt, 1);
+	if (count == 1)
+		pr_warning("None of secondaries found, assuming UP\n");
+	else if (count <= 0)
+		pr_err("Failed to parse MADT during SMP init, not enabling"
+			" secondaries\n");
+}
+#else
+static inline void acpi_smp_init_cpus(void) {}
+#endif
+
+void __init smp_init_cpus(void)
+{
+	if (!of_smp_init_cpus())
+		return;
+
+	acpi_smp_init_cpus();
+ }
+
+ void __init smp_prepare_cpus(unsigned int max_cpus)
+{
+	int err;
+	unsigned int cpu, ncores = num_possible_cpus();
+
+	init_cpu_topology();
+	store_cpu_topology(smp_processor_id());
 
 	/*
 	 * are we trying to boot more cores than exist?
@@ -408,14 +574,16 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 		if (cpu == smp_processor_id())
 			continue;
 
-		if (!smp_enable_ops[cpu])
+		if (!cpu_ops[cpu])
 			continue;
 
-		err = smp_enable_ops[cpu]->prepare_cpu(cpu);
+		err = cpu_ops[cpu]->cpu_prepare(cpu);
 		if (err)
 			continue;
 
+	if (acpi_disabled)
 		set_cpu_present(cpu, true);
+		
 		max_cpus--;
 	}
 }
@@ -431,6 +599,11 @@ void arch_send_call_function_ipi_mask(const struct cpumask *mask)
 	smp_cross_call(mask, IPI_CALL_FUNC);
 }
 
+void arch_send_wakeup_ipi_mask(const struct cpumask *mask)
+{
+	smp_cross_call(mask, IPI_WAKEUP);
+}
+
 void arch_send_call_function_single_ipi(int cpu)
 {
 	smp_cross_call(cpumask_of(cpu), IPI_CALL_FUNC_SINGLE);
@@ -442,6 +615,7 @@ static const char *ipi_types[NR_IPI] = {
 	S(IPI_CALL_FUNC, "Function call interrupts"),
 	S(IPI_CALL_FUNC_SINGLE, "Single function call interrupts"),
 	S(IPI_CPU_STOP, "CPU stop interrupts"),
+	S(IPI_WAKEUP, "CPU wakeup interrupts"),
 };
 
 void show_ipi_list(struct seq_file *p, int prec)
@@ -525,6 +699,9 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		irq_enter();
 		ipi_cpu_stop(cpu);
 		irq_exit();
+		break;
+
+	case IPI_WAKEUP:
 		break;
 
 	default:

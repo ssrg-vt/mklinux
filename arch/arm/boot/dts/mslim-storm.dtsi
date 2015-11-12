@@ -1,0 +1,403 @@
+/*
+ * dts file for AppliedMicro (APM) X-Gene Storm MSLIM
+ *
+ * Copyright (C) 2014, Applied Micro Circuits Corporation
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
+ */
+
+/ {
+	model = "APM MSLIM Mustang";
+	compatible = "apm,mslim";
+	interrupt-parent = <&gic>;
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a5";
+			reg = <0>;
+			next-level-cache = <&L2>;
+		};
+
+		cpu@1 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a5";
+			reg = <1>;
+			next-level-cache = <&L2>;
+		};
+
+		cpu@2 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a5";
+			reg = <2>;
+			next-level-cache = <&L2>;
+		};
+
+		cpu@3 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a5";
+			reg = <3>;
+			next-level-cache = <&L2>;
+		};
+	};
+
+	gic: interrupt-controller@45001000 {
+		compatible = "arm,cortex-a9-gic";
+		#interrupt-cells = <3>;
+		interrupt-controller;
+		reg = <0x45001000 0x1000>,
+		      <0x45000100 0x100>;
+	};
+
+	timer@45000600 {
+		compatible = "arm,cortex-a5-twd-timer";
+		reg = <0x45000600 0x20>;
+		interrupts = <1 13 0xf04>;
+		clock-frequency = <250000000>;
+	};
+
+	scu@45000000 {
+		compatible = "arm,cortex-a5-scu";
+		reg = <0x45000000 0x100>;
+	};
+
+	L2: cache-controller@45002000 {
+		compatible = "arm,pl310-cache";
+		reg = <0x45002000 0x1000>;
+		cache-level = <2>;
+		arm,data-latency = <1 1 1>;
+		arm,tag-latency = <1 1 1>;
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		clocks {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+
+			refclk: refclk {
+				compatible = "fixed-clock";
+				#clock-cells = <1>;
+				clock-frequency = <100000000>;
+				clock-output-names = "refclk";
+			};
+
+			pcppll: pcppll@c7000100 {
+				compatible = "apm,xgene-pcppll-clock";
+				#clock-cells = <1>;
+				clocks = <&refclk 0>;
+				reg = <0xc7000100 0x1000>;
+				clock-output-names = "pcppll";
+			};
+
+			socpll: socpll@c7000120 {
+				compatible = "apm,xgene-socpll-clock";
+				#clock-cells = <1>;
+				clocks = <&refclk 0>;
+				reg = <0xc7000120 0x1000>;
+				clock-output-names = "socpll";
+			};
+
+			socplldiv2: socplldiv2  {
+				compatible = "fixed-factor-clock";
+				#clock-cells = <1>;
+				clocks = <&socpll 0>;
+				clock-mult = <1>;
+				clock-div = <2>;
+				clock-output-names = "socplldiv2";
+			};
+
+			sataphy1clk: sataphy1clk@cf21c000 {
+				compatible = "apm,xgene-device-clock";
+				#clock-cells = <1>;
+				clocks = <&socplldiv2 0>;
+				reg = <0xcf21c000 0x1000>;
+				reg-names = "csr-reg";
+				clock-output-names = "sataphy1clk";
+				csr-offset = <0x4>;
+				csr-mask = <0x3a>;
+				enable-offset = <0x0>;
+				enable-mask = <0x06>;
+			};
+
+			sataphy2clk: sataphy1clk@cf22c000 {
+				compatible = "apm,xgene-device-clock";
+				#clock-cells = <1>;
+				clocks = <&socplldiv2 0>;
+				reg = <0xcf22c000 0x1000>;
+				reg-names = "csr-reg";
+				clock-output-names = "sataphy2clk";
+				csr-offset = <0x4>;
+				csr-mask = <0x3a>;
+				enable-offset = <0x0>;
+				enable-mask = <0x06>;
+			};
+
+			sataphy3clk: sataphy1clk@cf23c000 {
+				compatible = "apm,xgene-device-clock";
+				#clock-cells = <1>;
+				clocks = <&socplldiv2 0>;
+				reg = <0xcf23c000 0x1000>;
+				reg-names = "csr-reg";
+				clock-output-names = "sataphy3clk";
+				csr-offset = <0x4>;
+				csr-mask = <0x3a>;
+				enable-offset = <0x0>;
+				enable-mask = <0x06>;
+			};
+
+			sata01clk: sata01clk@cf21c000 {
+				compatible = "apm,xgene-device-clock";
+				#clock-cells = <1>;
+				clocks = <&socplldiv2 0>;
+				reg = <0xcf21c000 0x1000>;
+				reg-names = "csr-reg";
+				clock-output-names = "sata01clk";
+				csr-offset = <0x4>;
+				csr-mask = <0x05>;
+				enable-offset = <0x0>;
+				enable-mask = <0x39>;
+			};
+
+			sata23clk: sata23clk@cf22c000 {
+				compatible = "apm,xgene-device-clock";
+				#clock-cells = <1>;
+				clocks = <&socplldiv2 0>;
+				reg = <0xcf22c000 0x1000>;
+				reg-names = "csr-reg";
+				clock-output-names = "sata23clk";
+				csr-offset = <0x4>;
+				csr-mask = <0x05>;
+				enable-offset = <0x0>;
+				enable-mask = <0x39>;
+			};
+
+			sata45clk: sata45clk@cf23c000 {
+				compatible = "apm,xgene-device-clock";
+				#clock-cells = <1>;
+				clocks = <&socplldiv2 0>;
+				reg = <0xcf23c000 0x1000>;
+				reg-names = "csr-reg";
+				clock-output-names = "sata45clk";
+				csr-offset = <0x4>;
+				csr-mask = <0x05>;
+				enable-offset = <0x0>;
+				enable-mask = <0x39>;
+			};
+		};
+
+		serial@cc021000 {
+			device_type = "serial";
+			compatible = "ns16550";
+			reg = <0xcc021000 0x100>;
+			reg-shift = <2>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 15 0x4>;
+			clock-frequency = <50000000>;
+		};
+
+		iof-csr@cf400000 {
+			compatible = "apm,mslim-iof-csr";
+			reg = <0xcf400000 0x1000>;
+		};
+
+		qmtm0: qmtm@cf600000 {
+			device_type = "qmtm";
+			compatible = "xgene,qmtm";
+			max_queues = <0x400>;
+			reg =  <0xcf600000 0x10000
+				0xc8000000 0x400000
+				0x44000000 0x10000
+				0xcf400000 0x10000>;
+			slave_name = "MSLIM_QMTM0";
+			slave_info = <0x0 0x0 0x2 0x20 0x2>;
+			interrupts =   <0x0 0x0 0x4
+					0x0 0x1 0x4
+					0x0 0x4 0x4>;
+			interrupt-parent = <&gic>;
+			#clock-cells = <1>;
+			devid = <0>;
+		};
+
+		enet4: ethernet@cf610000 {
+			device_type = "network";
+			compatible = "xgene,enet";
+			status = "ok";
+			reg =  <0xcf610000 0x30
+				0xcf610000 0x10000
+				0x17020000 0x10000>;
+			slave_name = "SXGMII0";
+			slave_info = <0x0 0x0 0x8 0x20 0x8>;
+			#clock-cells = <1>;
+			local-mac-address = [00 11 3a 8a 5a 74];
+			max-frame-size = <0x233a>;
+			devid = <4>;
+			phyid = <1>;
+			phy-mode = "xgmii";
+		};
+
+		phy1: phy@cf21a000 {
+			compatible = "apm,xgene-phy";
+			reg = <0xcf21a000 0x100>;
+			#phy-cells = <1>;
+			clocks = <&sataphy1clk 0>;
+			status = "ok";
+			apm,tx-boost-gain-ssd = <2 2 2 2 2 2>;
+			apm,tx-boost-gain = <30 30 30 30 30 30>;
+			apm,tx-eye-tuning = <2 10 10 2 10 10>;
+			apm,tx-equalizer = <1 1 1 1 1 1>;
+			apm,tx-boost-gain-ssd-A2 = <2 2 2 2 2 2>;
+			apm,tx-boost-gain-A2 = <2 2 2 2 2 2>;
+			apm,tx-eye-tuning-A2 = <10 10 10 10 10 10>;
+			apm,tx-speed-A2 = <1 3 5>;
+			apm,tx-pre-cursor1-A2 = <0 0 0 0 0 0>;
+			apm,tx-post-cursor-A2 = <273000 273000 273000 273000 273000 273000>;
+			apm,tx-amplitude-A2 = <199500 199500 199500 199500 199500 199500>;
+			apm,tx-equalizer-A2 = <0 0 0 0 0 0>;
+		};
+
+		phy2: phy@cf22a000 {
+			compatible = "apm,xgene-phy";
+			reg = <0xcf22a000 0x100>;
+			#phy-cells = <1>;
+			clocks = <&sataphy2clk 0>;
+			status = "disabled";
+			apm,tx-boost-gain-ssd = <2 2 2 2 2 2>;
+			apm,tx-boost-gain = <30 30 30 30 30 30>;
+			apm,tx-eye-tuning = <1 10 10 2 10 10>;
+			apm,tx-equalizer = <1 1 1 1 1 1>;
+			apm,tx-boost-gain-ssd-A2 = <2 2 2 2 2 2>;
+			apm,tx-boost-gain-A2 = <2 2 2 2 2 2>;
+			apm,tx-eye-tuning-A2 = <1 10 10 2 10 10>;
+			apm,tx-speed-A2 = <1 3 5>;
+			apm,tx-pre-cursor1-A2 = <0 0 0 0 0 0>;
+			apm,tx-post-cursor-A2 = <273000 273000 273000 273000 273000 273000>;
+			apm,tx-amplitude-A2 = <199500 199500 199500 199500 199500 199500>;
+			apm,tx-equalizer-A2 = <0 0 0 0 0 0>;
+		};
+
+		phy3: phy@cf23a000 {
+			compatible = "apm,xgene-phy-ext";
+			reg = <0xcf23a000 0x100>,
+			      <0xcf2d0000 0x100>;
+			#phy-cells = <1>;
+			clocks = <&sataphy3clk 0>;
+			status = "disabled";
+			apm,tx-boost-gain-ssd = <3 3 3 3 3 3>;
+			apm,tx-boost-gain = <31 31 31 31 31 31>;
+			apm,tx-eye-tuning = <2 10 10 2 10 10>;
+			apm,tx-equalizer = <1 1 1 1 1 1>;
+			apm,tx-boost-gain-ssd-A2 = <2 2 2 2 2 2>;
+			apm,tx-boost-gain-A2 = <2 2 2 2 2 2>;
+			apm,tx-eye-tuning-A2 = <10 10 10 10 10 10>;
+			apm,tx-speed-A2 = <1 3 5>;
+			apm,tx-pre-cursor1-A2 = <0 0 0 0 0 0>;
+			apm,tx-post-cursor-A2 = <273000 273000 273000 273000 273000 273000>;
+			apm,tx-amplitude-A2 = <199500 199500 199500 199500 199500 199500>;
+			apm,tx-equalizer-A2 = <0 0 0 0 0 0>;
+		};
+
+		sata1: sata@ca000000 {
+			compatible = "apm,xgene-ahci";
+			reg = <0xca000000 0x1000>,
+			      <0xcf210000 0x1000>,
+			      <0xcf21d000 0x1000>,
+			      <0xcf21e000 0x1000>,
+			      <0xcf21a000 0x1000>,
+			      <0xcf217000 0x1000>;
+			interrupts = <0x0 0x15 0x4>;
+			status = "ok";
+			clocks = <&sata01clk 0>;
+			phys = <&phy1 0>;
+			phy-names = "sata-phy";
+		};
+
+		sata2: sata@ca400000 {
+			compatible = "apm,xgene-ahci";
+			reg = <0xca400000 0x1000>,
+			      <0xcf220000 0x1000>,
+			      <0xcf22d000 0x1000>,
+			      <0xcf22e000 0x1000>,
+			      <0xcf22a000 0x1000>,
+			      <0xcf227000 0x1000>;
+			interrupts = <0x0 0x16 0x4>;
+			status = "disabled";
+			clocks = <&sata23clk 0>;
+			phys = <&phy2 0>;
+			phy-names = "sata-phy";
+		};
+
+		sata3: sata@ca800000 {
+			compatible = "apm,xgene-ahci";
+			reg = <0xca800000 0x1000>,
+			      <0xcf230000 0x1000>,
+			      <0xcf23d000 0x1000>,
+			      <0xcf23e000 0x1000>,
+			      <0xcf23a000 0x1000>;
+			interrupts = <0x0 0x17 0x4>;
+			status = "disabled";
+			clocks = <&sata45clk 0>;
+			phys = <&phy3 0>;
+			phy-names = "sata-phy";
+		};
+
+		msi@B9000000 {
+			compatible = "apm,gic-msi";
+			reg = <0xB9000000 0xB00000>;
+			msi-available-ranges = <0x0 0x1000>;
+			interrupts = <
+					0x0 0x34 0x1
+					0x0 0x35 0x1
+					0x0 0x36 0x1
+					0x0 0x37 0x1
+					0x0 0x38 0x1
+					0x0 0x39 0x1
+					0x0 0x3A 0x1
+					0x0 0x3B 0x1
+					0x0 0x3C 0x1
+					0x0 0x3D 0x1
+					0x0 0x3E 0x1
+					0x0 0x3F 0x1
+					0x0 0x40 0x1
+					0x0 0x41 0x1
+					0x0 0x42 0x1
+					0x0 0x43 0x1>;
+			interrupt-parent = <&gic>;
+		};
+
+		PCIE0: pciex@CF2B0000 {
+			device_type = "pci";
+			compatible = "xgene,pcie";
+			port = <0>;
+			status = "ok";
+			serdes-diff-clk = <0>;
+			link_width = <8>;
+			link_speed = <3>;
+			reg = < 0xCF2B0000 0x00010000>;
+
+			ranges = <
+				0x02000000 0x0 0xA0000000 0xA0000000 0x0 0x08000000 /* mem*/
+				0x01000000 0x0 0xA8000000 0xA8000000 0x0 0x00010000 /* io */
+				0x00000000 0x0 0xAC000000 0xAC000000 0x0 0x00200000 /* cfg */
+				0x00000000 0x0 0x79000000 0x79000000 0x0 0x00800000 /* msi */
+				>;
+
+			interrupt-map-mask = <0x0 0x0 0x0 0x7>;
+			interrupt-map = <0x0 0x0 0x0 0x1 &gic 0x0 0xc2 0x1>;
+			bus-range = <0x00 0x01>;
+		};
+	};
+};

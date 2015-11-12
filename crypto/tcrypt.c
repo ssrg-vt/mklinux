@@ -652,8 +652,9 @@ static void test_ahash_speed(const char *algo, unsigned int sec,
 	struct tcrypt_result tresult;
 	struct ahash_request *req;
 	struct crypto_ahash *tfm;
-	static char output[1024];
+	char *output;
 	int i, ret;
+	#define OUTPUT_SIZE		1024
 
 	printk(KERN_INFO "\ntesting speed of async %s\n", algo);
 
@@ -664,7 +665,9 @@ static void test_ahash_speed(const char *algo, unsigned int sec,
 		return;
 	}
 
-	if (crypto_ahash_digestsize(tfm) > sizeof(output)) {
+	output = kmalloc(OUTPUT_SIZE, GFP_KERNEL | GFP_DMA);
+
+	if (crypto_ahash_digestsize(tfm) > OUTPUT_SIZE) {
 		pr_err("digestsize(%u) > outputbuffer(%zu)\n",
 		       crypto_ahash_digestsize(tfm), sizeof(output));
 		goto out;
@@ -711,6 +714,7 @@ static void test_ahash_speed(const char *algo, unsigned int sec,
 
 out:
 	crypto_free_ahash(tfm);
+	kfree(output);
 }
 
 static inline int do_one_acipher_op(struct ablkcipher_request *req, int ret)
@@ -1176,6 +1180,10 @@ static int do_test(int m)
 
 	case 47:
 		ret += tcrypt_test("crct10dif");
+		break;
+
+	case 99:
+		ret += tcrypt_test("xgene(crc32c)");
 		break;
 
 	case 100:
@@ -1790,6 +1798,44 @@ static int do_test(int m)
 		test_acipher_speed("ctr(blowfish)", DECRYPT, sec, NULL, 0,
 				   speed_template_8_32);
 		break;
+
+#ifdef CONFIG_ARCH_XGENE
+	case 510:
+		ret += tcrypt_test("authenc(hmac(md5),cbc(aes))");
+		break;
+
+	case 511:
+		ret += tcrypt_test("authenc(hmac(sha1),cbc(aes))");
+		break;
+
+	case 512:
+		ret += tcrypt_test("authenc(hmac(sha224),cbc(aes))");
+		break;
+
+	case 513:
+		ret += tcrypt_test("authenc(hmac(sha256),cbc(aes))");
+		break;
+
+	case 514:
+		ret += tcrypt_test("authenc(hmac(md5),cbc(des3_ede))");
+		break;
+
+	case 515:
+		ret += tcrypt_test("authenc(hmac(sha1),cbc(des3_ede))");
+		break;
+
+	case 516:
+		ret += tcrypt_test("authenc(hmac(sha224),cbc(des3_ede))");
+		break;
+
+	case 517:
+		ret += tcrypt_test("authenc(hmac(sha256),cbc(des3_ede))");
+		break;
+
+	case 518:
+		ret += tcrypt_test("f8(kasumi)");
+		break;
+#endif
 
 	case 1000:
 		test_available();

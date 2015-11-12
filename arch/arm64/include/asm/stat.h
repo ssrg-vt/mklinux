@@ -19,8 +19,9 @@
 #include <uapi/asm/stat.h>
 
 #ifdef CONFIG_COMPAT
-
 #include <asm/compat.h>
+
+#ifdef CONFIG_AARCH32_EL0
 
 /*
  * struct stat64 is needed for compat tasks only. Its definition is different
@@ -57,5 +58,6 @@ struct stat64 {
 	compat_u64	st_ino;
 };
 
+#endif
 #endif
 #endif

@@ -1,0 +1,8 @@
+config XGENE
+	bool "X-Gene POTENZA 32bit ARM-v7 Core"
+	select ARM_ARCH_TIMER
+	select ARM_GIC
+	select CPU_V7
+	select HAVE_SMP
+	select ARM_PATCH_PHYS_VIRT
+	select USE_OF

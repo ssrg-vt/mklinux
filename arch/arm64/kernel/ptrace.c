@@ -69,10 +69,10 @@ static void ptrace_hbptriggered(struct perf_event *bp,
 		.si_addr	= (void __user *)(bkpt->trigger),
 	};
 
-#ifdef CONFIG_COMPAT
+#ifdef CONFIG_AARCH32_EL0
 	int i;
 
-	if (!is_compat_task())
+	if (!is_a32_compat_task())
 		goto send_sig;
 
 	for (i = 0; i < ARM_MAX_BRP; ++i) {
@@ -214,31 +214,29 @@ static int ptrace_hbp_fill_attr_ctrl(unsigned int note_type,
 {
 	int err, len, type, disabled = !ctrl.enabled;
 
-	if (disabled) {
-		len = 0;
-		type = HW_BREAKPOINT_EMPTY;
-	} else {
-		err = arch_bp_generic_fields(ctrl, &len, &type);
-		if (err)
-			return err;
+	attr->disabled = disabled;
+	if (disabled)
+		return 0;
 
-		switch (note_type) {
-		case NT_ARM_HW_BREAK:
-			if ((type & HW_BREAKPOINT_X) != type)
-				return -EINVAL;
-			break;
-		case NT_ARM_HW_WATCH:
-			if ((type & HW_BREAKPOINT_RW) != type)
-				return -EINVAL;
-			break;
-		default:
+	err = arch_bp_generic_fields(ctrl, &len, &type);
+	if (err)
+		return err;
+
+	switch (note_type) {
+	case NT_ARM_HW_BREAK:
+		if ((type & HW_BREAKPOINT_X) != type)
 			return -EINVAL;
-		}
+		break;
+	case NT_ARM_HW_WATCH:
+		if ((type & HW_BREAKPOINT_RW) != type)
+			return -EINVAL;
+		break;
+	default:
+		return -EINVAL;
 	}
 
 	attr->bp_len	= len;
 	attr->bp_type	= type;
-	attr->disabled	= disabled;
 
 	return 0;
 }
@@ -609,7 +607,7 @@ static const struct user_regset_view user_aarch64_view = {
 	.regsets = aarch64_regsets, .n = ARRAY_SIZE(aarch64_regsets)
 };
 
-#ifdef CONFIG_COMPAT
+#ifdef CONFIG_AARCH32_EL0
 #include <linux/compat.h>
 
 enum compat_regset {
@@ -636,28 +634,27 @@ static int compat_gpr_get(struct task_struct *target,
 
 	for (i = 0; i < num_regs; ++i) {
 		unsigned int idx = start + i;
-		void *reg;
+		compat_ulong_t reg;
 
 		switch (idx) {
 		case 15:
-			reg = (void *)&task_pt_regs(target)->pc;
+			reg = task_pt_regs(target)->pc;
 			break;
 		case 16:
-			reg = (void *)&task_pt_regs(target)->pstate;
+			reg = task_pt_regs(target)->pstate;
 			break;
 		case 17:
-			reg = (void *)&task_pt_regs(target)->orig_x0;
+			reg = task_pt_regs(target)->orig_x0;
 			break;
 		default:
-			reg = (void *)&task_pt_regs(target)->regs[idx];
+			reg = task_pt_regs(target)->regs[idx];
 		}
 
-		ret = copy_to_user(ubuf, reg, sizeof(compat_ulong_t));
-
+		ret = copy_to_user(ubuf, &reg, sizeof(reg));
 		if (ret)
 			break;
-		else
-			ubuf += sizeof(compat_ulong_t);
+
+		ubuf += sizeof(reg);
 	}
 
 	return ret;
@@ -685,28 +682,28 @@ static int compat_gpr_set(struct task_struct *target,
 
 	for (i = 0; i < num_regs; ++i) {
 		unsigned int idx = start + i;
-		void *reg;
+		compat_ulong_t reg;
+
+		ret = copy_from_user(&reg, ubuf, sizeof(reg));
+		if (ret)
+			return ret;
+
+		ubuf += sizeof(reg);
 
 		switch (idx) {
 		case 15:
-			reg = (void *)&newregs.pc;
+			newregs.pc = reg;
 			break;
 		case 16:
-			reg = (void *)&newregs.pstate;
+			newregs.pstate = reg;
 			break;
 		case 17:
-			reg = (void *)&newregs.orig_x0;
+			newregs.orig_x0 = reg;
 			break;
 		default:
-			reg = (void *)&newregs.regs[idx];
+			newregs.regs[idx] = reg;
 		}
 
-		ret = copy_from_user(reg, ubuf, sizeof(compat_ulong_t));
-
-		if (ret)
-			goto out;
-		else
-			ubuf += sizeof(compat_ulong_t);
 	}
 
 	if (valid_user_regs(&newregs.user_regs))
@@ -714,7 +711,6 @@ static int compat_gpr_set(struct task_struct *target,
 	else
 		ret = -EINVAL;
 
-out:
 	return ret;
 }
 
@@ -774,7 +770,7 @@ static int compat_vfp_set(struct task_struct *target,
 static const struct user_regset aarch32_regsets[] = {
 	[REGSET_COMPAT_GPR] = {
 		.core_note_type = NT_PRSTATUS,
-		.n = COMPAT_ELF_NGREG,
+		.n = COMPAT_A32_ELF_NGREG,
 		.size = sizeof(compat_elf_greg_t),
 		.align = sizeof(compat_elf_greg_t),
 		.get = compat_gpr_get,
@@ -809,7 +805,7 @@ static int compat_ptrace_read_user(struct task_struct *tsk, compat_ulong_t off,
 		tmp = tsk->mm->start_data;
 	else if (off == COMPAT_PT_TEXT_END_ADDR)
 		tmp = tsk->mm->end_code;
-	else if (off < sizeof(compat_elf_gregset_t))
+	else if (off < sizeof(compat_a32_elf_gregset_t))
 		return copy_regset_to_user(tsk, &user_aarch32_view,
 					   REGSET_COMPAT_GPR, off,
 					   sizeof(compat_ulong_t), ret);
@@ -829,7 +825,7 @@ static int compat_ptrace_write_user(struct task_struct *tsk, compat_ulong_t off,
 	if (off & 3 || off >= COMPAT_USER_SZ)
 		return -EIO;
 
-	if (off >= sizeof(compat_elf_gregset_t))
+	if (off >= sizeof(compat_a32_elf_gregset_t))
 		return 0;
 
 	ret = copy_regset_from_user(tsk, &user_aarch32_view,
@@ -968,8 +964,9 @@ static int compat_ptrace_sethbpregs(struct task_struct *tsk, compat_long_t num,
 }
 #endif	/* CONFIG_HAVE_HW_BREAKPOINT */
 
-long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
-			compat_ulong_t caddr, compat_ulong_t cdata)
+
+long compat_a32_arch_ptrace(struct task_struct *child, compat_long_t request,
+				       compat_ulong_t caddr, compat_ulong_t cdata)
 {
 	unsigned long addr = caddr;
 	unsigned long data = cdata;
@@ -989,7 +986,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 			ret = copy_regset_to_user(child,
 						  &user_aarch32_view,
 						  REGSET_COMPAT_GPR,
-						  0, sizeof(compat_elf_gregset_t),
+						  0, sizeof(compat_a32_elf_gregset_t),
 						  datap);
 			break;
 
@@ -997,7 +994,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 			ret = copy_regset_from_user(child,
 						    &user_aarch32_view,
 						    REGSET_COMPAT_GPR,
-						    0, sizeof(compat_elf_gregset_t),
+						    0, sizeof(compat_a32_elf_gregset_t),
 						    datap);
 			break;
 
@@ -1045,12 +1042,22 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 
 	return ret;
 }
-#endif /* CONFIG_COMPAT */
+#endif /* CONFIG_AARCH32_EL0 */
+
+#ifdef CONFIG_COMPAT
+long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
+			compat_ulong_t caddr, compat_ulong_t cdata)
+{
+	if (is_a32_compat_task())
+		return compat_a32_arch_ptrace(child, request, caddr, cdata);
+	return compat_ptrace_request(child, request, caddr, cdata);
+}
+#endif
 
 const struct user_regset_view *task_user_regset_view(struct task_struct *task)
 {
-#ifdef CONFIG_COMPAT
-	if (is_compat_thread(task_thread_info(task)))
+#ifdef CONFIG_AARCH32_EL0
+	if (is_a32_compat_thread(task_thread_info(task)))
 		return &user_aarch32_view;
 #endif
 	return &user_aarch64_view;
@@ -1069,7 +1076,7 @@ asmlinkage int syscall_trace(int dir, struct pt_regs *regs)
 	if (!test_thread_flag(TIF_SYSCALL_TRACE))
 		return regs->syscallno;
 
-	if (is_compat_task()) {
+	if (is_a32_compat_task()) {
 		/* AArch32 uses ip (r12) for scratch */
 		saved_reg = regs->regs[12];
 		regs->regs[12] = dir;
@@ -1087,7 +1094,7 @@ asmlinkage int syscall_trace(int dir, struct pt_regs *regs)
 	else if (tracehook_report_syscall_entry(regs))
 		regs->syscallno = ~0UL;
 
-	if (is_compat_task())
+	if (is_a32_compat_task())
 		regs->regs[12] = saved_reg;
 	else
 		regs->regs[7] = saved_reg;

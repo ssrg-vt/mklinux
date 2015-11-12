@@ -26,7 +26,11 @@
 #include <linux/ptrace.h>
 
 #define COMPAT_USER_HZ		100
+#ifdef __AARCH64EB__
+#define COMPAT_UTS_MACHINE	"armv8b\0\0"
+#else
 #define COMPAT_UTS_MACHINE	"armv8l\0\0"
+#endif
 
 typedef u32		compat_size_t;
 typedef s32		compat_ssize_t;
@@ -72,14 +76,27 @@ struct compat_timeval {
 	s32		tv_usec;
 };
 
+/* ILP32 uses 64bit time_t and not the above compat structures */
+#define COMPAT_USE_64BIT_TIME !is_a32_compat_task()
+
 struct compat_stat {
+#ifdef __AARCH64EB__
+	short		st_dev;
+	short		__pad1;
+#else
 	compat_dev_t	st_dev;
+#endif
 	compat_ino_t	st_ino;
 	compat_mode_t	st_mode;
 	compat_ushort_t	st_nlink;
 	__compat_uid16_t	st_uid;
 	__compat_gid16_t	st_gid;
+#ifdef __AARCH64EB__
+	short		st_rdev;
+	short		__pad2;
+#else
 	compat_dev_t	st_rdev;
+#endif
 	compat_off_t	st_size;
 	compat_off_t	st_blksize;
 	compat_off_t	st_blocks;
@@ -194,6 +211,9 @@ typedef struct compat_siginfo {
 	} _sifields;
 } compat_siginfo_t;
 
+/* ILP32 uses the native siginfo and not the compat struct */
+#define COMPAT_USE_NATIVE_SIGINFO	!is_a32_compat_task()
+
 #define COMPAT_OFF_T_MAX	0x7fffffff
 #define COMPAT_LOFF_T_MAX	0x7fffffffffffffffL
 
@@ -279,28 +299,79 @@ struct compat_shmid64_ds {
 	compat_ulong_t __unused5;
 };
 
-static inline int is_compat_task(void)
+#ifdef CONFIG_AARCH32_EL0
+static inline int is_a32_compat_task(void)
 {
 	return test_thread_flag(TIF_32BIT);
 }
 
-static inline int is_compat_thread(struct thread_info *thread)
+static inline int is_a32_compat_thread(struct thread_info *thread)
 {
 	return test_ti_thread_flag(thread, TIF_32BIT);
 }
+#else
+static inline int is_a32_compat_task(void)
+{
+	return 0;
+}
+static inline int is_a32_compat_thread(struct thread_info *thread)
+{
+	return 0;
+}
+#endif
+
+#ifdef CONFIG_ARM64_ILP32
+static inline int is_ilp32_compat_task(void)
+{
+	return test_thread_flag(TIF_32BIT_AARCH64);
+}
+static inline int is_ilp32_compat_thread(struct thread_info *thread)
+{
+	return test_ti_thread_flag(thread, TIF_32BIT_AARCH64);
+}
+#else
+static inline int is_ilp32_compat_task(void)
+{
+	return 0;
+}
+static inline int is_ilp32_compat_thread(struct thread_info *thread)
+{
+	return 0;
+}
+#endif
 
 #else /* !CONFIG_COMPAT */
 
-static inline int is_compat_task(void)
+static inline int is_a32_compat_task(void)
 {
 	return 0;
 }
 
-static inline int is_compat_thread(struct thread_info *thread)
+static inline int is_a32_compat_thread(struct thread_info *thread)
+{
+	return 0;
+}
+
+static inline int is_ilp32_compat_task(void)
+{
+	return 0;
+}
+
+static inline int is_ilp32_compat_thread(struct thread_info *thread)
 {
 	return 0;
 }
 
 #endif /* CONFIG_COMPAT */
+
+static inline int is_compat_task(void)
+{
+	return is_a32_compat_task() || is_ilp32_compat_task();
+}
+
+static inline int is_compat_thread(struct thread_info *thread)
+{
+	return is_a32_compat_thread(thread) || is_ilp32_compat_thread(thread);
+}
 #endif /* __KERNEL__ */
 #endif /* __ASM_COMPAT_H */

@@ -110,4 +110,10 @@ extern struct pci_ops via82c505_ops;
 extern int via82c505_setup(int nr, struct pci_sys_data *);
 extern void via82c505_init(void *sysdata);
 
+#if defined(CONFIG_PCI_MSI) && defined(CONFIG_PCI_XGENE)
+#define arch_setup_msi_irqs     arch_setup_msi_irqs
+#define arch_msi_check_device   arch_msi_check_device
+#define arch_teardown_msi_irqs  arch_teardown_msi_irqs
+#endif
+
 #endif /* __ASM_MACH_PCI_H */
