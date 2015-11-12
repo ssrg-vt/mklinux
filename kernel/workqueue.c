@@ -2956,6 +2956,13 @@ static int wq_clamp_max_active(int max_active, unsigned int flags,
 	return clamp_val(max_active, 1, lim);
 }
 
+const char* get_wq_name(struct workqueue_struct *wq){
+	if(wq)
+		return wq->name;	
+	else
+		return NULL;
+}
+
 struct workqueue_struct *__alloc_workqueue_key(const char *name,
 					       unsigned int flags,
 					       int max_active,
