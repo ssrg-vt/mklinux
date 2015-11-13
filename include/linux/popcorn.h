@@ -1,3 +1,5 @@
+#ifndef _POPCORN_H
+#define _POPCORN_H
 
  struct _remote_cpu_info_data
  {
@@ -35,3 +37,4 @@ struct _remote_cpu_info_list
   };
 typedef struct _remote_cpu_info_list _remote_cpu_info_list_t;
 
+#endif

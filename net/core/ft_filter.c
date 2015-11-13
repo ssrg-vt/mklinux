@@ -162,26 +162,9 @@ struct tcp_param_work{
 	struct tcp_init_param tcp_param;
 };
 
-/*struct wq_member{
-	struct list_head entry;
-	struct workqueue_struct *wq;
-};
-
-struct stack{
-	int size;
-	spinlock_t stack_lock;
-	struct list_head stack_head;
-};*/
-
-//static struct workqueue_struct *workqueues_creator_wq;
 static struct workqueue_struct *tx_notify_wq;
-extern int _cpu;
 struct list_head filter_list_head;
 DEFINE_SPINLOCK(filter_list_lock);
-
-/*#define MAX_WQ_POOL	50
-#define THRESHOLD_WQ_POOL	(MAX_WQ_POOL/3)
-struct stack wq_stack;*/
 
 struct handshake_work{
 	struct work_struct work;
@@ -212,65 +195,6 @@ struct kmem_cache *ft_filters_entries;
 
 static int get_iphdr(struct sk_buff *skb, struct iphdr** ip_header,int *iphdrlen);
 static void put_iphdr(struct sk_buff *skb, int iphdrlen);
-
-/*static struct workqueue_struct * add_wq_to_pool(struct workqueue_struct *wq, int force_add){
-        struct wq_member *new_entry;
-        struct workqueue_struct *ret= wq;
-        
-        if(!wq)
-                return ret;
-        
-        new_entry= kmalloc(sizeof(*new_entry), GFP_ATOMIC);
-        if(!new_entry) 
-                return ret;
-                
-        INIT_LIST_HEAD(&new_entry->entry);
-        new_entry->wq= wq; 
-                
-        spin_lock_bh(&wq_stack.stack_lock);
-        if(force_add || wq_stack.size < MAX_WQ_POOL){
-                list_add(&new_entry->entry, &wq_stack.stack_head);
-                wq_stack.size++;
-                ret= NULL;
-        }
-        spin_unlock_bh(&wq_stack.stack_lock);
-
-        if(ret){
-                kfree(new_entry);
-        }
-
-        return ret;
-
-}*/
-
-/*static void create_more_working_queues(struct work_struct* work){
-	static atomic_t id= ATOMIC_INIT(0);
-	static const int NAME_SIZE= 200;
-	char name[NAME_SIZE];
-	struct workqueue_struct *wq;
-	int ret;
-
-	if(in_interrupt())
-		return;
-
-	do{
-		ret= snprintf(name, NAME_SIZE, "ft_wq_%d", atomic_inc_return(&id));
-		if(ret==NAME_SIZE){
-			printk("%s ERROR: name field too small\n", __func__);
-			return;
-		}
-		
-		wq= create_singlethread_workqueue(name); 
-		if(wq)
-			wq= add_wq_to_pool(wq, 0);
-	}
-	while(wq==NULL);
-
-	destroy_workqueue(wq);
-
-	if(work)
-		kfree(work);
-}*/
 
 static int create_pckt_dispatcher_pool(void){
 	int i, ret;
@@ -354,39 +278,6 @@ out:
 	return ret;
 	
 }
-
-/*static struct workqueue_struct * remove_wq_from_pool(void){
- 	struct workqueue_struct *ret= NULL;
-        struct wq_member *entry= NULL;
-	int create_more= 0;
-	struct work_struct *work;
-
-	spin_lock_bh(&wq_stack.stack_lock);
-        if(wq_stack.size > 0){
-		entry= (struct wq_member *) list_first_entry(&wq_stack.stack_head, struct wq_member, entry);
-		list_del(&entry->entry);
-		wq_stack.size--;
-	}
-	if(wq_stack.size < THRESHOLD_WQ_POOL){
-		create_more= 1;
-	}
-        spin_unlock_bh(&wq_stack.stack_lock);
-
-	if(entry){
-		ret= entry->wq;
-		kfree(entry);
-	}
-
-	if(create_more){
-		work= kmalloc(sizeof(*work), GFP_ATOMIC);
-		if(work){
-			INIT_WORK(work, create_more_working_queues);
-		        queue_work(workqueues_creator_wq, work);
-		}
-	}
-
-	return ret;
-}*/
 
 static struct workqueue_struct * peak_wq_from_pckt_dispatcher_pool(void){
 	struct workqueue_struct *ret;
@@ -3078,143 +2969,6 @@ out_err:
 
 }
 
-static void process_rx_copy_msg(struct work_struct* work){
-        struct rx_copy_work *my_work= (struct rx_copy_work *) work;
-        struct rx_copy_msg *msg= (struct rx_copy_msg *) my_work->data;
-	struct net_filter_info *filter= ( struct net_filter_info *) my_work->filter;
-	struct sk_buff *skb;
-	wait_queue_head_t* where_to_wait;
-	unsigned long timeout;
-//#if FT_FILTER_VERBOSE
-	char* filter_id_printed;
-//#endif
-
-again:	spin_lock_bh(&filter->lock);
-	if(filter->type & FT_FILTER_ENABLE){
-
-	        //TODO: I should save a copy on a list
-		// beacuse maybe the primary replica died before sending this pckt to other 
-		// kernels => save a copy to give to them.
-		if(msg->pckt_id != filter->primary_rx+1){
-			filter_id_printed= print_filter_id(filter);
-			printk("%s: ERROR out of order delivery pckt id %llu primary_rx %llu in filter %s\n", __func__, msg->pckt_id, filter->primary_rx, filter_id_printed);
-			if(filter_id_printed)
-				kfree(filter_id_printed);
-
-			//requeue it
-                        /*INIT_WORK( work, process_rx_copy_msg);
-                        my_work->data= (void*) msg;
-                        my_work->filter= filter;
-                        queue_work(filter->rx_copy_wq, work);*/kfree(work);pcn_kmsg_free_msg(msg);
-			spin_unlock_bh(&filter->lock);
-        		put_ft_filter(filter);
-			return;
-			//goto out_err;
-		}
-		
-		filter->primary_rx= msg->pckt_id;
-
-		/* Wait to be aligned with the primary replica for the delivery of the packet.
-		 * => for tcp means wait to create the same filter
-		 * => for udp wait to reach the same number of sent pckts (on a not fake filter).
-		 */
-
-#define PR_RX_CP_MSG_SLEEP_COND ((filter->type & FT_FILTER_FAKE) || (filter->deliver_packets==0) || ((filter->deliver_packets==2) && (filter->local_tx < msg->local_tx)))
- 
-		while(PR_RX_CP_MSG_SLEEP_COND){
-			timeout = msecs_to_jiffies(WAIT_CROSS_FILTER_MAX) + 1;
-			where_to_wait= filter->wait_queue;
-			spin_unlock_bh(&filter->lock);
-
-			wait_event_timeout(*where_to_wait, !(filter->type & FT_FILTER_ENABLE) || !(PR_RX_CP_MSG_SLEEP_COND) , timeout);
-
-			spin_lock_bh(&filter->lock);
-            
-			if ( !(filter->type & FT_FILTER_FAKE) && ((filter->deliver_packets==1) || ( (filter->deliver_packets==2) && filter->local_tx >= msg->local_tx) ))
-				goto done;
-
-			if(!(filter->type & FT_FILTER_ENABLE)){
-				if(!(filter->type & FT_FILTER_FAKE)){
-		                        printk("%s: ERROR filter is disable but not fake\n",__func__);
-                		        goto out_err;
-                		}
-
-                		spin_unlock_bh(&filter->lock);
-                		put_ft_filter(filter);
-
-                		filter= find_and_get_filter(&msg->creator, msg->filter_id, msg->is_child, msg->daddr, msg->dport);;
-                		if(!filter){
-                        		printk("%s: ERROR no filter\n",__func__);
-                        		goto out;
-                		}
-
-				spin_lock_bh(&filter->lock);
-
-			}
-		}
-	}
-	else{
-
-		if(!(filter->type & FT_FILTER_FAKE)){
-			printk("%s: ERROR filter is disable but not fake\n",__func__);
-			goto out_err;
-		}
-
-		spin_unlock_bh(&filter->lock);
-		put_ft_filter(filter);
-
-		filter= find_and_get_filter(&msg->creator, msg->filter_id, msg->is_child, msg->daddr, msg->dport);
-		if(!filter){
-			printk("%s: ERROR no filter\n",__func__);
-			goto out;
-		}
-		else
-			goto again;
-	}
-done:	spin_unlock_bh(&filter->lock);
-
-	if(filter->type & FT_FILTER_FAKE){
-		printk("%s: ERROR trying to delivery pckt to fake filter\n", __func__);
-		put_ft_filter(filter);
-		goto out;
-	}
-
-	
-	skb= create_skb_from_rx_copy_msg(msg, filter);
-        if(IS_ERR(skb)){
-             	printk("ERROR %s imposible to allocate more skb\n", __func__);
-		put_ft_filter(filter);
-                goto out;
-        }
-
-#if FT_FILTER_VERBOSE
-	filter_id_printed= print_filter_id(filter);
-	FTPRINTK("%s: pid %d is going to deliver the packet %llu in filter %s\n\n", __func__, current->pid, msg->pckt_id, filter_id_printed);
-	if(filter_id_printed)
-		kfree(filter_id_printed);
-#endif
-
-	/* the network stack rx path is thougth to be executed in softirq
-	 * context...
-	 */
-	//printk("%s truesize %d users %d\n", __func__, skb->truesize,  atomic_read(&skb->users));	
-
-	local_bh_disable();	
-	netif_receive_skb(skb);
-	local_bh_enable();
-
-	put_ft_filter(filter);
-
-out:	pcn_kmsg_free_msg(msg);
-	kfree(work);
-	return;
-out_err:
-	spin_unlock_bh(&filter->lock);
-        put_ft_filter(filter);
-	goto out;
-
-}
-
 static int handle_rx_copy(struct pcn_kmsg_message* inc_msg){
 	struct rx_copy_msg *msg= (struct rx_copy_msg *) inc_msg;
 	struct rx_copy_work *work;
@@ -5246,12 +5000,6 @@ int update_filter_type_after_failure(void){
 
 static int __init ft_filter_init(void){
 
-	/*spin_lock_init(&wq_stack.stack_lock);
-	INIT_LIST_HEAD(&wq_stack.stack_head);
-	wq_stack.size= 0;
-	create_more_working_queues(NULL);
-	workqueues_creator_wq= alloc_workqueue("workqueues_creator_wq", WQ_MEM_RECLAIM | WQ_HIGHPRI, 1);
-	*/
 	if(create_pckt_dispatcher_pool())
 		printk("%s ERROR cannot create pckt_dispatcher_pool\n", __func__);
 

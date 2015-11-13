@@ -11,9 +11,11 @@
 #include <linux/kref.h>
 #include <linux/spinlock_types.h>
 #include <linux/wait.h>
+#include <linux/popcorn.h>
 
 #define FT_POPCORN
 
+#define SUPPORT_FOR_CLUSTERING
 /* int replica_type of struct task_struct can be only one of the 
  * following:
  */

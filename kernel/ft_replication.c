@@ -108,6 +108,7 @@ DEFINE_SPINLOCK(collect_secondary_replica_answers_lock);
 
 static struct workqueue_struct *secondary_replica_generator_wq;
 extern int _cpu;
+static int home_kernel;
 
 static void release_collect_secondary_replica_answers(struct kref *kref){
 	struct collect_secondary_replica_answers* collection;
@@ -279,7 +280,7 @@ static struct ft_pop_rep* create_ft_pop_rep(int replication_degree, int new_id, 
 
 	if(new_id){
 		new_ft_pop->id.id = get_new_ft_pop_id();
-		new_ft_pop->id.kernel = _cpu; 
+		new_ft_pop->id.kernel = home_kernel; 
 	}
 	else{
 		new_ft_pop->id.id = id->id;
@@ -384,7 +385,7 @@ path_again:
 	message->env_size= env_size;
 	message->envc= envc;
 
-	message->primary_replica.kernel= _cpu;
+	message->primary_replica.kernel= home_kernel;
 	message->primary_replica.pid= primary_replica_task->pid;
 	message->replication_degree= replication_degree;
 	message->ft_rep_id= *ft_rep_id;	
@@ -608,7 +609,7 @@ int update_replica_type_after_failure(void){
 				printk("\n");
 			}
 
-			if(ft_popcorn->primary_replica.kernel == _cpu){
+			if(ft_popcorn->primary_replica.kernel == home_kernel){
 				if(task->replica_type == FT_SECONDARY_REPLICA)
 					task->replica_type= FT_PRIMARY_AFTER_SECONDARY;
 				else
@@ -956,7 +957,7 @@ static void _send_error_to_primary_replica_from_work(struct work_struct* work){
         struct ft_work* my_work= (struct ft_work*) work;
 	struct replica_id* primary_replica= (struct replica_id*) my_work->data;
 	struct replica_id secondary_replica;
-        secondary_replica.kernel= _cpu;
+        secondary_replica.kernel= home_kernel;
 
 	_send_update_to_primary_replica(primary_replica, &secondary_replica, 1);
 
@@ -971,7 +972,7 @@ static void send_error_to_primary_replica(struct replica_id* primary_replica, in
 	struct replica_id secondary_rep;
 	
 	if(from_same_thread){
-		secondary_rep.kernel= _cpu;
+		secondary_rep.kernel= home_kernel;
 		secondary_rep.pid= current->pid;
 		_send_update_to_primary_replica(primary_replica, &secondary_rep, 1);
 	}
@@ -1553,7 +1554,7 @@ static int create_replicas(struct task_struct* primary_replica_task, int replica
 	if(ret)
 		return ret;
 	
-	primary_replica.kernel= _cpu;
+	primary_replica.kernel= home_kernel;
 	primary_replica.pid= primary_replica_task->pid;
 
 	/*replication_degree includes the primary one*/
@@ -1688,7 +1689,7 @@ int maybe_create_replicas(void){
 			if(ret == 0){
 				current->replica_type= FT_PRIMARY_REPLICA;	
 				ft_popcorn->primary_replica.pid= current->pid;
-				ft_popcorn->primary_replica.kernel= _cpu;
+				ft_popcorn->primary_replica.kernel= home_kernel;
 				current->ft_popcorn= ft_popcorn;
 				current->ft_pid.ft_pop_id= ft_popcorn->id;
 				
@@ -1709,7 +1710,7 @@ int maybe_create_replicas(void){
 		else{
 			if(current->replica_type == FT_POTENTIAL_SECONDARY_REPLICA){
 				secondary.pid= current->pid;
-				secondary.kernel= _cpu;
+				secondary.kernel= home_kernel;
 			
 				msg= (struct secondary_replica_request*) current->useful;
 				current->useful= NULL;
@@ -1769,6 +1770,11 @@ int maybe_create_replicas(void){
 
 static int __init ft_replication_init(void) {
 
+#ifndef SUPPORT_FOR_CLUSTERING
+	home_kernel= _cpu;
+#else
+    	home_kernel= cpumask_first(cpu_present_mask);
+#endif
 	secondary_replica_generator_wq= create_singlethread_workqueue("secondary_replica_generator_wq");
 
 	INIT_LIST_HEAD(&collect_primary_replica_answer_head.list_member);
