@@ -7854,7 +7854,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
 
     // This is important.  We want to make sure to keep an accurate record
     // of which cpu and thread group the new thread is a part of.
-    if(orig->executing_for_remote == 1 || orig->tgroup_home_cpu != _cpu) {
+    if(orig->executing_for_remote == 1 || orig->tgroup_home_cpu != home_kernel) {
         task->tgroup_home_cpu = orig->tgroup_home_cpu;
         task->tgroup_home_id = orig->tgroup_home_id;
         task->tgroup_distributed = 1;

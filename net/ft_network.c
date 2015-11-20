@@ -460,7 +460,7 @@ static int before_syscall_rcv_family_secondary(struct kiocb *iocb, struct socket
         __wsum my_csum;
         int err, ret= FT_SYSCALL_DROP;
 
-        FTPRINTK("%s started for pid %d syscall_id %d\n", __func__, current->pid, current->id_syscall);
+        printk("%s started for pid %d syscall_id %d\n", __func__, current->pid, current->id_syscall);
 
         syscall_info_primary= (struct rcv_fam_info *) ft_wait_for_syscall_info(&current->ft_pid, current->id_syscall);
         if(!syscall_info_primary){

@@ -1,0 +1,128 @@
+CHECKSUM OF NETWORK PACKETS:
+
+according to the type of NIC available and the sys configuration, the checksum of incoming packets can be checked by the hardware and the checksum of outgoing packet can be totally or partially computed by the hardware.  
+
+sys utilities for checking/enabling/disabling those features are:
+	sudo ethtool --show-offload  eth0
+	sudo ethtool --offload  eth0  rx off  tx off
+
+within the kernel, the struct sk_buff has two fields named ip_summed and csum that are supposed to tell the network stack how to behave (if computing/checking from software the checksum). The values of those two fields must be coherent in some cases, otherwise it will endup computing a wrong checksum.
+
+(from  include/linux/skbuff.h) ip_summed can be:
+
+/* A. Checksumming of received packets by device.
+ *
+ *      NONE: device failed to checksum this packet.
+ *              skb->csum is undefined.
+ *
+ *      UNNECESSARY: device parsed packet and wouldbe verified checksum.
+ *              skb->csum is undefined.
+ *            It is bad option, but, unfortunately, many of vendors do this.
+ *            Apparently with secret goal to sell you new device, when you
+ *            will add new protocol to your host. F.e. IPv6. 8)
+ *
+ *      COMPLETE: the most generic way. Device supplied checksum of _all_
+ *          the packet as seen by netif_rx in skb->csum.
+ *          NOTE: Even if device supports only some protocols, but
+ *          is able to produce some skb->csum, it MUST use COMPLETE,
+ *          not UNNECESSARY.
+ *
+ *      PARTIAL: identical to the case for output below.  This may occur
+ *          on a packet received directly from another Linux OS, e.g.,
+ *          a virtualised Linux kernel on the same host.  The packet can
+ *          be treated in the same way as UNNECESSARY except that on
+ *          output (i.e., forwarding) the checksum must be filled in
+ *          by the OS or the hardware.
+ *
+ * B. Checksumming on output.
+ *
+ *      NONE: skb is checksummed by protocol or csum is not required.
+ *
+ *      PARTIAL: device is required to csum packet as seen by hard_start_xmit
+ *      from skb->csum_start to the end and to record the checksum
+ *      at skb->csum_start + skb->csum_offset.
+ *
+ *      Device must show its capabilities in dev->features, set
+ *      at device setup time.
+ *      NETIF_F_HW_CSUM - it is clever device, it is able to checksum
+ *                        everything.
+ *      NETIF_F_NO_CSUM - loopback or reliable single hop media.
+ *      NETIF_F_IP_CSUM - device is dumb. It is able to csum only
+ *                        TCP/UDP over IPv4. Sigh. Vendors like this
+ *                        way by an unknown reason. Though, see comment above
+ *                        about CHECKSUM_UNNECESSARY. 8)
+ *      NETIF_F_IPV6_CSUM about as dumb as the last one but does IPv6 instead.
+ */
+
+After modifing a packet within a hook, these two functions fixed the problem for correctly recomputing the checksum (in net/core/ft_filter.c):
+
+__sum16 checksum_tcp_rx(struct sk_buff *skb, int len, struct iphdr *iph, struct tcphdr *tcph){
+        __sum16 ret= 0;
+
+        /*NOTE tcp_v4_check calls csum_tcpudp_magic for tcp.
+         *csum_tcpudp_magic adds to the checksum provided the saddr and daddr  
+         */
+        ret= tcp_v4_check(len, iph->saddr, iph->daddr, csum_partial((char *)tcph, len, 0));
+
+        /* this should tell tcp to not check the th->checksum against the one stored in skb->csum
+         * =>as if the hardware already check it.
+         */
+        skb->ip_summed = CHECKSUM_UNNECESSARY;
+        return ret;
+}
+
+__sum16 checksum_tcp_tx(struct sk_buff *skb, int len, struct iphdr *iph, struct tcphdr *tcph){
+        __sum16 ret= 0;
+        if ((skb_dst(skb) && skb_dst(skb)->dev) && (!(skb_dst(skb)->dev->features & NETIF_F_V4_CSUM))) {
+                //no hw checksum
+                skb->ip_summed = CHECKSUM_COMPLETE;
+
+                ret= tcp_v4_check(len, iph->saddr, iph->daddr, csum_partial((char *)tcph, len, 0));
+                if (ret == 0)
+                        ret = CSUM_MANGLED_0;
+
+        } else {
+                
+		skb->csum_start = skb_transport_header(skb) - skb->head;
+                skb->csum_offset = offsetof(struct tcphdr, check);
+                skb->ip_summed = CHECKSUM_PARTIAL;
+
+                ret= ~csum_tcpudp_magic(iph->saddr, iph->daddr, len, IPPROTO_TCP, 0);
+
+        }
+
+        return ret;
+}
+
+SKB SHARING:
+
+struct sk_buff has an usage counter that must be properly incremented/decremented if the skb must be saved or manipulated.
+
+skb_get(skb) and kfree_skb(skb) must be coherently called. 
+
+If within a hook a packet is STOLEN, then eventually a kfree_skb(skb) must be called to free the skb.
+If the packet is DROPPED, the hook management will call kfree_skb(skb)=> 1. cannot use anymore the skb after dropping it and 2. DO NOT CALL kfree_skb(skb) after drop!!
+If the packet is ACCEPTED, the next layers will eventually call the kfree_skb(skb). 
+If you need to store the packet even if the packet has been ACCEPTED, CALL skb_get(skb) otherwise its memory will be release and release it eventually with kfree_skb(skb).
+
+NOTE: sk_buff use cache memory: if you mess up with the counter probably you won't have a seg fault but you will go directly to modify other skb.
+
+ARP WITH FAKE DRIVER:
+
+the default behaviour of a network interface during ARP is to tell all mappings mac/ip that it sees on the local machine. 
+ft_dummy_driver has the same ip of the real interface used in the primary kernel. If not disabled, the network will understand that there are 2 macs associated with the same ip.
+
+to disable default behaviour:
+
+echo 1 > /proc/sys/net/ipv4/conf/eth0/arp_ignore
+echo 2 > /proc/sys/net/ipv4/conf/eth0/arp_announce
+
+ACCEPT ORDER CONNECTION
+
+when syn packets are accepted struct request_sock *requests (minisockets) are created to handle the handshake. When the last ack of the handshake is received, from the minisocket is created the corresponding socket(struct sock* child) that is added in a FIFO queue that will be queried for the accept. If syn packets or last handshake acks are dropped or if the minisocket cannot be converted to a real socket, the order of incoming connections on the accept queue can be different between primary and secondary replicas.  
+
+To avoid this for now I disabled the code to drop incoming connections when receiving a syn packet and when creating the socket from the minisocket. (code in net/ipv4/tcp_ipv4.c in tcp_v4_conn_request and tcp_v4_syn_recv_sock) 
+
+SPINLOCK IN SOFIRQ DISABLED
+
+if functions that use spinlocks are called both from softirq disable context and process context, they should always acquire the spinlock using the softirq safe api: spin_lock_bh and spin_unlock_bh. NOTE: not doing so can cuase deadlocks!! 

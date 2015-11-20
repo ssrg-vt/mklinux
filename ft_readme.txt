@@ -87,3 +87,10 @@ DEBUG:
 
 -> to see printk on serial line
    echo 7 > /proc/sys/kernel/printk
+
+-> memleak debugger (www.kernel.org/doc/Documentation/kmemleak.txt) NOTE: booting with the whole memory was not working, but with standard popcorn kernel mem param it was. 
+   enable the memleak debugger in make menuconfig
+   mount -t debugfs nodev /sys/kernel/debug/
+   echo scan > /sys/kernel/debug/kmemleak
+   cat /sys/kernel/debug/kmemleak
+   echo clear > /sys/kernel/debug/kmemleak
