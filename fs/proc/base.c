@@ -293,9 +293,9 @@ static int proc_pid_wchan(struct task_struct *task, char *buffer)
 		if (!ptrace_may_access(task, PTRACE_MODE_READ))
 			return 0;
 		else
-			return sprintf(buffer, "%lu", wchan);
+			return sprintf(buffer, "0x%lx", wchan);
 	else
-		return sprintf(buffer, "%s", symname);
+		return sprintf(buffer, "0x%s@%lx", symname, wchan);
 }
 #endif /* CONFIG_KALLSYMS */
 
