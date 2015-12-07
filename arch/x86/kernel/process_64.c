@@ -246,8 +246,10 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 	regs->ss		= _ss;
 	regs->flags		= X86_EFLAGS_IF;
 
+#if 0
 	if (!current->executing_for_remote)
 		free_thread_xstate(current);
+#endif
 }
 
 void
