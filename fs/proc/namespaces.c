@@ -41,10 +41,6 @@ static const struct proc_ns_operations *ns_entries[] = {
 	&mntns_operations,
 };
 
-/*const struct file_operations ns_popcorn_operations = {
-+	.llseek		= no_llseek,
-+};
-+*/
 const struct file_operations ns_file_operations = {
 	.llseek		= no_llseek,
 };
