@@ -2,7 +2,6 @@
 // modified by Antonio Barbalace (c) 2014
 
 #include <linux/kernel.h>
-#include <asm/bootparam.h>
 #include <asm/uaccess.h>
 #include <linux/mm.h>
 #include <asm/setup.h>
