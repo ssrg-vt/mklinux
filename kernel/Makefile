@@ -30,7 +30,7 @@ obj-y += irq/
 
 obj-$(CONFIG_POPCORN) += kinit.o \
 			 WKdmCompress.o WKdmDecompress.o futex_remote.o \
-			 global_spinlock.o proc_remote.o
+			 global_spinlock.o proc_remote.o remote_file.o
 obj-$(CONFIG_POPCORN) += popcorn/
 
 obj-$(CONFIG_CHECKPOINT_RESTORE) += kcmp.o

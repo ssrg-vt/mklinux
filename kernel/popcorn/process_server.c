@@ -7156,6 +7156,23 @@ static int __init process_server_init(void) {
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CREATE_THREAD_PULL,
 				   handle_thread_pull_creation);
 
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OPEN_REQUEST,
+				   handle_file_open_request);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OPEN_REPLY,
+				   handle_file_open_reply);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_STATUS_REQUEST,
+				   handle_file_status_request);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_STATUS_REPLY,
+				   handle_file_status_reply);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_REQUEST,
+				   handle_file_offset_request);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_REPLY,
+				   handle_file_offset_reply);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_UPDATE,
+				   handle_file_pos_update);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_CONFIRM,
+				   handle_file_pos_confirm);
+
 	return 0;
 }
 

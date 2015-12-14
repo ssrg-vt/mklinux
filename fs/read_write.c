@@ -36,6 +36,21 @@ const struct file_operations generic_ro_fops = {
 
 EXPORT_SYMBOL(generic_ro_fops);
 
+struct file *get_file_struct(int fd, pid_t orgin_pid)
+{
+	struct file *file;
+
+	if (current->tgroup_distributed == 0 || fd < 3)
+		return NULL;
+
+	file = ask_orgin_file(fd, orgin_pid);
+
+	if (IS_ERR(file))
+		return NULL;
+
+	return file;
+}
+
 static inline int unsigned_offsets(struct file *file)
 {
 	return file->f_mode & FMODE_UNSIGNED_OFFSET;
@@ -496,16 +511,56 @@ static inline void file_pos_write(struct file *file, loff_t pos)
 	file->f_pos = pos;
 }
 
+static loff_t file_pos_read_remote(struct file *file,int *needRemoteWrite,int fd)
+{
+	if(current->tgroup_distributed!=1)
+		return file_pos_read(file);
+
+	if (file->owner_pid == current->tgid) {
+		return file_pos_read(file);
+	} else {
+		if (isPidLocalKernel(file->owner_pid)) {
+			return file_pos_read(file);
+		} else {
+			*(needRemoteWrite)=1;
+			printk("r f-ow %d cur->tgid %d fd %d\n", file->owner_pid, current->tgid, fd);
+			return ask_remote_offset(fd, file);
+		}
+	}
+}
+
+static void file_pos_write_remote(struct file *file,loff_t pos,int *needRemoteWrite,int fd,offset_update_type type)
+{
+	if (*(needRemoteWrite) == 1) {
+		if (type == WRITE_UPDATE) {
+			printk("Wr file_pos=_write_remote\n");
+		}
+
+		tell_remote_offset(fd, file, pos, type);
+	}
+
+	file_pos_write(file, pos);
+}
+
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
+	int flag = 0;
+
+	if (f == NULL) {
+		printk("R Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		file = get_file_struct(fd, current->tgroup_home_id);
+	}
 
 	if (f.file) {
-		loff_t pos = file_pos_read(f.file);
+		/* loff_t pos = file_pos_read(f.file); */
+		loff_t pos = file_pos_read_remote(f.file, &flag, f);
 		ret = vfs_read(f.file, buf, count, &pos);
-		if (ret >= 0)
-			file_pos_write(f.file, pos);
+		if (ret >= 0) {
+			/* file_pos_write(f.file, pos); */
+			file_pos_write_remote(f.file, pos, &flag, f, READ_UPDATE);
+		}
 		fdput(f);
 	}
 	return ret;
@@ -516,12 +571,21 @@ SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 {
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
+	int flag = 0;
+
+	if (f == NULL) {
+		printk("W Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		file = get_file_struct(fd, current->tgroup_home_id);
+	}
 
 	if (f.file) {
-		loff_t pos = file_pos_read(f.file);
+		/* loff_t pos = file_pos_read(f.file); */
+		loff_t pos = file_pos_read_remote(f.file, &flag, f);
 		ret = vfs_write(f.file, buf, count, &pos);
-		if (ret >= 0)
-			file_pos_write(f.file, pos);
+		if (ret >= 0) {
+			/* file_pos_write(f.file, pos); */
+			file_pos_write_remote(f.file, pos, &flag, f, WRITE_UPDATE);
+		}
 		fdput(f);
 	}
 
@@ -536,6 +600,11 @@ SYSCALL_DEFINE4(pread64, unsigned int, fd, char __user *, buf,
 
 	if (pos < 0)
 		return -EINVAL;
+
+	if (f == NULL) {
+		printk("P_R Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		file = get_file_struct(fd, current->tgroup_home_id);
+	}
 
 	f = fdget(fd);
 	if (f.file) {
@@ -556,6 +625,11 @@ SYSCALL_DEFINE4(pwrite64, unsigned int, fd, const char __user *, buf,
 
 	if (pos < 0)
 		return -EINVAL;
+
+	if (f == NULL) {
+		printk("P_W Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		file = get_file_struct(fd, current->tgroup_home_id);
+	}
 
 	f = fdget(fd);
 	if (f.file) {
