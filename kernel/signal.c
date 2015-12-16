@@ -393,7 +393,8 @@ int remote_kill_pid_info(int kernel, int sig, pid_t pid,
 	// Send response
 	res = pcn_kmsg_send(kernel, (struct pcn_kmsg_message*) (request));
 
-	wait_event_interruptible(ptr->wq, (ptr->status == DONE));
+	if(res > 0)
+		wait_event_interruptible(ptr->wq, (ptr->status == DONE));
 
 	res = ptr->errno;
 
