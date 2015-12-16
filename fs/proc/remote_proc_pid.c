@@ -133,7 +133,7 @@ int iterate_process(unsigned long *pid_arr) {
 		
 		if(count == SIZE)
 		{
-			PSPRINTK("Reached the size limit of array - %d\n", count);
+			/* PSPRINTK("Reached the size limit of array - %d\n", count); */
 			break;
 		}
 	}
