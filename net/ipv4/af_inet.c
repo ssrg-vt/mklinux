@@ -1405,8 +1405,12 @@ static struct sk_buff **inet_gro_receive(struct sk_buff **head,
 		NAPI_GRO_CB(p)->flush |=
 			(iph->ttl ^ iph2->ttl) |
 			(iph->tos ^ iph2->tos) |
+#if defined(CONFIG_ARM64)
+			(__force int)((iph->frag_off ^ iph2->frag_off) & htons(IP_DF));
+#else
 			(__force int)((iph->frag_off ^ iph2->frag_off) & htons(IP_DF)) |
 			((u16)(ntohs(iph2->id) + NAPI_GRO_CB(p)->count) ^ id);
+#endif
 
 		NAPI_GRO_CB(p)->flush |= flush;
 	}
