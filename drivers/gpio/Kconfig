@@ -121,6 +121,15 @@ config GPIO_GENERIC_PLATFORM
 	help
 	  Say yes here to support basic platform_device memory-mapped GPIO controllers.
 
+config GPIO_DWAPB
+        tristate "Synopsys DesignWare APB GPIO driver"
+	select GPIO_GENERIC
+        select GENERIC_IRQ_CHIP
+        depends on OF_GPIO
+        help
+          Say Y or M here to build support for the Synopsys DesignWare APB
+          GPIO block.
+
 config GPIO_IT8761E
 	tristate "IT8761E GPIO support"
 	depends on X86  # unconditional access to IO space.
@@ -274,6 +283,22 @@ config GPIO_TZ1090_PDC
 	default y
 	help
 	  Say yes here to support Toumaz Xenif TZ1090 PDC GPIOs.
+
+config GPIO_XGENE
+	bool "APM X-Gene GPIO controller support"
+	depends on ARM64 && OF_GPIO
+	help
+	  This driver is to support the GPIO block within the APM X-Gene SoC
+	  platform's generic flash controller. The GPIO pins are muxed with
+	  the generic flash controller's address and data pins. Say yes
+	  here to enable the GFC GPIO functionality.
+
+config GPIO_XGENE_SB
+	tristate "APM X-Gene GPIO standby controller support"
+	depends on ARM64
+	help
+	  This option enables support for APM X-Gene SoC GPIO controller on the
+	  standby domain.
 
 config GPIO_XILINX
 	bool "Xilinx GPIO support"
