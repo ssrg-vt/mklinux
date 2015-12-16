@@ -12,6 +12,7 @@ union futex_key; //forward decl for futex_remote.h
 #include <linux/jhash.h>
 #include <linux/slab.h>
 #include <linux/syscalls.h>
+#include <linux/uaccess.h>
 #include <popcorn/global_spinlock.h>
 
 #include <linux/pcn_kmsg.h>
