@@ -1088,7 +1088,7 @@ COMPAT_SYSCALL_DEFINE4(openat, int, dfd, const char __user *, filename, int, fla
 
 #define __COMPAT_NFDBITS       (8 * sizeof(compat_ulong_t))
 
-static int poll_select_copy_remaining(struct timespec *end_time, void __user *p,
+static int compat_poll_select_copy_remaining(struct timespec *end_time, void __user *p,
 				      int timeval, int ret)
 {
 	struct timespec ts;
@@ -1307,7 +1307,7 @@ asmlinkage long compat_sys_select(int n, compat_ulong_t __user *inp,
 	}
 
 	ret = compat_core_sys_select(n, inp, outp, exp, to);
-	ret = poll_select_copy_remaining(&end_time, tvp, 1, ret);
+	ret = compat_poll_select_copy_remaining(&end_time, tvp, 1, ret);
 
 	return ret;
 }
@@ -1362,7 +1362,7 @@ static long do_compat_pselect(int n, compat_ulong_t __user *inp,
 	}
 
 	ret = compat_core_sys_select(n, inp, outp, exp, to);
-	ret = poll_select_copy_remaining(&end_time, tsp, 0, ret);
+	ret = compat_poll_select_copy_remaining(&end_time, tsp, 0, ret);
 
 	if (ret == -ERESTARTNOHAND) {
 		/*
@@ -1448,7 +1448,7 @@ asmlinkage long compat_sys_ppoll(struct pollfd __user *ufds,
 	} else if (sigmask)
 		sigprocmask(SIG_SETMASK, &sigsaved, NULL);
 
-	ret = poll_select_copy_remaining(&end_time, tsp, 0, ret);
+	ret = compat_poll_select_copy_remaining(&end_time, tsp, 0, ret);
 
 	return ret;
 }
