@@ -1272,7 +1272,7 @@ retry:
 			int ret,retf=0;
 			int x=0,y=0;
 			int g_errno;
-			unsigned long bp = stack_frame(current,NULL);
+			/* unsigned long bp = stack_frame(current,NULL); */
 			_spin_value *value =NULL;
 			_local_rq_t *l =NULL;
 			struct spin_key sk;
@@ -1449,7 +1449,7 @@ exit:
 	}
 	*/
 
-
+	/*
 	void dump_pgtable(unsigned long address)
 	{
 		pgd_t *base = __va(read_cr3() & PHYSICAL_PAGE_MASK);
@@ -1484,6 +1484,7 @@ out:
 bad:
 		printk(KERN_ALERT"BAD\n");
 	}
+	*/
 
 	/*
 	pte_t *do_page_wlk(unsigned long address,struct task_struct *t) {
@@ -1574,7 +1575,7 @@ exit:
 		struct futex_q *this, *next;
 		int ret, op_ret;
 		struct page *page;
-		unsigned long bp = stack_frame(current,NULL);
+		/* unsigned long bp = stack_frame(current,NULL); */
 		int g_errno=0;
 		int x=0;
 		struct mm_struct *act=NULL,*old=NULL;
@@ -1955,7 +1956,7 @@ out:
 		u32 curval2;
 		int requeued=0;
 		int g_errno=0;
-		unsigned long bp = stack_frame(current,NULL);
+		/* unsigned long bp = stack_frame(current,NULL); */
 		_spin_value *value1 =NULL, *value2 =NULL;
 		_local_rq_t *l =NULL;
 		struct spin_key sk;
@@ -2867,7 +2868,7 @@ exit:
 		int x=0;
 		int retf = 0;
 		struct pt_regs * regs;
-		unsigned long bp = stack_frame(current,NULL);
+		/* unsigned long bp = stack_frame(current,NULL); */
 
 
 		/*if(strcmp(current->comm,"mut") == 0){
