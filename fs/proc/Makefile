@@ -34,4 +34,3 @@ proc-y  += meminfo_remote.o
 proc-y  += remote_proc_pid.o
 proc-y  += remote_proc_pid_files.o
 proc-y  += krninfo.o
-
