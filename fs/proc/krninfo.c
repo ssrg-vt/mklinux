@@ -7,13 +7,14 @@
 
 static int krninfo_proc_show(struct seq_file *m, void *v)
 {
-
+#if defined(CONFIG_X86)
 	seq_printf(m,
 		"POPCORN KERNEL INFO:   \n"
 		"Kernel Id    %8lu \n"
 		"Start PFN    %8lu \n"
 		"End   PFN    %8lu \n",
 		Kernel_Id,kernel_start_addr,PFN_PHYS(max_low_pfn));
+#endif
 
 	return 0;
 }
