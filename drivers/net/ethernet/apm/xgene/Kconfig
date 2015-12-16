@@ -1,0 +1,24 @@
+config XGENE_NET
+	tristate "X-Gene Network Driver"
+	select XGENE_QMTM
+	select PHYLIB
+	default y if ARCH_XGENE
+	help
+	  This is the Network driver for X-Gene SOC Ethernet device.
+
+	  To compile this driver as a module, choose M here. This module will
+	  be called apm_enet.
+
+config XGENE_NET_JUMBO_FRAME
+	bool "X-Gene SoC Ethernet Jumbo frame support"
+	depends on XGENE_NET
+	default y
+	help
+	  Enable this option to have jumbo frame support
+
+config XGENE_NET_IPV4_FORWARD_OFFLOAD
+	bool "IPv4 Forward Offload using Inline Classifier"
+	depends on (XGENE_NET && XGENE_CLE && !XGENE_NET_JUMBO_FRAME && !XGENE_QMTM_ERROR)
+	default n
+	help
+	  Enable this option to have IPv4 Forward Offload support
