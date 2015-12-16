@@ -53,6 +53,12 @@ if SPI_MASTER
 
 comment "SPI Master Controller Drivers"
 
+config SPI_XGENE
+	tristate "AppliedMicro  DesignWare SPI controller"
+	help
+	  This enables using the AppliedMicro Synchronous Serial Interface
+	  controller in master SPI mode.
+
 config SPI_ALTERA
 	tristate "Altera SPI Controller"
 	select SPI_BITBANG

@@ -43,6 +43,7 @@
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
 #include <linux/pinctrl/consumer.h>
+#include <linux/amba/acpi.h>
 
 /*
  * This macro is used to define some register default values.
@@ -2069,6 +2070,49 @@ pl022_platform_data_dt_get(struct device *dev)
 	return pd;
 }
 
+#ifdef CONFIG_ACPI
+static struct pl022_ssp_controller *
+acpi_pl022_get_platform_data(struct device *dev)
+{
+	struct pl022_ssp_controller *pd, *ret;
+	struct acpi_amba_dsm_entry entry;
+
+	pd = devm_kzalloc(dev, sizeof(struct pl022_ssp_controller), GFP_KERNEL);
+	if (!pd) {
+		dev_err(dev, "cannot allocate platform data memory\n");
+		return NULL;
+	}
+	ret = pd;
+
+	pd->bus_id = -1;
+	pd->enable_dma = 1;
+	if (acpi_amba_dsm_lookup(ACPI_HANDLE(dev), "num-cs", 0, &entry) == 0) {
+		if (kstrtou8(entry.value, 0, &pd->num_chipselect) != 0) {
+			dev_err(dev, "invalid 'num-cs' in ACPI definition\n");
+			ret = NULL;
+		}
+		kfree(entry.key);
+		kfree(entry.value);
+	}
+	if (acpi_amba_dsm_lookup(ACPI_HANDLE(dev),
+			"autosuspend-delay", 0, &entry) == 0) {
+		if (kstrtoint(entry.value, 0, &pd->autosuspend_delay) != 0) {
+			dev_err(dev, "invalid 'autosuspend-delay' in ACPI definition\n");
+			ret = NULL;
+		}
+		kfree(entry.key);
+		kfree(entry.value);
+	}
+	if (acpi_amba_dsm_lookup(ACPI_HANDLE(dev), "rt", 0, &entry) == 0) {
+		pd->rt = (entry.value && strcmp(entry.value, "1") == 0);
+		kfree(entry.key);
+		kfree(entry.value);
+	}
+
+	return ret;
+}
+#endif
+
 static int pl022_probe(struct amba_device *adev, const struct amba_id *id)
 {
 	struct device *dev = &adev->dev;
@@ -2081,6 +2125,11 @@ static int pl022_probe(struct amba_device *adev, const struct amba_id *id)
 
 	dev_info(&adev->dev,
 		 "ARM PL022 driver, device ID: 0x%08x\n", adev->periphid);
+#ifdef CONFIG_ACPI
+	if (!platform_info && ACPI_HANDLE(dev))
+		platform_info = acpi_pl022_get_platform_data(dev);
+	else
+#endif
 	if (!platform_info && IS_ENABLED(CONFIG_OF))
 		platform_info = pl022_platform_data_dt_get(dev);
 
