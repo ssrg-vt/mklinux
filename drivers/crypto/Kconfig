@@ -399,4 +399,35 @@ config CRYPTO_DEV_ATMEL_SHA
 	  To compile this driver as a module, choose M here: the module
 	  will be called atmel-sha.
 
+config CRYPTO_DEV_XGENE
+	tristate "Support for APM SoC X-Gene crypto hw accelerator"
+	select CRYPTO_DES
+	select CRYPTO_HASH
+	select CRYPTO_ALGAPI
+	select CRYPTO_BLKCIPHER
+	select UIO
+	help
+	  This option enables support for APM X-Gene SoC crypto acceleration.
+
+config CRYPTO_DEV_XGENE_PKA
+        tristate "Applied Micro PKA support"
+        help
+          Select this option if you want to have support for the Applied Micro PKA Device.
+
+          To compile this driver as a module, choose M here: the module
+          will be called xgene-pka.
+
+config CRYPTO_DEV_XGENE_PKTDMA_ALG
+	tristate "Support for APM SoC X-Gene PktDma HW Algorithm accelerator"
+	depends on ARM64
+	select DMADEVICES
+	select XGENE_DMA
+	select CRYPTO_HASH
+	help
+	  This option enables support for APM X-Gene SoC PtkDMA algorithms offload 
+	  such as crc32c, crc32, and checksum.
+
+	  To compile this driver as a module, choose M here: the module
+	  Will be called xgene-crc32c.	
+
 endif # CRYPTO_HW

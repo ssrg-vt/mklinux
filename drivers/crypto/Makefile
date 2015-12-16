@@ -22,3 +22,6 @@ obj-$(CONFIG_CRYPTO_DEV_NX) += nx/
 obj-$(CONFIG_CRYPTO_DEV_ATMEL_AES) += atmel-aes.o
 obj-$(CONFIG_CRYPTO_DEV_ATMEL_TDES) += atmel-tdes.o
 obj-$(CONFIG_CRYPTO_DEV_ATMEL_SHA) += atmel-sha.o
+obj-$(CONFIG_CRYPTO_DEV_XGENE) += xgene/
+obj-$(CONFIG_CRYPTO_DEV_XGENE_PKA) += xgene-pka.o
+obj-$(CONFIG_CRYPTO_DEV_XGENE_PKTDMA_ALG) += xgene-crc32c.o
