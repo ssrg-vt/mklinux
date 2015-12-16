@@ -314,3 +314,16 @@ config HW_RANDOM_TPM
 	  module will be called tpm-rng.
 
 	  If unsure, say Y.
+
+config HW_RANDOM_XGENE_TRNG
+	tristate "APM True Random Number Generator (TRNG) support"
+	depends on HW_RANDOM
+	default HW_RANDOM
+	---help---
+	  This driver provides kernel-side support for the Random Number
+	  Generator hardware found on APM88xxxx.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called xgene-trng.
+
+	  If unsure, say Y.
