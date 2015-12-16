@@ -99,6 +99,10 @@ static int _cpu=0;
 #define FLAGS_CLOCKRT		0x02
 #define FLAGS_HAS_TIMEOUT	0x04
 
+/*extern functions*/
+#if defined(CONFIG_ARM64)
+unsigned long futex_atomic_add(unsigned long ptr, unsigned long val);
+#endif
 
 static unsigned long long _wait=0,_wake=0,_wakeop=0,_requeue=0;
 static unsigned int _wait_cnt=0,_wake_cnt=0,_wakeop_cnt=0,_requeue_cnt=0;
@@ -1101,7 +1105,11 @@ retry:
 			//Get the local mapped value for the key (TGID|Uaddr)
 			getKey(uaddr, &sk,current->tgroup_home_id);
 			_spin_value *value = hashspinkey(&sk);
+#if defined(CONFIG_X86)
 			int localticket_value = xadd_sync(&value->_ticket, 1);
+#else
+			int localticket_value = futex_atomic_add(&value->_ticket, 1);
+#endif
 			int ret;
 			u32 dval;
 			int x=0,y=0,cpu=0;
@@ -1201,7 +1209,11 @@ retry:
 			getKey(uaddr, &sk,current->tgroup_home_id);
 			_spin_value *value = hashspinkey(&sk);
 
+#if defined(CONFIG_X86)
 			int localticket_value = xadd_sync(&value->_ticket, 1);
+#else
+			int localticket_value = futex_atomic_add(&value->_ticket, 1);
+#endif
 
 			int cpu = getFutexOwnerFromPage((unsigned long)uaddr);
 
@@ -1402,6 +1414,7 @@ out:
 			return vma;
 	}
 
+	/*
 	static void dumpPTE(pte_t *ptep) {
 
 		int nx;
@@ -1434,6 +1447,7 @@ out:
 exit:
 		printk("exit\n");
 	}
+	*/
 
 
 	void dump_pgtable(unsigned long address)
@@ -1471,6 +1485,7 @@ bad:
 		printk(KERN_ALERT"BAD\n");
 	}
 
+	/*
 	pte_t *do_page_wlk(unsigned long address,struct task_struct *t) {
 		pgd_t *pgd = NULL;
 		pud_t *pud = NULL;
@@ -1514,8 +1529,10 @@ exit:
 		//	up_read(&_m->mmap_sem);
 		return NULL;
 	}
+	*/
 
 
+	/*
 	void find_page(unsigned long uaddr,struct task_struct *t){
 
 		pte_t *pt=do_page_wlk(uaddr,t);
@@ -1533,6 +1550,8 @@ exit:
 			printk(KERN_ALERT"%s: pg present vm{%lx} end{%lx}  flags{%lx} pageprot{%lx} \n",__func__,_v->vm_start, _v->vm_end,_v->vm_flags, pgprot_val(_v->vm_page_prot));
 		}
 	}
+	*/
+
 	/*
 	 * Wake up all waiters hashed on the physical page that is mapped
 	 * to this virtual address:
@@ -2790,6 +2809,7 @@ exit:
 	}
 
 
+	/*
 	static void dump_regs(struct pt_regs* regs) {
 		unsigned long fs, gs;
 		printk(KERN_ALERT"DUMP REGS\n");
@@ -2821,6 +2841,7 @@ exit:
 		printk(KERN_ALERT"gs{%lx}\n",gs);
 		FPRINTK(KERN_ALERT"REGS DUMP COMPLETE\n");
 	}
+	*/
 
 	//static
 	int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
