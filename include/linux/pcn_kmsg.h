@@ -8,6 +8,20 @@
 
 #include <linux/types.h>
 
+typedef enum _update_for_who
+{
+	FOR_OWNER,
+	FOR_MAIN
+}for_who;
+
+typedef enum _offset_update_type
+{
+	READ_UPDATE,
+	WRITE_UPDATE,
+	LSEEK_UPDATE,
+	OFFSET_TYPE_MAX
+} offset_update_type;
+
 enum pcn_connection_status{
 	PCN_CONN_WATING,
 	PCN_CONN_CONNECTED,
