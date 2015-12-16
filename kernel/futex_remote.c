@@ -22,7 +22,6 @@
 #include <linux/delay.h>
 #include <popcorn/remote_pfn.h>
 #include <popcorn/pid.h>
-#include <asm/page_types.h>
 #include <linux/mmu_context.h>
 
 #include "futex_remote.h"
@@ -91,6 +90,7 @@ static struct list_head vm_head;
 
 extern int __kill_something_info(int sig, struct siginfo *info, pid_t pid);
 
+/*
 static void dump_regs(struct pt_regs* regs) {
 	unsigned long fs, gs;
 	FRPRINTK(KERN_ALERT"DUMP REGS\n");
@@ -122,6 +122,7 @@ static void dump_regs(struct pt_regs* regs) {
 	FRPRINTK(KERN_ALERT"gs{%lx}\n",gs);
 	FRPRINTK(KERN_ALERT"REGS DUMP COMPLETE\n");
 }
+*/
 
 
 struct _inc_remote_vm_pool {
