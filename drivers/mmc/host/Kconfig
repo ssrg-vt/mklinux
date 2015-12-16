@@ -271,6 +271,17 @@ config MMC_SDHCI_BCM2835
 
 	  If unsure, say N.
 
+config MMC_XGENE_SDHCI
+	tristate "APM X-Gene SDHCI support"
+	depends on MMC_SDHCI_PLTFM
+	select MMC_SDHCI_IO_ACCESSORS  
+	help
+	  This selects the APM X-Gene SoC SD/SDIO/eMMC controller.
+	  If you have a APM X-Gene Platform with SD/SDIO/eMMC Card slot,
+	  say Y or M here.
+
+	  If unsure, say N.
+
 config MMC_OMAP
 	tristate "TI OMAP Multimedia Card Interface support"
 	depends on ARCH_OMAP

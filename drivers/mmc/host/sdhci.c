@@ -46,6 +46,7 @@
 
 static unsigned int debug_quirks = 0;
 static unsigned int debug_quirks2;
+static DEFINE_SPINLOCK(shared_bus_lock);
 
 static void sdhci_finish_data(struct sdhci_host *);
 
@@ -1333,6 +1334,9 @@ static void sdhci_request(struct mmc_host *mmc, struct mmc_request *mrq)
 
 	sdhci_runtime_pm_get(host);
 
+	if (host->quirks2 & SDHCI_QUIRK2_SHARED_BUS_LOCK)
+		spin_lock(&shared_bus_lock);
+
 	spin_lock_irqsave(&host->lock, flags);
 
 	WARN_ON(host->mrq != NULL);
@@ -1593,7 +1597,15 @@ static void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	struct sdhci_host *host = mmc_priv(mmc);
 
 	sdhci_runtime_pm_get(host);
+
+	if (host->quirks2 & SDHCI_QUIRK2_SHARED_BUS_LOCK)
+		spin_lock(&shared_bus_lock);
+
 	sdhci_do_set_ios(host, ios);
+
+	if (host->quirks2 & SDHCI_QUIRK2_SHARED_BUS_LOCK)
+		spin_unlock(&shared_bus_lock);
+
 	sdhci_runtime_pm_put(host);
 }
 
@@ -2129,6 +2141,10 @@ static void sdhci_tasklet_finish(unsigned long param)
          */
 	if (!host->mrq) {
 		spin_unlock_irqrestore(&host->lock, flags);
+
+		if (host->quirks2 & SDHCI_QUIRK2_SHARED_BUS_LOCK)
+			spin_unlock(&shared_bus_lock);
+
 		return;
 	}
 
@@ -2167,6 +2183,9 @@ static void sdhci_tasklet_finish(unsigned long param)
 
 	mmiowb();
 	spin_unlock_irqrestore(&host->lock, flags);
+
+	if (host->quirks2 & SDHCI_QUIRK2_SHARED_BUS_LOCK)
+		spin_unlock(&shared_bus_lock);
 
 	mmc_request_done(host->mmc, mrq);
 	sdhci_runtime_pm_put(host);
@@ -2579,6 +2598,10 @@ int sdhci_suspend_host(struct sdhci_host *host)
 		sdhci_enable_irq_wakeups(host);
 		enable_irq_wake(host->irq);
 	}
+
+	if (host->quirks2 & SDHCI_QUIRK2_SHARED_BUS_LOCK)
+		spin_unlock(&shared_bus_lock);
+
 	return ret;
 }
 
