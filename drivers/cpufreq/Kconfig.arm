@@ -235,3 +235,26 @@ config ARM_TEGRA_CPUFREQ
 	default y
 	help
 	  This adds the CPUFreq driver support for TEGRA SOCs.
+
+config ARM_XGENE_CPUFREQ
+	bool "APM CPUFreq support"
+	select CPU_FREQ_TABLE
+	depends on ARM64
+	help
+	  This adds the CPUFreq driver support for APM X-Gene SoC for device
+	  tree.
+
+config ARM_XGENE_ACPI_CPUFREQ
+	bool "APM ACPI Processor P-States driver"
+	select CPU_FREQ_TABLE
+	depends on ACPI
+	help
+	  This driver adds a CPUFreq driver which utilizes the ACPI
+	  Processor Performance States.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called acpi-cpufreq.
+
+	  For details, take a look at <file:Documentation/cpu-freq/>.
+
+	  If in doubt, say N.
