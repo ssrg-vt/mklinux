@@ -3793,10 +3793,13 @@ sleep_again:
 						goto sleep_again;
 					}
 
-				//synchronize_migrations(current->tgroup_home_cpu,current->tgroup_home_id );
+#if defined(CONFIG_ARM64)
+				synchronize_migrations(current->tgroup_home_cpu,current->tgroup_home_id);
 
+				return task_pt_regs(current)->regs[0];
+#else
 				return task_pt_regs(current)->orig_ax;
-
+#endif
 			}
 		}
 	} /* if cpus_allowed_map is not existent or its ns does not point to the current ns DO NOT mig */
