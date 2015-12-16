@@ -321,4 +321,6 @@ static inline bool is_compat_task(void)
 	return is_ia32_task() || is_x32_task();
 }
 
+#define COMPAT_USE_NATIVE_SIGINFO 0
+
 #endif /* _ASM_X86_COMPAT_H */
