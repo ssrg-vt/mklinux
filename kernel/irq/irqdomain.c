@@ -10,6 +10,7 @@
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/acpi.h>
 #include <linux/topology.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
@@ -501,6 +502,33 @@ unsigned int irq_create_of_mapping(struct device_node *controller,
 	return virq;
 }
 EXPORT_SYMBOL_GPL(irq_create_of_mapping);
+
+#ifdef CONFIG_ACPI
+unsigned int irq_create_acpi_mapping(irq_hw_number_t hwirq,
+                                       unsigned int type)
+{
+       struct irq_domain *domain;
+       unsigned int virq;
+
+       domain = irq_default_domain;
+       if (!domain) {
+               pr_warn("no irq domain found !\n");
+               return 0;
+       }
+
+       /* Create mapping */
+       virq = irq_create_mapping(domain, hwirq);
+       if (!virq)
+               return virq;
+
+       /* Set type if specified and different than the current one */
+       if (type != IRQ_TYPE_NONE &&
+           type != irq_get_trigger_type(virq))
+               irq_set_irq_type(virq, type);
+       return virq;
+}
+EXPORT_SYMBOL_GPL(irq_create_acpi_mapping);
+#endif
 
 /**
  * irq_dispose_mapping() - Unmap an interrupt
