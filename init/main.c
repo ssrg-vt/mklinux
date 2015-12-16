@@ -811,8 +811,6 @@ void __init load_default_modules(void)
 static int run_init_process(const char *init_filename)
 {
 	argv_init[0] = init_filename;
-	printk(KERN_EMERG"%s: %s %s %s\n",
-	       __func__, init_filename, argv_init, envp_init);
 	return do_execve(init_filename,
 		(const char __user *const __user *)argv_init,
 		(const char __user *const __user *)envp_init);
