@@ -73,7 +73,7 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 								"a present page that is in invalid state\n");
 					}
 
-					if (!(newprot.pgprot & PROT_WRITE)) { //it is becoming a read only vma
+					if (!(pgprot_val(newprot) & PROT_WRITE)) { //it is becoming a read only vma
 
 						if (page->replicated == 1) {
 							printk("mprot: changing to read only address %lu\n",addr);
@@ -142,7 +142,7 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 			}
 
 			if(clear)
-				ptent = pte_clear_flags(ptent, _PAGE_RW);
+				ptent = pte_wrprotect(ptent);
 			else{
 				/*
 				 * Avoid taking write faults for pages we know to be
@@ -159,8 +159,8 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 			ptep_modify_prot_commit(mm, addr, pte, ptent);
 		} else
 			if(current->tgroup_distributed == 1){
-
-				if(!( pte==NULL || pte_none(pte_clear_flags(oldpte, _PAGE_UNUSED1)) )){
+				//Ajith - Removing optimization used for local fetch - _PAGE_UNUSED1 case
+				if(!( pte==NULL || pte_none(oldpte))){
 
 					struct page *page= pte_page(oldpte);
 
@@ -168,7 +168,7 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 						printk("ERROR: mprotect moving a not present page that is not in invalid state or replicated\n");
 					}
 
-					if( !(newprot.pgprot & PROT_WRITE)) { //it is becoming a read only vma
+					if( !(pgprot_val(newprot) & PROT_WRITE)) { //it is becoming a read only vma
 						printk("mprot: removing page address %lu\n",addr);
 						//force a new fetch
 						int rss[NR_MM_COUNTERS];
@@ -191,7 +191,10 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 							pte_t ptent= *pte;
 							if(!pte_none(ptent))
 								printk("ERROR: mprot cleaning pte but after not none\n");
-							ptent = pte_set_flags(ptent, _PAGE_UNUSED1);
+							
+							//Ajith - Removing optimization used for local fetch - _PAGE_UNUSED1 case
+							//ptent = pte_set_flags(ptent, _PAGE_UNUSED1);
+
 							set_pte_at_notify(mm, addr, pte, ptent);
 						}
 
