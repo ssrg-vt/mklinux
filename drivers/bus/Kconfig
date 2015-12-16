@@ -41,4 +41,20 @@ config ARM_CCI
 	help
 	  Driver supporting the CCI cache coherent interconnect for ARM
 	  platforms.
+
+config XGENE_PCP
+	tristate "Xgene SoC PCP Bus Driver"
+        depends on ARM64 && ARCH_XGENE
+	default y if ARCH_XGENE
+	help
+	  Xgene SoC PCP bus driver is required for error reporting.
+
+config XGENE_PMU
+	tristate "X-Gene SoC PMU Driver"
+        depends on ARM64 && ARCH_XGENE
+	default y if ARCH_XGENE
+	help
+	  X-Gene SoC PMU driver.
+
 endmenu
+
