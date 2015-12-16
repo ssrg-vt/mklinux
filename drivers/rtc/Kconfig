@@ -698,7 +698,7 @@ config RTC_DRV_DA9055
 
 config RTC_DRV_EFI
 	tristate "EFI RTC"
-	depends on IA64
+	depends on IA64 || ARM64
 	help
 	  If you say yes here you will get support for the EFI
 	  Real Time Clock.
@@ -1258,6 +1258,15 @@ config RTC_DRV_MOXART
 	   This driver can also be built as a module. If so, the module
 	   will be called rtc-moxart
 
+config RTC_DRV_XGENE
+	tristate "APM X-Gene RTC"
+	help
+	  If you say yes here you get support for the APM X-Gene SoC real time
+	  clock.
+
+	  This driver can also be built as a module, if so, the module
+	  will be called "rtc-xgene".
+
 comment "HID Sensor RTC drivers"
 
 config RTC_DRV_HID_SENSOR_TIME
@@ -1272,6 +1281,5 @@ config RTC_DRV_HID_SENSOR_TIME
 
 	  If this driver is compiled as a module, it will be named
 	  rtc-hid-sensor-time.
-
 
 endif # RTC_CLASS
