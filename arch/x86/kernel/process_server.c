@@ -18,7 +18,7 @@
 #include <linux/sched.h>
 #include <linux/cpu_namespace.h>
 #include <linux/popcorn_cpuinfo.h>
-#include <linux/process_server.h>
+#include <popcorn/process_server.h>
 #include <asm/i387.h>
 #include <asm/uaccess.h>
 #include <process_server_arch.h>
@@ -80,32 +80,32 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	savesegment(es, es);
 
 	if ((current == task) && (es != arch->thread_es)) {
-		PSPRINTK("%s: es %x thread %x\n", __func__, es, arch->thread_es);
+		/* PSPRINTK("%s: es %x thread %x\n", __func__, es, arch->thread_es); */
 	}
 	arch->thread_ds = task->thread.ds;
 	savesegment(ds, ds);
 	if (ds != arch->thread_ds) {
-		PSPRINTK("%s: ds %x thread %x\n", __func__, ds, arch->thread_ds);
+		/* PSPRINTK("%s: ds %x thread %x\n", __func__, ds, arch->thread_ds); */
 	}
 
 
 	arch->thread_fsindex = task->thread.fsindex;
 	savesegment(fs, fsindex);
 	if (fsindex != arch->thread_fsindex) {
-		PSPRINTK("%s: fsindex %x thread %x\n", __func__, fsindex, arch->thread_fsindex);
+		/* PSPRINTK("%s: fsindex %x thread %x\n", __func__, fsindex, arch->thread_fsindex); */
 		arch->thread_fsindex = fsindex;
 	}
 	arch->thread_gsindex = task->thread.gsindex;
 	savesegment(gs, gsindex);
 	if (gsindex != arch->thread_gsindex) {
-		PSPRINTK("%s: gsindex %x thread %x\n", __func__, gsindex, arch->thread_gsindex);
+		/* PSPRINTK("%s: gsindex %x thread %x\n", __func__, gsindex, arch->thread_gsindex); */
 		arch->thread_gsindex = gsindex;
 	}
 
 	arch->thread_fs = task->thread.fs;
 	rdmsrl(MSR_FS_BASE, fs);
 	if (fs != arch->thread_fs) {
-		PSPRINTK("%s: fs %lx thread %lx\n", __func__, fs, arch->thread_fs);
+		/* PSPRINTK("%s: fs %lx thread %lx\n", __func__, fs, arch->thread_fs); */
 		arch->thread_fs = fs;
 	}
 
@@ -118,14 +118,14 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	arch->thread_gs = task->thread.gs;
 	rdmsrl(MSR_KERNEL_GS_BASE, gs);
 	if (gs != arch->thread_gs) {
-		PSPRINTK("%s: gs %lx thread %lx\n", __func__, gs, arch->thread_gs);
+		/* PSPRINTK("%s: gs %lx thread %lx\n", __func__, gs, arch->thread_gs); */
 		arch->thread_gs = gs;
 	}
 
 	/*Ajith - for het migration */
 	if(task->migration_pc != 0){
 		arch->migration_pc = task->migration_pc;
-		PSPRINTK("IN %s:%d migration PC = %lx %lx\n", __func__, __LINE__, arch->migration_pc, read_old_rsp());
+		/* PSPRINTK("IN %s:%d migration PC = %lx %lx\n", __func__, __LINE__, arch->migration_pc, read_old_rsp()); */
 	}
 
 	ret = 0;
@@ -162,7 +162,7 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 {
 	int ret = -1;
 
-	PSPRINTK("%s [+] TID: %d\n", __func__, task->pid);
+	/* PSPRINTK("%s [+] TID: %d\n", __func__, task->pid); */
 	
 	if((task == NULL)  || (arch == NULL)){
 		printk(KERN_ERR"process_server: invalid params to restore_thread_info()");
@@ -193,7 +193,7 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
     		task_pt_regs(task)->ip=arch->migration_pc;
 		task_pt_regs(task)->sp= task->saved_old_rsp;
 
-		PSPRINTK("IN %s:%d migration values: IP: %lx PC:%lx SP:%lx SP:%lx\n", __func__, __LINE__, task_pt_regs(task)->ip, arch->migration_pc, arch->regs.sp, task_pt_regs(task)->sp);
+		/* PSPRINTK("IN %s:%d migration values: IP: %lx PC:%lx SP:%lx SP:%lx\n", __func__, __LINE__, task_pt_regs(task)->ip, arch->migration_pc, arch->regs.sp, task_pt_regs(task)->sp); */
 	}
 
 	task->thread.fs = arch->thread_fs;
@@ -225,7 +225,7 @@ if (current == task) {
 
 	ret = 0;
 
-	PSPRINTK("%s [-] TID: %d\n", __func__, task->pid);
+	/* PSPRINTK("%s [-] TID: %d\n", __func__, task->pid); */
 exit:
 	return ret;
 }
