@@ -1,0 +1,6 @@
+config XGENE_MCI
+	tristate "X-Gene MCI driver"
+	depends on XGENE_QMTM
+	default n 
+	help
+	  This option enables Potenza/MSLIM Communication Interface (MCI). 

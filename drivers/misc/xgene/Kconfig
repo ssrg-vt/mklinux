@@ -1,0 +1,3 @@
+source "drivers/misc/xgene/qmtm/Kconfig"
+source "drivers/misc/xgene/cle/Kconfig"
+source "drivers/misc/xgene/slimpro/Kconfig"

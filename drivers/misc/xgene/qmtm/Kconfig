@@ -1,0 +1,14 @@
+config XGENE_QMTM
+	tristate "X-Gene QMTM driver"
+	default y 
+	help
+	  This option enables X-Gene Queue Manager Traffic Manager (QMTM)
+	  driver support.
+	  QMTM is required for PktDMA, Ethernet, Security Engine, etc.
+
+config XGENE_QMTM_ERROR
+	bool "X-Gene QMTM Error reporting"
+	default y 
+	help
+	  This option enables X-Gene Queue Manager Traffic Manager (QMTM)
+	  Error reporting driver support.

@@ -1,0 +1,5 @@
+config XGENE_BMC
+       bool 'external BMC support in X-Gene SlimPro'
+       default n
+       help
+         Provides external BMC support in X-Gene SlimPro
