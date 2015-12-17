@@ -38,7 +38,8 @@ enum arch_timer_reg {
 extern u32 arch_timer_get_rate(void);
 extern u64 (*arch_timer_read_counter)(void);
 extern struct timecounter *arch_timer_get_timecounter(void);
-
+extern void __init arch_timer_acpi_init(void);
+extern void arm_arch_timer_init(u32 freq, u32 irq);
 #else
 
 static inline u32 arch_timer_get_rate(void)
@@ -54,6 +55,10 @@ static inline u64 arch_timer_read_counter(void)
 static inline struct timecounter *arch_timer_get_timecounter(void)
 {
 	return NULL;
+}
+
+static inline void arm_arch_timer_init(u32 freq, u32 irq)
+{
 }
 
 #endif
