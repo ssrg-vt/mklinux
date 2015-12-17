@@ -955,52 +955,40 @@ struct file *file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 EXPORT_SYMBOL(file_open_root);
 
 /**
- * Added to support thread migration this function will open the file that is opened on a remote
- * thread. This one returns a File descriptor for that. This way all threads have same FD table in the
- * master process :D
+ * Added to support thread migration this function will open the file that is
+ * opened on a remote thread. This one returns a File descriptor for that. This
+ * way all threads have same FD table in the master process
  */
-long remote_thread_open(const char *filename, int flags, int mode,pid_t owner_pid,struct task_struct* task)
+long remote_thread_open(const char *filename, int flags, int mode, pid_t owner_pid, struct task_struct* task)
 {
 	struct open_flags op;
-		int lookup = build_open_flags(flags, mode, &op);
-	//	printk("saif:my mode %x\n",mode);
-	//if (!IS_ERR(tmp)) {
-		int fd,fd2;
+	int lookup = build_open_flags(flags, mode, &op);
+	int fd,fd2;
 
-		fd = get_unused_fd_flags_task(flags,task);
-		printk("%s FD1 = %d\n",__func__,fd);
-		if(fd<0)
-			return fd;
-		if(task->fake_file_table[fd]==NULL)
-		{
-			task->fake_file_table[fd]=kmalloc(sizeof(remote_file_info_t),GFP_KERNEL);				//only supporting 32 files
-		}
-		task->fake_file_table[fd]->flags=flags;
-		task->fake_file_table[fd]->mode=mode;
-		task->fake_file_table[fd]->owner_pid=owner_pid;
-		strcpy(task->fake_file_table[fd]->filename,filename);
+	fd = get_unused_fd_flags_task(flags, task);
 
-	//	fd2= get_unused_fd_flags_task(flags,task);
-	//	printk("FD1 = %d FD2= %d\n",fd);
-	/*		if (fd >= 0) {
-				struct file *f = do_filp_open(AT_FDCWD, filename, &op, lookup);
-	//			printk("Inside fd open");
-				if (IS_ERR(f)) {
-					put_unused_fd_task(fd,task);
-					fd = PTR_ERR(f);
-				} else {
-					f->f_omode=mode;
-					fsnotify_open(f);
-					fd_install_task(fd, f,task);
-				}
-			}*/
+	printk("%s FD1 = %d\n",__func__,fd);
+
+	if (fd < 0)
 		return fd;
 
+	if (task->fake_file_table[fd] == NULL) {
+		/* only supporting 32 files */
+		task->fake_file_table[fd] = kmalloc(sizeof(remote_file_info_t), GFP_KERNEL);
+	}
+
+	task->fake_file_table[fd]->flags = flags;
+	task->fake_file_table[fd]->mode = mode;
+	task->fake_file_table[fd]->owner_pid = owner_pid;
+
+	strcpy(task->fake_file_table[fd]->filename, filename);
+
+	return fd;
 }
 
 DEFINE_SPINLOCK(_remote_file_lock);
 
-struct file* saif_do_sys_open(int dfd, const char *filename, int flags, int mode,int fd,pid_t actual_owner)
+static struct file *saif_do_sys_open(int dfd, const char *filename, int flags, int mode, int fd, pid_t actual_owner)
 {
 	struct open_flags op;
 	int lookup = build_open_flags(flags, mode, &op);
@@ -1011,57 +999,38 @@ struct file* saif_do_sys_open(int dfd, const char *filename, int flags, int mode
 	struct filename name;
 	struct filename * tmp = &name;
 
-	tmp->name=filename;
-	printk("%s %d TID %d\n",__func__,actual_owner,current->pid);
-//	char *tmp = getname(filename);
-	//fd = PTR_ERR(tmp);
+	tmp->name = filename;
+	printk("%s %d TID %d\n", __func__, actual_owner, current->pid);
 
-//	printk("saif:my mode %x\n",mode);
-	//if (!IS_ERR(tmp)) {
 	tsk_ftable = current->files;
 
-//	spin_lock(&tsk_ftable->file_lock);
-		rcv_fd = force_fd_flags(flags,fd);
-//		printk("%s %d fd %d\n",__func__,actual_owner,fd);
-		if(rcv_fd==-fd)
-		{
+	rcv_fd = force_fd_flags(flags,fd);
 
-//		spin_unlock_irqrestore(&_remote_file_lock);
-//			spin_unlock(&tsk_ftable->file_lock);
+	if (rcv_fd == -fd) {
+		printk("%s fd %d is already there\n",__func__,fd);
+	}
 
-			printk("%s fd %d is already there\n",__func__,fd);
-//		return fcheck_files(tsk_ftable, fd);
-		}
-		if (fd >= 0) {
-//			f = do_filp_open(dfd, filename, &op, lookup); changed in 3.12.0
-			f = do_filp_open(dfd, tmp, &op);
-//			printk("Inside fd open");
-			if (IS_ERR(f)) {
-				put_unused_fd(fd);
-				fd = PTR_ERR(f);
-
-			} else {
-				f->f_omode=mode;
-				f->owner_pid=actual_owner;
-				fsnotify_open(f);
-				 if(my_fd_install(fd, f)<0)
-				 {
-					 f=fcheck_files(tsk_ftable, fd);
-				 }
-
-//				spin_unlock(&_remote_file_lock);
-//				spin_unlock(&tsk_ftable->file_lock);
-				printk("%s after lock opened agian\n",__func__);
-				return f;
+	if (fd >= 0) {
+		f = do_filp_open(dfd, tmp, &op);
+		if (IS_ERR(f)) {
+			put_unused_fd(fd);
+			fd = PTR_ERR(f);
+		} else {
+			f->f_omode = mode;
+			f->owner_pid = actual_owner;
+			fsnotify_open(f);
+			if (my_fd_install(fd, f) < 0) {
+				f = fcheck_files(tsk_ftable, fd);
 			}
+			printk("%s after lock opened agian\n",__func__);
+			return f;
 		}
-	//	putname(tmp);
-	//}
-//		spin_unlock(&tsk_ftable->file_lock);
+	}
+
 	return f;
 }
 
-struct file * saif_open(char * filename,int flags,int mode,int fd,pid_t actual_owner)
+struct file *saif_open(char *filename, int flags, int mode, int fd, pid_t actual_owner)
 {
 	struct file* ret;
 
@@ -1100,7 +1069,7 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 			f->f_omode = mode;
 			f->owner_pid = current->tgid;
 			/* new implementation I don't set the owner to the one
- 			 * that has opened it */
+			 * that has opened it */
 
 			fsnotify_open(f);
 			fd_install(fd, f);

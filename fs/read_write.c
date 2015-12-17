@@ -39,16 +39,16 @@ const struct file_operations generic_ro_fops = {
 
 EXPORT_SYMBOL(generic_ro_fops);
 
-struct file* get_file_struct(int fd,pid_t orgin_pid)
+static struct file *get_file_struct(int fd, pid_t orgin_pid)
 {
 	struct file *file;
 
-	if(current->tgroup_distributed==0||fd<3)
+	if (current->tgroup_distributed == 0 || fd < 3)
 		return NULL;
 
-	file=ask_orgin_file(fd,orgin_pid);
+	file = ask_orgin_file(fd, orgin_pid);
 
-	if(IS_ERR(file))
+	if (IS_ERR(file))
 		return NULL;
 
 	return file;
@@ -540,17 +540,16 @@ SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
 
-	if(!f.file){
-		if(current->tgroup_distributed==1&&fd==1)
-		{
-			printk("%s",buf);
-			return strlen(buf);
-		}
-	}
-	if(!f.file)
+	if (!f.file && current->tgroup_distributed == 1&& fd == 1)
 	{
-		printk("R Origin PID %d fd %d distro %d\n",current->tgroup_home_id,fd,current->tgroup_distributed);
-		f.file=get_file_struct(fd,current->tgroup_home_id);
+		printk("%s",buf);
+		return strlen(buf);
+	}
+
+	if (!f.file)
+	{
+		printk("R Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		f.file = get_file_struct(fd, current->tgroup_home_id);
 	}
 
 	if (f.file) {
