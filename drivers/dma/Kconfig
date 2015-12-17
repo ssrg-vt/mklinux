@@ -46,6 +46,19 @@ config INTEL_MID_DMAC
 
 	  If unsure, say N.
 
+config XGENE_PCIE_DMA
+	tristate "XGENE PCIe DMA support for PCIe Devices"
+	depends on PCI_XGENE
+	select DMA_ENGINE
+	default n
+	help
+	  Enable support for the XGENE PCIe DMA engine present
+	  in APM chipsets.
+
+	  Say Y here if you have such a chipset.
+
+	  If unsure, say N.
+
 config ASYNC_TX_ENABLE_CHANNEL_SWITCH
 	bool
 
@@ -317,6 +330,16 @@ config K3_DMA
 	help
 	  Support the DMA engine for Hisilicon K3 platform
 	  devices.
+
+config XGENE_DMA
+	tristate "X-Gene Packet DMA support"
+	depends on ARM64
+	select DMA_ENGINE
+	select ASYNC_TX_DMA
+	select XGENE_QMTM
+	select ASYNC_TX_ENABLE_CHANNEL_SWITCH
+	help
+	  Support the APM X-Gene SoC Packet DMA engine.
 
 config DMA_ENGINE
 	bool
