@@ -8,6 +8,20 @@
 
 #include <linux/types.h>
 
+typedef enum _update_for_who
+{
+	FOR_OWNER,
+	FOR_MAIN
+}for_who;
+
+typedef enum _offset_update_type
+{
+	READ_UPDATE,
+	WRITE_UPDATE,
+	LSEEK_UPDATE,
+	OFFSET_TYPE_MAX
+} offset_update_type;
+
 enum pcn_connection_status{
 	PCN_CONN_WATING,
 	PCN_CONN_CONNECTED,
@@ -87,6 +101,17 @@ enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_PROC_SRV_CREATE_THREAD_PULL,
 	PCN_KMSG_TERMINATE,
 	PCN_KMSG_TYPE_SELFIE_TEST,
+	PCN_KMSG_TYPE_FILE_MIGRATE_REQUEST,      /*To send file name Messages*/
+	PCN_KMSG_TYPE_FILE_OPEN_REQUEST,	 	/*when some thread opens a file*/
+	PCN_KMSG_TYPE_FILE_OPEN_REPLY,	 		/*when some thread opens a file*/
+	PCN_KMSG_TYPE_FILE_STATUS_REQUEST,	 	/*when some thread opens a file*/
+	PCN_KMSG_TYPE_FILE_STATUS_REPLY,
+	PCN_KMSG_TYPE_FILE_OFFSET_REQUEST,
+	PCN_KMSG_TYPE_FILE_OFFSET_REPLY,
+	PCN_KMSG_TYPE_FILE_CLOSE_NOTIFICATION,	 /*when some thread closes a file*/
+	PCN_KMSG_TYPE_FILE_OFFSET_UPDATE,			 /*when some thread reads a file updates the offset value*/
+	PCN_KMSG_TYPE_FILE_OFFSET_CONFIRM,
+	PCN_KMSG_TYPE_FILE_LSEEK_NOTIFICATION,   /*when some thread lseek a file updates the offset value*/
 	PCN_KMSG_TYPE_MAX
 };
 

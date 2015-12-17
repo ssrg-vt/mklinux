@@ -71,4 +71,11 @@ extern void fd_install(unsigned int fd, struct file *file);
 extern void flush_delayed_fput(void);
 extern void __fput_sync(struct file *);
 
+extern int alloc_fd_task(unsigned start, unsigned flags, struct task_struct* task );
+extern int my_fd_install(unsigned int fd, struct file *file);
+extern int saif_alloc_fd(unsigned start, unsigned flags,unsigned int fd);
+
+#define force_fd_flags(flags,fd) saif_alloc_fd(0, (flags),fd)
+#define get_unused_fd_flags_task(flags,task) alloc_fd_task(0, (flags),task)
+
 #endif /* __LINUX_FILE_H */

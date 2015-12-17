@@ -62,6 +62,7 @@
 #include <linux/popcorn_cpuinfo.h>
 #include <linux/process_server.h>
 #include <process_server_arch.h>
+#include <popcorn/remote_file.h>
 
 #include <linux/elf.h>
 #include <linux/binfmts.h>
@@ -77,6 +78,7 @@
  */
 
 static int _cpu = -1;
+int _file_cpu = 1;
 
 data_header_t* _data_head = NULL; // General purpose data store
 fetching_t* _fetching_head = NULL;
@@ -7069,6 +7071,7 @@ static int __init process_server_init(void) {
 		printk("ERROR process_server cannot initialize _cpu\n");
 	else{
 		_cpu= copy_cpu;
+		_file_cpu = _cpu;
 		printk("process_server: I am cpu %d\n",_cpu);
 	}
 
@@ -7155,6 +7158,23 @@ static int __init process_server_init(void) {
 
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_CREATE_THREAD_PULL,
 				   handle_thread_pull_creation);
+
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OPEN_REQUEST,
+				   handle_file_open_request);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OPEN_REPLY,
+				   handle_file_open_reply);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_STATUS_REQUEST,
+				   handle_file_status_request);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_STATUS_REPLY,
+				   handle_file_status_reply);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_REQUEST,
+				   handle_file_offset_request);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_REPLY,
+				   handle_file_offset_reply);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_UPDATE,
+				   handle_file_pos_update);
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_CONFIRM,
+				   handle_file_pos_confirm);
 
 	return 0;
 }

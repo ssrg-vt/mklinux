@@ -22,6 +22,9 @@
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 
+#include <linux/pcn_kmsg.h>
+#include <popcorn/remote_file.h>
+
 typedef ssize_t (*io_fn_t)(struct file *, char __user *, size_t, loff_t *);
 typedef ssize_t (*iov_fn_t)(struct kiocb *, const struct iovec *,
 		unsigned long, loff_t);
@@ -35,6 +38,21 @@ const struct file_operations generic_ro_fops = {
 };
 
 EXPORT_SYMBOL(generic_ro_fops);
+
+struct file* get_file_struct(int fd,pid_t orgin_pid)
+{
+	struct file *file;
+
+	if(current->tgroup_distributed==0||fd<3)
+		return NULL;
+
+	file=ask_orgin_file(fd,orgin_pid);
+
+	if(IS_ERR(file))
+		return NULL;
+
+	return file;
+}
 
 static inline int unsigned_offsets(struct file *file)
 {
@@ -501,6 +519,11 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
 
+	if (!f.file) {
+		printk("R Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		f.file = get_file_struct(fd, current->tgroup_home_id);
+	}
+
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);
 		ret = vfs_read(f.file, buf, count, &pos);
@@ -516,6 +539,19 @@ SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 {
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
+
+	if(!f.file){
+		if(current->tgroup_distributed==1&&fd==1)
+		{
+			printk("%s",buf);
+			return strlen(buf);
+		}
+	}
+	if(!f.file)
+	{
+		printk("R Origin PID %d fd %d distro %d\n",current->tgroup_home_id,fd,current->tgroup_distributed);
+		f.file=get_file_struct(fd,current->tgroup_home_id);
+	}
 
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);

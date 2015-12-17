@@ -794,6 +794,11 @@ struct file {
 	const struct cred	*f_cred;
 	struct file_ra_state	f_ra;
 
+	pid_t			owner_pid;
+	pid_t			owner_origin_pid;
+	bool			exclusive;
+	int			f_omode;
+
 	u64			f_version;
 #ifdef CONFIG_SECURITY
 	void			*f_security;

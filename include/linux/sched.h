@@ -1016,6 +1016,16 @@ enum perf_event_task_context {
 	perf_nr_task_contexts,
 };
 
+/*saif added to hold info about the remote threads*/
+typedef struct _task_file_data {
+	char filename[256];
+	unsigned int flags;
+	fmode_t mode;
+	off_t pos;
+	pid_t owner_pid;
+} remote_file_info_t;
+
+
 struct task_struct {
 	volatile long state;	/* -1 unrunnable, 0 runnable, >0 stopped */
 	void *stack;
@@ -1438,6 +1448,8 @@ struct task_struct {
 	/*Ajith - for het migration */
 	unsigned long migration_pc;
 	unsigned long saved_old_rsp;
+
+	remote_file_info_t *fake_file_table[64];
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

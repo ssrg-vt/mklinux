@@ -545,6 +545,156 @@ void put_unused_fd(unsigned int fd)
 
 EXPORT_SYMBOL(put_unused_fd);
 
+/* Modified alloc_fd. Finds and allocks fd for a spcific task rather than current */
+int alloc_fd_task(unsigned start, unsigned flags, struct task_struct* task )
+{
+	struct files_struct *files = task->files;
+		unsigned int fd;
+		int error;
+		struct fdtable *fdt;
+
+		spin_lock(&files->file_lock);
+	repeat:
+		fdt = files_fdtable(files);
+		fd = start;
+		if (fd < files->next_fd)
+			fd = files->next_fd;
+
+/*		if (fd < fdt->max_fds)
+			fd = find_next_zero_bit(fdt->open_fds->fds_bits,    changed in 3.12.0
+						   fdt->max_fds, fd);
+*/
+		if (fd < fdt->max_fds)
+			fd = find_next_zero_bit(fdt->open_fds,
+						   fdt->max_fds, fd);
+
+		error = expand_files(files, fd);
+		if (error < 0)
+			goto out;
+
+		/*
+		 * If we needed to expand the fs array we
+		 * might have blocked - try again.
+		 */
+		if (error)
+			goto repeat;
+
+		if (start <= files->next_fd)
+			files->next_fd = fd + 1;
+
+//		FD_SET(fd, fdt->open_fds);
+		__set_open_fd(fd, fdt);
+		if (flags & O_CLOEXEC)
+//			FD_SET(fd, fdt->close_on_exec);
+			__set_close_on_exec(fd, fdt);
+		else
+			__clear_close_on_exec(fd, fdt);
+//			FD_CLR(fd, fdt->close_on_exec);
+		error = fd;
+	#if 1
+		/* Sanity check */
+		if (rcu_dereference_raw(fdt->fd[fd]) != NULL) {
+			printk(KERN_WARNING "alloc_fd: slot %d not NULL!\n", fd);
+			rcu_assign_pointer(fdt->fd[fd], NULL);
+		}
+	#endif
+
+	out:
+		spin_unlock(&files->file_lock);
+		return error;
+}
+
+
+
+int saif_alloc_fd(unsigned start, unsigned flags,unsigned int fd)
+{
+	struct files_struct *files = current->files;
+//	unsigned int fd;
+	int error;
+	struct fdtable *fdt;
+	spin_lock(&files->file_lock);
+
+repeat:
+	fdt = files_fdtable(files);
+//	fd = start;
+/*
+	if (fd < files->next_fd)
+		fd = files->next_fd;
+
+	if (fd < fdt->max_fds)
+		fd = find_next_zero_bit(fdt->open_fds->fds_bits,
+					   fdt->max_fds, fd);
+*/
+
+	error = expand_files(files, fd);
+	if (error < 0)
+		goto out;
+
+	/*
+	 * If we needed to expand the fs array we
+	 * might have blocked - try again.
+	 */
+	if (error)
+		goto repeat;
+
+	if (start <= files->next_fd)
+		files->next_fd = fd + 1;
+/*	if(FD_ISSET(fd, fdt->open_fds)) //need to figure this out chnaged in 3.12.0
+	{
+		spin_unlock(&files->file_lock);
+		return -fd;
+	}
+*/
+	if(test_bit(fd, fdt->open_fds)) //need to figure this out chnaged in 3.12.0
+	{
+		spin_unlock(&files->file_lock);
+		return -fd;
+	}
+
+	
+	__set_open_fd(fd, fdt);
+	if (flags & O_CLOEXEC)
+		__set_close_on_exec(fd, fdt);
+	else
+		__clear_close_on_exec(fd, fdt);
+/*	FD_SET(fd, fdt->open_fds);    //changed in 3.12.0
+	if (flags & O_CLOEXEC)
+		FD_SET(fd, fdt->close_on_exec);
+	else
+		FD_CLR(fd, fdt->close_on_exec);
+*/	
+	error = fd;
+#if 1
+	/* Sanity check */
+	if (rcu_dereference_raw(fdt->fd[fd]) != NULL) {
+	//	printk(KERN_WARNING "alloc_fd: slot %d not NULL!\n", fd);
+	//	rcu_assign_pointer(fdt->fd[fd], NULL);
+		error = -fd;
+	}
+	#endif
+
+out:
+	spin_unlock(&files->file_lock);
+	return error;
+}
+
+int my_fd_install(unsigned int fd, struct file *file)
+{
+	struct files_struct *files = current->files;
+	struct fdtable *fdt;
+	spin_lock(&files->file_lock);
+	fdt = files_fdtable(files);
+	if(fdt->fd[fd] != NULL)
+	{
+		spin_unlock(&files->file_lock);
+		return -1;
+	}
+	//BUG_ON(fdt->fd[fd] != NULL);
+	rcu_assign_pointer(fdt->fd[fd], file);
+	spin_unlock(&files->file_lock);
+	return 0;
+}
+
 /*
  * Install a file pointer in the fd array.
  *
