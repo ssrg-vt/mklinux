@@ -31,10 +31,6 @@
 #include <asm/atomic.h>
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
-#include <asm/uaccess.h> // USER_DS
-#include <asm/prctl.h> // prctl
-#include <asm/proto.h> // do_arch_prctl
-#include <asm/msr.h> // wrmsr_safe
 #include <linux/fdtable.h> //saif
 #include <popcorn/pid.h>  //saif for orig_pid
 #include <linux/semaphore.h>//saif for semaphore stuff
