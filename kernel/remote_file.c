@@ -5,7 +5,6 @@
  *      Author: saif
  */
 
-//#include <linux/mcomm.h> // IPC
 #include <linux/kthread.h>
 #include <linux/export.h>
 #include <linux/delay.h>
@@ -25,7 +24,6 @@
 #include <linux/io.h> // ioremap
 #include <linux/mman.h> // MAP_ANONYMOUS
 #include <linux/pcn_kmsg.h> // Messaging
-//#include <linux/pcn_perf.h> // performance measurement
 #include <linux/string.h>
 #include <linux/pid.h>
 
@@ -43,10 +41,7 @@
 #include <asm/mmu_context.h>
 #include <popcorn/remote_file.h>
 
-/*Globals*/
-//wait queues
-
-//locks
+/* Locks */
 DEFINE_SPINLOCK(_file_list_lock);					//Lock for file_start
 DEFINE_SPINLOCK(_file_op_request_id_lock); 			//Lock for request_op_number
 
@@ -59,7 +54,7 @@ DEFINE_SPINLOCK(_remote_file_info_lock);			//Lock on remote file info list// wil
 
 
 /*extern fucntions*/
-extern long saif_open(char * filename, int flags, int mode, int fd,
+extern long saif_open(char *filename, int flags, int mode, int fd,
 		pid_t actual_owner);
 extern long sys_lseek(unsigned int, off_t, unsigned int);
 extern long sys_close(unsigned int);
@@ -73,7 +68,7 @@ static fd_wait wait_q;
 static file_status_wait wait_q_file_status;
 static file_offset_wait wait_q_file_offset;
 static file_offset_wait wait_q_file_offset_confirm;
-//static remote_file_info remote_file_info_table;
+
 /*init function*/
 void file_wait_q(void)
 {
@@ -81,23 +76,10 @@ void file_wait_q(void)
 	INIT_LIST_HEAD(&wait_q_file_status.list);
 	INIT_LIST_HEAD(&wait_q_file_offset.list);
 	INIT_LIST_HEAD(&wait_q_file_offset_confirm.list);
-//	INIT_LIST_HEAD(&remote_file_info_table.list);
 }
 
-/*migration related functions*/
-/*
-int add_to_file_migration_list(remote_file_info* info)
+long long get_filesystem_reqno(void)
 {
-	spin_lock(&_remote_file_info_lock);
-	INIT_LIST_HEAD(&(strc->list));
-	list_add_tail(&(strc->list), &(wait_q_file_status.list));
-	spin_unlock(&_remote_file_info_lock);
-}
-*/
-
-
-
-long long get_filesystem_reqno(void) {
 	long long retval;
 	spin_lock(&_file_op_request_id_lock);
 	retval = _file_op_request_id++ % 0xFFFFFFFFFFFFFFF;
@@ -105,29 +87,31 @@ long long get_filesystem_reqno(void) {
 	return retval;
 }
 
-static int register_for_file_status(file_status_wait * strc) {
-
+static int register_for_file_status(file_status_wait * strc)
+{
 	spin_lock(&_wait_q_file_status_lock);
 	INIT_LIST_HEAD(&(strc->list));
 	list_add_tail(&(strc->list), &(wait_q_file_status.list));
 	spin_unlock(&_wait_q_file_status_lock);
 }
 
-
-//wait fucntions
-static int wait_for_file_status(file_status_wait * strc) {
+//wait functions
+static int wait_for_file_status(file_status_wait * strc)
+{
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
 }
-static int register_for_file_offset_confirm(file_offset_confirm_wait * strc){
+
+static int register_for_file_offset_confirm(file_offset_confirm_wait * strc)
+{
 	spin_lock(&_wait_q_file_offset_confirm_lock);
 	INIT_LIST_HEAD(&(strc->list));
 	list_add_tail(&(strc->list), &(wait_q_file_offset_confirm.list));
 	spin_unlock(&_wait_q_file_offset_confirm_lock);
 }
 
-static int wait_for_file_offset_confirm(file_offset_confirm_wait * strc) {
-
+static int wait_for_file_offset_confirm(file_offset_confirm_wait * strc)
+{
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
 }
@@ -139,27 +123,29 @@ static int register_for_fd_ret(fd_wait *strc){
 	spin_unlock(&_wait_q_lock);
 }
 
-static int wait_for_fd_ret(fd_wait *strc) {
-
+static int wait_for_fd_ret(fd_wait *strc)
+{
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
 }
 
-static int register_for_file_offset(file_offset_wait * strc) {
+static int register_for_file_offset(file_offset_wait * strc)
+{
 	spin_lock(&_wait_q_file_offset_lock);
 	INIT_LIST_HEAD(&(strc->list));
 	list_add_tail(&(strc->list), &(wait_q_file_offset.list));
 	spin_unlock(&_wait_q_file_offset_lock);
 }
 
-static int wait_for_file_offset(file_offset_wait * strc) {
+static int wait_for_file_offset(file_offset_wait * strc)
+{
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
 }
 
-
 void tell_remote_offset(int fd, struct file* file, loff_t pos,
-		offset_update_type type) {
+		offset_update_type type)
+{
 
 	int tx_ret;
 	file_offset_confirm *waitPtr = kmalloc(sizeof(file_offset_confirm),
@@ -218,7 +204,8 @@ void tell_remote_offset(int fd, struct file* file, loff_t pos,
 
 }
 
-loff_t ask_remote_offset(int fd, struct file* file) {
+loff_t ask_remote_offset(int fd, struct file* file)
+{
 	file_offset_req *reqPtr = kmalloc(sizeof(file_offset_req), GFP_KERNEL);
 	file_offset_wait* reqWaitPtr = kmalloc(sizeof(file_offset_wait),
 	GFP_KERNEL);
@@ -252,7 +239,9 @@ loff_t ask_remote_offset(int fd, struct file* file) {
 	kfree(reqWaitPtr);
 	return offset;
 }
-struct file* ask_orgin_file(int fd, pid_t orgin_pid) {
+
+struct file* ask_orgin_file(int fd, pid_t orgin_pid)
+{
 	file_status_req *reqPtr = kmalloc(sizeof(file_status_req), GFP_KERNEL);
 	file_status_wait* reqWaitPtr = kmalloc(sizeof(file_status_wait),
 	GFP_KERNEL);
@@ -289,7 +278,9 @@ struct file* ask_orgin_file(int fd, pid_t orgin_pid) {
 	return f;
 
 }
-static char* get_filename_file(struct file * file, file_info_t_req * fileinfo) {
+
+static char* get_filename_file(struct file * file, file_info_t_req * fileinfo)
+{
 	struct path path;
 	char * pathname;
 	/*	spin_lock(&file->file_lock);
@@ -314,7 +305,8 @@ static char* get_filename_file(struct file * file, file_info_t_req * fileinfo) {
 
 }
 
-static char* get_filename(struct file * file, file_data* fileinfo) {
+static char* get_filename(struct file * file, file_data* fileinfo)
+{
 	struct path path;
 	char * pathname;
 	/*	spin_lock(&file->file_lock);
@@ -340,12 +332,15 @@ static char* get_filename(struct file * file, file_data* fileinfo) {
 	return pathname;
 
 }
-/*gets the proper fd from home kernel*/
-int pcn_get_fd_from_home(char *tmp, int flags, fmode_t mode) {
+
+/* Get the proper fd from home kernel */
+int pcn_get_fd_from_home(char *tmp, int flags, fmode_t mode)
+{
+	int fd, tx_ret;
+
 	file_open_req* request = kmalloc(sizeof(file_open_req), GFP_KERNEL);
 	fd_wait *wait_for_fd = kmalloc(sizeof(fd_wait), GFP_KERNEL);
-	int tx_ret;
-	int fd;
+
 	request->header.from_cpu = _file_cpu;
 	request->header.is_lg_msg = 0;
 	request->header.type = PCN_KMSG_TYPE_FILE_OPEN_REQUEST;
@@ -357,6 +352,7 @@ int pcn_get_fd_from_home(char *tmp, int flags, fmode_t mode) {
 	request->original_pid = current->tgroup_home_id;
 	request->actual_owner = current->tgid;
 	strcpy(request->file_name, tmp);
+
 	/*
 	 *                       USER VIEW
 	 <-- PID 43 --> <----------------- PID 42 ----------------->
@@ -375,6 +371,7 @@ int pcn_get_fd_from_home(char *tmp, int flags, fmode_t mode) {
 	 KERNEL VIEW
 	 *
 	 * */
+
 	wait_for_fd->req_no = request->reqno;
 	register_for_fd_ret(wait_for_fd);
 	tx_ret = pcn_kmsg_send_long(ORIG_NODE(current->origin_pid),
@@ -385,10 +382,12 @@ int pcn_get_fd_from_home(char *tmp, int flags, fmode_t mode) {
 	wait_for_fd_ret(wait_for_fd);
 	fd = wait_for_fd->fd;
 	kfree(wait_for_fd);
+
 	return fd;
 }
 
-int handle_file_open_reply(struct pcn_kmsg_message* inc_msg) {
+int handle_file_open_reply(struct pcn_kmsg_message* inc_msg)
+{
 	struct list_head *pos, *q;
 	fd_wait *tmp = NULL;
 	file_info_t_reply *r_ptr = (file_info_t_reply*) inc_msg;
@@ -423,7 +422,8 @@ int handle_file_open_reply(struct pcn_kmsg_message* inc_msg) {
 	return -1;
 }
 
-int handle_file_status_reply(struct pcn_kmsg_message* inc_msg) {
+int handle_file_status_reply(struct pcn_kmsg_message* inc_msg)
+{
 	struct list_head *pos, *q;
 	file_status_wait *tmp = NULL;
 	file_status_reply *r_ptr = (file_status_reply*) inc_msg;
@@ -450,7 +450,8 @@ int handle_file_status_reply(struct pcn_kmsg_message* inc_msg) {
 	return -1;
 }
 
-int handle_file_offset_reply(struct pcn_kmsg_message* inc_msg) {
+int handle_file_offset_reply(struct pcn_kmsg_message* inc_msg)
+{
 	struct list_head *pos, *q;
 	file_offset_wait *tmp = NULL;
 	file_offset_reply *r_ptr = (file_offset_reply*) inc_msg;
@@ -478,7 +479,8 @@ int handle_file_offset_reply(struct pcn_kmsg_message* inc_msg) {
 	return -1;
 }
 
-int handle_file_open_request(struct pcn_kmsg_message* inc_msg) {
+int handle_file_open_request(struct pcn_kmsg_message* inc_msg)
+{
 //	file_open_work *workPtr=kmalloc(sizeof(file_open_work), GFP_ATOMIC);
 	file_open_req *reqPtr = (file_open_req*) inc_msg;
 	file_info_t_reply* replyPtr = kmalloc(sizeof(file_info_t_reply),GFP_ATOMIC);
@@ -532,7 +534,8 @@ int handle_file_open_request(struct pcn_kmsg_message* inc_msg) {
 
 }
 
-int handle_file_status_request(struct pcn_kmsg_message* inc_msg) {
+int handle_file_status_request(struct pcn_kmsg_message* inc_msg)
+{
 //	file_open_work *workPtr=kmalloc(sizeof(file_open_work), GFP_ATOMIC);
 	file_status_req *reqPtr = (file_open_req*) inc_msg;
 	file_status_reply replyPtr;
@@ -595,7 +598,8 @@ int handle_file_status_request(struct pcn_kmsg_message* inc_msg) {
 
 }
 
-int handle_file_offset_request(struct pcn_kmsg_message* inc_msg) {
+int handle_file_offset_request(struct pcn_kmsg_message* inc_msg)
+{
 //	file_open_work *workPtr=kmalloc(sizeof(file_open_work), GFP_ATOMIC);
 	file_offset_req *reqPtr = (file_offset_req*) inc_msg;
 	file_offset_reply replyPtr;
@@ -650,7 +654,8 @@ int handle_file_offset_request(struct pcn_kmsg_message* inc_msg) {
 
 }
 
-int handle_file_close_notification(struct pcn_kmsg_message* inc_msg) {
+int handle_file_close_notification(struct pcn_kmsg_message* inc_msg)
+{
 	/*	file_open_work *workPtr=kmalloc(sizeof(file_open_work), GFP_ATOMIC);
 	 file_open_req *reqPtr=(file_open_req*)inc_msg;
 	 if(inc_msg==NULL)
@@ -667,7 +672,8 @@ int handle_file_close_notification(struct pcn_kmsg_message* inc_msg) {
 	 }
 	 */
 }
-int handle_file_pos_confirm(struct pcn_kmsg_message* inc_msg) {
+int handle_file_pos_confirm(struct pcn_kmsg_message* inc_msg)
+{
 	struct list_head *pos, *q;
 	file_offset_confirm_wait *tmp = NULL;
 	file_offset_confirm *r_ptr = (file_offset_reply*) inc_msg;
@@ -694,7 +700,8 @@ int handle_file_pos_confirm(struct pcn_kmsg_message* inc_msg) {
 
 }
 
-int handle_file_pos_update(struct pcn_kmsg_message* inc_msg) {
+int handle_file_pos_update(struct pcn_kmsg_message* inc_msg)
+{
 	file_offset_update *uptPtr = (file_offset_update*) inc_msg;
 	file_offset_confirm confPtr;
 	offset_confirm_sts status = OFFSET_UPDATE_SUCC;
@@ -749,8 +756,3 @@ int handle_file_pos_update(struct pcn_kmsg_message* inc_msg) {
 	pcn_kmsg_free_msg(inc_msg);
 	return 0;
 }
-
-
-
-
-
