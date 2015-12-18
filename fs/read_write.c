@@ -840,6 +840,11 @@ SYSCALL_DEFINE3(readv, unsigned long, fd, const struct iovec __user *, vec,
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
 
+	if (!f.file) {
+		printk("%s: RV Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
+		f.file = get_file_struct(fd, current->tgroup_home_id);
+	}
+
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);
 		ret = vfs_readv(f.file, vec, vlen, &pos);
