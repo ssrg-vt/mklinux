@@ -520,7 +520,7 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 	ssize_t ret = -EBADF;
 
 	if (!f.file) {
-		printk("R Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		printk("%s: R Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
 		f.file = get_file_struct(fd, current->tgroup_home_id);
 	}
 
@@ -540,15 +540,15 @@ SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
 
-	if (!f.file && current->tgroup_distributed == 1&& fd == 1)
+	if (!f.file && current->tgroup_distributed == 1 && fd == 1)
 	{
-		printk("%s",buf);
+		printk("%s", buf);
 		return strlen(buf);
 	}
 
 	if (!f.file)
 	{
-		printk("R Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		printk("%s: W Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
 		f.file = get_file_struct(fd, current->tgroup_home_id);
 	}
 
