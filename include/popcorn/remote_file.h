@@ -192,12 +192,6 @@ int pcn_get_fd_from_home(char *tmp, int flags, fmode_t mode);
 static char* get_filename_file(struct file *file, file_info_t_req *fileinfo);
 static char* get_filename(struct file *file, file_data *fileinfo);
 
-/* Wait functions */
-static int wait_for_file_status(file_status_wait *strc);
-static int wait_for_file_offset_confirm(file_offset_confirm_wait *strc);
-static int wait_for_fd_ret(fd_wait *strc);
-static int wait_for_file_offset(file_offset_wait *strc);
-
 /* Handler functions */
 /* Reply handlers */
 int handle_file_open_reply(struct pcn_kmsg_message *inc_msg);

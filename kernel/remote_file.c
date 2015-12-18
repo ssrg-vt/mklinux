@@ -83,7 +83,7 @@ long long get_filesystem_reqno(void)
 	return retval;
 }
 
-static int register_for_file_status(file_status_wait *strc)
+static void register_for_file_status(file_status_wait *strc)
 {
 	spin_lock(&_wait_q_file_status_lock);
 	INIT_LIST_HEAD(&(strc->list));
@@ -92,13 +92,13 @@ static int register_for_file_status(file_status_wait *strc)
 }
 
 /* Wait functions */
-static int wait_for_file_status(file_status_wait *strc)
+static void wait_for_file_status(file_status_wait *strc)
 {
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
 }
 
-static int register_for_file_offset_confirm(file_offset_confirm_wait *strc)
+static void register_for_file_offset_confirm(file_offset_confirm_wait *strc)
 {
 	spin_lock(&_wait_q_file_offset_confirm_lock);
 	INIT_LIST_HEAD(&(strc->list));
@@ -106,26 +106,26 @@ static int register_for_file_offset_confirm(file_offset_confirm_wait *strc)
 	spin_unlock(&_wait_q_file_offset_confirm_lock);
 }
 
-static int wait_for_file_offset_confirm(file_offset_confirm_wait *strc)
+static void wait_for_file_offset_confirm(file_offset_confirm_wait *strc)
 {
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
 }
 
-static int register_for_fd_ret(fd_wait *strc){
+static void register_for_fd_ret(fd_wait *strc){
 	spin_lock(&_wait_q_lock);
 	INIT_LIST_HEAD(&(strc->list));
 	list_add_tail(&(strc->list), &(wait_q.list));
 	spin_unlock(&_wait_q_lock);
 }
 
-static int wait_for_fd_ret(fd_wait *strc)
+static void wait_for_fd_ret(fd_wait *strc)
 {
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
 }
 
-static int register_for_file_offset(file_offset_wait *strc)
+static void register_for_file_offset(file_offset_wait *strc)
 {
 	spin_lock(&_wait_q_file_offset_lock);
 	INIT_LIST_HEAD(&(strc->list));
@@ -133,7 +133,7 @@ static int register_for_file_offset(file_offset_wait *strc)
 	spin_unlock(&_wait_q_file_offset_lock);
 }
 
-static int wait_for_file_offset(file_offset_wait *strc)
+static void wait_for_file_offset(file_offset_wait *strc)
 {
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
@@ -145,6 +145,7 @@ void tell_remote_offset(int fd, struct file* file, loff_t pos,
 	int tx_ret;
 
 	file_offset_confirm *waitPtr = kmalloc(sizeof(file_offset_confirm), GFP_KERNEL);
+	file_offset_update *uptPtrOwner;
 
 	if ((current->origin_pid != file->owner_pid)
 			&& (file->owner_pid != current->tgid) && (file->owner_pid != 0)
@@ -152,8 +153,7 @@ void tell_remote_offset(int fd, struct file* file, loff_t pos,
 
 		printk("Tell the owner pid %d\n",current->pid);
 
-		file_offset_update * uptPtrOwner = kmalloc(sizeof(file_offset_update),
-				GFP_KERNEL);
+		uptPtrOwner = kmalloc(sizeof(file_offset_update), GFP_KERNEL);
 
 		/* header */
 		uptPtrOwner->header.from_cpu = _file_cpu;
@@ -309,10 +309,11 @@ int pcn_get_fd_from_home(char *tmp, int flags, fmode_t mode)
 {
 	int fd, tx_ret;
 
-	printk("%s: tmp _%s_\n", __func__, tmp);
 
 	file_open_req* request = kmalloc(sizeof(file_open_req), GFP_KERNEL);
 	fd_wait *wait_for_fd = kmalloc(sizeof(fd_wait), GFP_KERNEL);
+
+	printk("%s: tmp _%s_\n", __func__, tmp);
 
 	request->header.from_cpu = _file_cpu;
 	request->header.is_lg_msg = 0;
