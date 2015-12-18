@@ -49,7 +49,7 @@ DEFINE_SPINLOCK(_remote_file_info_lock);			//Lock on remote file info list// wil
 
 
 
-/*extern fucntions*/
+/* Extern fucntions */
 extern long saif_open(char *filename, int flags, int mode, int fd,
 		pid_t actual_owner);
 extern long sys_lseek(unsigned int, off_t, unsigned int);
@@ -65,7 +65,7 @@ static file_status_wait wait_q_file_status;
 static file_offset_wait wait_q_file_offset;
 static file_offset_wait wait_q_file_offset_confirm;
 
-/*init function*/
+/* Init functions */
 void file_wait_q(void)
 {
 	INIT_LIST_HEAD(&wait_q.list);
@@ -83,7 +83,7 @@ long long get_filesystem_reqno(void)
 	return retval;
 }
 
-static int register_for_file_status(file_status_wait * strc)
+static int register_for_file_status(file_status_wait *strc)
 {
 	spin_lock(&_wait_q_file_status_lock);
 	INIT_LIST_HEAD(&(strc->list));
@@ -91,14 +91,14 @@ static int register_for_file_status(file_status_wait * strc)
 	spin_unlock(&_wait_q_file_status_lock);
 }
 
-//wait functions
-static int wait_for_file_status(file_status_wait * strc)
+/* Wait functions */
+static int wait_for_file_status(file_status_wait *strc)
 {
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
 }
 
-static int register_for_file_offset_confirm(file_offset_confirm_wait * strc)
+static int register_for_file_offset_confirm(file_offset_confirm_wait *strc)
 {
 	spin_lock(&_wait_q_file_offset_confirm_lock);
 	INIT_LIST_HEAD(&(strc->list));
@@ -106,7 +106,7 @@ static int register_for_file_offset_confirm(file_offset_confirm_wait * strc)
 	spin_unlock(&_wait_q_file_offset_confirm_lock);
 }
 
-static int wait_for_file_offset_confirm(file_offset_confirm_wait * strc)
+static int wait_for_file_offset_confirm(file_offset_confirm_wait *strc)
 {
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
@@ -125,7 +125,7 @@ static int wait_for_fd_ret(fd_wait *strc)
 	down_interruptible(&(strc->file_sem));
 }
 
-static int register_for_file_offset(file_offset_wait * strc)
+static int register_for_file_offset(file_offset_wait *strc)
 {
 	spin_lock(&_wait_q_file_offset_lock);
 	INIT_LIST_HEAD(&(strc->list));
@@ -133,7 +133,7 @@ static int register_for_file_offset(file_offset_wait * strc)
 	spin_unlock(&_wait_q_file_offset_lock);
 }
 
-static int wait_for_file_offset(file_offset_wait * strc)
+static int wait_for_file_offset(file_offset_wait *strc)
 {
 	sema_init(&(strc->file_sem), 0);
 	down_interruptible(&(strc->file_sem));
@@ -238,41 +238,48 @@ loff_t ask_remote_offset(int fd, struct file* file)
 
 struct file* ask_orgin_file(int fd, pid_t orgin_pid)
 {
-	file_status_req *reqPtr = kmalloc(sizeof(file_status_req), GFP_KERNEL);
-	file_status_wait* reqWaitPtr = kmalloc(sizeof(file_status_wait),
-	GFP_KERNEL);
-	struct file* f = NULL;
-	printk("ask_origin_file\n");
-	/*header*/
+	struct file *f = NULL;
 	int tx_ret;
+
+	file_status_req *reqPtr = kmalloc(sizeof(file_status_req), GFP_KERNEL);
+	file_status_wait *reqWaitPtr = kmalloc(sizeof(file_status_wait), GFP_KERNEL);
+
+	printk("%s\n", __func__);
+
 	reqPtr->header.from_cpu = _file_cpu;
 	reqPtr->header.type = PCN_KMSG_TYPE_FILE_STATUS_REQUEST;
 	reqPtr->header.prio = PCN_KMSG_PRIO_HIGH;
+
 	/*data*/
 	reqPtr->fd = fd;
 	reqPtr->original_pid = orgin_pid;
 	reqPtr->reqno = get_filesystem_reqno();
 
 	reqWaitPtr->req_no = reqPtr->reqno;
+
 	register_for_file_status(reqWaitPtr);
-	tx_ret = pcn_kmsg_send(ORIG_NODE(orgin_pid),
-			(struct pcn_kmsg_long_message*) reqPtr);
+
+	tx_ret = pcn_kmsg_send(ORIG_NODE(orgin_pid), (struct pcn_kmsg_long_message*) reqPtr);
+
 	if (tx_ret < 0)
 		return NULL;
+
 	kfree(reqPtr);
 
-
-//wait for it
+	/* wait for it */
 	wait_for_file_status(reqWaitPtr);
-//open the file...write another open function... have to save actual owner information
-//saif_open(char * filename,int flags,int mode,int fd,pid_t actual_owner)
-	if (reqWaitPtr->owner > 0)
+
+	/* open the file...write another open function... have to save actual
+ 	 * owner information */
+	/* saif_open(char * filename,int flags,int mode,int fd,pid_t actual_owner) */
+	if (reqWaitPtr->owner > 0) {
 		f = saif_open(reqWaitPtr->name, reqWaitPtr->flags, reqWaitPtr->mode, fd,
 				reqWaitPtr->owner);
+	}
 
 	kfree(reqWaitPtr);
-	return f;
 
+	return f;
 }
 
 static char* get_filename_file(struct file * file, file_info_t_req * fileinfo)
@@ -333,6 +340,8 @@ static char* get_filename(struct file * file, file_data* fileinfo)
 int pcn_get_fd_from_home(char *tmp, int flags, fmode_t mode)
 {
 	int fd, tx_ret;
+
+	printk("%s: tmp _%s_\n", __func__, tmp);
 
 	file_open_req* request = kmalloc(sizeof(file_open_req), GFP_KERNEL);
 	fd_wait *wait_for_fd = kmalloc(sizeof(fd_wait), GFP_KERNEL);
