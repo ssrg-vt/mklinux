@@ -7074,6 +7074,7 @@ static int __init process_server_init(void) {
 		_file_cpu = _cpu;
 		printk("process_server: I am cpu %d\n",_cpu);
 	}
+	file_wait_q();
 
 	/*
 	 * Create a work queue so that we can do bottom side
