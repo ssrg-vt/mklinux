@@ -12,7 +12,7 @@
 #ifndef REMOTE_FILE_H_
 #define REMOTE_FILE_H_
 
-//data structures//
+/* Data structures */
 
 typedef struct _file_offset_req {
 	struct pcn_kmsg_hdr header;
@@ -67,6 +67,7 @@ typedef struct _file_offset_confirm_wait {
 	unsigned int new_node;
 	long long reqno;
 } file_offset_confirm_wait;
+
 typedef struct _file_data {
 	fmode_t mode;
 	int flags;
@@ -179,60 +180,39 @@ typedef struct _pos_update_work {
 	off_t pos;
 } file_pos_update_work;
 
-/*typedef struct _task_file_data {
-	char filename[256];
-	unsigned int flags;
-	fmode_t mode;
-	off_t pos;
-	pid_t owner_pid;
-} remote_file_info_t;
-
-typedef struct _remote_file_info{
-	struct list_head list;
-	pid_t tgid;
-	remote_file_info_t* info[64]; //BITS_PER_LONG
-}remote_file_info;
-*/
-
 static int _file_op_request_id = 0;
 
-//fucntion prototypes
+/* Fucntion prototypes */
 
 struct file* ask_orgin_file(int fd, pid_t orgin_pid);
-loff_t ask_remote_offset(int fd, struct file* file);
-void tell_remote_offset(int fd, struct file* file, loff_t pos,offset_update_type type);
+loff_t ask_remote_offset(int fd, struct file *file);
+void tell_remote_offset(int fd, struct file *file, loff_t pos, offset_update_type type);
 long long get_filesystem_reqno(void);
 int pcn_get_fd_from_home(char *tmp, int flags, fmode_t mode);
-static char* get_filename_file(struct file * file, file_info_t_req * fileinfo);
-static char* get_filename(struct file * file, file_data* fileinfo);
+static char* get_filename_file(struct file *file, file_info_t_req *fileinfo);
+static char* get_filename(struct file *file, file_data *fileinfo);
 
-//wait functions
-static int wait_for_file_status(file_status_wait * strc);
-static int wait_for_file_offset_confirm(file_offset_confirm_wait * strc);
+/* Wait functions */
+static int wait_for_file_status(file_status_wait *strc);
+static int wait_for_file_offset_confirm(file_offset_confirm_wait *strc);
 static int wait_for_fd_ret(fd_wait *strc);
-static int wait_for_file_offset(file_offset_wait * strc);
+static int wait_for_file_offset(file_offset_wait *strc);
 
-//handler functions
-/*reply handlers*/
-int handle_file_open_reply(struct pcn_kmsg_message* inc_msg);
-int handle_file_status_reply(struct pcn_kmsg_message* inc_msg);
-int handle_file_offset_reply(struct pcn_kmsg_message* inc_msg);
-int handle_file_pos_confirm(struct pcn_kmsg_message* inc_msg);
-/*request handlers*/
-int handle_file_open_request(struct pcn_kmsg_message* inc_msg);
-int handle_file_status_request(struct pcn_kmsg_message* inc_msg);
-int handle_file_offset_request(struct pcn_kmsg_message* inc_msg);
-int handle_file_close_notification(struct pcn_kmsg_message* inc_msg);
-int handle_file_pos_update(struct pcn_kmsg_message* inc_msg);
-int change_dir_remote(const char* path,struct task_struct *task);
+/* Handler functions */
+/* Reply handlers */
+int handle_file_open_reply(struct pcn_kmsg_message *inc_msg);
+int handle_file_status_reply(struct pcn_kmsg_message *inc_msg);
+int handle_file_offset_reply(struct pcn_kmsg_message *inc_msg);
+int handle_file_pos_confirm(struct pcn_kmsg_message *inc_msg);
+/* Request handlers */
+int handle_file_open_request(struct pcn_kmsg_message *inc_msg);
+int handle_file_status_request(struct pcn_kmsg_message *inc_msg);
+int handle_file_offset_request(struct pcn_kmsg_message *inc_msg);
+int handle_file_close_notification(struct pcn_kmsg_message *inc_msg);
+int handle_file_pos_update(struct pcn_kmsg_message *inc_msg);
+int change_dir_remote(const char *path, struct task_struct *task);
 
-/*init function*/
+/* Init function */
 void file_wait_q(void);
-
-
-
-
-
-
 
 #endif /* REMOTE_FILE_H_ */
