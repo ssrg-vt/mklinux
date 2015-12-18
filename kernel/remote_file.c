@@ -142,41 +142,25 @@ static int wait_for_file_offset(file_offset_wait *strc)
 void tell_remote_offset(int fd, struct file* file, loff_t pos,
 		offset_update_type type)
 {
-
 	int tx_ret;
-	file_offset_confirm *waitPtr = kmalloc(sizeof(file_offset_confirm),
-			GFP_KERNEL);
-	/*//	printk("Inside Tell_remote\n");
-	 if((current->origin_pid!=current->tgid)&&(current->origin_pid!=0)&&current->tgroup_distributed!=0)
-	 {
-	 printk("Tell the origin origin %d tgid %d \n,",current->origin_pid,current->tgid);
-	 file_offset_update * uptPtrMain=kmalloc(sizeof(file_offset_update),GFP_KERNEL);
-	 uptPtrMain->header.from_cpu=_cpu;
-	 uptPtrMain->header.type=PCN_KMSG_TYPE_FILE_OFFSET_UPDATE;
-	 uptPtrMain->header.prio=PCN_KMSG_PRIO_HIGH;
-	 data
-	 uptPtrMain->fd=fd;
-	 uptPtrMain->offset=pos;
-	 uptPtrMain->owner_pid=file->owner_pid;
-	 uptPtrMain->type= type;
-	 uptPtrMain->target=FOR_MAIN;
-	 tx_ret=pcn_kmsg_send(ORIG_NODE(current->origin_pid),
-	 (struct pcn_kmsg_long_message*) uptPtrMain);
 
-	 kfree(uptPtrMain);
-	 }
-	 */
+	file_offset_confirm *waitPtr = kmalloc(sizeof(file_offset_confirm), GFP_KERNEL);
+
 	if ((current->origin_pid != file->owner_pid)
 			&& (file->owner_pid != current->tgid) && (file->owner_pid != 0)
 			&& current->tgroup_distributed != 0) {
+
 		printk("Tell the owner pid %d\n",current->pid);
+
 		file_offset_update * uptPtrOwner = kmalloc(sizeof(file_offset_update),
-		GFP_KERNEL);
-		/*header*/
+				GFP_KERNEL);
+
+		/* header */
 		uptPtrOwner->header.from_cpu = _file_cpu;
 		uptPtrOwner->header.type = PCN_KMSG_TYPE_FILE_OFFSET_UPDATE;
 		uptPtrOwner->header.prio = PCN_KMSG_PRIO_HIGH;
-		/*data*/
+
+		/* data */
 		uptPtrOwner->fd = fd;
 		uptPtrOwner->offset = pos;
 		uptPtrOwner->owner_pid = file->owner_pid;
@@ -185,30 +169,26 @@ void tell_remote_offset(int fd, struct file* file, loff_t pos,
 		uptPtrOwner->target = FOR_OWNER;
 
 		waitPtr->reqno = uptPtrOwner->reqno;
-	//	register_for_file_offset_confirm(waitPtr);
 
 		tx_ret = pcn_kmsg_send(ORIG_NODE(file->owner_pid),
 				(struct pcn_kmsg_long_message*) uptPtrOwner);
 
-		//wait for confirmation
-
-	//	wait_for_file_offset_confirm(waitPtr);
 		kfree(waitPtr);
 		kfree(uptPtrOwner);
-
 	}
-
 }
 
-loff_t ask_remote_offset(int fd, struct file* file)
+loff_t ask_remote_offset(int fd, struct file *file)
 {
-	file_offset_req *reqPtr = kmalloc(sizeof(file_offset_req), GFP_KERNEL);
-	file_offset_wait* reqWaitPtr = kmalloc(sizeof(file_offset_wait),
-	GFP_KERNEL);
-	loff_t offset = -1;
-	printk("%s Pid %d\n",__func__,current->pid);
-	/*header*/
 	int tx_ret;
+	loff_t offset = -1;
+
+	file_offset_req *reqPtr = kmalloc(sizeof(file_offset_req), GFP_KERNEL);
+	file_offset_wait* reqWaitPtr = kmalloc(sizeof(file_offset_wait), GFP_KERNEL);
+
+	printk("%s Pid %d\n",__func__,current->pid);
+
+	/*header*/
 	reqPtr->header.from_cpu = _file_cpu;
 	reqPtr->header.type = PCN_KMSG_TYPE_FILE_OFFSET_REQUEST;
 	reqPtr->header.prio = PCN_KMSG_PRIO_HIGH;
@@ -220,19 +200,21 @@ loff_t ask_remote_offset(int fd, struct file* file)
 	reqWaitPtr->req_no = reqPtr->reqno;
 	register_for_file_offset(reqWaitPtr);
 
-
 	tx_ret = pcn_kmsg_send(ORIG_NODE(file->owner_pid),
 			(struct pcn_kmsg_long_message*) reqPtr);
+
 	if (tx_ret < 0)
 		return -1;
+
 	kfree(reqPtr);
 
-	//wait for it
 	wait_for_file_offset(reqWaitPtr);
 
 	if (reqWaitPtr->owner_pid > 0)
 		offset = reqWaitPtr->offset;
+
 	kfree(reqWaitPtr);
+
 	return offset;
 }
 
@@ -282,58 +264,44 @@ struct file* ask_orgin_file(int fd, pid_t orgin_pid)
 	return f;
 }
 
-static char* get_filename_file(struct file * file, file_info_t_req * fileinfo)
+static char *get_filename_file(struct file *file, file_info_t_req *fileinfo)
 {
 	struct path path;
-	char * pathname;
-	/*	spin_lock(&file->file_lock);
-	 if (!file) {
-	 spin_unlock(&file->file_lock);
-	 return -ENOENT;
-	 }
-	 */
-	path = file->f_path;
 	char buffer[256];
+	char *pathname;
+
+	path = file->f_path;
+
 	pathname = d_path(&path, buffer, sizeof(buffer));
-	//printk("File %x path %s \n",file,pathname);
+
 	if (!IS_ERR(pathname)) {
 		fileinfo->pos = file->f_pos;
 		fileinfo->mode = file->f_omode;
 		fileinfo->flags = file->f_flags;
 		strcpy(fileinfo->name, pathname);
 	}
-//	path_get(&file->f_path);
-//	spin_unlock(&file->file_lock);
-	return pathname;
 
+	return pathname;
 }
 
-static char* get_filename(struct file * file, file_data* fileinfo)
+static char *get_filename(struct file *file, file_data *fileinfo)
 {
 	struct path path;
-	char * pathname;
-	/*	spin_lock(&file->file_lock);
-	 if (!file) {
-	 spin_unlock(&file->file_lock);
-	 return -ENOENT;
-	 }
-	 unsigned int flags;
-	 fmode_t mode;
-	 off_t pos;
-	 */
-	path = file->f_path;
+	char *pathname;
 	char buffer[256];
+
+	path = file->f_path;
 	pathname = d_path(&path, buffer, sizeof(buffer));
+
 	printk("%s path %s \n",__func__,pathname);
+
 	if (!IS_ERR(pathname)) {
 		fileinfo->mode = file->f_omode;
 		fileinfo->flags = file->f_flags;
 		strcpy(fileinfo->file_name, pathname);
 	}
-//	path_get(&file->f_path);
-//	spin_unlock(&file->file_lock);
-	return pathname;
 
+	return pathname;
 }
 
 /* Get the proper fd from home kernel */
@@ -396,34 +364,37 @@ int handle_file_open_reply(struct pcn_kmsg_message* inc_msg)
 	struct list_head *pos, *q;
 	fd_wait *tmp = NULL;
 	file_info_t_reply *r_ptr = (file_info_t_reply*) inc_msg;
-	if(r_ptr==NULL)
-	{
-		printk("%s inc_msg NULL :S \n",__func__);
+
+	if (r_ptr == NULL) {
+		printk("%s inc_msg NULL :S \n", __func__);
 	}
-	if(list_empty(&wait_q.list)){
-		printk("%s Q not initialized\n",__func__);
+
+	if (list_empty(&wait_q.list)) {
+		printk("%s Q not initialized\n", __func__);
 	}
-	list_for_each_safe(pos,q,&(wait_q.list))
-	{
-		tmp = list_entry(pos,fd_wait,list);
-		if(tmp!=NULL){
+
+	list_for_each_safe(pos, q, &(wait_q.list)) {
+		tmp = list_entry(pos, fd_wait, list);
+		if (tmp != NULL) {
 			printk("handle_file_open_reply File_O_R Fd %d Req %d tmp->Req %d\n",
 				r_ptr->fd, r_ptr->request_id, tmp->req_no);
+
 			if (tmp->req_no == r_ptr->request_id) {
 				printk("Fd %d Req %d\n", r_ptr->fd, r_ptr->request_id);
 				tmp->fd = r_ptr->fd;
-						//reshuffle
+				/* Reshuffle */
 				list_del(pos);
 				pcn_kmsg_free_msg(inc_msg);
 				up(&tmp->file_sem);
 				return 0;
 			}
-		}
-		else{
+		} else{
 			printk("%s List entry is NULL\n",__func__);
 		}
 	}
+
 	pcn_kmsg_free_msg(inc_msg);
+
 	return -1;
 }
 
@@ -432,15 +403,16 @@ int handle_file_status_reply(struct pcn_kmsg_message* inc_msg)
 	struct list_head *pos, *q;
 	file_status_wait *tmp = NULL;
 	file_status_reply *r_ptr = (file_status_reply*) inc_msg;
-	list_for_each(pos,&(wait_q_file_status.list))
-	{
-		tmp = list_entry(pos,file_status_wait,list);
-		//	printk("Handle Sts reply \n");
-		printk("Handle Sts reply  Req %d tmp->Req %d\n", r_ptr->reqno,
-				tmp->req_no);
+
+	list_for_each(pos,&(wait_q_file_status.list)) {
+		tmp = list_entry(pos, file_status_wait, list);
+
+		printk("Handle Sts reply  Req %d tmp->Req %d\n", r_ptr->reqno, tmp->req_no);
+
 		if (tmp->req_no == r_ptr->reqno) {
 			printk("FName %s flag %d mode %d\n", r_ptr->filedata.file_name,
 					r_ptr->filedata.flags, r_ptr->filedata.mode);
+
 			tmp->mode = r_ptr->filedata.mode;
 			tmp->flags = r_ptr->filedata.flags;
 			tmp->owner = r_ptr->owner;
@@ -451,7 +423,9 @@ int handle_file_status_reply(struct pcn_kmsg_message* inc_msg)
 			return 0;
 		}
 	}
+
 	pcn_kmsg_free_msg(inc_msg);
+
 	return -1;
 }
 
@@ -460,13 +434,14 @@ int handle_file_offset_reply(struct pcn_kmsg_message* inc_msg)
 	struct list_head *pos, *q;
 	file_offset_wait *tmp = NULL;
 	file_offset_reply *r_ptr = (file_offset_reply*) inc_msg;
-	printk("Handle offet reply Req %d\n", r_ptr->reqno); //somthing is wrong with printk it works :(
-	list_for_each_safe(pos,q,&(wait_q_file_offset.list))
-	{
+
+	printk("Handle offet reply Req %d\n", r_ptr->reqno);
+
+	list_for_each_safe(pos,q,&(wait_q_file_offset.list)) {
 		tmp = list_entry(pos,file_offset_wait,list);
-		//printk("Handle Sts reply \n");
-		printk("Handle Offset reply Req %d tmp->Req %d\n", r_ptr->reqno,
-				tmp->req_no);
+
+		printk("Handle Offset reply Req %d tmp->Req %d\n", r_ptr->reqno, tmp->req_no);
+
 		if (tmp->req_no == r_ptr->reqno) {
 			printk("Reply Offset %d \n", r_ptr->offset);
 			tmp->offset = r_ptr->offset;
@@ -480,7 +455,9 @@ int handle_file_offset_reply(struct pcn_kmsg_message* inc_msg)
 			return 0;
 		}
 	}
+
 	pcn_kmsg_free_msg(inc_msg);
+
 	return -1;
 }
 
