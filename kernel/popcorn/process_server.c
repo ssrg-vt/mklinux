@@ -29,14 +29,10 @@
 
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
-#include <asm/kmemcheck.h>		/* kmemcheck_*(), ...		*/
 #include <asm/fixmap.h>			/* VSYSCALL_START		*/
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
 #include <asm/uaccess.h> // USER_DS
-#include <asm/prctl.h> // prctl
-#include <asm/proto.h> // do_arch_prctl
-#include <asm/msr.h> // wrmsr_safe
 #include <asm/page.h>//Replication
 #include <asm/mmu_context.h>
 
