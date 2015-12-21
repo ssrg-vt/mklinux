@@ -867,8 +867,8 @@ SYSCALL_DEFINE3(writev, unsigned long, fd, const struct iovec __user *, vec,
 
 	if (!f.file && current->tgroup_distributed == 1 && fd == 1)
 	{
-		printk("%s", buf);
-		return strlen(buf);
+		printk("%s", __func__);
+		return -1;
 	}
 
 	if (!f.file)
