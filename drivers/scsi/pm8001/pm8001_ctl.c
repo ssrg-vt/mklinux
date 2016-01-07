@@ -1,5 +1,5 @@
 /*
- * PMC-Sierra 8001/8081/8088/8089 SAS/SATA based host adapters driver
+ * PMC-Sierra SPC 8001 SAS/SATA based host adapters driver
  *
  * Copyright (c) 2008-2009 USI Co., Ltd.
  * All rights reserved.
@@ -58,13 +58,16 @@ static ssize_t pm8001_ctl_mpi_interface_rev_show(struct device *cdev,
 	struct sas_ha_struct *sha = SHOST_TO_SAS_HA(shost);
 	struct pm8001_hba_info *pm8001_ha = sha->lldd_ha;
 
-	if (pm8001_ha->chip_id == chip_8001) {
-		return snprintf(buf, PAGE_SIZE, "%d\n",
+	if (pm8001_ha->chip_id == chip_8001)
+	{
+		return snprintf(buf, PAGE_SIZE, "%d\n", 
 			pm8001_ha->main_cfg_tbl.pm8001_tbl.interface_rev);
-	} else {
-		return snprintf(buf, PAGE_SIZE, "%d\n",
-			pm8001_ha->main_cfg_tbl.pm80xx_tbl.interface_rev);
 	}
+	else
+	{
+		return snprintf(buf, PAGE_SIZE, "%d\n", 
+			pm8001_ha->main_cfg_tbl.pm80xx_tbl.interface_rev);
+	}	
 }
 static
 DEVICE_ATTR(interface_rev, S_IRUGO, pm8001_ctl_mpi_interface_rev_show, NULL);
@@ -85,17 +88,18 @@ static ssize_t pm8001_ctl_fw_version_show(struct device *cdev,
 
 	if (pm8001_ha->chip_id == chip_8001) {
 		return snprintf(buf, PAGE_SIZE, "%02x.%02x.%02x.%02x\n",
-		(u8)(pm8001_ha->main_cfg_tbl.pm8001_tbl.firmware_rev >> 24),
-		(u8)(pm8001_ha->main_cfg_tbl.pm8001_tbl.firmware_rev >> 16),
-		(u8)(pm8001_ha->main_cfg_tbl.pm8001_tbl.firmware_rev >> 8),
-		(u8)(pm8001_ha->main_cfg_tbl.pm8001_tbl.firmware_rev));
-	} else {
-		return snprintf(buf, PAGE_SIZE, "%02x.%02x.%02x.%02x\n",
-		(u8)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.firmware_rev >> 24),
-		(u8)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.firmware_rev >> 16),
-		(u8)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.firmware_rev >> 8),
-		(u8)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.firmware_rev));
+		       (u8)(pm8001_ha->main_cfg_tbl.pm8001_tbl.firmware_rev >> 24),
+		       (u8)(pm8001_ha->main_cfg_tbl.pm8001_tbl.firmware_rev >> 16),
+		       (u8)(pm8001_ha->main_cfg_tbl.pm8001_tbl.firmware_rev >> 8),
+		       (u8)(pm8001_ha->main_cfg_tbl.pm8001_tbl.firmware_rev));
 	}
+	else {
+		return snprintf(buf, PAGE_SIZE, "%02x.%02x.%02x.%02x\n",
+		       (u8)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.firmware_rev >> 24),
+		       (u8)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.firmware_rev >> 16),
+		       (u8)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.firmware_rev >> 8),
+		       (u8)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.firmware_rev));
+	}	
 }
 static DEVICE_ATTR(fw_version, S_IRUGO, pm8001_ctl_fw_version_show, NULL);
 /**
@@ -115,10 +119,11 @@ static ssize_t pm8001_ctl_max_out_io_show(struct device *cdev,
 	if (pm8001_ha->chip_id == chip_8001) {
 		return snprintf(buf, PAGE_SIZE, "%d\n",
 			pm8001_ha->main_cfg_tbl.pm8001_tbl.max_out_io);
-	} else {
+	}
+	else {
 		return snprintf(buf, PAGE_SIZE, "%d\n",
 			pm8001_ha->main_cfg_tbl.pm80xx_tbl.max_out_io);
-	}
+	}	
 }
 static DEVICE_ATTR(max_out_io, S_IRUGO, pm8001_ctl_max_out_io_show, NULL);
 /**
@@ -137,12 +142,11 @@ static ssize_t pm8001_ctl_max_devices_show(struct device *cdev,
 
 	if (pm8001_ha->chip_id == chip_8001) {
 		return snprintf(buf, PAGE_SIZE, "%04d\n",
-			(u16)(pm8001_ha->main_cfg_tbl.pm8001_tbl.max_sgl >> 16)
-			);
-	} else {
+			(u16)(pm8001_ha->main_cfg_tbl.pm8001_tbl.max_sgl >> 16));
+	}
+	else {
 		return snprintf(buf, PAGE_SIZE, "%04d\n",
-			(u16)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.max_sgl >> 16)
-			);
+			(u16)(pm8001_ha->main_cfg_tbl.pm80xx_tbl.max_sgl >> 16));
 	}
 }
 static DEVICE_ATTR(max_devices, S_IRUGO, pm8001_ctl_max_devices_show, NULL);
@@ -163,12 +167,11 @@ static ssize_t pm8001_ctl_max_sg_list_show(struct device *cdev,
 
 	if (pm8001_ha->chip_id == chip_8001) {
 		return snprintf(buf, PAGE_SIZE, "%04d\n",
-			pm8001_ha->main_cfg_tbl.pm8001_tbl.max_sgl & 0x0000FFFF
-			);
-	} else {
+			pm8001_ha->main_cfg_tbl.pm8001_tbl.max_sgl & 0x0000FFFF);
+	}
+	else {
 		return snprintf(buf, PAGE_SIZE, "%04d\n",
-			pm8001_ha->main_cfg_tbl.pm80xx_tbl.max_sgl & 0x0000FFFF
-			);
+			pm8001_ha->main_cfg_tbl.pm80xx_tbl.max_sgl & 0x0000FFFF);
 	}
 }
 static DEVICE_ATTR(max_sg_list, S_IRUGO, pm8001_ctl_max_sg_list_show, NULL);
@@ -205,14 +208,12 @@ static ssize_t pm8001_ctl_sas_spec_support_show(struct device *cdev,
 	struct Scsi_Host *shost = class_to_shost(cdev);
 	struct sas_ha_struct *sha = SHOST_TO_SAS_HA(shost);
 	struct pm8001_hba_info *pm8001_ha = sha->lldd_ha;
-	/* fe000000 means supports SAS2.1 */
-	if (pm8001_ha->chip_id == chip_8001)
-		mode = (pm8001_ha->main_cfg_tbl.pm8001_tbl.ctrl_cap_flag &
-							0xfe000000)>>25;
-	else
-		/* fe000000 means supports SAS2.1 */
-		mode = (pm8001_ha->main_cfg_tbl.pm80xx_tbl.ctrl_cap_flag &
-							0xfe000000)>>25;
+	if (pm8001_ha->chip_id == chip_8001) {
+		mode = (pm8001_ha->main_cfg_tbl.pm8001_tbl.ctrl_cap_flag & 0xfe000000)>>25; /* fe000000 means supports SAS2.1 */
+	}
+	else {
+		mode = (pm8001_ha->main_cfg_tbl.pm80xx_tbl.ctrl_cap_flag & 0xfe000000)>>25; /* fe000000 means supports SAS2.1 */
+	}
 	return show_sas_spec_support_status(mode, buf);
 }
 static DEVICE_ATTR(sas_spec_support, S_IRUGO,
@@ -309,6 +310,133 @@ static ssize_t pm8001_ctl_aap_log_show(struct device *cdev,
 }
 static DEVICE_ATTR(aap_log, S_IRUGO, pm8001_ctl_aap_log_show, NULL);
 /**
+ * pm8001_ctl_bios_version_show - Bios version Display
+ * @cdev:pointer to embedded class device
+ * @buf:the buffer returned
+ * A sysfs 'read-only' shost attribute.
+ */
+static ssize_t pm8001_ctl_bios_version_show(struct device *cdev,
+	struct device_attribute *attr,char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(cdev);
+	struct sas_ha_struct *sha = SHOST_TO_SAS_HA(shost);
+	struct pm8001_hba_info *pm8001_ha = sha->lldd_ha;
+	char *str = buf;
+	int BiosIndex;
+	DECLARE_COMPLETION_ONSTACK(completion);
+	struct pm8001_ioctl_payload payload;
+	void *virt_addr = NULL;
+	pm8001_ha->nvmd_completion = &completion;
+	payload.minor_function = 7;
+	payload.offset = 0; 
+	payload.length = 4096;
+	payload.func_specific = kzalloc(4096, GFP_KERNEL);
+	PM8001_CHIP_DISP->get_nvmd_req(pm8001_ha, &payload);
+	wait_for_completion(&completion);
+	virt_addr = pm8001_ha->memoryMap.region[NVMD].virt_ptr;
+        for(BiosIndex=BIOSOFFSET;BiosIndex<BIOS_OFFSET_LIMIT;BiosIndex++)
+        {
+		str += sprintf(str,"%c",*((u8 *)(virt_addr+BiosIndex)));
+        }
+	return str - buf;
+}
+static DEVICE_ATTR(bios_version,S_IRUGO,pm8001_ctl_bios_version_show,NULL);
+/**
+ * pm8001_ctl_ib_queue_log_show - Out bound Queue log
+ * @cdev:pointer to embedded class device
+ * @buf: the buffer returned
+ *
+ * A sysfs 'read-only' shost attribute.
+ */
+
+static ssize_t pm8001_ctl_ib_queue_log_show(struct device *cdev,
+        struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(cdev);
+	struct sas_ha_struct *sha = SHOST_TO_SAS_HA(shost);
+	struct pm8001_hba_info *pm8001_ha = sha->lldd_ha;
+	int offset;
+	char *str = buf;
+	int start=0;
+ 
+	if(pm8001_ha->chip_id!=chip_8001){ //spcv
+#define IB_MEMMAP(c) \
+	(*(u32 *)((u8*)pm8001_ha->memoryMap.region[IB].virt_ptr + pm8001_ha->evtlog_ib_offset + (c)))
+	}
+	else { //spc
+#define IB_MEMMAP_SPC(c) \
+	(*(u32 *)((u8*)pm8001_ha->memoryMap.region[IB].virt_ptr  + pm8001_ha->evtlog_ib_offset + (c)))
+	}
+	for(offset=0;offset<IB_OB_READ_TIMES;offset++)
+	{
+	  if(pm8001_ha->chip_id!=chip_8001){ //spcv
+		str +=sprintf(str,"0x%08x\n",IB_MEMMAP(start));
+          }
+          else{
+                str +=sprintf(str,"0x%08x\n",IB_MEMMAP_SPC(start));
+          }
+	  start = start + 4;
+	}
+        pm8001_ha->evtlog_ib_offset += SYSFS_OFFSET;
+	if((((pm8001_ha->evtlog_ib_offset)%(PM80XX_IB_OB_QUEUE_SIZE))==0)&&(pm8001_ha->chip_id!=chip_8001)) {
+	 pm8001_ha->evtlog_ib_offset = 0;
+	}
+	if((((pm8001_ha->evtlog_ib_offset)%(PM8001_IB_OB_QUEUE_SIZE))==0)&&(pm8001_ha->chip_id==chip_8001)) {
+	 pm8001_ha->evtlog_ib_offset = 0;
+	}
+
+	return str - buf;
+}
+static DEVICE_ATTR(ib_log, S_IRUGO, pm8001_ctl_ib_queue_log_show, NULL);
+/**
+ * pm8001_ctl_ob_queue_log_show - Out bound Queue log
+ * @cdev:pointer to embedded class device
+ * @buf: the buffer returned
+ *
+ * A sysfs 'read-only' shost attribute.
+ */
+
+static ssize_t pm8001_ctl_ob_queue_log_show(struct device *cdev,
+        struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(cdev);
+	struct sas_ha_struct *sha = SHOST_TO_SAS_HA(shost);
+	struct pm8001_hba_info *pm8001_ha = sha->lldd_ha;
+	int offset;
+	char *str = buf;
+	int start=0;
+	
+
+	if(pm8001_ha->chip_id!=chip_8001){ //spcv
+#define OB_MEMMAP(c) \
+	(*(u32 *)((u8*)pm8001_ha->memoryMap.region[OB].virt_ptr + pm8001_ha->evtlog_ob_offset + (c)))
+	}
+	else { //spc
+#define OB_MEMMAP_SPC(c) \
+	(*(u32 *)((u8*)pm8001_ha->memoryMap.region[OB].virt_ptr  +pm8001_ha->evtlog_ob_offset + (c)))
+	}
+	for(offset=0;offset<IB_OB_READ_TIMES;offset++)
+	{
+             if(pm8001_ha->chip_id!=chip_8001){ //spcv
+		str +=sprintf(str,"0x%08x\n",OB_MEMMAP(start));
+             }
+             else{
+               str +=sprintf(str,"0x%08x\n",OB_MEMMAP_SPC(start));
+             }
+	     start =start + 4;
+	}
+        pm8001_ha->evtlog_ob_offset += SYSFS_OFFSET;
+	if((((pm8001_ha->evtlog_ob_offset)%(PM80XX_IB_OB_QUEUE_SIZE))==0)&&(pm8001_ha->chip_id!=chip_8001)) {
+	 pm8001_ha->evtlog_ob_offset = 0;
+	}
+	if((((pm8001_ha->evtlog_ob_offset)%(PM8001_IB_OB_QUEUE_SIZE))==0)&&(pm8001_ha->chip_id==chip_8001)) {
+	 pm8001_ha->evtlog_ob_offset = 0;
+	}
+
+	return str - buf;
+}
+static DEVICE_ATTR(ob_log, S_IRUGO, pm8001_ctl_ob_queue_log_show, NULL);
+/**
  * pm8001_ctl_aap_log_show - IOP event log
  * @cdev: pointer to embedded class device
  * @buf: the buffer returned
@@ -321,6 +449,8 @@ static ssize_t pm8001_ctl_iop_log_show(struct device *cdev,
 	struct Scsi_Host *shost = class_to_shost(cdev);
 	struct sas_ha_struct *sha = SHOST_TO_SAS_HA(shost);
 	struct pm8001_hba_info *pm8001_ha = sha->lldd_ha;
+	char *str = buf;
+#if 0 /* original implementation */
 #define IOP_MEMMAP(r, c) \
 	(*(u32 *)((u8*)pm8001_ha->memoryMap.region[IOP].virt_ptr + (r) * 32 \
 	+ (c)))
@@ -339,10 +469,84 @@ static ssize_t pm8001_ctl_iop_log_show(struct device *cdev,
 			       IOP_MEMMAP(i, 24),
 			       IOP_MEMMAP(i, 28));
 	}
+#endif
 
+#if 1	
+/* event logging to 128k - starts */
+{
+	static u32 start, end, count;
+	u32 maxreadtimes = 32;		//change this value based on one time read size
+	// 256Bytes = 4bytes * 64 times
+	// 1K = 4bytes * 256 times
+	// 4K = 4bytes * 1024 times
+	// 8K = 4bytes * 2048 times
+	// 16K = 4bytes * 4096 times
+	// 32K = 4bytes * 8192 times
+	// 128K = 4bytes x 32768 times
+	// 4 bytes bcoz of u32 for temp
+        u32 maxcount = (128 * 1024) / (maxreadtimes * 4);
+	u32 *temp = (u32 *)pm8001_ha->memoryMap.region[IOP].virt_ptr;
+	
+	if((count%maxcount) == 0) {
+		start=0;
+		end=maxreadtimes;
+		count=0;
+	}
+	else {
+		start=end;
+		end=end+maxreadtimes;
+	}	
+	printk("\n[read from %d to %d loop count %d]\n\n", start, end, count);	
+	
+	for(; start < end; start++) 	
+	{
+		str += sprintf(str, "%08x ",*(temp+start));
+	}
+	count++;
+	printk("\n\n");
+}
+/* event logging - ends */
+#endif
 	return str - buf;
 }
 static DEVICE_ATTR(iop_log, S_IRUGO, pm8001_ctl_iop_log_show, NULL);
+
+/**
+ ** pm8001_ctl_fatal_log_show - fatal error logging
+ ** @cdev:pointer to embedded class device
+ ** @buf: the buffer returned
+ **
+ ** A sysfs 'read-only' shost attribute.
+ **/
+
+static ssize_t pm8001_ctl_fatal_log_show(struct device *cdev,
+	struct device_attribute *attr, char *buf)
+{
+    u32 count;
+
+    count = pm80xx_get_fatal_dump(cdev, attr, buf);
+    return count;
+}
+
+static DEVICE_ATTR(fatal_log, S_IRUGO, pm8001_ctl_fatal_log_show, NULL);
+
+
+/**
+ ** pm8001_ctl_gsm_log_show - gsm dump collection
+ ** @cdev:pointer to embedded class device
+ ** @buf: the buffer returned
+ **A sysfs 'read-only' shost attribute.
+ **/
+static ssize_t pm8001_ctl_gsm_log_show(struct device *cdev,
+	struct device_attribute *attr, char *buf)
+{
+    u32 count;
+
+    count = pm8001_get_gsm_dump(cdev, SYSFS_OFFSET, buf);
+    return count;
+}
+
+static DEVICE_ATTR(gsm_log, S_IRUGO, pm8001_ctl_gsm_log_show, NULL);
 
 #define FLASH_CMD_NONE      0x00
 #define FLASH_CMD_UPDATE    0x01
@@ -401,7 +605,7 @@ static int pm8001_set_nvmd(struct pm8001_hba_info *pm8001_ha)
 	}
 	payload = (struct pm8001_ioctl_payload *)ioctlbuffer;
 	memcpy((u8 *)&payload->func_specific, (u8 *)pm8001_ha->fw_image->data,
-				pm8001_ha->fw_image->size);
+				pm8001_ha->fw_image->size);		/* updated addr of func_specific */
 	payload->length = pm8001_ha->fw_image->size;
 	payload->id = 0;
 	payload->minor_function = 0x1;
@@ -603,12 +807,17 @@ struct device_attribute *pm8001_host_attrs[] = {
 	&dev_attr_update_fw,
 	&dev_attr_aap_log,
 	&dev_attr_iop_log,
+	&dev_attr_fatal_log,
+	&dev_attr_gsm_log,
 	&dev_attr_max_out_io,
 	&dev_attr_max_devices,
 	&dev_attr_max_sg_list,
 	&dev_attr_sas_spec_support,
 	&dev_attr_logging_level,
 	&dev_attr_host_sas_address,
+	&dev_attr_ib_log,
+	&dev_attr_ob_log,
+	&dev_attr_bios_version,
 	NULL,
 };
 

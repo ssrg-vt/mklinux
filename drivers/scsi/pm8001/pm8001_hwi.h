@@ -43,6 +43,8 @@
 #include <linux/types.h>
 #include <scsi/libsas.h>
 
+/* IOMB SIZE IN BYTES */
+#define IOMB_SIZE	128
 
 /* for Request Opcode of IOMB */
 #define OPC_INB_ECHO				1	/* 0x000 */
@@ -82,6 +84,7 @@
 #define OPC_INB_GET_DEVICE_STATE		43	/* 0x02B */
 #define OPC_INB_SET_DEV_INFO			44	/* 0x02C */
 #define OPC_INB_SAS_RE_INITIALIZE		45	/* 0x02D */
+#define OPC_INB_SGPIO_REG				46	/* 0x02E */
 
 /* for Response Opcode of IOMB */
 #define OPC_OUB_ECHO				1	/* 0x001 */
@@ -120,6 +123,7 @@
 #define OPC_OUB_GET_DEVICE_STATE		39	/* 0x027 */
 #define OPC_OUB_SET_DEV_INFO			40	/* 0x028 */
 #define OPC_OUB_SAS_RE_INITIALIZE		41	/* 0x029 */
+#define OPC_OUB_SGPIO_RESP			2094	/* 0x82E */
 
 /* for phy start*/
 #define SPINHOLD_DISABLE		(0x00 << 14)
@@ -697,6 +701,18 @@ struct set_dev_state_resp {
 	u32		reserved[11];
 } __attribute__((packed, aligned(4)));
 
+struct sgpio_reg_req {
+	__le32		tag;
+	__le32		func_reg_index;
+	__le32		count;
+	u32		value[12];
+} __attribute__((packed, aligned(4)));
+
+struct sgpio_reg_resp {
+	__le32		tag;
+	__le32		func_result;
+	u32		value[13];
+} __attribute__((packed, aligned(4)));
 
 #define NDS_BITS 0x0F
 #define PDS_BITS 0xF0
@@ -819,7 +835,7 @@ struct set_dev_state_resp {
 #define SPC_MSGU_CFG_TABLE_FREEZE		0x04/* Inbound doorbell bit2 */
 #define SPC_MSGU_CFG_TABLE_UNFREEZE		0x08/* Inbound doorbell bit4 */
 #define MSGU_IBDB_SET				0x04
-#define MSGU_HOST_INT_STATUS			0x08
+#define MSGU_HOST_INT_STATUS		0x08
 #define MSGU_HOST_INT_MASK			0x0C
 #define MSGU_IOPIB_INT_STATUS			0x18
 #define MSGU_IOPIB_INT_MASK			0x1C
@@ -1027,5 +1043,8 @@ struct set_dev_state_resp {
 #define DEVREG_FAILURE_PORT_NOT_VALID_STATE		0x06
 #define DEVREG_FAILURE_DEVICE_TYPE_NOT_VALID		0x07
 
+#define GSM_BASE                                 0x4F0000 
+#define SHIFT_REG_64K_MASK   0xffff0000
+#define SHIFT_REG_BIT_SHIFT  8
 #endif
 

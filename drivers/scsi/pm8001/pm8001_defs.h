@@ -1,5 +1,5 @@
 /*
- * PMC-Sierra 8001/8081/8088/8089 SAS/SATA based host adapters driver
+ * PMC-Sierra SPC 8001 SAS/SATA based host adapters driver
  *
  * Copyright (c) 2008-2009 USI Co., Ltd.
  * All rights reserved.
@@ -41,12 +41,25 @@
 #ifndef _PM8001_DEFS_H_
 #define _PM8001_DEFS_H_
 
+#if defined (RHEL_MAJOR) && (RHEL_MAJOR >= 6) && (RHEL_MINOR >= 3)
+#define PM8001_RHEL63
+#endif
+#ifndef PCI_VENDOR_ID_PMC_Sierra
+#define PCI_VENDOR_ID_PMC_Sierra 0x11f8
+#endif
+#ifndef PCI_VENDOR_ID_ADAPTEC2
+#define PCI_VENDOR_ID_ADAPTEC2 0x9005
+#endif
+
 enum chip_flavors {
 	chip_8001,
 	chip_8008,
 	chip_8009,
 	chip_8018,
-	chip_8019
+	chip_8019,
+        chip_8074,
+        chip_8076,
+        chip_8077 
 };
 
 enum phy_speed {
@@ -69,37 +82,34 @@ enum port_type {
 
 /* driver compile-time configuration */
 #define	PM8001_MAX_CCB		 512	/* max ccbs supported */
-#define PM8001_MPI_QUEUE         1024   /* maximum mpi queue entries */
-#define	PM8001_MAX_INB_NUM	 1
-#define	PM8001_MAX_OUTB_NUM	 1
-#define	PM8001_MAX_SPCV_INB_NUM		1
-#define	PM8001_MAX_SPCV_OUTB_NUM	4
-#define	PM8001_CAN_QUEUE	 508	/* SCSI Queue depth */
-
-/* Inbound/Outbound queue size */
-#define IOMB_SIZE_SPC		64
-#define IOMB_SIZE_SPCV		128
+#define	PM8001_MAX_INB_NUM	 16
+#define	PM8001_MAX_OUTB_NUM	 8
+#define PM8001_MAX_SPC_INB_NUM	 1
+#define PM8001_MAX_SPC_OUTB_NUM	 1
+#define	PM8001_CAN_QUEUE	 128	/* SCSI Queue depth */
 
 /* unchangeable hardware details */
 #define	PM8001_MAX_PHYS		 16	/* max. possible phys */
 #define	PM8001_MAX_PORTS	 16	/* max. possible ports */
 #define	PM8001_MAX_DEVICES	 2048	/* max supported device */
-#define	PM8001_MAX_MSIX_VEC	 64	/* max msi-x int for spcv/ve */
+#define	PM8001_MAX_MSIX_VEC	 64	/* max msi-x interrupt for pm80xx controllers */
+#define	PM8001_MAX_MSI_VEC	 8	
 
-#define USI_MAX_MEMCNT_BASE	5
-#define IB			(USI_MAX_MEMCNT_BASE + 1)
-#define CI			(IB + PM8001_MAX_SPCV_INB_NUM)
-#define OB			(CI + PM8001_MAX_SPCV_INB_NUM)
-#define PI			(OB + PM8001_MAX_SPCV_OUTB_NUM)
-#define USI_MAX_MEMCNT		(PI + PM8001_MAX_SPCV_OUTB_NUM)
-#define PM8001_MAX_DMA_SG	SG_ALL
+#define USI_MAX_MEMCNT_BASE		6
+#define IB				(USI_MAX_MEMCNT_BASE + 1)
+#define CI				(IB + PM8001_MAX_INB_NUM) 
+#define OB				(CI + PM8001_MAX_INB_NUM)
+#define PI				(OB + PM8001_MAX_OUTB_NUM)
+#define USI_MAX_MEMCNT			(PI + PM8001_MAX_OUTB_NUM)
+#define PM8001_MAX_DMA_SG		SG_ALL
 enum memory_region_num {
 	AAP1 = 0x0, /* application acceleration processor */
 	IOP,	    /* IO processor */
 	NVMD,	    /* NVM device */
 	DEV_MEM,    /* memory for devices */
 	CCB_MEM,    /* memory for command control block */
-	FW_FLASH    /* memory for fw flash update */
+	FW_FLASH,    /* memory for fw flash update */
+	FORENSIC_MEM  /* memory for fw forensic data */
 };
 #define	PM8001_EVENT_LOG_SIZE	 (128 * 1024)
 
@@ -125,3 +135,4 @@ enum pm8001_hba_info_flags {
 };
 
 #endif
+

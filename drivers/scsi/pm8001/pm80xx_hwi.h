@@ -1,5 +1,5 @@
 /*
- * PMC-Sierra SPCv/ve 8088/8089 SAS/SATA based host adapters driver
+ * PMC-Sierra SPC 80XX SAS/SATA based host adapters driver
  *
  * Copyright (c) 2008-2009 USI Co., Ltd.
  * All rights reserved.
@@ -8,16 +8,16 @@
  * modification, are permitted provided that the following conditions
  * are met:
  * 1. Redistributions of source code must retain the above copyright
- *	notice, this list of conditions, and the following disclaimer,
- *	without modification.
+ *    notice, this list of conditions, and the following disclaimer,
+ *    without modification.
  * 2. Redistributions in binary form must reproduce at minimum a disclaimer
- *	substantially similar to the "NO WARRANTY" disclaimer below
- *	("Disclaimer") and any redistribution must be conditioned upon
- *	including a substantially similar Disclaimer requirement for further
- *	binary redistribution.
+ *    substantially similar to the "NO WARRANTY" disclaimer below
+ *    ("Disclaimer") and any redistribution must be conditioned upon
+ *    including a substantially similar Disclaimer requirement for further
+ *    binary redistribution.
  * 3. Neither the names of the above-listed copyright holders nor the names
- *	of any contributors may be used to endorse or promote products derived
- *	from this software without specific prior written permission.
+ *    of any contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
  *
  * Alternatively, this software may be distributed under the terms of the
  * GNU General Public License ("GPL") version 2 as published by the Free
@@ -43,6 +43,9 @@
 
 #include <linux/types.h>
 #include <scsi/libsas.h>
+
+/* Size of IOMB in bytes */
+#define IOMB_SIZE	128
 
 /* for Request Opcode of IOMB */
 #define OPC_INB_ECHO				1	/* 0x000 */
@@ -84,10 +87,10 @@
 #define OPC_INB_SET_DEV_INFO			44	/* 0x02C */
 /* 0x2D RESV IN SPCv */
 #define OPC_INB_RSVD4				45	/* 0x02D */
-#define OPC_INB_SGPIO_REGISTER			46	/* 0x02E */
-#define OPC_INB_PCIE_DIAG_EXEC			47	/* 0x02F */
-#define OPC_INB_SET_CONTROLLER_CONFIG		48	/* 0x030 */
-#define OPC_INB_GET_CONTROLLER_CONFIG		49	/* 0x031 */
+#define OPC_INB_SGPIO_REGISTER  		46	/* 0x02E */
+#define OPC_INB_PCIE_DIAG_EXEC	    	        47	/* 0x02F */
+#define OPC_INB_SET_CONTROLLER_CONFIG 	        48	/* 0x030 */
+#define OPC_INB_GET_CONTROLLER_CONFIG	        49	/* 0x031 */
 #define OPC_INB_REG_DEV				50	/* 0x032 */
 #define OPC_INB_SAS_HW_EVENT_ACK		51	/* 0x033 */
 #define OPC_INB_GET_DEVICE_INFO			52	/* 0x034 */
@@ -134,32 +137,32 @@
 #define OPC_OUB_SET_DEVICE_STATE			38	/* 0x026 */
 #define OPC_OUB_GET_DEVICE_STATE			39	/* 0x027 */
 #define OPC_OUB_SET_DEV_INFO				40	/* 0x028 */
-#define OPC_OUB_RSVD5					41	/* 0x029 */
+#define OPC_OUB_RSVD5					41	/* 0x029 - Reservered*/
 #define OPC_OUB_HW_EVENT				1792	/* 0x700 */
 #define OPC_OUB_DEV_HANDLE_ARRIV			1824	/* 0x720 */
 #define OPC_OUB_THERM_HW_EVENT				1840	/* 0x730 */
 #define OPC_OUB_SGPIO_RESP				2094	/* 0x82E */
-#define OPC_OUB_PCIE_DIAG_EXECUTE			2095	/* 0x82F */
+#define OPC_OUB_PCIE_DIAG_EXECUTE			2095  	/* 0x82F */
 #define OPC_OUB_DEV_REGIST				2098	/* 0x832 */
 #define OPC_OUB_SAS_HW_EVENT_ACK			2099	/* 0x833 */
-#define OPC_OUB_GET_DEVICE_INFO				2100	/* 0x834 */
+#define OPC_OUB_GET_DEVICE_INFO				2100  	/* 0x834 */
 /* spcv specific commands */
-#define OPC_OUB_PHY_START_RESP				2052	/* 0x804 */
-#define OPC_OUB_PHY_STOP_RESP				2053	/* 0x805 */
-#define OPC_OUB_SET_CONTROLLER_CONFIG			2096	/* 0x830 */
-#define OPC_OUB_GET_CONTROLLER_CONFIG			2097	/* 0x831 */
-#define OPC_OUB_GET_PHY_PROFILE				2101	/* 0x835 */
-#define OPC_OUB_FLASH_OP_EXT				2102	/* 0x836 */
+#define OPC_OUB_PHY_START_RESP          		2052  	/* 0x804 */
+#define OPC_OUB_PHY_STOP_RESP				2053  	/* 0x805 */
+#define OPC_OUB_SET_CONTROLLER_CONFIG			2096  	/* 0x830 */
+#define OPC_OUB_GET_CONTROLLER_CONFIG			2097  	/* 0x831 */
+#define OPC_OUB_GET_PHY_PROFILE				2101  	/* 0x835 */
+#define OPC_OUB_FLASH_OP_EXT				2102	/* 0x836 */	
 #define OPC_OUB_SET_PHY_PROFILE				2103	/* 0x837 */
-#define OPC_OUB_KEK_MANAGEMENT_RESP			2304	/* 0x900 */
-#define OPC_OUB_DEK_MANAGEMENT_RESP			2305	/* 0x901 */
-#define OPC_OUB_SSP_COALESCED_COMP_RESP			2306	/* 0x902 */
+#define OPC_OUB_KEK_MANAGEMENT_RESP			2304  	/* 0x900 */
+#define OPC_OUB_DEK_MANAGEMENT_RESP			2305  	/* 0x901 */
+#define OPC_OUB_SSP_COALESCED_COMP_RESP 		2306   	/* 0x902 */
 
 /* for phy start*/
 #define SSC_DISABLE_15			(0x01 << 16)
 #define SSC_DISABLE_30			(0x02 << 16)
 #define SSC_DISABLE_60			(0x04 << 16)
-#define SAS_ASE				(0x01 << 15)
+#define SAS_ASE 			(0x01 << 15)
 #define SPINHOLD_DISABLE		(0x00 << 14)
 #define SPINHOLD_ENABLE			(0x01 << 14)
 #define LINKMODE_SAS			(0x01 << 12)
@@ -168,61 +171,79 @@
 #define LINKRATE_15			(0x01 << 8)
 #define LINKRATE_30			(0x02 << 8)
 #define LINKRATE_60			(0x06 << 8)
+#define LINKRATE_120                    (0x08 << 8)
+
+/* phy_profile */
+#define SAS_PHY_ANALOG_SETTINGS_PAGE     0x04
+#define PHY_DWORD_LENGTH                 0xC
 
 /* Thermal related */
 #define	THERMAL_ENABLE			0x1
 #define	THERMAL_LOG_ENABLE		0x1
-#define THERMAL_OP_CODE			0x6
-#define LTEMPHIL			 70
-#define RTEMPHIL			100
+#define THERMAL_OP_CODE			0x6 
+#define LTEMPHIL			 70 
+#define RTEMPHIL			100 
 
 /* Encryption info */
-#define SCRATCH_PAD3_ENC_DISABLED	0x00000000
-#define SCRATCH_PAD3_ENC_DIS_ERR	0x00000001
-#define SCRATCH_PAD3_ENC_ENA_ERR	0x00000002
-#define SCRATCH_PAD3_ENC_READY		0x00000003
-#define SCRATCH_PAD3_ENC_MASK		SCRATCH_PAD3_ENC_READY
+#define SCRATCH_PAD3_ENC_DISABLED              0x00000000   
+#define SCRATCH_PAD3_ENC_DIS_ERR               0x00000001  
+#define SCRATCH_PAD3_ENC_ENA_ERR               0x00000002  
+#define SCRATCH_PAD3_ENC_READY                 0x00000003  
+#define SCRATCH_PAD3_ENC_MASK      SCRATCH_PAD3_ENC_READY  
 
-#define SCRATCH_PAD3_XTS_ENABLED		(1 << 14)
-#define SCRATCH_PAD3_SMA_ENABLED		(1 << 4)
-#define SCRATCH_PAD3_SMB_ENABLED		(1 << 5)
-#define SCRATCH_PAD3_SMF_ENABLED		0
-#define SCRATCH_PAD3_SM_MASK			0x000000F0
-#define SCRATCH_PAD3_ERR_CODE			0x00FF0000
+#define SCRATCH_PAD3_XTS_ENABLED               (1 << 14) 
+#define SCRATCH_PAD3_SMA_ENABLED               (1 << 4 ) 
+#define SCRATCH_PAD3_SMB_ENABLED               (1 << 5 ) 
+#define SCRATCH_PAD3_SMF_ENABLED               0 
+#define SCRATCH_PAD3_SM_MASK                   0x000000F0    
+#define SCRATCH_PAD3_ERR_CODE                  0x00FF0000    
 
 #define SEC_MODE_SMF				0x0
 #define SEC_MODE_SMA				0x100
 #define SEC_MODE_SMB				0x200
 #define CIPHER_MODE_ECB				0x00000001
-#define CIPHER_MODE_XTS				0x00000002
+#define CIPHER_MODE_XTS 	               	0x00000002
 #define KEK_MGMT_SUBOP_KEYCARDUPDATE		0x4
+
+/* SATA CMDS */
+#define SAT_READ_FPDMA_QUEUED			0x60
+#define SAT_READ_DMA_EXT			0x25
+#define SAT_READ_DMA				0xC8
+#define SAT_WRITE_FPDMA_QUEUED			0x61
+#define SAT_WRITE_DMA_EXT			0x35
+#define SAT_WRITE_DMA				0xCA
+#define SAT_WRITE_SECTORS			0x30
+#define SAT_WRITE_SECTORS_EXT			0x34
+#define SAT_READ_SECTORS			0x20
+#define SAT_READ_SECTORS_EXT			0x24
 
 /* SAS protocol timer configuration page */
 #define SAS_PROTOCOL_TIMER_CONFIG_PAGE  0x04
 #define STP_MCT_TMO                     32
 #define SSP_MCT_TMO                     32
-#define SAS_MAX_OPEN_TIME				5
+#define SAS_MAX_OPEN_TIME                   5
 #define SMP_MAX_CONN_TIMER              0xFF
 #define STP_FRM_TIMER                   0
-#define STP_IDLE_TIME                   5 /* 5 us; controller default */
+#define STP_IDLE_TIME                   5 /* 5 us; the defaulf of the controller */
 #define SAS_MFD                         0
 #define SAS_OPNRJT_RTRY_INTVL           2
 #define SAS_DOPNRJT_RTRY_TMO            128
 #define SAS_COPNRJT_RTRY_TMO            128
-
 /*
   Making ORR bigger than IT NEXUS LOSS which is 2000000us = 2 second.
-  Assuming a bigger value 3 second, 3000000/128 = 23437.5 where 128
-  is DOPNRJT_RTRY_TMO
+  Assuming a bigger value 3 second, 3000000/128 = 23437.5 where 128 is DOPNRJT_RTRY_TMO
 */
 #define SAS_DOPNRJT_RTRY_THR            23438
 #define SAS_COPNRJT_RTRY_THR            23438
 #define SAS_MAX_AIP                     0x200000
-#define IT_NEXUS_TIMEOUT       0x7D0
-#define PORT_RECOVERY_TIMEOUT  ((IT_NEXUS_TIMEOUT/100) + 30)
 
-struct mpi_msg_hdr {
-	__le32	header;	/* Bits [11:0] - Message operation code */
+
+#define IT_NEXUS_TIMEOUT       0x7D0 /* 2000 ms; old value was 0xFFFF */
+#define PORT_RECOVERY_TIMEOUT  ((IT_NEXUS_TIMEOUT/100) + 30)   /* 5000 ms; in 100ms; should be large than IT_NEXUS_TIMEOUT */
+
+	
+struct mpi_msg_hdr{
+	__le32	header;	/* Bits [11:0]  - Message operation code */
 	/* Bits [15:12] - Message Category */
 	/* Bits [21:16] - Outboundqueue ID for the
 	operation completion message */
@@ -233,6 +254,7 @@ struct mpi_msg_hdr {
 	/* Bits [31] - Message Valid bit */
 } __attribute__((packed, aligned(4)));
 
+
 /*
  * brief the data structure of PHY Start Command
  * use to describe enable the phy (128 bytes)
@@ -241,9 +263,10 @@ struct phy_start_req {
 	__le32	tag;
 	__le32	ase_sh_lm_slr_phyid;
 	struct sas_identify_frame sas_identify; /* 28 Bytes */
-	__le32 spasti;
-	u32	reserved[21];
+	__le32 spasti;  
+	u32	reserved[21];			
 } __attribute__((packed, aligned(4)));
+
 
 /*
  * brief the data structure of PHY Start Command
@@ -255,20 +278,21 @@ struct phy_stop_req {
 	u32	reserved[29];
 } __attribute__((packed, aligned(4)));
 
+
 /* set device bits fis - device to host */
-struct set_dev_bits_fis {
+struct  set_dev_bits_fis {
 	u8	fis_type;	/* 0xA1*/
 	u8	n_i_pmport;
 	/* b7 : n Bit. Notification bit. If set device needs attention. */
 	/* b6 : i Bit. Interrupt Bit */
 	/* b5-b4: reserved2 */
 	/* b3-b0: PM Port */
-	u8	status;
+	u8 	status;
 	u8	error;
 	u32	_r_a;
 } __attribute__ ((packed));
 /* PIO setup FIS - device to host */
-struct pio_setup_fis {
+struct  pio_setup_fis {
 	u8	fis_type;	/* 0x5f */
 	u8	i_d_pmPort;
 	/* b7 : reserved */
@@ -306,13 +330,14 @@ struct sata_completion_resp {
 	u32	sata_resp[12];
 } __attribute__((packed, aligned(4)));
 
+
 /*
  * brief the data structure of SAS HW Event Notification
  * use to alert the host about the hardware event(64 bytes)
  */
 /* updated outbound struct for spcv */
 
-struct hw_event_resp {
+struct hw_event_resp { 
 	__le32	lr_status_evt_portid;
 	__le32	evt_param;
 	__le32	phyid_npip_portstate;
@@ -325,12 +350,12 @@ struct hw_event_resp {
  */
 
 struct thermal_hw_event {
-	__le32	thermal_event;
-	__le32	rht_lht;
-} __attribute__((packed, aligned(4)));
+	__le32  thermal_event;
+	__le32  rht_lht;
+}  __attribute__((packed, aligned(4)));
 
 /*
- * brief the data structure of REGISTER DEVICE Command
+ * brief the data structure of  REGISTER DEVICE Command
  * use to describe MPI REGISTER DEVICE Command (64 bytes)
  */
 
@@ -344,8 +369,9 @@ struct reg_dev_req {
 	u32	reserved[24];
 } __attribute__((packed, aligned(4)));
 
+
 /*
- * brief the data structure of DEREGISTER DEVICE Command
+ * brief the data structure of  DEREGISTER DEVICE Command
  * use to request spc to remove all internal resources associated
  * with the device id (64 bytes)
  */
@@ -356,9 +382,10 @@ struct dereg_dev_req {
 	u32	reserved[29];
 } __attribute__((packed, aligned(4)));
 
+
 /*
  * brief the data structure of DEVICE_REGISTRATION Response
- * use to notify the completion of the device registration (64 bytes)
+ * use to notify the completion of the device registration  (64 bytes)
  */
 struct dev_reg_resp {
 	__le32	tag;
@@ -366,6 +393,7 @@ struct dev_reg_resp {
 	__le32	device_id;
 	u32	reserved[12];
 } __attribute__((packed, aligned(4)));
+
 
 /*
  * brief the data structure of Local PHY Control Command
@@ -377,6 +405,7 @@ struct local_phy_ctl_req {
 	u32	reserved1[29];
 } __attribute__((packed, aligned(4)));
 
+
 /**
  * brief the data structure of Local Phy Control Response
  * use to describe MPI Local Phy Control Response (64 bytes)
@@ -387,6 +416,7 @@ struct local_phy_ctl_req {
 	__le32	status;
 	u32	reserved[12];
 } __attribute__((packed, aligned(4)));
+
 
 #define OP_BITS 0x0000FF00
 #define ID_BITS 0x000000FF
@@ -404,6 +434,7 @@ struct port_ctl_req {
 	u32	reserved1[27];
 } __attribute__((packed, aligned(4)));
 
+
 /*
  * brief the data structure of HW Event Ack Command
  * use to acknowledge receive HW event (64 bytes)
@@ -415,6 +446,56 @@ struct hw_event_ack_req {
 	__le32	param1;
 	u32	reserved1[27];
 } __attribute__((packed, aligned(4)));
+
+/*
+ * brief the data structure of GPIO Commannd
+ * use to control MPI GPIOs (64 bytes)
+ */
+struct gpio_req {
+  __le32  tag;
+  __le32  eobid_ge_gs_gr_gw;
+  __le32  gpio_wr_msk;
+  __le32  gpio_wr_val;
+  __le32  gpio_in_enabled;
+  __le32  gpio_pinsetup1;
+  __le32  gpio_pinsetup2;
+  __le32  gpio_evt_change;
+  __le32  gpio_evt_rise;
+  __le32  gpio_evt_fall;
+  u32     reserved[5];
+}  __attribute__((packed, aligned(4)));
+
+
+#define GPIO_GW_BIT 0x1
+#define GPIO_GR_BIT 0x2
+#define GPIO_GS_BIT 0x4
+#define GPIO_GE_BIT 0x8
+
+/* 
+ * brief the data structure of GPIO Response
+ * indicates the completion of GPIO command (64 bytes)
+ */
+struct gpio_resp {
+  __le32  tag;
+  u32     reserved[2];
+  __le32  gpio_rd_val;
+  __le32  gpio_in_enabled;
+  __le32  gpio_pinsetup1;
+  __le32  gpio_pinsetup2;
+  __le32  gpio_evt_change;
+  __le32  gpio_evt_rise;
+  __le32  gpio_evt_fall;
+  u32     reserved1[5];
+}  __attribute__((packed, aligned(4)));
+
+/*
+ * brief the data structure of GPIO Event
+ * indicates the generation of GPIO event (64 bytes)
+ */
+struct gpio_event {
+  __le32  gpio_event;
+  u32     reserved[14];
+}  __attribute__((packed, aligned(4)));
 
 /*
  * brief the data structure of PHY_START Response Command
@@ -432,71 +513,72 @@ struct phy_start_resp {
  * indicates the completion of PHY_STOP command (64 bytes)
  */
 struct phy_stop_resp {
-	__le32	tag;
-	__le32	status;
-	__le32	phyid;
-	u32	reserved[12];
+	__le32 	tag;
+	__le32 	status;
+	__le32 	phyid;
+	u32 	reserved[12];
 } __attribute__((packed, aligned(4)));
 
 /*
  * brief the data structure of SSP Completion Response
- * use to indicate a SSP Completion (n bytes)
+ * use to indicate a SSP Completion  (n bytes)
  */
 struct ssp_completion_resp {
 	__le32	tag;
 	__le32	status;
 	__le32	param;
 	__le32	ssptag_rescv_rescpad;
-	struct ssp_response_iu ssp_resp_iu;
+	struct ssp_response_iu  ssp_resp_iu;
 	__le32	residual_count;
 } __attribute__((packed, aligned(4)));
+
 
 #define SSP_RESCV_BIT	0x00010000
 
 /*
  * brief the data structure of SATA EVNET response
- * use to indicate a SATA Completion (64 bytes)
+ * use to indicate a SATA Completion  (64 bytes)
  */
 struct sata_event_resp {
-	__le32 tag;
-	__le32 event;
-	__le32 port_id;
-	__le32 device_id;
-	u32 reserved;
-	__le32 event_param0;
-	__le32 event_param1;
-	__le32 sata_addr_h32;
-	__le32 sata_addr_l32;
-	__le32 e_udt1_udt0_crc;
-	__le32 e_udt5_udt4_udt3_udt2;
-	__le32 a_udt1_udt0_crc;
-	__le32 a_udt5_udt4_udt3_udt2;
-	__le32 hwdevid_diferr;
-	__le32 err_framelen_byteoffset;
-	__le32 err_dataframe;
+ __le32 tag;
+ __le32 event;
+ __le32 port_id;
+ __le32 device_id;
+ u32 reserved;
+ __le32 event_param0;
+ __le32 event_param1;
+ __le32 sata_addr_h32;
+ __le32 sata_addr_l32;
+ __le32 e_udt1_udt0_crc;
+ __le32 e_udt5_udt4_udt3_udt2;
+ __le32 a_udt1_udt0_crc;
+ __le32 a_udt5_udt4_udt3_udt2;
+ __le32 hwdevid_diferr;
+ __le32 err_framelen_byteoffset;
+ __le32 err_dataframe;     // TBU: array size
 } __attribute__((packed, aligned(4)));
 
 /*
  * brief the data structure of SSP EVNET esponse
- * use to indicate a SSP Completion (64 bytes)
+ * use to indicate a SSP Completion  (64 bytes)
  */
 struct ssp_event_resp {
-	__le32 tag;
-	__le32 event;
-	__le32 port_id;
-	__le32 device_id;
-	__le32 ssp_tag;
-	__le32 event_param0;
-	__le32 event_param1;
-	__le32 sas_addr_h32;
-	__le32 sas_addr_l32;
-	__le32 e_udt1_udt0_crc;
-	__le32 e_udt5_udt4_udt3_udt2;
-	__le32 a_udt1_udt0_crc;
-	__le32 a_udt5_udt4_udt3_udt2;
-	__le32 hwdevid_diferr;
-	__le32 err_framelen_byteoffset;
-	__le32 err_dataframe;
+ __le32 tag;
+ __le32 event;
+ __le32 port_id;
+ __le32 device_id;
+ __le32 ssp_tag;
+ __le32 event_param0;
+ __le32 event_param1;
+ __le32 sas_addr_h32;
+ __le32 sas_addr_l32;
+ __le32 e_udt1_udt0_crc;
+ __le32 e_udt5_udt4_udt3_udt2;
+ __le32 a_udt1_udt0_crc;
+ __le32 a_udt5_udt4_udt3_udt2;
+ __le32 hwdevid_diferr;
+ __le32 err_framelen_byteoffset;
+ __le32 err_dataframe;     // TBU: array size
 } __attribute__((packed, aligned(4)));
 
 /**
@@ -507,6 +589,7 @@ struct general_event_resp {
 	__le32	status;
 	__le32	inb_IOMB_payload[14];
 } __attribute__((packed, aligned(4)));
+
 
 #define GENERAL_EVENT_PAYLOAD	14
 #define OPCODE_BITS	0x00000fff
@@ -519,7 +602,7 @@ struct smp_req {
 	__le32	tag;
 	__le32	device_id;
 	__le32	len_ip_ir;
-	/* Bits [0] - Indirect response */
+	/* Bits [0]  - Indirect response */
 	/* Bits [1] - Indirect Payload */
 	/* Bits [15:2] - Reserved */
 	/* Bits [23:16] - direct payload Len */
@@ -577,6 +660,7 @@ struct task_abort_resp {
 	u32	reserved[12];
 } __attribute__((packed, aligned(4)));
 
+
 /**
  * brief the data structure of SAS Diagnostic Start/End Command
  * use to describe MPI SAS Diagnostic Start/End Command (64 bytes)
@@ -587,11 +671,12 @@ struct sas_diag_start_end_req {
 	u32	reserved[29];
 } __attribute__((packed, aligned(4)));
 
+
 /**
  * brief the data structure of SAS Diagnostic Execute Command
  * use to describe MPI SAS Diagnostic Execute Command (64 bytes)
  */
-struct sas_diag_execute_req {
+struct sas_diag_execute_req{
 	__le32	tag;
 	__le32	cmdtype_cmddesc_phyid;
 	__le32	pat1_pat2;
@@ -601,6 +686,7 @@ struct sas_diag_execute_req {
 	__le32	pERF1CTL;
 	u32	reserved[24];
 } __attribute__((packed, aligned(4)));
+
 
 #define SAS_DIAG_PARAM_BYTES 24
 
@@ -628,27 +714,25 @@ struct sata_start_req {
 	__le32	ncqtag_atap_dir_m_dad;
 	struct host_to_dev_fis	sata_fis;
 	u32	reserved1;
-	u32	reserved2;	/* dword 11. rsvd for normal I/O. */
-				/* EPLE Descl for enc I/O */
-	u32	addr_low;	/* dword 12. rsvd for enc I/O */
-	u32	addr_high;	/* dword 13. reserved for enc I/O */
-	__le32	len;		/* dword 14: length for normal I/O. */
-				/* EPLE Desch for enc I/O */
-	__le32	esgl;		/* dword 15. rsvd for enc I/O */
-	__le32	atapi_scsi_cdb[4];	/* dword 16-19. rsvd for enc I/O */
+	u32	reserved2;			/* dword 11. reserved for normal I/O. EPLE Descl for enc I/O */
+	u32	addr_low;			/* dword 12. reserved for enc I/O */
+	u32	addr_high;			/* dword 13. reserved for enc I/O */
+	__le32	len;				/* dowrd 14: length for normal I/O. EPLE Desch for enc I/O */				
+	__le32	esgl;				/* dword 15. reserved for enc I/O */
+	__le32  atapi_scsi_cdb[4];		/* dword 16-19. reserved for enc I/O */
 	/* The below fields are reserved for normal I/O */
-	__le32	key_index_mode;	/* dword 20 */
-	__le32	sector_cnt_enss;/* dword 21 */
-	__le32	keytagl;	/* dword 22 */
-	__le32	keytagh;	/* dword 23 */
-	__le32	twk_val0;	/* dword 24 */
-	__le32	twk_val1;	/* dword 25 */
-	__le32	twk_val2;	/* dword 26 */
-	__le32	twk_val3;	/* dword 27 */
-	__le32	enc_addr_low;	/* dword 28. Encryption SGL address high */
-	__le32	enc_addr_high;	/* dword 29. Encryption SGL address low */
-	__le32	enc_len;	/* dword 30. Encryption length */
-	__le32	enc_esgl;	/* dword 31. Encryption esgl bit */
+        __le32  key_index_mode;                 /* dword 20 */
+        __le32  sector_cnt_enss;                /* dword 21 */
+        __le32  keytagl;                        /* dword 22 */
+        __le32  keytagh;                        /* dword 23 */
+        __le32  twk_val0;                       /* dword 24 */
+        __le32  twk_val1;                       /* dword 25 */
+        __le32  twk_val2;                       /* dword 26 */
+        __le32  twk_val3;                       /* dword 27 */
+        __le32  enc_addr_low;                   /* dword 28. Encryption SGL address high */
+        __le32  enc_addr_high;                  /* dword 29. Encryption SGL address low */
+        __le32  enc_len;                        /* dword 30. Encryption length */
+        __le32  enc_esgl;                       /* dword 31. Encryption esgl bit */
 } __attribute__((packed, aligned(4)));
 
 /**
@@ -665,11 +749,12 @@ struct ssp_ini_tm_start_req {
 	u32	reserved[24];
 } __attribute__((packed, aligned(4)));
 
+
 struct ssp_info_unit {
 	u8	lun[8];/* SCSI Logical Unit Number */
 	u8	reserved1;/* reserved */
 	u8	efb_prio_attr;
-	/* B7 : enabledFirstBurst */
+	/* B7   : enabledFirstBurst */
 	/* B6-3 : taskPriority */
 	/* B2-0 : taskAttribute */
 	u8	reserved2;	/* reserved */
@@ -678,6 +763,7 @@ struct ssp_info_unit {
 	/* B1-0 : reserved */
 	u8	cdb[16];/* The SCSI CDB up to 16 bytes length */
 } __attribute__((packed, aligned(4)));
+
 
 /**
  * brief the data structure of SSP INI IO Start Command
@@ -690,36 +776,32 @@ struct ssp_ini_io_start_req {
 	__le32	data_len;
 	__le32	dad_dir_m_tlr;
 	struct ssp_info_unit	ssp_iu;
-	__le32	addr_low;	/* dword 12: sgl low for normal I/O. */
-				/* epl_descl for encryption I/O */
-	__le32	addr_high;	/* dword 13: sgl hi for normal I/O */
-				/* dpl_descl for encryption I/O */
-	__le32	len;		/* dword 14: len for normal I/O. */
-				/* edpl_desch for encryption I/O */
-	__le32	esgl;		/* dword 15: ESGL bit for normal I/O. */
-				/* user defined tag mask for enc I/O */
+	__le32	addr_low;			/* dword 12: sgl low for normal I/O epl_descl for encryption I/O */ 
+	__le32	addr_high;			/* dword 13: sgl hi for normal I/O dpl_descl for encryption I/O */
+	__le32	len;				/* dword 14: len for normal I/O edpl_desch for encryption I/O */
+	__le32	esgl;				/* dword 15: ESGL bit for normal I/O. user defined tag mask for enc I/O */ 
 	/* The below fields are reserved for normal I/O */
-	u8	udt[12];	/* dword 16-18 */
-	__le32	sectcnt_ios;	/* dword 19 */
-	__le32	key_cmode;	/* dword 20 */
-	__le32	ks_enss;	/* dword 21 */
-	__le32	keytagl;	/* dword 22 */
-	__le32	keytagh;	/* dword 23 */
-	__le32	twk_val0;	/* dword 24 */
-	__le32	twk_val1;	/* dword 25 */
-	__le32	twk_val2;	/* dword 26 */
-	__le32	twk_val3;	/* dword 27 */
-	__le32	enc_addr_low;	/* dword 28: Encryption sgl addr low */
-	__le32	enc_addr_high;	/* dword 29: Encryption sgl addr hi */
-	__le32	enc_len;	/* dword 30: Encryption length */
-	__le32	enc_esgl;	/* dword 31: ESGL bit for encryption */
+	u8	udt[12];			/* dword 16-18 */ 
+	__le32	sectcnt_ios;			/* dword 19    */
+	__le32	key_cmode;			/* dword 20    */ 
+	__le32	ks_enss;			/* dword 21    */
+	__le32	keytagl;			/* dword 22    */
+	__le32	keytagh;			/* dword 23    */
+	__le32	twk_val0;			/* dword 24    */
+	__le32	twk_val1;			/* dword 25    */
+	__le32	twk_val2;			/* dword 26    */
+	__le32	twk_val3;			/* dword 27    */
+	__le32	enc_addr_low;			/* dword 28: Encryption sgl addr low */			
+	__le32	enc_addr_high;			/* dword 29: Encryption sgl addr hi */
+	__le32	enc_len;			/* dword 30: Encryption length */
+	__le32	enc_esgl;			/* dword 31: ESGL bit for encryption */
 } __attribute__((packed, aligned(4)));
 
 /**
  * brief the data structure for SSP_INI_DIF_ENC_IO COMMAND
- * use to initiate SSP I/O operation with optional DIF/ENC
+ * use to initiate SSP I/O operation with optional DIF/ENC 
  */
-struct ssp_dif_enc_io_req {
+struct ssp_dif_enc_io_req {			
 	__le32	tag;
 	__le32	device_id;
 	__le32	data_len;
@@ -739,16 +821,16 @@ struct ssp_dif_enc_io_req {
 	__le32	sectcnt_ios;
 	__le32	key_cmode;
 	__le32	ks_enss;
-	__le32	keytagl;
+	__le32	keytagl;	
 	__le32	keytagh;
-	__le32	twk_val0;
-	__le32	twk_val1;
-	__le32	twk_val2;
-	__le32	twk_val3;
-	__le32	addr_low;
+	__le32	twk_val0;	
+	__le32	twk_val1;	
+	__le32	twk_val2;	
+	__le32	twk_val3;	
+	__le32	addr_low;	
 	__le32	addr_high;
 	__le32	len;
-	__le32	esgl;
+	__le32	esgl;	
 } __attribute__((packed, aligned(4)));
 
 /**
@@ -768,6 +850,7 @@ struct fw_flash_Update_req {
 	u32	reserved1[16];
 } __attribute__((packed, aligned(4)));
 
+
 #define FWFLASH_IOMB_RESERVED_LEN 0x07
 /**
  * brief the data structure of FW_FLASH_UPDATE Response
@@ -779,6 +862,7 @@ struct fw_flash_Update_req {
 	__le32	status;
 	u32	reserved[13];
 } __attribute__((packed, aligned(4)));
+
 
 /**
  * brief the data structure of Get NVM Data Command
@@ -794,6 +878,7 @@ struct get_nvm_data_req {
 	__le32	resp_len;
 	u32	reserved1[17];
 } __attribute__((packed, aligned(4)));
+
 
 struct set_nvm_data_req {
 	__le32	tag;
@@ -813,7 +898,7 @@ struct set_nvm_data_req {
 struct set_ctrl_cfg_req {
 	__le32	tag;
 	__le32	cfg_pg[14];
-	u32	reserved[16];
+	u32	reserved[16];	
 } __attribute__((packed, aligned(4)));
 
 /**
@@ -824,12 +909,12 @@ struct get_ctrl_cfg_req {
 	__le32	tag;
 	__le32	pgcd;
 	__le32	int_vec;
-	u32	reserved[28];
+	u32	reserved[28];	
 } __attribute__((packed, aligned(4)));
 
 /**
  * brief the data structure for KEK_MANAGEMENT COMMAND
- * use for KEK management
+ * use for KEK management 
  */
 struct kek_mgmt_req {
 	__le32	tag;
@@ -841,7 +926,7 @@ struct kek_mgmt_req {
 
 /**
  * brief the data structure for DEK_MANAGEMENT COMMAND
- * use for DEK management
+ * use for DEK management 
  */
 struct dek_mgmt_req {
 	__le32	tag;
@@ -856,7 +941,7 @@ struct dek_mgmt_req {
 
 /**
  * brief the data structure for SET PHY PROFILE COMMAND
- * use to retrive phy specific information
+ * use to retrive phy specific information 
  */
 struct set_phy_profile_req {
 	__le32	tag;
@@ -866,7 +951,7 @@ struct set_phy_profile_req {
 
 /**
  * brief the data structure for GET PHY PROFILE COMMAND
- * use to retrive phy specific information
+ * use to retrive phy specific information 
  */
 struct get_phy_profile_req {
 	__le32	tag;
@@ -875,8 +960,8 @@ struct get_phy_profile_req {
 } __attribute__((packed, aligned(4)));
 
 /**
- * brief the data structure for EXT FLASH PARTITION
- * use to manage ext flash partition
+ * brief the data structure for EXT FLASH PARTITION 
+ * use to manage ext flash partition 
  */
 struct ext_flash_partition_req {
 	__le32	tag;
@@ -906,12 +991,13 @@ struct ext_flash_partition_req {
  * brief the data structure of Get NVMD Data Response
  * use to describe MPI Get NVMD Data Response (64 bytes)
  */
-struct get_nvm_data_resp {
+ struct get_nvm_data_resp {
 	__le32		tag;
 	__le32		ir_tda_bn_dps_das_nvm;
 	__le32		dlen_status;
 	__le32		nvm_data[12];
 } __attribute__((packed, aligned(4)));
+
 
 /**
  * brief the data structure of SAS Diagnostic Start/End Response
@@ -923,6 +1009,7 @@ struct sas_diag_start_end_resp {
 	__le32		status;
 	u32		reserved[13];
 } __attribute__((packed, aligned(4)));
+
 
 /**
  * brief the data structure of SAS Diagnostic Execute Response
@@ -936,6 +1023,7 @@ struct sas_diag_execute_resp {
 	__le32		ReportData;
 	u32		reserved[11];
 } __attribute__((packed, aligned(4)));
+
 
 /**
  * brief the data structure of Set Device State Response
@@ -956,66 +1044,66 @@ struct set_dev_state_resp {
  * use to modify controller configuration
  */
 struct set_ctrl_cfg_resp {
-	__le32 tag;
-	__le32 status;
-	__le32 err_qlfr_pgcd;
-	u32 reserved[12];
+ __le32 tag;
+ __le32 status;
+ __le32 err_qlfr_pgcd;
+ u32 reserved[12];
 } __attribute__((packed, aligned(4)));
 
 struct get_ctrl_cfg_resp {
-	__le32 tag;
-	__le32 status;
-	__le32 err_qlfr;
-	__le32 confg_page[12];
+ __le32 tag;
+ __le32 status;
+ __le32 err_qlfr;
+ __le32 confg_page[12];
 } __attribute__((packed, aligned(4)));
 
 struct kek_mgmt_resp {
-	__le32 tag;
-	__le32 status;
-	__le32 kidx_new_curr_ksop;
-	__le32 err_qlfr;
-	u32 reserved[11];
+ __le32 tag;
+ __le32 status;
+ __le32 kidx_new_curr_ksop;
+ __le32 err_qlfr;
+ u32 reserved[11];
 } __attribute__((packed, aligned(4)));
 
 struct dek_mgmt_resp {
-	__le32 tag;
-	__le32 status;
-	__le32 kekidx_tbls_dsop;
-	__le32 dekidx;
-	__le32 err_qlfr;
-	u32 reserved[10];
+ __le32 tag;
+ __le32 status;
+ __le32 kekidx_tbls_dsop;
+ __le32 dekidx;
+ __le32 err_qlfr;
+ u32 reserved[10];
 } __attribute__((packed, aligned(4)));
 
 struct get_phy_profile_resp {
-	__le32 tag;
-	__le32 status;
-	__le32 ppc_phyid;
-	__le32 ppc_specific_rsp[12];
+ __le32 tag;
+ __le32 status;
+ __le32 ppc_phyid;
+ __le32 ppc_specific_rsp[12];
 } __attribute__((packed, aligned(4)));
 
 struct flash_op_ext_resp {
-	__le32 tag;
-	__le32 cmd;
-	__le32 status;
-	__le32 epart_size;
-	__le32 epart_sect_size;
-	u32 reserved[10];
+ __le32 tag;
+ __le32 cmd;
+ __le32 status;
+ __le32 epart_size;
+ __le32 epart_sect_size;
+ u32 reserved[10];
 } __attribute__((packed, aligned(4)));
 
 struct set_phy_profile_resp {
-	__le32 tag;
-	__le32 status;
-	__le32 ppc_phyid;
-	__le32 ppc_specific_rsp[12];
+ __le32 tag;
+ __le32 status;
+ __le32 ppc_phyid;
+ __le32 ppc_specific_rsp[12];
 } __attribute__((packed, aligned(4)));
 
 struct ssp_coalesced_comp_resp {
-	__le32 coal_cnt;
-	__le32 tag0;
-	__le32 ssp_tag0;
-	__le32 tag1;
-	__le32 ssp_tag1;
-	__le32 add_tag_ssp_tag[10];
+ __le32 coal_cnt;
+ __le32 tag0;
+ __le32 ssp_tag0;
+ __le32 tag1;
+ __le32 ssp_tag1;
+ __le32 add_tag_ssp_tag[10];  // TBU: array size. how many tag and ssp_tag
 } __attribute__((packed, aligned(4)));
 
 /* new outbound structure for spcv - ends */
@@ -1023,20 +1111,19 @@ struct ssp_coalesced_comp_resp {
 /* brief data structure for SAS protocol timer configuration page.
  *
  */
-struct SASProtocolTimerConfig {
-	__le32 pageCode;			/* 0 */
-	__le32 MST_MSI;				/* 1 */
-	__le32 STP_SSP_MCT_TMO;			/* 2 */
-	__le32 STP_FRM_TMO;			/* 3 */
-	__le32 STP_IDLE_TMO;			/* 4 */
-	__le32 OPNRJT_RTRY_INTVL;		/* 5 */
-	__le32 Data_Cmd_OPNRJT_RTRY_TMO;	/* 6 */
-	__le32 Data_Cmd_OPNRJT_RTRY_THR;	/* 7 */
-	__le32 MAX_AIP;				/* 8 */
+struct SASProtocolTimerConfig{
+    __le32 pageCode;                        /* 0 */
+    __le32 MST_MSI;                         /* 1 */
+    __le32 STP_SSP_MCT_TMO;                 /* 2 */
+    __le32 STP_FRM_TMO;                     /* 3 */
+    __le32 STP_IDLE_TMO;                    /* 4 */
+    __le32 OPNRJT_RTRY_INTVL;               /* 5 */
+    __le32 Data_Cmd_OPNRJT_RTRY_TMO;        /* 6 */
+    __le32 Data_Cmd_OPNRJT_RTRY_THR;        /* 7 */
+    __le32 MAX_AIP;                         /* 8 */
 } __attribute__((packed, aligned(4)));
 
 typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
-
 #define NDS_BITS 0x0F
 #define PDS_BITS 0xF0
 
@@ -1077,7 +1164,7 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define PORT_VALID				0x01
 #define PORT_LOSTCOMM				0x02
 #define PORT_IN_RESET				0x04
-#define PORT_3RD_PARTY_RESET			0x07
+#define PORT_3RD_PARTY_RESET			0x07 
 #define PORT_INVALID				0x08
 
 /*
@@ -1092,9 +1179,9 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define IO_ABORT_RESET				0x05
 #define IO_NOT_VALID				0x06
 #define IO_NO_DEVICE				0x07
-#define IO_ILLEGAL_PARAMETER			0x08
-#define IO_LINK_FAILURE				0x09
-#define IO_PROG_ERROR				0x0A
+#define IO_ILLEGAL_PARAMETER			0x08	/* IO is not supported (SSP) */
+#define IO_LINK_FAILURE				0x09		/* IO failed because of link failure (SMP) */
+#define IO_PROG_ERROR				0x0A		/* IO failed because of program error (SMP) */
 
 #define IO_EDC_IN_ERROR				0x0B
 #define IO_EDC_OUT_ERROR			0x0C
@@ -1124,7 +1211,7 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define IO_XFER_ERROR_ABORTED_DUE_TO_SRST		0x22
 #define IO_XFER_ERROR_REJECTED_NCQ_MODE			0x21
 #define IO_XFER_ERROR_ABORTED_NCQ_MODE			0x23
-#define IO_XFER_OPEN_RETRY_TIMEOUT			0x24
+#define IO_XFER_OPEN_RETRY_TIMEOUT			0x24		/* IO OPEN_RETRY_TIMEOUT */
 /* This error code 0x25 is not used on SPCv */
 #define IO_XFER_SMP_RESP_CONNECTION_ERROR		0x25
 #define IO_XFER_ERROR_UNEXPECTED_PHASE			0x26
@@ -1151,98 +1238,99 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define IO_ABORT_IN_PROGRESS				0x40
 #define IO_ABORT_DELAYED				0x41
 #define IO_INVALID_LENGTH				0x42
-
-/********** additional response event values *****************/
-
-#define IO_OPEN_CNX_ERROR_HW_RESOURCE_BUSY_ALT		0x43
-#define IO_XFER_OPEN_RETRY_BACKOFF_THRESHOLD_REACHED	0x44
-#define IO_OPEN_CNX_ERROR_IT_NEXUS_LOSS_OPEN_TMO	0x45
-#define IO_OPEN_CNX_ERROR_IT_NEXUS_LOSS_NO_DEST		0x46
-#define IO_OPEN_CNX_ERROR_IT_NEXUS_LOSS_OPEN_COLLIDE	0x47
-#define IO_OPEN_CNX_ERROR_IT_NEXUS_LOSS_PATHWAY_BLOCKED	0x48
-#define IO_DS_INVALID					0x49
+#define IO_OPEN_CNX_ERROR_HW_RESOURCE_BUSY_ALT          0x43
+#define IO_XFER_OPEN_RETRY_BACKOFF_THRESHOLD_REACHED    0x44
+#define IO_OPEN_CNX_ERROR_IT_NEXUS_LOSS_OPEN_TMO        0x45
+#define IO_OPEN_CNX_ERROR_IT_NEXUS_LOSS_NO_DEST         0x46
+#define IO_OPEN_CNX_ERROR_IT_NEXUS_LOSS_OPEN_COLLIDE    0x47
+#define IO_OPEN_CNX_ERROR_IT_NEXUS_LOSS_PATHWAY_BLOCKED 0x48
+#define IO_DS_INVALID                                   0x49
 /* WARNING: the value is not contiguous from here */
-#define IO_XFER_ERR_LAST_PIO_DATAIN_CRC_ERR	0x52
-#define IO_XFER_DMA_ACTIVATE_TIMEOUT		0x53
-#define IO_XFER_ERROR_INTERNAL_CRC_ERROR	0x54
-#define MPI_IO_RQE_BUSY_FULL			0x55
-#define IO_XFER_ERR_EOB_DATA_OVERRUN		0x56
-#define IO_XFR_ERROR_INVALID_SSP_RSP_FRAME	0x57
-#define IO_OPEN_CNX_ERROR_OPEN_PREEMPTED	0x58
+#define IO_XFER_ERR_LAST_PIO_DATAIN_CRC_ERR             0x52
+#define IO_XFER_DMA_ACTIVATE_TIMEOUT			0x53
+#define IO_XFER_ERROR_INTERNAL_CRC_ERROR                 0x54
+#define MPI_IO_RQE_BUSY_FULL                            0x55
+#define IO_XFER_ERR_EOB_DATA_OVERRUN                    0x56   /* This status is only for Hitach FW */
+#define IO_XFER_ERROR_INVALID_SSP_RSP_FRAME              0x57
+#define IO_OPEN_CNX_ERROR_OPEN_PREEMPTED                0x58
 
-#define MPI_ERR_IO_RESOURCE_UNAVAILABLE		0x1004
-#define MPI_ERR_ATAPI_DEVICE_BUSY		0x1024
+/***************************** Device States *********************/
+#define DS_OPERATIONAL 					0x01
+#define DS_PORT_IN_RESET                0x02
+#define DS_IN_RECOVERY                  0x03
+#define DS_IN_ERROR                     0x04
+#define DS_NON_OPERATIONAL 				0x07	
 
-#define IO_XFR_ERROR_DEK_KEY_CACHE_MISS		0x2040
+
+#define MPI_ERR_IO_RESOURCE_UNAVAILABLE                  0x1004
+#define MPI_ERR_ATAPI_DEVICE_BUSY                        0x1024
+
+#define IO_XFR_ERROR_DEK_KEY_CACHE_MISS                  0x2040
+/* 
+   An encryption IO request failed due to DEK Key Tag mismatch.
+   The key tag supplied in the encryption IOMB does not match with the Key Tag in the referenced DEK Entry.
+*/
+#define IO_XFR_ERROR_DEK_KEY_TAG_MISMATCH                0x2041 
+#define IO_XFR_ERROR_CIPHER_MODE_INVALID                 0x2042
 /*
- * An encryption IO request failed due to DEK Key Tag mismatch.
- * The key tag supplied in the encryption IOMB does not match with
- * the Key Tag in the referenced DEK Entry.
- */
-#define IO_XFR_ERROR_DEK_KEY_TAG_MISMATCH	0x2041
-#define IO_XFR_ERROR_CIPHER_MODE_INVALID	0x2042
-/*
- * An encryption I/O request failed because the initial value (IV)
- * in the unwrapped DEK blob didn't match the IV used to unwrap it.
- */
-#define IO_XFR_ERROR_DEK_IV_MISMATCH		0x2043
-/* An encryption I/O request failed due to an internal RAM ECC or
- * interface error while unwrapping the DEK. */
-#define IO_XFR_ERROR_DEK_RAM_INTERFACE_ERROR	0x2044
-/* An encryption I/O request failed due to an internal RAM ECC or
- * interface error while unwrapping the DEK. */
-#define IO_XFR_ERROR_INTERNAL_RAM		0x2045
-/*
- * An encryption I/O request failed
- * because the DEK index specified in the I/O was outside the bounds of
- * the total number of entries in the host DEK table.
- */
-#define IO_XFR_ERROR_DEK_INDEX_OUT_OF_BOUNDS0x2046
+    An encryption I/O request failed 
+    because the initial value (IV) in the unwrapped DEK blob didn't match the IV used to unwrap it. 
+*/
+#define IO_XFR_ERROR_DEK_IV_MISMATCH                     0x2043 
+/* An encryption I/O request failed due to an internal RAM ECC or interface error while unwrapping the DEK. */
+#define IO_XFR_ERROR_DEK_RAM_INTERFACE_ERROR             0x2044 
+/* An encryption I/O request failed due to an internal RAM ECC or interface error while unwrapping the DEK. */
+#define IO_XFR_ERROR_INTERNAL_RAM                        0x2045
+/* 
+    An encryption I/O request failed 
+    because the DEK index specified in the I/O was outside the bounds of thetotal number of entries in the host DEK table.
+*/
+#define IO_XFR_ERROR_DEK_INDEX_OUT_OF_BOUNDS             0x2046  
 
 /* define DIF IO response error status code */
-#define IO_XFR_ERROR_DIF_MISMATCH			0x3000
-#define IO_XFR_ERROR_DIF_APPLICATION_TAG_MISMATCH	0x3001
-#define IO_XFR_ERROR_DIF_REFERENCE_TAG_MISMATCH		0x3002
-#define IO_XFR_ERROR_DIF_CRC_MISMATCH			0x3003
+#define IO_XFR_ERROR_DIF_MISMATCH                        0x3000
+#define IO_XFR_ERROR_DIF_APPLICATION_TAG_MISMATCH        0x3001
+#define IO_XFR_ERROR_DIF_REFERENCE_TAG_MISMATCH          0x3002
+#define IO_XFR_ERROR_DIF_CRC_MISMATCH                    0x3003
 
 /* define operator management response status and error qualifier code */
-#define OPR_MGMT_OP_NOT_SUPPORTED			0x2060
-#define OPR_MGMT_MPI_ENC_ERR_OPR_PARAM_ILLEGAL		0x2061
-#define OPR_MGMT_MPI_ENC_ERR_OPR_ID_NOT_FOUND		0x2062
-#define OPR_MGMT_MPI_ENC_ERR_OPR_ROLE_NOT_MATCH		0x2063
-#define OPR_MGMT_MPI_ENC_ERR_OPR_MAX_NUM_EXCEEDED	0x2064
-#define OPR_MGMT_MPI_ENC_ERR_KEK_UNWRAP_FAIL		0x2022
-#define OPR_MGMT_MPI_ENC_ERR_NVRAM_OPERATION_FAILURE	0x2023
-/***************** additional response event values ***************/
+#define OPR_MGMT_OP_NOT_SUPPORTED                             0x2060
+#define OPR_MGMT_MPI_ENC_ERR_OPR_PARAM_ILLEGAL                0x2061 
+#define OPR_MGMT_MPI_ENC_ERR_OPR_ID_NOT_FOUND                 0x2062
+#define OPR_MGMT_MPI_ENC_ERR_OPR_ROLE_NOT_MATCH               0x2063
+#define OPR_MGMT_MPI_ENC_ERR_OPR_MAX_NUM_EXCEEDED             0x2064
+#define OPR_MGMT_MPI_ENC_ERR_KEK_UNWRAP_FAIL                  0x2022
+#define OPR_MGMT_MPI_ENC_ERR_NVRAM_OPERATION_FAILURE          0x2023
+/*********************** additional response event values *************************/
 
 /* WARNING: This error code must always be the last number.
  * If you add error code, modify this code also
  * It is used as an index
  */
-#define IO_ERROR_UNKNOWN_GENERIC			0x2023
+#define IO_ERROR_UNKNOWN_GENERIC			0x2023		/* Note: ERROR values are not continuous */
 
-/* MSGU CONFIGURATION TABLE*/
+/* MSGU CONFIGURATION  TABLE*/
 
-#define SPCv_MSGU_CFG_TABLE_UPDATE		0x01
-#define SPCv_MSGU_CFG_TABLE_RESET		0x02
-#define SPCv_MSGU_CFG_TABLE_FREEZE		0x04
-#define SPCv_MSGU_CFG_TABLE_UNFREEZE		0x08
-#define MSGU_IBDB_SET				0x00
-#define MSGU_HOST_INT_STATUS			0x08
+#define SPCv_MSGU_CFG_TABLE_UPDATE		0x001/* Inbound doorbell bit0 */
+#define SPCv_MSGU_CFG_TABLE_RESET		0x002/* Inbound doorbell bit1 */
+#define SPCv_MSGU_CFG_TABLE_FREEZE		0x004/* Inbound doorbell bit2 */
+#define SPCv_MSGU_CFG_TABLE_UNFREEZE		0x008/* Inbound doorbell bit4 */
+#define MSGU_IBDB_SET				0x00/* Inbound Doorbell Set Register */  
+#define MSGU_HOST_INT_STATUS			0x08/* Inbound Doorbell Clear Register */
 #define MSGU_HOST_INT_MASK			0x0C
 #define MSGU_IOPIB_INT_STATUS			0x18
 #define MSGU_IOPIB_INT_MASK			0x1C
-#define MSGU_IBDB_CLEAR				0x20
-
+#define MSGU_IBDB_CLEAR				0x20/* RevB - Host not use */
+											/* Outbound Doorbell Clear Register */
 #define MSGU_MSGU_CONTROL			0x24
-#define MSGU_ODR				0x20
-#define MSGU_ODCR				0x28
+#define MSGU_ODR				0x20/* RevB */ /* Outbound Doorbell Set Register */
+#define MSGU_ODCR				0x28/* RevB */ /* Outbound Doorbell Clear Register */
 
-#define MSGU_ODMR				0x30
-#define MSGU_ODMR_U				0x34
-#define MSGU_ODMR_CLR				0x38
-#define MSGU_ODMR_CLR_U				0x3C
-#define MSGU_OD_RSVD				0x40
+#define MSGU_ODMR				0x30/* RevB */ /* Outbound Doorbell Mask Set Register */
+#define MSGU_ODMR_U				0x34/* RevB */ /* Outbound Doorbell Mask Set Register */
+#define MSGU_ODMR_CLR				0x38/* RevB */ /* Outbound Doorbell Mask Clear Register */
+#define MSGU_ODMR_CLR_U				0x3C/* RevB */ /* Outbound Doorbell Mask Clear Register */
+#define MSGU_OD_RSVD				0x40/* RevB */ /* Rsvd */
 
 #define MSGU_SCRATCH_PAD_0			0x44
 #define MSGU_SCRATCH_PAD_1			0x48
@@ -1257,22 +1345,23 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define MSGU_HOST_SCRATCH_PAD_6			0x6C
 #define MSGU_HOST_SCRATCH_PAD_7			0x70
 
+
 /* bit definition for ODMR register */
 #define ODMR_MASK_ALL			0xFFFFFFFF/* mask all
 					interrupt vector */
-#define ODMR_CLEAR_ALL			0	/* clear all
+#define ODMR_CLEAR_ALL				0/* clear all
 					interrupt vector */
 /* bit definition for ODCR register */
-#define ODCR_CLEAR_ALL			0xFFFFFFFF /* mask all
+#define ODCR_CLEAR_ALL			0xFFFFFFFF   /* mask all
 					interrupt vector*/
 /* MSIX Interupts */
 #define MSIX_TABLE_OFFSET		0x2000
 #define MSIX_TABLE_ELEMENT_SIZE		0x10
 #define MSIX_INTERRUPT_CONTROL_OFFSET	0xC
-#define MSIX_TABLE_BASE			(MSIX_TABLE_OFFSET + \
-					MSIX_INTERRUPT_CONTROL_OFFSET)
+#define MSIX_TABLE_BASE	  (MSIX_TABLE_OFFSET + MSIX_INTERRUPT_CONTROL_OFFSET)
 #define MSIX_INTERRUPT_DISABLE		0x1
 #define MSIX_INTERRUPT_ENABLE		0x0
+
 
 /* state definition for Scratch Pad1 register */
 #define SCRATCH_PAD_RAAE_READY		0x3
@@ -1281,66 +1370,68 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define SCRATCH_PAD_IOP0_READY		0xC00
 #define SCRATCH_PAD_IOP1_READY		0x3000
 
-/* boot loader state */
-#define SCRATCH_PAD1_BOOTSTATE_MASK		0x70	/* Bit 4-6 */
-#define SCRATCH_PAD1_BOOTSTATE_SUCESS		0x0	/* Load successful */
-#define SCRATCH_PAD1_BOOTSTATE_HDA_SEEPROM	0x10	/* HDA SEEPROM */
-#define SCRATCH_PAD1_BOOTSTATE_HDA_BOOTSTRAP	0x20	/* HDA BootStrap Pins */
-#define SCRATCH_PAD1_BOOTSTATE_HDA_SOFTRESET	0x30	/* HDA Soft Reset */
-#define SCRATCH_PAD1_BOOTSTATE_CRIT_ERROR	0x40	/* HDA critical error */
-#define SCRATCH_PAD1_BOOTSTATE_R1		0x50	/* Reserved */
-#define SCRATCH_PAD1_BOOTSTATE_R2		0x60	/* Reserved */
-#define SCRATCH_PAD1_BOOTSTATE_FATAL		0x70	/* Fatal Error */
+/* boot loader state */ 
+#define SCRATCH_PAD1_BOOTSTATE_MASK            0x70   /* Bit 4-6 */
+#define SCRATCH_PAD1_BOOTSTATE_SUCESS          0x0    /* Load successful */
+#define SCRATCH_PAD1_BOOTSTATE_HDA_SEEPROM     0x10   /* HDA Mode SEEPROM Setting */
+#define SCRATCH_PAD1_BOOTSTATE_HDA_BOOTSTRAP   0x20   /* HDA Mode BootStrap Pin Setting */
+#define SCRATCH_PAD1_BOOTSTATE_HDA_SOFTRESET   0x30   /* HDA Mode Soft Reset */
+#define SCRATCH_PAD1_BOOTSTATE_CRIT_ERROR      0x40   /* HDA Mode due to critical error */
+#define SCRATCH_PAD1_BOOTSTATE_R1              0x50   /* Reserved */
+#define SCRATCH_PAD1_BOOTSTATE_R2              0x60   /* Reserved */
+#define SCRATCH_PAD1_BOOTSTATE_FATAL           0x70   /* Fatal Error Boot process halted */
+
 
  /* state definition for Scratch Pad2 register */
-#define SCRATCH_PAD2_POR		0x00	/* power on state */
-#define SCRATCH_PAD2_SFR		0x01	/* soft reset state */
-#define SCRATCH_PAD2_ERR		0x02	/* error state */
-#define SCRATCH_PAD2_RDY		0x03	/* ready state */
-#define SCRATCH_PAD2_FWRDY_RST		0x04	/* FW rdy for soft reset flag */
-#define SCRATCH_PAD2_IOPRDY_RST		0x08	/* IOP ready for soft reset */
+#define SCRATCH_PAD2_POR		0x00  /* power on state */
+#define SCRATCH_PAD2_SFR		0x01  /* soft reset state */
+#define SCRATCH_PAD2_ERR		0x02  /* error state */
+#define SCRATCH_PAD2_RDY		0x03  /* ready state */
+#define SCRATCH_PAD2_FWRDY_RST		0x04  /* FW ready for soft reset flag*/
+#define SCRATCH_PAD2_IOPRDY_RST		0x08  /* IOP ready for soft reset */
 #define SCRATCH_PAD2_STATE_MASK		0xFFFFFFF4 /* ScratchPad 2
  Mask, bit1-0 State */
-#define SCRATCH_PAD2_RESERVED		0x000003FC/* Scratch Pad1
+#define SCRATCH_PAD2_RESERVED		0x000003FC   /* Scratch Pad1
  Reserved bit 2 to 9 */
 
-#define SCRATCH_PAD_ERROR_MASK		0xFFFFFC00 /* Error mask bits */
-#define SCRATCH_PAD_STATE_MASK		0x00000003 /* State Mask bits */
+#define SCRATCH_PAD_ERROR_MASK		0xFFFFFC00   /* Error mask bits */
+#define SCRATCH_PAD_STATE_MASK		0x00000003   /* State Mask bits */
 
 /* main configuration offset - byte offset */
-#define MAIN_SIGNATURE_OFFSET		0x00 /* DWORD 0x00 */
-#define MAIN_INTERFACE_REVISION		0x04 /* DWORD 0x01 */
-#define MAIN_FW_REVISION		0x08 /* DWORD 0x02 */
-#define MAIN_MAX_OUTSTANDING_IO_OFFSET	0x0C /* DWORD 0x03 */
-#define MAIN_MAX_SGL_OFFSET		0x10 /* DWORD 0x04 */
-#define MAIN_CNTRL_CAP_OFFSET		0x14 /* DWORD 0x05 */
-#define MAIN_GST_OFFSET			0x18 /* DWORD 0x06 */
-#define MAIN_IBQ_OFFSET			0x1C /* DWORD 0x07 */
-#define MAIN_OBQ_OFFSET			0x20 /* DWORD 0x08 */
-#define MAIN_IQNPPD_HPPD_OFFSET		0x24 /* DWORD 0x09 */
+#define MAIN_SIGNATURE_OFFSET		0x00/* DWORD 0x00 */
+#define MAIN_INTERFACE_REVISION		0x04/* DWORD 0x01 */
+#define MAIN_FW_REVISION		0x08/* DWORD 0x02 */
+#define MAIN_MAX_OUTSTANDING_IO_OFFSET	0x0C/* DWORD 0x03 */
+#define MAIN_MAX_SGL_OFFSET		0x10/* DWORD 0x04 */
+#define MAIN_CNTRL_CAP_OFFSET		0x14/* DWORD 0x05 */
+#define MAIN_GST_OFFSET			0x18/* DWORD 0x06 */
+#define MAIN_IBQ_OFFSET			0x1C/* DWORD 0x07 */
+#define MAIN_OBQ_OFFSET			0x20/* DWORD 0x08 */
+#define MAIN_IQNPPD_HPPD_OFFSET		0x24/* DWORD 0x09 */
 
 /* 0x28 - 0x4C - RSVD */
-#define MAIN_EVENT_CRC_CHECK		0x48 /* DWORD 0x12 */
-#define MAIN_EVENT_LOG_ADDR_HI		0x50 /* DWORD 0x14 */
-#define MAIN_EVENT_LOG_ADDR_LO		0x54 /* DWORD 0x15 */
-#define MAIN_EVENT_LOG_BUFF_SIZE	0x58 /* DWORD 0x16 */
-#define MAIN_EVENT_LOG_OPTION		0x5C /* DWORD 0x17 */
-#define MAIN_PCS_EVENT_LOG_ADDR_HI	0x60 /* DWORD 0x18 */
-#define MAIN_PCS_EVENT_LOG_ADDR_LO	0x64 /* DWORD 0x19 */
-#define MAIN_PCS_EVENT_LOG_BUFF_SIZE	0x68 /* DWORD 0x1A */
-#define MAIN_PCS_EVENT_LOG_OPTION	0x6C /* DWORD 0x1B */
-#define MAIN_FATAL_ERROR_INTERRUPT	0x70 /* DWORD 0x1C */
-#define MAIN_FATAL_ERROR_RDUMP0_OFFSET	0x74 /* DWORD 0x1D */
-#define MAIN_FATAL_ERROR_RDUMP0_LENGTH	0x78 /* DWORD 0x1E */
-#define MAIN_FATAL_ERROR_RDUMP1_OFFSET	0x7C /* DWORD 0x1F */
-#define MAIN_FATAL_ERROR_RDUMP1_LENGTH	0x80 /* DWORD 0x20 */
-#define MAIN_GPIO_LED_FLAGS_OFFSET	0x84 /* DWORD 0x21 */
-#define MAIN_ANALOG_SETUP_OFFSET	0x88 /* DWORD 0x22 */
+#define MAIN_EVENT_CRC_CHECK		0x48/* DWORD 0x12 */
+#define MAIN_EVENT_LOG_ADDR_HI		0x50/* DWORD 0x14 */
+#define MAIN_EVENT_LOG_ADDR_LO		0x54/* DWORD 0x15 */
+#define MAIN_EVENT_LOG_BUFF_SIZE	0x58/* DWORD 0x16 */
+#define MAIN_EVENT_LOG_OPTION		0x5C/* DWORD 0x17 */
+#define MAIN_PCS_EVENT_LOG_ADDR_HI	0x60/* DWORD 0x18 */
+#define MAIN_PCS_EVENT_LOG_ADDR_LO	0x64/* DWORD 0x19 */
+#define MAIN_PCS_EVENT_LOG_BUFF_SIZE	0x68/* DWORD 0x1A */
+#define MAIN_PCS_EVENT_LOG_OPTION	0x6C/* DWORD 0x1B */
+#define MAIN_FATAL_ERROR_INTERRUPT	0x70/* DWORD 0x1C */
+#define MAIN_FATAL_ERROR_RDUMP0_OFFSET	0x74/* DWORD 0x1D */
+#define MAIN_FATAL_ERROR_RDUMP0_LENGTH	0x78/* DWORD 0x1E */
+#define MAIN_FATAL_ERROR_RDUMP1_OFFSET	0x7C/* DWORD 0x1F */
+#define MAIN_FATAL_ERROR_RDUMP1_LENGTH	0x80/* DWORD 0x20 */
+#define MAIN_GPIO_LED_FLAGS_OFFSET	0x84/* DWORD 0x21 */
+#define MAIN_ANALOG_SETUP_OFFSET	0x88/* DWORD 0x22 */
 
 #define MAIN_INT_VECTOR_TABLE_OFFSET	0x8C /* DWORD 0x23 */
-#define MAIN_SAS_PHY_ATTR_TABLE_OFFSET	0x90 /* DWORD 0x24 */
-#define MAIN_PORT_RECOVERY_TIMER	0x94 /* DWORD 0x25 */
-#define MAIN_INT_REASSERTION_DELAY	0x98 /* DWORD 0x26 */
+#define MAIN_SAS_PHY_ATTR_TABLE_OFFSET  0x90 /* DWORD 0x24 */
+#define MAIN_PORT_RECOVERY_TIMER 	0x94 /* DWORD 0x25 */
+#define MAIN_INT_REASSERTION_DELAY      0x98 /* DWORD 0x26 */
+
 
 /* Gereral Status Table offset - byte offset */
 #define GST_GSTLEN_MPIS_OFFSET		0x00
@@ -1360,6 +1451,7 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define GST_RERRINFO_OFFSET6		0x5c
 #define GST_RERRINFO_OFFSET7		0x60
 
+
 /* General Status Table - MPI state */
 #define GST_MPI_STATE_UNINIT		0x00
 #define GST_MPI_STATE_INIT		0x01
@@ -1370,22 +1462,22 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 /* Per SAS PHY Attributes */
 
 #define PSPA_PHYSTATE0_OFFSET		0x00 /* Dword V */
-#define PSPA_OB_HW_EVENT_PID0_OFFSET	0x04 /* DWORD V+1 */
+#define PSPA_OB_HW_EVENT_PID0_OFFSET	0x04 /* DWORD V+1 */ 
 #define PSPA_PHYSTATE1_OFFSET		0x08 /* Dword V+2 */
-#define PSPA_OB_HW_EVENT_PID1_OFFSET	0x0C /* DWORD V+3 */
+#define PSPA_OB_HW_EVENT_PID1_OFFSET	0x0C /* DWORD V+3 */ 
 #define PSPA_PHYSTATE2_OFFSET		0x10 /* Dword V+4 */
 #define PSPA_OB_HW_EVENT_PID2_OFFSET	0x14 /* DWORD V+5 */
 #define PSPA_PHYSTATE3_OFFSET		0x18 /* Dword V+6 */
 #define PSPA_OB_HW_EVENT_PID3_OFFSET	0x1C /* DWORD V+7 */
 #define PSPA_PHYSTATE4_OFFSET		0x20 /* Dword V+8 */
-#define PSPA_OB_HW_EVENT_PID4_OFFSET	0x24 /* DWORD V+9 */
+#define PSPA_OB_HW_EVENT_PID4_OFFSET	0x24 /* DWORD V+9 */ 
 #define PSPA_PHYSTATE5_OFFSET		0x28 /* Dword V+10 */
 #define PSPA_OB_HW_EVENT_PID5_OFFSET	0x2C /* DWORD V+11 */
 #define PSPA_PHYSTATE6_OFFSET		0x30 /* Dword V+12 */
-#define PSPA_OB_HW_EVENT_PID6_OFFSET	0x34 /* DWORD V+13 */
+#define PSPA_OB_HW_EVENT_PID6_OFFSET	0x34 /* DWORD V+13 */ 
 #define PSPA_PHYSTATE7_OFFSET		0x38 /* Dword V+14 */
-#define PSPA_OB_HW_EVENT_PID7_OFFSET	0x3C /* DWORD V+15 */
-#define PSPA_PHYSTATE8_OFFSET		0x40 /* DWORD V+16 */
+#define PSPA_OB_HW_EVENT_PID7_OFFSET	0x3C /* DWORD V+15 */ 
+#define PSPA_PHYSTATE8_OFFSET		0x40 /* DWORD V+16 */ 
 #define PSPA_OB_HW_EVENT_PID8_OFFSET	0x44 /* DWORD V+17 */
 #define PSPA_PHYSTATE9_OFFSET		0x48 /* DWORD V+18 */
 #define PSPA_OB_HW_EVENT_PID9_OFFSET	0x4C /* DWORD V+19 */
@@ -1401,29 +1493,31 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define PSPA_OB_HW_EVENT_PID14_OFFSET	0x74 /* DWORD V+29 */
 #define PSPA_PHYSTATE15_OFFSET		0x78 /* DWORD V+30 */
 #define PSPA_OB_HW_EVENT_PID15_OFFSET	0x7c /* DWORD V+31 */
-/* end PSPA */
+
+/* end PSPA  */
+
 
 /* inbound queue configuration offset - byte offset */
-#define IB_PROPERITY_OFFSET		0x00
-#define IB_BASE_ADDR_HI_OFFSET		0x04
-#define IB_BASE_ADDR_LO_OFFSET		0x08
-#define IB_CI_BASE_ADDR_HI_OFFSET	0x0C
-#define IB_CI_BASE_ADDR_LO_OFFSET	0x10
-#define IB_PIPCI_BAR			0x14
-#define IB_PIPCI_BAR_OFFSET		0x18
-#define IB_RESERVED_OFFSET		0x1C
+#define IB_PROPERITY_OFFSET            0x00
+#define IB_BASE_ADDR_HI_OFFSET         0x04
+#define IB_BASE_ADDR_LO_OFFSET         0x08
+#define IB_CI_BASE_ADDR_HI_OFFSET      0x0C
+#define IB_CI_BASE_ADDR_LO_OFFSET      0x10
+#define IB_PIPCI_BAR                   0x14
+#define IB_PIPCI_BAR_OFFSET            0x18
+#define IB_RESERVED_OFFSET             0x1C
 
 /* outbound queue configuration offset - byte offset */
-#define OB_PROPERITY_OFFSET		0x00
-#define OB_BASE_ADDR_HI_OFFSET		0x04
-#define OB_BASE_ADDR_LO_OFFSET		0x08
-#define OB_PI_BASE_ADDR_HI_OFFSET	0x0C
-#define OB_PI_BASE_ADDR_LO_OFFSET	0x10
-#define OB_CIPCI_BAR			0x14
-#define OB_CIPCI_BAR_OFFSET		0x18
-#define OB_INTERRUPT_COALES_OFFSET	0x1C
-#define OB_DYNAMIC_COALES_OFFSET	0x20
-#define OB_PROPERTY_INT_ENABLE		0x40000000
+#define OB_PROPERITY_OFFSET            0x00
+#define OB_BASE_ADDR_HI_OFFSET         0x04
+#define OB_BASE_ADDR_LO_OFFSET         0x08
+#define OB_PI_BASE_ADDR_HI_OFFSET      0x0C
+#define OB_PI_BASE_ADDR_LO_OFFSET      0x10
+#define OB_CIPCI_BAR                   0x14
+#define OB_CIPCI_BAR_OFFSET            0x18
+#define OB_INTERRUPT_COALES_OFFSET     0x1C
+#define OB_DYNAMIC_COALES_OFFSET       0x20
+#define OB_PROPERTY_INT_ENABLE         0x40000000
 
 #define MBIC_NMI_ENABLE_VPE0_IOP	0x000418
 #define MBIC_NMI_ENABLE_VPE0_AAP1	0x000418
@@ -1451,30 +1545,30 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define SPC_REG_RESET			0x000000/* reset register */
 
 /* bit definition for SPC_RESET register */
-#define SPC_REG_RESET_OSSP		0x00000001
-#define SPC_REG_RESET_RAAE		0x00000002
-#define SPC_REG_RESET_PCS_SPBC		0x00000004
-#define SPC_REG_RESET_PCS_IOP_SS	0x00000008
-#define SPC_REG_RESET_PCS_AAP1_SS	0x00000010
-#define SPC_REG_RESET_PCS_AAP2_SS	0x00000020
-#define SPC_REG_RESET_PCS_LM		0x00000040
-#define SPC_REG_RESET_PCS		0x00000080
-#define SPC_REG_RESET_GSM		0x00000100
-#define SPC_REG_RESET_DDR2		0x00010000
-#define SPC_REG_RESET_BDMA_CORE		0x00020000
-#define SPC_REG_RESET_BDMA_SXCBI	0x00040000
-#define SPC_REG_RESET_PCIE_AL_SXCBI	0x00080000
-#define SPC_REG_RESET_PCIE_PWR		0x00100000
-#define SPC_REG_RESET_PCIE_SFT		0x00200000
-#define SPC_REG_RESET_PCS_SXCBI		0x00400000
-#define SPC_REG_RESET_LMS_SXCBI		0x00800000
-#define SPC_REG_RESET_PMIC_SXCBI	0x01000000
-#define SPC_REG_RESET_PMIC_CORE		0x02000000
-#define SPC_REG_RESET_PCIE_PC_SXCBI	0x04000000
-#define SPC_REG_RESET_DEVICE		0x80000000
+#define   SPC_REG_RESET_OSSP		0x00000001
+#define   SPC_REG_RESET_RAAE		0x00000002
+#define   SPC_REG_RESET_PCS_SPBC	0x00000004
+#define   SPC_REG_RESET_PCS_IOP_SS	0x00000008
+#define   SPC_REG_RESET_PCS_AAP1_SS	0x00000010
+#define   SPC_REG_RESET_PCS_AAP2_SS	0x00000020
+#define   SPC_REG_RESET_PCS_LM		0x00000040
+#define   SPC_REG_RESET_PCS		0x00000080
+#define   SPC_REG_RESET_GSM		0x00000100
+#define   SPC_REG_RESET_DDR2		0x00010000
+#define   SPC_REG_RESET_BDMA_CORE	0x00020000
+#define   SPC_REG_RESET_BDMA_SXCBI	0x00040000
+#define   SPC_REG_RESET_PCIE_AL_SXCBI	0x00080000
+#define   SPC_REG_RESET_PCIE_PWR	0x00100000
+#define   SPC_REG_RESET_PCIE_SFT	0x00200000
+#define   SPC_REG_RESET_PCS_SXCBI	0x00400000
+#define   SPC_REG_RESET_LMS_SXCBI	0x00800000
+#define   SPC_REG_RESET_PMIC_SXCBI	0x01000000
+#define   SPC_REG_RESET_PMIC_CORE	0x02000000
+#define   SPC_REG_RESET_PCIE_PC_SXCBI	0x04000000
+#define   SPC_REG_RESET_DEVICE		0x80000000
 
 /* registers for BAR Shifting - BAR2(0x18), BAR1(win) */
-#define SPCV_IBW_AXI_TRANSLATION_LOW	0x001010
+#define SPCV_IBW_AXI_TRANSLATION_LOW	0x001010 
 
 #define MBIC_AAP1_ADDR_BASE		0x060000
 #define MBIC_IOP_ADDR_BASE		0x070000
@@ -1501,13 +1595,13 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define MBIC_IOP_ADDR_BASE		0x070000
 #define GSM_ADDR_BASE			0x0700000
 #define SPC_TOP_LEVEL_ADDR_BASE		0x000000
-#define GSM_CONFIG_RESET_VALUE		0x00003b00
-#define GPIO_ADDR_BASE			0x00090000
-#define GPIO_GPIO_0_0UTPUT_CTL_OFFSET	0x0000010c
+#define GSM_CONFIG_RESET_VALUE          0x00003b00
+#define GPIO_ADDR_BASE                  0x00090000
+#define GPIO_GPIO_0_0UTPUT_CTL_OFFSET   0x0000010c
 
 /* RB6 offset */
 #define SPC_RB6_OFFSET			0x80C0
-/* Magic number of soft reset for RB6 */
+/* Magic number of  soft reset for RB6 */
 #define RB6_MAGIC_NUMBER_RST		0x1234
 
 /* Device Register status */
@@ -1520,4 +1614,7 @@ typedef struct SASProtocolTimerConfig SASProtocolTimerConfig_t;
 #define DEVREG_FAILURE_PORT_NOT_VALID_STATE		0x06
 #define DEVREG_FAILURE_DEVICE_TYPE_NOT_VALID		0x07
 
+
+#define MEMBASE_II_SHIFT_REGISTER       0x1010
 #endif
+
