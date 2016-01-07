@@ -108,9 +108,9 @@ enum si_intf_state {
 #define IPMI_BT_INTMASK_ENABLE_IRQ_BIT	1
 
 enum si_type {
-    SI_KCS, SI_SMIC, SI_BT
+    SI_KCS, SI_SMIC, SI_BT, SI_RAW, SI_XGENE_KCS
 };
-static char *si_to_str[] = { "kcs", "smic", "bt" };
+static char *si_to_str[] = { "kcs", "smic", "bt", "raw", "xgene_kcs"};
 
 static char *ipmi_addr_src_to_str[] = { NULL, "hotmod", "hardcoded", "SPMI",
 					"ACPI", "SMBIOS", "PCI",
@@ -316,6 +316,34 @@ static int add_smi(struct smi_info *smi);
 static int try_smi_init(struct smi_info *smi);
 static void cleanup_one_si(struct smi_info *to_clean);
 static void cleanup_ipmi_si(void);
+
+#ifdef CONFIG_XGENE_BMC
+#include <misc/xgene/slimpro/xgene_slimpro_ipmi_kcs.h>
+
+static unsigned char xgene_slimpro_port_inb(struct si_sm_io *io,
+		unsigned int offset)
+{
+	unsigned int addr = io->addr_data;
+	unsigned char data;
+	int ret;
+
+	ret = slimpro_xgene_kcs_rd(addr + (offset * io->regspacing),
+			&data, 1);
+	if (ret)
+		return data;
+	else 
+		return 0;
+}
+
+static void xgene_slimpro_port_outb(struct si_sm_io *io, unsigned int offset,
+		      unsigned char b)
+{
+	unsigned int addr = io->addr_data;
+
+	slimpro_xgene_kcs_wr(addr + (offset * io->regspacing),
+			&b, 1);
+}
+#endif
 
 static ATOMIC_NOTIFIER_HEAD(xaction_notifier_list);
 static int register_xaction_notifier(struct notifier_block *nb)
@@ -1434,6 +1462,10 @@ static void port_cleanup(struct smi_info *info)
 	unsigned int addr = info->io.addr_data;
 	int          idx;
 
+#ifdef CONFIG_XGENE_BMC
+	if (info->si_type == SI_XGENE_KCS)
+		return;
+#endif
 	if (addr) {
 		for (idx = 0; idx < info->io_size; idx++)
 			release_region(addr + idx * info->io.regspacing,
@@ -1451,6 +1483,13 @@ static int port_setup(struct smi_info *info)
 
 	info->io_cleanup = port_cleanup;
 
+#ifdef CONFIG_XGENE_BMC
+	if (info->si_type == SI_XGENE_KCS) {
+		info->io.inputb = xgene_slimpro_port_inb;
+		info->io.outputb = xgene_slimpro_port_outb;
+		return 0;
+	}
+#endif
 	/*
 	 * Figure out the actual inb/inw/inl/etc routine to use based
 	 * upon the register size.
@@ -1642,6 +1681,8 @@ static struct hotmod_vals hotmod_si[] = {
 	{ "kcs",	SI_KCS },
 	{ "smic",	SI_SMIC },
 	{ "bt",		SI_BT },
+	{ "raw",	SI_RAW },
+	{ "xgene_kcs",	SI_XGENE_KCS },
 	{ NULL }
 };
 static struct hotmod_vals hotmod_as[] = {
@@ -1894,12 +1935,18 @@ static int hardcode_find_bmc(void)
 		info->addr_source = SI_HARDCODED;
 		printk(KERN_INFO PFX "probing via hardcoded address\n");
 
-		if (!si_type[i] || strcmp(si_type[i], "kcs") == 0) {
+		if (!si_type[i] ) { 
+			info->si_type = SI_RAW;
+		} else if (strcmp(si_type[i], "kcs") == 0) {
 			info->si_type = SI_KCS;
 		} else if (strcmp(si_type[i], "smic") == 0) {
 			info->si_type = SI_SMIC;
 		} else if (strcmp(si_type[i], "bt") == 0) {
 			info->si_type = SI_BT;
+		} else if (strcmp(si_type[i], "raw") == 0) {
+			info->si_type = SI_RAW;
+		} else if (strcmp(si_type[i], "xgene_kcs") == 0) {
+			info->si_type = SI_XGENE_KCS;
 		} else {
 			printk(KERN_WARNING PFX "Interface type specified "
 			       "for interface %d, was invalid: %s\n",
@@ -2093,6 +2140,12 @@ static int try_init_spmi(struct SPMITable *spmi)
 	case 3:	/* BT */
 		info->si_type = SI_BT;
 		break;
+	case 4:	/* RAW */
+		info->si_type = SI_RAW;
+		break;
+	case 5:	/* XGENE_KCS */
+		info->si_type = SI_XGENE_KCS;
+		break;
 	default:
 		printk(KERN_INFO PFX "Unknown ACPI/SPMI SI type %d\n",
 		       spmi->InterfaceType);
@@ -2208,6 +2261,13 @@ static int ipmi_pnp_probe(struct pnp_dev *dev,
 	case 3:
 		info->si_type = SI_BT;
 		break;
+	case 4:
+		info->si_type = SI_RAW;
+		break;
+	case 5:
+		info->si_type = SI_XGENE_KCS;
+		break;
+
 	default:
 		dev_info(&dev->dev, "unknown IPMI type %lld\n", tmp);
 		goto err_free;
@@ -2386,6 +2446,14 @@ static void try_init_dmi(struct dmi_ipmi_data *ipmi_data)
 	case 0x03: /* BT */
 		info->si_type = SI_BT;
 		break;
+	case 0x04: /* RAW */
+		info->si_type = SI_RAW;
+		break;
+
+	case 0x05: /* XGENE_KCS */
+		info->si_type = SI_XGENE_KCS;
+		break;
+
 	default:
 		kfree(info);
 		return;
@@ -2455,6 +2523,7 @@ static void dmi_find_bmc(void)
 #define PCI_ERMC_CLASSCODE_TYPE_SMIC	0x00
 #define PCI_ERMC_CLASSCODE_TYPE_KCS	0x01
 #define PCI_ERMC_CLASSCODE_TYPE_BT	0x02
+#define PCI_ERMC_CLASSCODE_TYPE_RAW	0x03
 
 #define PCI_HP_VENDOR_ID    0x103C
 #define PCI_MMC_DEVICE_ID   0x121A
@@ -2694,6 +2763,11 @@ static struct of_device_id ipmi_match[] =
 	  .data = (void *)(unsigned long) SI_SMIC },
 	{ .type = "ipmi", .compatible = "ipmi-bt",
 	  .data = (void *)(unsigned long) SI_BT },
+	{ .type = "ipmi", .compatible = "ipmi-raw",
+	  .data = (void *)(unsigned long) SI_RAW },
+	{ .type = "ipmi", .compatible = "ipmi-xgene-kcs",
+	  .data = (void *)(unsigned long) SI_XGENE_KCS },
+
 	{},
 };
 
@@ -3152,6 +3226,8 @@ static struct ipmi_default_vals
 	int port;
 } ipmi_defaults[] =
 {
+	{ .type = SI_RAW, .port = 0x0 },
+	{ .type = SI_XGENE_KCS, .port = 0x4 },
 	{ .type = SI_KCS, .port = 0xca2 },
 	{ .type = SI_SMIC, .port = 0xca9 },
 	{ .type = SI_BT, .port = 0xe4 },
@@ -3269,6 +3345,14 @@ static int try_smi_init(struct smi_info *new_smi)
 
 	case SI_BT:
 		new_smi->handlers = &bt_smi_handlers;
+		break;
+
+	case SI_RAW:
+		new_smi->handlers = &raw_smi_handlers;
+		break;
+
+	case SI_XGENE_KCS:
+		new_smi->handlers = &xgene_kcs_smi_handlers;
 		break;
 
 	default:
@@ -3496,10 +3580,8 @@ static int init_ipmi_si(void)
 
 	printk(KERN_INFO "IPMI System Interface driver.\n");
 
-	/* If the user gave us a device, they presumably want us to use it */
 	if (!hardcode_find_bmc())
 		return 0;
-
 #ifdef CONFIG_PCI
 	if (si_trypci) {
 		rv = pci_register_driver(&ipmi_pci_driver);
@@ -3593,6 +3675,7 @@ static int init_ipmi_si(void)
 		mutex_unlock(&smi_infos_lock);
 		return 0;
 	}
+
 }
 module_init(init_ipmi_si);
 
@@ -3697,5 +3780,5 @@ module_exit(cleanup_ipmi_si);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Corey Minyard <minyard@mvista.com>");
-MODULE_DESCRIPTION("Interface to the IPMI driver for the KCS, SMIC, and BT"
+MODULE_DESCRIPTION("Interface to the IPMI driver for the KCS, SMIC, BT, XGENE_KCS and RAW"
 		   " system interfaces.");

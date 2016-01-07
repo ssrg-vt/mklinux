@@ -136,6 +136,8 @@ struct si_sm_handlers {
 
 /* Current state machines that we can use. */
 extern struct si_sm_handlers kcs_smi_handlers;
+extern struct si_sm_handlers xgene_kcs_smi_handlers;
+extern struct si_sm_handlers raw_smi_handlers;
 extern struct si_sm_handlers smic_smi_handlers;
 extern struct si_sm_handlers bt_smi_handlers;
 

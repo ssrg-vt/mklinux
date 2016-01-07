@@ -460,8 +460,8 @@ static int ipmi_dell_chassis_detect(ipmi_user_t user)
  * Standard chassis support
  */
 
-#define IPMI_NETFN_CHASSIS_REQUEST	0
-#define IPMI_CHASSIS_CONTROL_CMD	0x02
+/*#define IPMI_NETFN_CHASSIS_REQUEST	0*/
+/*#define IPMI_CHASSIS_CONTROL_CMD	0x02*/
 
 static int ipmi_chassis_detect(ipmi_user_t user)
 {
