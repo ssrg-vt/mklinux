@@ -548,7 +548,7 @@ SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 
 	if (!f.file)
 	{
-		printk("%s: W Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		printk("%s: W Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
 		f.file = get_file_struct(fd, current->tgroup_home_id);
 	}
 
@@ -873,7 +873,7 @@ SYSCALL_DEFINE3(writev, unsigned long, fd, const struct iovec __user *, vec,
 
 	if (!f.file)
 	{
-		printk("%s: W Origin PID %d fd %d distro %d\n", current->tgroup_home_id, fd, current->tgroup_distributed);
+		printk("%s: W Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
 		f.file = get_file_struct(fd, current->tgroup_home_id);
 	}
 
