@@ -1754,6 +1754,11 @@ static inline void xhci_unregister_plat(void)
 {  }
 #endif
 
+#if defined(CONFIG_USB_XHCI_HCD_OF)
+int xhci_register_platform_driver(void);
+void xhci_unregister_platform_driver(void);
+#endif
+
 /* xHCI host controller glue */
 typedef void (*xhci_get_quirks_t)(struct device *, struct xhci_hcd *);
 int xhci_handshake(struct xhci_hcd *xhci, void __iomem *ptr,

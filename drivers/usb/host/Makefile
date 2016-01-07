@@ -23,6 +23,11 @@ ifneq ($(CONFIG_USB_XHCI_PLATFORM), )
 	xhci-hcd-y		+= xhci-plat.o
 endif
 
+#Added support for xhci hcd of platform driver
+ifeq ($(CONFIG_USB_XHCI_HCD_OF),y)
+	xhci-hcd-y += xgene_usb.o
+endif
+
 obj-$(CONFIG_USB_WHCI_HCD)	+= whci/
 
 obj-$(CONFIG_PCI)		+= pci-quirks.o

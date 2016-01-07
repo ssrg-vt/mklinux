@@ -28,7 +28,15 @@ if USB_XHCI_HCD
 
 config USB_XHCI_PLATFORM
 	tristate
-
+	
+config USB_XHCI_HCD_OF
+	bool "XHCI support for USB controller on OF platform bus"
+	depends on USB_XHCI_HCD 
+	default y
+	---help---
+	  Enables support for of_platform xHCI controller present on the ARM64
+	  OpenFirmware platform bus.
+  
 endif # USB_XHCI_HCD
 
 config USB_EHCI_HCD

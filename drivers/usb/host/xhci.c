@@ -384,6 +384,10 @@ static int xhci_try_enable_msi(struct usb_hcd *hcd)
 
  legacy_irq:
 	/* fall back to legacy interrupt*/
+	if(pdev->irq == 0) {
+		return 0;
+	}
+
 	ret = request_irq(pdev->irq, &usb_hcd_irq, IRQF_SHARED,
 			hcd->irq_descr, hcd);
 	if (ret) {
@@ -4945,6 +4949,12 @@ static int __init xhci_hcd_init(void)
 {
 	int retval;
 
+#ifdef CONFIG_USB_XHCI_HCD_OF
+	retval = xhci_register_platform_driver();
+	if (retval < 0) {
+		return retval;
+	}
+#endif
 	retval = xhci_register_pci();
 	if (retval < 0) {
 		pr_debug("Problem registering PCI driver.\n");
@@ -4981,6 +4991,9 @@ module_init(xhci_hcd_init);
 
 static void __exit xhci_hcd_cleanup(void)
 {
+#ifdef CONFIG_USB_XHCI_HCD_OF
+	xhci_unregister_platform_driver();
+#endif
 	xhci_unregister_pci();
 	xhci_unregister_plat();
 }

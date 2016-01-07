@@ -2133,6 +2133,9 @@ static int process_ctrl_td(struct xhci_hcd *xhci, struct xhci_td *td,
 		}
 	}
 
+#ifdef CONFIG_PM_RUNTIME
+	mdelay(5);
+#endif
 	return finish_td(xhci, td, event_trb, event, ep, status, false);
 }
 
