@@ -38,9 +38,9 @@ struct xgene_reboot_context {
 	u32 mask;
 };
 
-static struct xgene_reboot_context *xgene_restart_ctx;
+static struct xgene_reboot_context *xgene_restart_ctx = NULL;
 
-static void xgene_restart(char str, const char *cmd)
+static void xgene_restart(enum reboot_mode reboot_mode, const char *cmd)
 {
 	struct xgene_reboot_context *ctx = xgene_restart_ctx;
 	unsigned long timeout;
@@ -59,6 +59,14 @@ static void xgene_restart(char str, const char *cmd)
 static int xgene_reboot_probe(struct platform_device *pdev)
 {
 	struct xgene_reboot_context *ctx;
+	struct resource *res;
+	int rc;
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+        if (!res) {
+                dev_err(&pdev->dev, "no resource address\n");
+		return -ENODEV;
+        }
 
 	ctx = devm_kzalloc(&pdev->dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx) {
@@ -66,21 +74,27 @@ static int xgene_reboot_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	ctx->csr = of_iomap(pdev->dev.of_node, 0);
+	ctx->csr = devm_ioremap_resource(&pdev->dev, res);
 	if (!ctx->csr) {
-		devm_kfree(&pdev->dev, ctx);
-		dev_err(&pdev->dev, "can not map resource\n");
-		return -ENODEV;
+		dev_err(&pdev->dev, "can't map CSR resource\n");
+		rc  = -ENOMEM;
+		goto error;
 	}
 
-	if (of_property_read_u32(pdev->dev.of_node, "mask", &ctx->mask))
-		ctx->mask = 0xFFFFFFFF;
+	ctx->mask = 0x1;
+
+	dev_info(&pdev->dev, "X-Gene register reboot driver\n");
 
 	ctx->pdev = pdev;
 	arm_pm_restart = xgene_restart;
 	xgene_restart_ctx = ctx;
-
 	return 0;
+
+error:
+	if (ctx->csr)
+		devm_iounmap(&pdev->dev, ctx->csr);
+	devm_kfree(&pdev->dev, ctx);
+	return rc;
 }
 
 static struct of_device_id xgene_reboot_of_match[] = {
