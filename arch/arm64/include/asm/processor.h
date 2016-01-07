@@ -195,4 +195,12 @@ extern unsigned long	boot_option_idle_override;
 
 #endif
 
+enum idle_boot_override {
+	IDLE_NO_OVERRIDE = 0,
+	IDLE_HALT,
+	IDLE_NOMWAIT,
+	IDLE_POLL,
+	IDLE_POWERSAVE_OFF
+};
+
 #endif /* __ASM_PROCESSOR_H */
