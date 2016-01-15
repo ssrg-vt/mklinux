@@ -4878,9 +4878,9 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
  * This is a back migration => <task> must already been migrated at least once in <dst_cpu>.
  * It returns -1 in error case.
  */
-//static
-int do_back_migration(struct task_struct* task, int dst_cpu,
-		      struct pt_regs * regs){
+static int do_back_migration(struct task_struct* task, int dst_cpu,
+			     struct pt_regs * regs)
+{
 	unsigned long flags;
 	int ret;
 	back_migration_request_t* request;
