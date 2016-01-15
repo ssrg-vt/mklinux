@@ -4939,12 +4939,14 @@ static int do_back_migration(struct task_struct* task, int dst_cpu,
 
 	unlock_task_sighand(task, &flags);
 
-	ret = pcn_kmsg_send_long(dst_cpu,(struct pcn_kmsg_long_message*) request,sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
-
 #if MIGRATION_PROFILE
 	migration_end = ktime_get();
         printk(KERN_ERR "Time for x86->arm back migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
 #endif
+
+	ret = pcn_kmsg_send_long(dst_cpu,
+				 (struct pcn_kmsg_long_message *)request,
+				 sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
 
 	kfree(request);
 
@@ -5098,15 +5100,14 @@ int do_migration(struct task_struct* task, int dst_cpu,
 	request->tgroup_home_cpu = task->tgroup_home_cpu;
 	request->tgroup_home_id = task->tgroup_home_id;
 
-	//dump_processor_regs(&request->regs);
-	tx_ret = pcn_kmsg_send_long(dst_cpu,
-				    (struct pcn_kmsg_long_message*) request,
-				    sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
-
 #if MIGRATION_PROFILE
 	migration_end = ktime_get();
         printk(KERN_ERR "Time for x86->arm migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
 #endif
+
+	tx_ret = pcn_kmsg_send_long(dst_cpu,
+				    (struct pcn_kmsg_long_message*) request,
+				    sizeof(clone_request_t) - sizeof(struct pcn_kmsg_hdr));
 
 	if (first) {
 		printk(KERN_EMERG"%s: Creating kernel thread\n", __func__);
