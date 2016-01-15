@@ -5132,30 +5132,31 @@ int do_migration(struct task_struct* task, int dst_cpu,
  * It returns PROCESS_SERVER_CLONE_FAIL in case of error,
  * PROCESS_SERVER_CLONE_SUCCESS otherwise.
  */
-int process_server_do_migration(struct task_struct* task, int dst_cpu,
-				struct pt_regs * regs) {
-
+int process_server_do_migration(struct task_struct *task, int dst_cpu,
+				struct pt_regs *regs)
+{
 	int first = 0;
-	int back= 0;
-	int ret= 0;
+	int back = 0;
+	int ret = 0;
 
-	printk("%s : migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
+	printk("%s: migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
 
-	if (task->prev_cpu==dst_cpu){
-		back= 1;
-		ret= do_back_migration(task, dst_cpu, regs);
-		if(ret==-1)
+	if (task->prev_cpu == dst_cpu) {
+		back = 1;
+		ret = do_back_migration(task, dst_cpu, regs);
+		if (ret == -1)
 			return PROCESS_SERVER_CLONE_FAIL;
-	} else{
-		ret= do_migration(task, dst_cpu, regs,&first);
+	} else {
+		ret = do_migration(task, dst_cpu, regs,&first);
 	}
 
 	if (ret != -1) {
 		//printk(KERN_ALERT"%s clone request sent ret{%d} \n", __func__,ret);
 		__set_task_state(task, TASK_UNINTERRUPTIBLE);
 		return PROCESS_SERVER_CLONE_SUCCESS;
-	} else
+	} else {
 		return PROCESS_SERVER_CLONE_FAIL;
+	}
 }
 
 void process_vma_op(struct work_struct* work)
