@@ -250,7 +250,7 @@ int executer_thread(void* arg0)
 		}
 		else
 		{
-			printk("%s: type %d\n", __func__, msg->hdr.type);
+			printk("%s: type %d (%s)\n", __func__, msg->hdr.type, msg_names[msg->hdr.type]);
 			ftn = callbacks[msg->hdr.type];
 			if(ftn != NULL)
 			{
@@ -650,7 +650,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
         msg.msg_iovlen = 1;
         msg.msg_control = NULL;
 
-	printk("__ send msg dest %d type %d\n", dest_cpu, lmsg->hdr.type);
+	printk("__ send msg dest %d type %d (%s)\n", dest_cpu, lmsg->hdr.type, msg_names[lmsg->hdr.type]);
 
 		down_interruptible(&pcn_send_sem);
         oldfs = get_fs();
