@@ -2866,7 +2866,8 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg){
 	//
 	struct task_struct * task = pid_task(find_get_pid(request->prev_pid), PIDTYPE_PID);
 
-	if (task!=NULL && (task->next_pid == request->placeholder_pid) && (task->next_cpu == request->header.from_cpu)
+	if (task != NULL && (task->next_pid == request->placeholder_pid)
+	    && (task->next_cpu == request->header.from_cpu)
 	    && (task->represents_remote == 1)) {
 		// TODO: Handle return values
 		restore_thread_info(task, &request->arch);
@@ -2881,10 +2882,13 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg){
 
 #if MIGRATION_PROFILE
 		migration_end = ktime_get();
+#if defined(CONFIG_ARM64)
+		printk(KERN_ERR "Time for x86->arm back migration - ARM side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+#else
 		printk(KERN_ERR "Time for arm->x86 back migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
 #endif
-
-	} else{
+#endif
+	} else {
 		printk("ERROR: task not found. Impossible to re-run shadow.");
 	}
 	pcn_kmsg_free_msg(request);
