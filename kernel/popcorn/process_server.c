@@ -4424,10 +4424,12 @@ extern int access_error(unsigned long error_code, struct vm_area_struct *vma);
  * 0, remotely fetched;
  */
 int process_server_try_handle_mm_fault(struct task_struct *tsk,
-				       struct mm_struct *mm, struct vm_area_struct *vma,
-				       unsigned long page_faul_address, unsigned long page_fault_flags,
-				       unsigned long error_code) {
-
+				       struct mm_struct *mm,
+				       struct vm_area_struct *vma,
+				       unsigned long page_faul_address,
+				       unsigned long page_fault_flags,
+				       unsigned long error_code)
+{
 	pgd_t* pgd;
 	pud_t* pud;
 	pmd_t* pmd;
@@ -4448,24 +4450,21 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 #if STATISTICS
 	page_fault_mio++;
 #endif
-	PSPRINTK(
-		"Page fault %i address %lu in page %lu task pid %d t_group_cpu %d t_group_id %d \n", page_fault_mio, page_faul_address, address, tsk->pid, tgroup_home_cpu, tgroup_home_id);
-	PSMINPRINTK(
-		"Page fault for address %lu in page %lu task pid %d t_group_cpu %d t_group_id %d \n", page_faul_address, address, tsk->pid, tgroup_home_cpu, tgroup_home_id);
+	PSPRINTK("%s: page fault for address %lx in page %lx task pid %d t_group_cpu %d t_group_id %d \n",
+                 page_faul_address, address, tsk->pid,
+                 tgroup_home_cpu, tgroup_home_id);
 
-	if(page_fault_flags & FAULT_FLAG_WRITE){
+	if (page_fault_flags & FAULT_FLAG_WRITE){
 		PSPRINTK(KERN_ALERT"write\n");
-	}
-	else{
+	} else {
 		PSPRINTK(KERN_ALERT"read\n");
 	}
 
 	if (address == 0) {
-		printk("ERROR: accessing page at address 0 pid %i\n",tsk->pid);
+		printk("ERROR: accessing page at address 0 pid %i\n", tsk->pid);
 		dump_processor_regs(task_pt_regs(tsk));
 		return VM_FAULT_ACCESS_ERROR | VM_FAULT_VMA;
 	}
-
 
 	if (vma && (address < vma->vm_end && address >= vma->vm_start)
 	    && (unlikely(is_vm_hugetlb_page(vma))
