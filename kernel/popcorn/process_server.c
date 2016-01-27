@@ -4451,7 +4451,7 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	page_fault_mio++;
 #endif
 	PSPRINTK("%s: page fault for address %lx in page %lx task pid %d t_group_cpu %d t_group_id %d \n",
-                 page_faul_address, address, tsk->pid,
+                 __func__, page_faul_address, address, tsk->pid,
                  tgroup_home_cpu, tgroup_home_id);
 
 	if (page_fault_flags & FAULT_FLAG_WRITE){
