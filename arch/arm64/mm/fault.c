@@ -287,7 +287,6 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 	}
 
 	//Ajith - Mutikernel code taken from x86
-#if NOT_REPLICATED_VMA_MANAGEMENT
 	//Multikernel
 	if(tsk->tgroup_distributed==1 && tsk->main==0){
 
@@ -296,7 +295,6 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 	}
 	else
 		lock_aquired= 0;
-#endif
 
 	/*
 	 * As per x86, we may deadlock here. However, since the kernel only
@@ -433,11 +431,9 @@ out:
 	up_read(&mm->mmap_sem);
 
 out_distr:
-#if NOT_REPLICATED_VMA_MANAGEMENT
 	if((tsk->tgroup_distributed == 1 && tsk->main==0) && lock_aquired){
 		up_read(&mm->distribute_sem);
 	}
-#endif
 
     /*if(my_pid == tsk->prev_pid)
     {
