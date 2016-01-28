@@ -216,7 +216,6 @@ int get_user_pages_fast(unsigned long start, int nr_pages, int write,
 		start += nr << PAGE_SHIFT;
 		pages += nr;
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
 		int lock_aquired= 0;
 		//Multikernel
 		if(current->tgroup_distributed == 1){
@@ -226,19 +225,16 @@ int get_user_pages_fast(unsigned long start, int nr_pages, int write,
 		}
 		else
 			lock_aquired = 0;
-#endif
 
 		down_read(&mm->mmap_sem);
 		ret = get_user_pages(current, mm, start,
 				     nr_pages - nr, write, 0, pages, NULL);
 		up_read(&mm->mmap_sem);
 
-#if NOT_REPLICATED_VMA_MANAGEMENT
 		if(current->tgroup_distributed==1 && lock_aquired){
 
 			up_read(&mm->distribute_sem);
 		}
-#endif
 
 		/* Have to be a bit careful with return values */
 		if (nr > 0) {
