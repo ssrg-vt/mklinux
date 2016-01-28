@@ -42,7 +42,7 @@ int __init initialize()
 
 #if CONFIG_ARM64
 	my_cpu = 0;
-#elif CONFIG_x86_64
+#elif CONFIG_X86_64
 	my_cpu = 1;
 #else
 	printk(" In msg layer: unkown architecture detected\n");
@@ -112,7 +112,7 @@ inline int pcn_kmsg_get_node_ids(uint16_t *nodes, int len, uint16_t *self){
 
 #if CONFIG_ARM64
 	*self = 0;
-#elif CONFIG_x86_64
+#elif CONFIG_X86_64
 	*self = 1;
 #else
 	printk(" Unkown architecture detected\n");
