@@ -39,7 +39,11 @@
 #define MAX_NUM_CHANNELS 	4
 #define SEND_OFFSET		1
 #define RECV_OFFSET		(MAX_NUM_CHANNELS+SEND_OFFSET)
+#if CONFIG_ARM64
+#define TARGET_NODE		4
+#else
 #define TARGET_NODE		8
+#endif
 #define NO_FLAGS		0
 #define SEG_SIZE		20000
 #define MAX_NUM_BUF		20
