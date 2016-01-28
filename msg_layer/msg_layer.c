@@ -12,8 +12,7 @@
 #include <linux/file.h>
 #include <linux/ktime.h>
 
-//#include <linux/pcn_kmsg.h>
-#include "pcn_kmsg.h"
+#include <linux/pcn_kmsg.h>
 
 #include <linux/fdtable.h>
 

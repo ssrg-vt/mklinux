@@ -11,8 +11,7 @@
 #include <linux/kthread.h>
 #include <linux/semaphore.h>
 #include <linux/file.h>
-//#include <linux/pcn_kmsg.h>
-#include "pcn_kmsg.h"
+#include <linux/pcn_kmsg.h>
 
 #include <linux/fdtable.h>
 
