@@ -17,7 +17,7 @@
 #ifndef PROCESS_SERVER_ARCH_MACROS_H_
 #define PROCESS_SERVER_ARCH_MACROS_H_
 
-typedef struct x86_pt_regs {
+struct x86_pt_regs {
        unsigned long r15;
        unsigned long r14;
        unsigned long r13;
@@ -44,7 +44,7 @@ typedef struct x86_pt_regs {
        unsigned long ss;
 /* top of stack page */
 
- };
+};
 
 /*
  * FPU structure and data
