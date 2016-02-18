@@ -1389,9 +1389,9 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 	answer_request_void++;
 #endif
 
-	PSPRINTK("answer_request_void %i address %lu from cpu %i. This is a void response.\n", answer_request_void, response->address, inc_msg->hdr.from_cpu);
+	PSPRINTK("answer_request_void %i address %lx from cpu %i. This is a void response.\n", answer_request_void, response->address, inc_msg->hdr.from_cpu);
 
-	PSMINPRINTK("answer_request_void address %lu from cpu %i. This is a void response.\n", response->address, inc_msg->hdr.from_cpu);
+	PSMINPRINTK("answer_request_void address %lx from cpu %i. This is a void response.\n", response->address, inc_msg->hdr.from_cpu);
 
 	if (fetched_data == NULL) {
 		PSPRINTK("data not found in local list\n");
@@ -1456,8 +1456,8 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 	answer_request++;
 #endif
 
-	PSPRINTK("Answer_request %i address %lu from cpu %i \n", answer_request, response->address, inc_msg->hdr.from_cpu);
-	PSMINPRINTK("Received answer for address %lu last write %d from cpu %i\n", response->address, response->last_write,inc_msg->hdr.from_cpu);
+	PSPRINTK("Answer_request %i address %lx from cpu %i \n", answer_request, response->address, inc_msg->hdr.from_cpu);
+	PSMINPRINTK("Received answer for address %lx last write %d from cpu %i\n", response->address, response->last_write,inc_msg->hdr.from_cpu);
 
 	if (fetched_data == NULL) {
 		PSPRINTK("data not found in local list\n");
@@ -1471,7 +1471,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 		if (response->header.from_cpu != response->tgroup_home_cpu)
 			printk("ERROR: a kernel that is not the server is sending the mapping\n");
 
-		PSPRINTK("response->vma_pesent %d reresponse->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->fowner %d\n",
+		PSPRINTK("response->vma_pesent %d reresponse->vaddr_start %lx response->vaddr_size %lx response->prot %lx response->vm_flags %lx response->pgoff %lx response->path %s response->fowner %d\n",
 			 response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
 
 		if (fetched_data->vma_present == 0) {
@@ -1535,7 +1535,7 @@ static int handle_ack(struct pcn_kmsg_message* inc_msg)
 	ack++;
 #endif
 	PSPRINTK(
-		"Answer_invalid %i address %lu from cpu %i \n", ack, response->address, inc_msg->hdr.from_cpu);
+		"Answer_invalid %i address %lx from cpu %i \n", ack, response->address, inc_msg->hdr.from_cpu);
 
 	if (fetched_data == NULL) {
 		goto out;
@@ -1582,9 +1582,9 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 	invalid++;
 #endif
 
-	PSPRINTK("Invalid %i address %lu from cpu %i\n", invalid, data->address, from_cpu);
+	PSPRINTK("Invalid %i address %lx from cpu %i\n", invalid, data->address, from_cpu);
 
-	PSMINPRINTK("Invalid for address %lu from cpu %i\n",data->address, from_cpu);
+	PSMINPRINTK("Invalid for address %lx from cpu %i\n",data->address, from_cpu);
 
 	//start= native_read_tsc();
 
@@ -1753,7 +1753,7 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 			//printk("page reading when received invalid\n");
 
 			if(page->status!=REPLICATION_STATUS_INVALID || page->last_write!=(data->last_write-1))
-				printk("Incorrect invalid received while reading address %lu, my status is %d, page last write %lu, invalid for version %lu",
+				printk("Incorrect invalid received while reading address %lx, my status is %d, page last write %lx, invalid for version %lx",
 				       address,page->status,page->last_write,data->last_write);
 
 			delay = (invalid_work_t*) kmalloc(sizeof(invalid_work_t), GFP_ATOMIC);
@@ -1779,14 +1779,14 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 			 */
 			response->writing=1;
 			if(page->owner==1 || page->status==REPLICATION_STATUS_WRITTEN)
-				printk("Incorrect invalid received while writing address %lu, my status is %d, page last write %lu, invalid for version %lu page owner %d",
+				printk("Incorrect invalid received while writing address %lx, my status is %d, page last write %lx, invalid for version %lx page owner %d",
 				       address,page->status,page->last_write,data->last_write,page->owner);
 
 			//printk("received invalid while writing\n");
 		}
 
 		if(page->last_write!= data->last_write)
-			printk("ERROR: received an invalid for copy %lu but my copy is %lu\n",data->last_write,page->last_write);
+			printk("ERROR: received an invalid for copy %lx but my copy is %lx\n",data->last_write,page->last_write);
 
 		page->status = REPLICATION_STATUS_INVALID;
 		page->owner = 0;
@@ -1882,8 +1882,8 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	request_data++;
 #endif
 
-	PSMINPRINTK("Request for address %lu is fetch %i is write %i\n", request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
-	PSPRINTK("Request %i address %lu is fetch %i is write %i\n", request_data, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
+	PSMINPRINTK("Request for address %lx is fetch %i is write %i\n", request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
+	PSPRINTK("Request %i address %lx is fetch %i is write %i\n", request_data, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
 
 	memory = find_memory_entry(request->tgroup_home_cpu,
 				   request->tgroup_home_id);
@@ -1924,7 +1924,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 		vma = NULL;
 		if(_cpu == request->tgroup_home_cpu){
-			printk(KERN_ALERT"%s: vma NULL in xeon address{%lu} \n",__func__,address);
+			printk(KERN_ALERT"%s: vma NULL in xeon address{%lx} \n",__func__,address);
 			up_read(&mm->mmap_sem);
 			goto out;
 		}
@@ -1938,7 +1938,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 		}
 
 		PSPRINTK(
-			"Find vma from %s start %lu end %lu\n", ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"), vma->vm_start, vma->vm_end);
+			"Find vma from %s start %lx end %lx\n", ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"), vma->vm_start, vma->vm_end);
 
 	}
 
@@ -2072,7 +2072,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 				//mark the pte if main
 				if(_cpu==request->tgroup_home_cpu){
 
-					PSPRINTK(KERN_ALERT"%s: marking a pte for address %lu \n",__func__,address);
+					PSPRINTK(KERN_ALERT"%s: marking a pte for address %lx \n",__func__,address);
 
 					entry = pte_set_flags(entry, _PAGE_UNUSED1);
 
@@ -2123,7 +2123,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 			if (!pte_write(entry)) {
 
 			retry_cow:
-				PSPRINTK("COW page at %lu \n", address);
+				PSPRINTK("COW page at %lx \n", address);
 
 				int ret= do_wp_page_for_popcorn(mm, vma,address, pte,pmd,ptl, entry);
 
@@ -2280,7 +2280,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 			else{
 				if(request->is_write){
 					if(page->last_write!= request->last_write)
-						printk("ERROR: received a write for copy %lu but my copy is %lu\n",request->last_write,page->last_write);
+						printk("ERROR: received a write for copy %lx but my copy is %lx\n",request->last_write,page->last_write);
 
 					page->status= REPLICATION_STATUS_INVALID;
 					page->owner= 0;
@@ -2313,7 +2313,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 				if(request->is_write==1){
 
 					if(page->last_write!= (request->last_write+1))
-						printk("ERROR: received a write for copy %lu but my copy is %lu\n",request->last_write,page->last_write);
+						printk("ERROR: received a write for copy %lx but my copy is %lx\n",request->last_write,page->last_write);
 
 					page->status= REPLICATION_STATUS_INVALID;
 					page->owner= 0;
@@ -2331,7 +2331,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 				else{
 
 					if(page->last_write!= (request->last_write+1))
-						printk("ERROR: received an read for copy %lu but my copy is %lu\n",request->last_write,page->last_write);
+						printk("ERROR: received an read for copy %lx but my copy is %lx\n",request->last_write,page->last_write);
 
 					page->status = REPLICATION_STATUS_VALID;
 					page->owner= 1;
@@ -2437,7 +2437,7 @@ resolved:
 			plpath = d_path(&vma->vm_file->f_path, lpath, 512);
 			strcpy(response->path, plpath);
 		}
-		PSPRINTK("response->vma_present %d response->vaddr_start %lu response->vaddr_size %lu response->prot %lu response->vm_flags %lu response->pgoff %lu response->path %s response->futex_owner %d\n",
+		PSPRINTK("response->vma_present %d response->vaddr_start %lx response->vaddr_size %lx response->prot %lx response->vm_flags %lx response->pgoff %lx response->path %s response->futex_owner %d\n",
 			 response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
 	} else {
 		response->vma_present = 0;
@@ -3079,7 +3079,7 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 
 			if (!pte_write(entry)) {
 			retry_cow:
-				PSPRINTK("COW page at %lu \n", address);
+				PSPRINTK("COW page at %lx \n", address);
 
 				int cow_ret= do_wp_page_for_popcorn(mm, vma,address, pte,pmd,ptl, entry);
 
@@ -3189,7 +3189,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	read++;
 #endif
 
-	PSMINPRINTK("Read for address %lu pid %d\n", address,current->pid);
+	PSMINPRINTK("Read for address %lx pid %d\n", address,current->pid);
 
 	page->reading= 1;
 
@@ -3241,7 +3241,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	// Make data entry visible to handler.
 	add_mapping_entry(reading_page);
 
-	PSPRINTK("Sending a read message for address %lu \n ", address);
+	PSPRINTK("Sending a read message for address %lx \n ", address);
 
 	spin_unlock(ptl);
 	up_read(&mm->mmap_sem);
@@ -3303,7 +3303,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		}
 
 		if (reading_page->last_write != (page->last_write+1)) {
-			printk("ERROR: new copy received during a read but my last write is %lu and received last write is %lu\n",
+			printk("ERROR: new copy received during a read but my last write is %lx and received last write is %lx\n",
 			       page->last_write,reading_page->last_write);
 			ret = VM_FAULT_REPLICATION_PROTOCOL;
 			goto exit_reading_page;
@@ -3357,7 +3357,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		//flush_tlb_page(vma, address);
 
 		flush_tlb_fix_spurious_fault(vma, address);
-		PSPRINTK("Out read %i address %lu \n ", read, address);
+		PSPRINTK("Out read %i address %lx \n ", read, address);
 	}
 	else{
 		printk("ERROR: no copy received for a read\n");
@@ -3409,8 +3409,8 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	write++;
 #endif
 
-	PSPRINTK("Write %i address %lu pid %d\n", write, address,current->pid);
-	PSMINPRINTK("Write for address %lu owner %d pid %d\n", address,page->owner==1?1:0,current->pid);
+	PSPRINTK("Write %i address %lx pid %d\n", write, address,current->pid);
+	PSMINPRINTK("Write for address %lx owner %d pid %d\n", address,page->owner==1?1:0,current->pid);
 
 	if(page->owner==1){
 		//in this case I send and invalid message
@@ -3495,7 +3495,7 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			goto exit_invalid;
 		}
 
-		PSPRINTK("Received ack to invalid %i address %lu \n", write, address);
+		PSPRINTK("Received ack to invalid %i address %lx \n", write, address);
 
 	exit_invalid:
 		kfree(invalid_message);
@@ -3557,7 +3557,7 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		add_mapping_entry(writing_page);
 
 		PSPRINTK(
-			"Sending a write message for address %lu \n ", address);
+			"Sending a write message for address %lx \n ", address);
 
 
 		spin_unlock(ptl);
@@ -3628,7 +3628,7 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			if (writing_page->last_write != (page->last_write+1)) {
 				pcn_kmsg_free_msg(writing_page->data);
 				printk(
-					"ERROR: new copy received during a write but my last write is %lu and received last write is %lu\n",page->last_write,writing_page->last_write);
+					"ERROR: new copy received during a write but my last write is %lx and received last write is %lx\n",page->last_write,writing_page->last_write);
 				ret = VM_FAULT_REPLICATION_PROTOCOL;
 				goto exit_writing_page;
 			}
@@ -3701,7 +3701,7 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 	flush_tlb_fix_spurious_fault(vma, address);
 
-	PSPRINTK("Out write %i address %lu last write is %lu \n ", write, address,page->last_write);
+	PSPRINTK("Out write %i address %lx last write is %lx \n ", write, address,page->last_write);
 
 exit:
 	page->writing = 0;
@@ -3874,7 +3874,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 					!= (fetching_page->vaddr_start
 					    + fetching_page->vaddr_size))) {
 					PSPRINTK(
-						"Mapping anonimous vma start %lu end %lu \n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
+						"Mapping anonimous vma start %lx end %lx \n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
 
 					/*Note:
 					 * This mapping is caused because when a thread migrates it does not have any vma
@@ -3906,7 +3906,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						spin_lock(ptl);
 						/*PTE LOCKED*/
 						printk(
-							"ERROR: error mapping anonimous vma while fetching address %lu \n",
+							"ERROR: error mapping anonimous vma while fetching address %lx \n",
 							address);
 						ret = VM_FAULT_VMA;
 						return ret;
@@ -3956,7 +3956,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						    + fetching_page->vaddr_size))) {
 
 						PSPRINTK(
-							"Mapping file vma start %lu end %lu\n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
+							"Mapping file vma start %lx end %lx\n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
 
 						/*Note:
 						 * This mapping is caused because when a thread migrates it does not have any vma
@@ -4002,7 +4002,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 							spin_lock(ptl);
 							/*PTE LOCKED*/
 							printk(
-								"ERROR: error mapping file vma while fetching address %lu \n",
+								"ERROR: error mapping file vma while fetching address %lx \n",
 								address);
 							ret = VM_FAULT_VMA;
 							return ret;
@@ -4061,7 +4061,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	data_request_for_2_kernels_t* fetch_message;
 	int ret= 0,i,reachable,other_cpu=-1;
 
-	PSMINPRINTK("Fetch for address %lu write %i pid %d is local?%d\n", address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),current->pid,pte_none(value_pte));
+	PSMINPRINTK("Fetch for address %lx write %i pid %d is local?%d\n", address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),current->pid,pte_none(value_pte));
 #if STATISTICS
 	fetch++;
 #endif
@@ -4108,7 +4108,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #if STATISTICS
 			local_fetch++;
 #endif
-			PSPRINTK("Copy not present in the other kernel, local fetch %d of address %lu\n", local_fetch, address);
+			PSPRINTK("Copy not present in the other kernel, local fetch %d of address %lx\n", local_fetch, address);
 			ret = VM_CONTINUE_WITH_CHECK;
 			goto exit;
 		}
@@ -4130,7 +4130,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	fetch_message->is_fetch= 1;
 	fetch_message->vma_operation_index= current->mm->vma_operation_index;
 
-	PSPRINTK("Fetch %i address %lu\n", fetch, address);
+	PSPRINTK("Fetch %i address %lx\n", fetch, address);
 
 	spin_unlock(ptl);
 	up_read(&mm->mmap_sem);
@@ -4180,7 +4180,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	spin_lock(ptl);
 	/*PTE LOCKED*/
 
-	PSPRINTK("Out wait fetch %i address %lu \n", fetch, address);
+	PSPRINTK("Out wait fetch %i address %lx \n", fetch, address);
 
 	//only the client has to update the vma
 	if(tgroup_home_cpu!=_cpu) {
@@ -4203,7 +4203,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		if (vma == NULL) {
 			//PSPRINTK
 			dump_stack();
-			printk(KERN_ALERT"%s: ERROR: no vma for address %lu in the system {%d} \n",__func__, address,current->pid);
+			printk(KERN_ALERT"%s: ERROR: no vma for address %lx in the system {%d} \n",__func__, address,current->pid);
 			ret = VM_FAULT_VMA;
 			goto exit_fetch_message;
 		}
@@ -4377,7 +4377,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 		}
 
-		PSPRINTK("End fetching address %lu \n", address);
+		PSPRINTK("End fetching address %lx \n", address);
 		ret= 0;
 		goto exit_fetch_message;
 
@@ -4389,8 +4389,8 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #if STATISTICS
 		local_fetch++;
 #endif
-		PSPRINTK("Copy not present in the other kernel, local fetch %d of address %lu\n", local_fetch, address);
-		PSMINPRINTK("Local fetch for address %lu\n",address);
+		PSPRINTK("Copy not present in the other kernel, local fetch %d of address %lx\n", local_fetch, address);
+		PSMINPRINTK("Local fetch for address %lx\n",address);
 		kfree(fetch_message);
 		ret = VM_CONTINUE_WITH_CHECK;
 		goto exit;
@@ -4611,7 +4611,7 @@ start:
 		 */
 		if (unlikely(
 			    !vma || address >= vma->vm_end || address < vma->vm_start)) {
-			printk("ERROR: no vma for address %lu in the system\n", address);
+			printk("ERROR: no vma for address %lx in the system\n", address);
 			spin_unlock(ptl);
 			return VM_FAULT_VMA;
 		}
@@ -4631,13 +4631,13 @@ start:
 		/* case page NOT REPLICATED
 		 */
 		if (page->replicated == 0) {
-			PSPRINTK("Page not replicated address %lu \n", address);
+			PSPRINTK("Page not replicated address %lx \n", address);
 
 			//check if it a cow page...
 			if ((vma->vm_flags & VM_WRITE) && !pte_write(value_pte)) {
 
 			retry_cow:
-				PSPRINTK("COW page at %lu \n", address);
+				PSPRINTK("COW page at %lx \n", address);
 
 				int cow_ret= do_wp_page_for_popcorn(mm, vma,address, pte,pmd,ptl, value_pte);
 
@@ -4696,7 +4696,7 @@ start:
 		 */
 		if (page->status == REPLICATION_STATUS_VALID) {
 
-			PSPRINTK("Page status valid address %lu \n", address);
+			PSPRINTK("Page status valid address %lx \n", address);
 
 			/*read case
 			 */
@@ -4767,7 +4767,7 @@ start:
 			 * both read and write can be performed on this page.
 			 * */
 			if (page->status == REPLICATION_STATUS_WRITTEN) {
-				PSPRINTK("Page status written address %lu \n", address);
+				PSPRINTK("Page status written address %lx \n", address);
 				spin_unlock(ptl);
 
 				return 0;
@@ -4776,13 +4776,13 @@ start:
 			else {
 
 				if (!(page->status == REPLICATION_STATUS_INVALID)) {
-					printk("ERROR: Page status not correct on address %lu \n",
+					printk("ERROR: Page status not correct on address %lx \n",
 					       address);
 					spin_unlock(ptl);
 					return VM_FAULT_REPLICATION_PROTOCOL;
 				}
 
-				PSPRINTK("Page status invalid address %lu \n", address);
+				PSPRINTK("Page status invalid address %lx \n", address);
 
 				/*If other threads are already reading or writing it wait,
 				 * they will eventually read a valid copy
@@ -5781,7 +5781,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 		return ret;
 	}
 
-	PSVMAPRINTK("%s, Starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lu len %lu end %lu\n",
+	PSVMAPRINTK("%s, Starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lx len %lx end %lx\n",
 		    __func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
 
 
@@ -6341,7 +6341,7 @@ start: current->mm->distr_vma_op_counter++;
 		    || operation == VMA_OP_BRK) {
 			ret = entry->addr;
 			if (entry->addr < 0) {
-				printk("Received error %lu from the server for operation %d\n", ret,operation);
+				printk("Received error %lx from the server for operation %d\n", ret,operation);
 				goto out_dist_lock;
 			}
 		}
