@@ -7087,8 +7087,8 @@ static int __init process_server_init(void) {
 	exit_group_wq = create_workqueue("exit_group_wq");
 	message_request_wq = create_workqueue("request_wq");
 	invalid_message_wq= create_workqueue("invalid_wq");
-	vma_op_wq= create_workqueue("vma_op_wq");
-	vma_lock_wq= create_workqueue("vma_lock_wq");
+	vma_op_wq= create_singlethread_workqueue("vma_op_wq");
+	vma_lock_wq= create_singlethread_workqueue("vma_lock_wq");
 	new_kernel_wq= create_workqueue("new_kernel_wq");
 
 #if STATISTICS
