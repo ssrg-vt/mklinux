@@ -35,7 +35,7 @@
 #include "genif.h"
 
 /* Macro definitions */
-#define MAX_NUM_CHANNELS 	4
+#define MAX_NUM_CHANNELS 	1
 #define SEND_OFFSET		1
 #define RECV_OFFSET		(MAX_NUM_CHANNELS+SEND_OFFSET)
 #if CONFIG_ARM64
