@@ -105,6 +105,8 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	task_pt_regs(task)->user_regs.pstate = PSR_MODE_EL0t;
 	task_pt_regs(task)->user_regs.sp = arch->old_rsp;
 
+	task_pt_regs(task)->regs[29] = arch->bp;
+
 	task->thread.tp_value = arch->thread_fs;
 	//dump_processor_regs(&arch->regs);
 	
