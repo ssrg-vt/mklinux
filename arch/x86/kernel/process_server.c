@@ -75,6 +75,11 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	/* Ajith - check*/
 	task->saved_old_rsp = read_old_rsp();
 
+	/*
+	 * Also save frame pointer, required for stack transformation
+	 */
+	arch->bp = regs->bp;
+
 	arch->old_rsp = read_old_rsp();
 	arch->thread_es = task->thread.es;
 	savesegment(es, es);
