@@ -18,7 +18,7 @@
 #include <linux/sched.h>
 #include <linux/cpu_namespace.h>
 #include <linux/popcorn_cpuinfo.h>
-#include <linux/process_server.h>
+#include <popcorn/process_server.h>
 #include <process_server_arch.h>
 
 #include <asm/pgtable.h>
