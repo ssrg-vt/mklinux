@@ -58,20 +58,16 @@ extern struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_fl
  */
 int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch *arch)
 {
-	unsigned long val = 0;
-
 	arch->migration_pc = task_pt_regs(task)->user_regs.pc;
 	arch->regs.sp = task_pt_regs(task)->user_regs.sp;
 	arch->old_rsp = task_pt_regs(task)->user_regs.sp;
 	arch->thread_fs = task->thread.tp_value;
 
 	/*Ajith - for het migration */
-	if(task->migration_pc != 0){
+	if (task->migration_pc != 0){
 		arch->migration_pc = task->migration_pc;
 		PSPRINTK("IN %s:%d migration PC = %lx\n", __func__, __LINE__, arch->migration_pc);
 	}
-
-	//dump_processor_regs(&arch->regs);
 
 	return 0;
 }
@@ -108,7 +104,6 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	task_pt_regs(task)->regs[29] = arch->bp;
 
 	task->thread.tp_value = arch->thread_fs;
-	//dump_processor_regs(&arch->regs);
 	
 	PSPRINTK("IP value during restore %lx %lx %ld\n", arch->regs.ip, arch->old_rsp, task->thread.tp_value);
 
@@ -190,7 +185,6 @@ struct task_struct* create_thread(int flags)
 	struct task_struct *task = NULL;
 	struct pt_regs regs;
 
-        //printk("%s [+]: flags = 0x%x\n", __func__, flags);
         memset(&regs, 0, sizeof(struct pt_regs));
 
 	current->flags &= ~PF_KTHREAD;
@@ -200,11 +194,10 @@ struct task_struct* create_thread(int flags)
 	if (task != NULL) {
 		//printk("%s [-]: task = 0x%lx\n", __func__, task);
 	} else {
-		printk("%s [-]: do_fork failed, task = 0x%lx, &task = 0x%lx\n", task, &task);
+		printk("%s [-]: do_fork failed, task = 0x%lx, &task = 0x%lx\n", __func__,
+		       (unsigned long)task, (unsigned long)&task);
 	}
-exit:
         return task;
-
 }
 
 #if MIGRATE_FPU
@@ -306,45 +299,46 @@ int update_fpu_info(struct task_struct *task)
  */
 int dump_processor_regs(struct x86_pt_regs *regs)
 {
-        int ret = -1;
-        unsigned long fs, gs;
+	int ret = -1;
+	unsigned long fs, gs;
 
-        if(regs == NULL){
-                printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
-                goto exit;
-        }
-        printk(KERN_ALERT"DUMP REGS\n");
+	if (regs == NULL){
+		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
+		goto exit;
+	}
 
-        if(NULL != regs) {
-                printk(KERN_ALERT"r15{%lx}\n",regs->r15);
-                printk(KERN_ALERT"r14{%lx}\n",regs->r14);
-                printk(KERN_ALERT"r13{%lx}\n",regs->r13);
-                printk(KERN_ALERT"r12{%lx}\n",regs->r12);
-                printk(KERN_ALERT"r11{%lx}\n",regs->r11);
-                printk(KERN_ALERT"r10{%lx}\n",regs->r10);
-                printk(KERN_ALERT"r9{%lx}\n",regs->r9);
-                printk(KERN_ALERT"r8{%lx}\n",regs->r8);
-                printk(KERN_ALERT"bp{%lx}\n",regs->bp);
-                printk(KERN_ALERT"bx{%lx}\n",regs->bx);
-                printk(KERN_ALERT"ax{%lx}\n",regs->ax);
-                printk(KERN_ALERT"cx{%lx}\n",regs->cx);
-                printk(KERN_ALERT"dx{%lx}\n",regs->dx);
-                printk(KERN_ALERT"di{%lx}\n",regs->di);
-                printk(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
-                printk(KERN_ALERT"ip{%lx}\n",regs->ip);
-                printk(KERN_ALERT"cs{%lx}\n",regs->cs);
-                printk(KERN_ALERT"flags{%lx}\n",regs->flags);
-                printk(KERN_ALERT"sp{%lx}\n",regs->sp);
-                printk(KERN_ALERT"ss{%lx}\n",regs->ss);
-        }
-        printk(KERN_ALERT"fs{%lx}\n",fs);
-        printk(KERN_ALERT"gs{%lx}\n",gs);
-        printk(KERN_ALERT"REGS DUMP COMPLETE\n");
-        ret = 0;
+	printk(KERN_ALERT"DUMP REGS 2\n");
+
+	if (NULL != regs) {
+		printk(KERN_ALERT"r15{%lx}\n", regs->r15);
+		printk(KERN_ALERT"r14{%lx}\n", regs->r14);
+		printk(KERN_ALERT"r13{%lx}\n", regs->r13);
+		printk(KERN_ALERT"r12{%lx}\n", regs->r12);
+		printk(KERN_ALERT"r11{%lx}\n", regs->r11);
+		printk(KERN_ALERT"r10{%lx}\n", regs->r10);
+		printk(KERN_ALERT"r9{%lx}\n", regs->r9);
+		printk(KERN_ALERT"r8{%lx}\n", regs->r8);
+		printk(KERN_ALERT"bp{%lx}\n", regs->bp);
+		printk(KERN_ALERT"bx{%lx}\n", regs->bx);
+		printk(KERN_ALERT"ax{%lx}\n", regs->ax);
+		printk(KERN_ALERT"cx{%lx}\n", regs->cx);
+		printk(KERN_ALERT"dx{%lx}\n", regs->dx);
+		printk(KERN_ALERT"di{%lx}\n", regs->di);
+		printk(KERN_ALERT"orig_ax{%lx}\n", regs->orig_ax);
+		printk(KERN_ALERT"ip{%lx}\n", regs->ip);
+		printk(KERN_ALERT"cs{%lx}\n", regs->cs);
+		printk(KERN_ALERT"flags{%lx}\n", regs->flags);
+		printk(KERN_ALERT"sp{%lx}\n", regs->sp);
+		printk(KERN_ALERT"ss{%lx}\n", regs->ss);
+	}
+
+	printk(KERN_ALERT"fs{%lx}\n", fs);
+	printk(KERN_ALERT"gs{%lx}\n", gs);
+	printk(KERN_ALERT"REGS DUMP COMPLETE\n");
+	ret = 0;
 
 exit:
-        return ret;
-
+	return ret;
 }
 
 unsigned long futex_atomic_add(unsigned long ptr, unsigned long val)
