@@ -302,7 +302,6 @@ int update_fpu_info(struct task_struct *task)
 int dump_processor_regs(struct x86_pt_regs *regs)
 {
 	int ret = -1;
-	unsigned long fs, gs;
 
 	if (regs == NULL){
 		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
@@ -334,8 +333,6 @@ int dump_processor_regs(struct x86_pt_regs *regs)
 		printk(KERN_ALERT"ss{%lx}\n", regs->ss);
 	}
 
-	printk(KERN_ALERT"fs{%lx}\n", fs);
-	printk(KERN_ALERT"gs{%lx}\n", gs);
 	printk(KERN_ALERT"REGS DUMP COMPLETE\n");
 	ret = 0;
 
