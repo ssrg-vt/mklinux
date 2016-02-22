@@ -3923,11 +3923,12 @@ asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long 
 			return -ESRCH;
 		}
 
-		if ( (p->cpus_allowed_map &&
-					(p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) )
-			retval= sched_setaffinity_on_popcorn(pid,p, pmask, len, 0);
-		else
-			retval= sched_setaffinity(pid, pmask);
+		if ( (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) ) {
+			printk("%s: ERROR with cpu masks (migration pc 0)\n", __func__);
+			retval = sched_setaffinity_on_popcorn(pid, p, pmask, len, 0);
+		} else {
+			retval = sched_setaffinity(pid, pmask);
+		}
 	}
 	//#ifdef CONFIG_CPU_NAMESPACE
 	if ( !(nr_cpus > nr_cpu_ids))
