@@ -60,15 +60,13 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	unsigned short es, ds;
 	unsigned long fs, gs;
 
-	//printk("%s [+] TID: %d\n", __func__, task->pid);
 	if((task == NULL)  || (arch == NULL)){
-		printk(KERN_ERR"process_server: invalid params to restore_thread_info()");
+		printk(KERN_ERR"%s: invalid params\n", __func__);
 		goto exit;
 	}
 
 	// have a look at: copy_thread() arch/x86/kernel/process_64.c
 	// have a look at: struct thread_struct arch/x86/include/asm/processor.h
-	//printk("size of struct pt_regs id %d \n",sizeof(struct pt_regs));
 	memcpy(&arch->regs, regs, sizeof(struct pt_regs));
 	arch->thread_usersp = task->thread.usersp;
 
@@ -81,18 +79,18 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	arch->bp = regs->bp;
 
 	arch->old_rsp = read_old_rsp();
+
 	arch->thread_es = task->thread.es;
 	savesegment(es, es);
-
 	if ((current == task) && (es != arch->thread_es)) {
 		/* PSPRINTK("%s: es %x thread %x\n", __func__, es, arch->thread_es); */
 	}
+
 	arch->thread_ds = task->thread.ds;
 	savesegment(ds, ds);
 	if (ds != arch->thread_ds) {
 		/* PSPRINTK("%s: ds %x thread %x\n", __func__, ds, arch->thread_ds); */
 	}
-
 
 	arch->thread_fsindex = task->thread.fsindex;
 	savesegment(fs, fsindex);
@@ -100,6 +98,7 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 		/* PSPRINTK("%s: fsindex %x thread %x\n", __func__, fsindex, arch->thread_fsindex); */
 		arch->thread_fsindex = fsindex;
 	}
+
 	arch->thread_gsindex = task->thread.gsindex;
 	savesegment(gs, gsindex);
 	if (gsindex != arch->thread_gsindex) {
@@ -115,10 +114,10 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	}
 
 	printk(KERN_EMERG"%s: %s FS task %lx[%lx] saved %lx[%lx] current %lx[%lx]\n",
-	__func__, task->comm, 
-	(unsigned long)task->thread.fs, (unsigned long)task->thread.fsindex,
-	(unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
-	(unsigned long)fs, (unsigned long)fsindex);
+	      __func__, task->comm,
+	      (unsigned long)task->thread.fs, (unsigned long)task->thread.fsindex,
+	      (unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
+	      (unsigned long)fs, (unsigned long)fsindex);
 
 	arch->thread_gs = task->thread.gs;
 	rdmsrl(MSR_KERNEL_GS_BASE, gs);
@@ -135,7 +134,6 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 
 	ret = 0;
 
-	//printk("%s [-] TID: %d\n", __func__, task->pid);
 exit:
 	return ret;
 }
@@ -165,7 +163,9 @@ exit:
  */
 int restore_thread_info(struct task_struct *task, field_arch *arch)
 {
+	int passed;
 	int ret = -1;
+	unsigned long fsindex, fs_val;
 
 	/* PSPRINTK("%s [+] TID: %d\n", __func__, task->pid); */
 	
@@ -192,11 +192,10 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	task->thread.gsindex = arch->thread_gsindex;
 #endif
 
-    /*Ajith - for het migration */
-    if(arch->migration_pc != 0)
-	{
-    		task_pt_regs(task)->ip=arch->migration_pc;
-		task_pt_regs(task)->sp= task->saved_old_rsp;
+	/* For het migration */
+	if (arch->migration_pc != 0) {
+		task_pt_regs(task)->ip = arch->migration_pc;
+		task_pt_regs(task)->sp = task->saved_old_rsp;
 
 		/* PSPRINTK("IN %s:%d migration values: IP: %lx PC:%lx SP:%lx SP:%lx\n", __func__, __LINE__, task_pt_regs(task)->ip, arch->migration_pc, arch->regs.sp, task_pt_regs(task)->sp); */
 	}
@@ -204,33 +203,24 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	task->thread.fs = arch->thread_fs;
 	task->thread.fsindex = arch->thread_fsindex;
 
-	//dump_processor_regs(task_pt_regs(task));
-int passed = 1;
-if (current == task) {
-	loadsegment(fs, arch->thread_fsindex);
-        wrmsrl(MSR_FS_BASE, arch->thread_fs);
-	passed = 2;
-}
+	passed = 1;
+	if (current == task) {
+		loadsegment(fs, arch->thread_fsindex);
+		wrmsrl(MSR_FS_BASE, arch->thread_fs);
+		passed = 2;
+	}
 
-	unsigned long fsindex = 0x1234, fs_val = 0x11112222;
+	fsindex = 0x1234;
+	fs_val = 0x11112222;
+
 	savesegment(fs, fsindex);
 	rdmsrl(MSR_FS_BASE, fs_val);
-	//printk(KERN_EMERG"%s: task=%s current=%s (%d) FS saved %lx[%lx] curr %lx[%lx] content %lx\n",
 	printk(KERN_EMERG"%s: task=%s current=%s (%d) FS saved %lx[%lx] curr %lx[%lx]\n",
-		__func__, task->comm, current->comm, passed,
-		(unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
-		(unsigned long)fs_val, (unsigned long)fsindex
-);
-//,
-//		fs_val ? *(unsigned long *)fs_val : 0x1234567);
-
-//musl debugging
-//if (fs_val)
-//	* (unsigned long *) fs_val = (unsigned long)arch->thread_fs;
-
+	       __func__, task->comm, current->comm, passed,
+	       (unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
+	       (unsigned long)fs_val, (unsigned long)fsindex);
 	ret = 0;
 
-	/* PSPRINTK("%s [-] TID: %d\n", __func__, task->pid); */
 exit:
 	return ret;
 }
@@ -351,7 +341,6 @@ struct task_struct* create_thread(int flags)
 	struct task_struct *task = NULL;
 	struct pt_regs regs;
 
-	//printk("%s [+]: flags = 0x%x\n", __func__, flags);
 	memset(&regs, 0, sizeof(struct pt_regs));
 
 	current->flags &= ~PF_KTHREAD;
@@ -359,11 +348,12 @@ struct task_struct* create_thread(int flags)
 	current->flags |= PF_KTHREAD;
 
 	if (task != NULL) {
-		//printk("%s [-]: task = 0x%lx\n", __func__, task);
+		/* printk("%s [-]: task = 0x%lx\n", __func__, task); */
 	} else {
-		printk("%s [-]: do_fork failed, task = 0x%lx, &task = 0x%lx\n", task, &task);
+		printk("%s [-]: do_fork failed, task = 0x%lx, &task = 0x%lx\n", __func__,
+		       (unsigned long)task, (unsigned long)&task);
 	}
-exit:
+
 	return task;
 }
 
@@ -552,15 +542,16 @@ exit:
 int dump_processor_regs(struct pt_regs* regs) {
 	int ret = -1;
 	unsigned long fs, gs;
+	unsigned long fsindex, gsindex;
 
-	if(regs == NULL){
+	if (regs == NULL){
 		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
 		goto exit;
 	}
-dump_stack();
+	dump_stack();
 	printk(KERN_ALERT"DUMP REGS %s\n", __func__);
 
-	if(NULL != regs) {
+	if (NULL != regs) {
 		printk(KERN_ALERT"r15{%lx}\n",regs->r15);
 		printk(KERN_ALERT"r14{%lx}\n",regs->r14);
 		printk(KERN_ALERT"r13{%lx}\n",regs->r13);
@@ -587,7 +578,6 @@ dump_stack();
         printk(KERN_ALERT"fs{%lx} - %lx content %lx\n",fs, current->thread.fs, fs ? * (unsigned long*) fs : 0x1234567l);
         printk(KERN_ALERT"gs{%lx} - %lx content %lx\n",gs, current->thread.gs, fs ? * (unsigned long*)gs : 0x1234567l);
 
-	unsigned long fsindex, gsindex;
 	savesegment(fs, fsindex);
 	savesegment(gs, gsindex);
 	printk(KERN_ALERT"fsindex{%lx} - %x\n",fsindex, current->thread.fsindex);
