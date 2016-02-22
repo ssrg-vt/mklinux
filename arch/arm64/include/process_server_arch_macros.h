@@ -94,6 +94,7 @@ union thread_xstate {
 	unsigned char task_fpu_counter;\
 	unsigned char thread_has_fpu;\
 	unsigned long bp;\
+	unsigned long ra;\
 	union thread_xstate fpu_state;
 
 /*

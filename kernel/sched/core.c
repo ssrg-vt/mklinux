@@ -3707,7 +3707,8 @@ out_put_task:
 long sched_setaffinity_on_popcorn(pid_t pid, struct task_struct *p,
 				  const struct cpumask *in_mask,
 				  unsigned int len,
-				  unsigned long migration_pc)
+				  unsigned long migration_pc,
+				  unsigned long return_addr)
 {
 	cpumask_var_t cpus_allowed, new_mask;
 	int retval;
@@ -3758,6 +3759,7 @@ long sched_setaffinity_on_popcorn(pid_t pid, struct task_struct *p,
 
 				/*Ajith - taking migration PC from syscall for het migration */
 				p->migration_pc = migration_pc;
+				p->return_addr = return_addr;
 
 				printk("MIGRATE: PID %d\n", p->pid);
 				ret = process_server_do_migration(p, i, regs);
@@ -3925,7 +3927,8 @@ asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long 
 
 		if ( (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) ) {
 			printk("%s: ERROR with cpu masks (migration pc 0)\n", __func__);
-			retval = sched_setaffinity_on_popcorn(pid, p, pmask, len, 0);
+			retval = sched_setaffinity_on_popcorn(pid,p, pmask,
+							      len, 0, 0);
 		} else {
 			retval = sched_setaffinity(pid, pmask);
 		}
@@ -3948,12 +3951,14 @@ asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long 
  * @len: length in bytes of the bitmask pointed to by user_mask_ptr
  * @user_mask_ptr: user-space pointer to the new cpu mask
  * @migration_pc:  PC to be used after migration on remote side
+ * @return_addr: Return address (Only used in x86 -> arm64)
  *
  * Return: 0 on success. An error code otherwise.
  */
 asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
 					      unsigned long __user *user_mask_ptr,
-					      unsigned long migration_pc)
+					      unsigned long migration_pc,
+					      unsigned long return_addr)
 {
 	cpumask_var_t new_mask;
 	int retval;
@@ -4006,7 +4011,9 @@ asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
 		}
 
 		if ((p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns))) {
-			retval = sched_setaffinity_on_popcorn(pid,p, pmask, len, migration_pc);
+			retval = sched_setaffinity_on_popcorn(pid, p, pmask,
+							      len, migration_pc,
+							      return_addr);
 		} else {
 			retval = sched_setaffinity(pid, pmask);
 		}

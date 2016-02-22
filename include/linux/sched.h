@@ -1448,6 +1448,7 @@ struct task_struct {
 	/*Ajith - for het migration */
 	unsigned long migration_pc;
 	unsigned long saved_old_rsp;
+	unsigned long return_addr;
 
 	remote_file_info_t *fake_file_table[64];
 };

@@ -77,6 +77,7 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	 * Also save frame pointer, required for stack transformation
 	 */
 	arch->bp = regs->bp;
+	arch->ra = task->return_addr;
 
 	arch->old_rsp = read_old_rsp();
 

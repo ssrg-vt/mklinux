@@ -853,7 +853,8 @@ asmlinkage long sys_take_time(int start);
 
 /*Ajith- new syscall for popcorn sched_setaffinity */
 asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
-                                        unsigned long __user *user_mask_ptr,
-					unsigned long migration_pc);
+					      unsigned long __user *user_mask_ptr,
+					      unsigned long migration_pc,
+					      unsigned long return_addr);
 
 #endif

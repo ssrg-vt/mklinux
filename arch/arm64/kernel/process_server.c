@@ -104,6 +104,7 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	task_pt_regs(task)->user_regs.sp = arch->old_rsp;
 
 	task_pt_regs(task)->regs[29] = arch->bp;
+	task_pt_regs(task)->regs[30] = arch->ra;
 
 	task->thread.tp_value = arch->thread_fs;
 	
