@@ -196,6 +196,7 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	if (arch->migration_pc != 0) {
 		task_pt_regs(task)->ip = arch->migration_pc;
 		task_pt_regs(task)->sp = task->saved_old_rsp;
+		task_pt_regs(task)->bp = arch->bp;
 
 		/* PSPRINTK("IN %s:%d migration values: IP: %lx PC:%lx SP:%lx SP:%lx\n", __func__, __LINE__, task_pt_regs(task)->ip, arch->migration_pc, arch->regs.sp, task_pt_regs(task)->sp); */
 	}
