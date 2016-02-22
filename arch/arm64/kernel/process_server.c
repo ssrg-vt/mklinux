@@ -63,6 +63,8 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	arch->old_rsp = task_pt_regs(task)->user_regs.sp;
 	arch->thread_fs = task->thread.tp_value;
 
+	arch->bp = task_pt_regs(task)->regs[29];
+
 	/*Ajith - for het migration */
 	if (task->migration_pc != 0){
 		arch->migration_pc = task->migration_pc;
