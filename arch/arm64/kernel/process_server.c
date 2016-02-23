@@ -300,45 +300,28 @@ int update_fpu_info(struct task_struct *task)
  *	on success, returns 0
  * 	on failure, returns negative integer
  */
-int dump_processor_regs(struct x86_pt_regs *regs)
+int dump_processor_regs(struct pt_regs *regs)
 {
-	int ret = -1;
+	int i;
 
-	if (regs == NULL){
+	if (regs == NULL) {
 		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
-		goto exit;
+		return;
 	}
 
-	printk(KERN_ALERT"DUMP REGS 2\n");
+	dump_stack();
+
+	printk(KERN_ALERT"DUMP REGS %s\n", __func__);
 
 	if (NULL != regs) {
-		printk(KERN_ALERT"r15{%lx}\n", regs->r15);
-		printk(KERN_ALERT"r14{%lx}\n", regs->r14);
-		printk(KERN_ALERT"r13{%lx}\n", regs->r13);
-		printk(KERN_ALERT"r12{%lx}\n", regs->r12);
-		printk(KERN_ALERT"r11{%lx}\n", regs->r11);
-		printk(KERN_ALERT"r10{%lx}\n", regs->r10);
-		printk(KERN_ALERT"r9{%lx}\n", regs->r9);
-		printk(KERN_ALERT"r8{%lx}\n", regs->r8);
-		printk(KERN_ALERT"bp{%lx}\n", regs->bp);
-		printk(KERN_ALERT"bx{%lx}\n", regs->bx);
-		printk(KERN_ALERT"ax{%lx}\n", regs->ax);
-		printk(KERN_ALERT"cx{%lx}\n", regs->cx);
-		printk(KERN_ALERT"dx{%lx}\n", regs->dx);
-		printk(KERN_ALERT"di{%lx}\n", regs->di);
-		printk(KERN_ALERT"orig_ax{%lx}\n", regs->orig_ax);
-		printk(KERN_ALERT"ip{%lx}\n", regs->ip);
-		printk(KERN_ALERT"cs{%lx}\n", regs->cs);
-		printk(KERN_ALERT"flags{%lx}\n", regs->flags);
-		printk(KERN_ALERT"sp{%lx}\n", regs->sp);
-		printk(KERN_ALERT"ss{%lx}\n", regs->ss);
+		printk(KERN_ALERT"sp: 0x%lx\n", regs->sp);
+		printk(KERN_ALERT"pc: 0x%lx\n", regs->pc);
+		printk(KERN_ALERT"pstate: 0x%lx\n", regs->pstate);
+
+		for (i = 0; i < 31; i++) {
+			printk(KERN_ALERT"regs[%d]: 0x%lx\n", i, regs->regs[i]);
+		}
 	}
-
-	printk(KERN_ALERT"REGS DUMP COMPLETE\n");
-	ret = 0;
-
-exit:
-	return ret;
 }
 
 unsigned long futex_atomic_add(unsigned long ptr, unsigned long val)

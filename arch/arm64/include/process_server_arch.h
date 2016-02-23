@@ -25,7 +25,7 @@ extern int restore_thread_info(struct task_struct *task, field_arch *arch);
 extern int update_thread_info(struct task_struct *task);
 extern int initialize_thread_retval(struct task_struct *task, int val);
 extern struct task_struct* create_thread(int flags);
-extern int dump_processor_regs(struct x86_pt_regs* regs);
+extern int dump_processor_regs(struct pt_regs* regs);
 
 /* FPU related functions */
 #if MIGRATE_FPU
