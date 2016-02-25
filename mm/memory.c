@@ -1885,14 +1885,11 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 				if (foll_flags & FOLL_NOWAIT)
 					fault_flags |= (FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_RETRY_NOWAIT);
 
-				if(current->tgroup_distributed==1)
-					ret= process_server_try_handle_mm_fault(current,
-							mm, vma,
-							start, fault_flags,
-							0);
-				else
-					ret = handle_mm_fault(mm, vma, start,
-							fault_flags);
+				if (current->tgroup_distributed == 1) {
+					ret = process_server_try_handle_mm_fault(current, mm, vma, start, fault_flags, 0);
+				} else {
+					ret = handle_mm_fault(mm, vma, start, fault_flags);
+				}
 
 				if (ret & VM_FAULT_ERROR) {
 					if (ret & VM_FAULT_OOM)
