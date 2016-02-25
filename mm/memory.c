@@ -2006,14 +2006,12 @@ int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
 
 	vma = find_extend_vma(mm, address);
 
-        if(tsk->tgroup_distributed==1){
+        if (tsk->tgroup_distributed == 1) {
 
                 if (!vma || address < vma->vm_start)
-                        vma=NULL;
-                ret= process_server_try_handle_mm_fault(tsk,
-                                mm, vma,
-                                address, fault_flags,
-                                0);
+                        vma = NULL;
+
+                ret = process_server_try_handle_mm_fault(tsk, mm, vma, address, fault_flags, 0);
 
                 if (ret & VM_FAULT_ERROR) {
                         if (ret & VM_FAULT_OOM)
@@ -2025,9 +2023,10 @@ int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
                         BUG();
                 }
 
-        }else{
-	if (!vma || address < vma->vm_start)
-		return -EFAULT;
+        } else {
+		if (!vma || address < vma->vm_start)
+			return -EFAULT;
+	}
 
 	ret = handle_mm_fault(mm, vma, address, fault_flags);
 	if (ret & VM_FAULT_ERROR) {
