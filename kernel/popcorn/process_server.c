@@ -443,7 +443,8 @@ static int add_memory_entry_with_check(memory_t* entry) {
 	return 0;
 }
 
-static memory_t* find_memory_entry(int cpu, int id) {
+static memory_t* find_memory_entry(int cpu, int id)
+{
 	memory_t* curr = NULL;
 	memory_t* ret = NULL;
 	unsigned long flags;
@@ -462,7 +463,8 @@ static memory_t* find_memory_entry(int cpu, int id) {
 	return ret;
 }
 
-static struct mm_struct* find_dead_mapping(int cpu, int id) {
+static struct mm_struct* find_dead_mapping(int cpu, int id)
+{
 	memory_t* curr = NULL;
 	struct mm_struct* ret = NULL;
 	unsigned long flags;
@@ -731,7 +733,8 @@ extern struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_fl
 							  int __user *parent_tidptr,
 							  int __user *child_tidptr);
 
-int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t* mm_data) {
+static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t* mm_data)
+{
 
 	count_answers_t* data;
 	remote_thread_count_request_t* request;
@@ -1519,6 +1522,8 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 		pcn_kmsg_free_msg(inc_msg);
 
 	//trace_printk("e\n");
+
+	return 1;
 }
 
 static int handle_ack(struct pcn_kmsg_message* inc_msg)
@@ -6824,7 +6829,8 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 
 }
 
-static int clone_remote_thread(clone_request_t* clone,int inc) {
+static int clone_remote_thread(clone_request_t* clone,int inc)
+{
 	struct file* f;
 	memory_t* memory = NULL;
 	unsigned long flags;
@@ -6935,7 +6941,8 @@ retry: memory = find_memory_entry(clone->tgroup_home_cpu,
 	}
 }
 
-void try_create_remote_thread(struct work_struct* work) {
+void try_create_remote_thread(struct work_struct* work)
+{
 	clone_work_t* clone_work = (clone_work_t*) work;
 	clone_request_t* clone = clone_work->request;
 	int ret;
@@ -6956,7 +6963,8 @@ void try_create_remote_thread(struct work_struct* work) {
 	kfree(work);
 }
 
-static int handle_clone_request(struct pcn_kmsg_message* inc_msg) {
+static int handle_clone_request(struct pcn_kmsg_message* inc_msg)
+{
 	clone_request_t* clone = (clone_request_t*) inc_msg;
 	int ret;
 
