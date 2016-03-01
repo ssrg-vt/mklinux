@@ -25,6 +25,8 @@ VERSION {
 		__vdso_getcpu;
 		time;
 		__vdso_time;
+		popcorn_migrate;
+		__vdso_popcorn_migrate;
 	local: *;
 	};
 }

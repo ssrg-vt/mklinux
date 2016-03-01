@@ -13,7 +13,7 @@ vdso-install-$(VDSO32-y)	+= $(vdso32-images)
 
 
 # files to link into the vdso
-vobjs-y := vdso-note.o vclock_gettime.o vgetcpu.o
+vobjs-y := vdso-note.o vclock_gettime.o vgetcpu.o vpopcorn.o
 
 vobjs-$(VDSOX32-y) += $(vobjx32s-compat)
 
@@ -62,6 +62,7 @@ $(vobjs): KBUILD_CFLAGS += $(CFL)
 CFLAGS_REMOVE_vdso-note.o = -pg
 CFLAGS_REMOVE_vclock_gettime.o = -pg
 CFLAGS_REMOVE_vgetcpu.o = -pg
+CFLAGS_REMOVE_vpopcorn.o = -pg
 CFLAGS_REMOVE_vvar.o = -pg
 
 targets += vdso-syms.lds
