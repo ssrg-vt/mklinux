@@ -6513,45 +6513,6 @@ void sleep_shadow() {
 
 }
 
-//Ajith - to crosscheck
-
-int new_init_regs(struct pt_regs* regs) {
-	int ret = -1;
-
-	if(regs == NULL){
-		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
-		goto exit;
-	}
-	printk(KERN_ALERT"DUMP REGS\n");
-
-	if(NULL != regs) {
-		regs->r15 = 0;
-		regs->r14 = 0x404490;//0x403900;
-		regs->r13 = 0x404520;//0x403990;
-		regs->r12 = 0;
-		regs->r11 = 0x202;
-		regs->r10 = 0x402db0;
-		regs->r9 = 0;
-		regs->r8 = 0;
-		regs->bp = 0x7f06b6e0a0;
-		regs->sp = 0x7f06b6e0a0;
-		regs->bx = 0xffffffff8178bf32;
-		regs->ax = 0x13b;
-		regs->cx = 0x4d0800;
-		regs->dx = 0x7f06b6dfe0;
-		regs->di = 0;
-		regs->orig_ax = 0x13b;
-		regs->cs = 0x33;
-		regs->flags = 0x202;
-		regs->ss = 0x2b;
-	}
-	printk(KERN_ALERT"REGS INIT COMPLETE\n");
-	ret = 0;
-
-exit:
-	return ret;
-}
-
 int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 					       thread_pull_t* my_thread_pull) {
 	shadow_thread_t* my_shadow;
