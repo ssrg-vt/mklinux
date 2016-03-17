@@ -427,6 +427,9 @@ asmlinkage long sys_mprotect(unsigned long start, size_t len,
 				unsigned long prot);
 asmlinkage int  kernel_mprotect(unsigned long start, size_t len,
 				unsigned long prot);
+asmlinkage long kernel_mremap(unsigned long addr,
+			   unsigned long old_len, unsigned long new_len,
+			   unsigned long flags, unsigned long new_addr);
 asmlinkage long sys_mremap(unsigned long addr,
 			   unsigned long old_len, unsigned long new_len,
 			   unsigned long flags, unsigned long new_addr);

@@ -614,3 +614,147 @@ out:
 		mm_populate(new_addr + old_len, new_len - old_len);
 	return ret;
 }
+
+long kernel_mremap(unsigned long addr, unsigned long old_len,
+		unsigned long new_len, unsigned long flags,
+		unsigned long new_addr)
+{
+	struct mm_struct *mm = current->mm;
+	struct vm_area_struct *vma;
+	unsigned long ret = -EINVAL;
+	long distr_ret = -EINVAL;
+	unsigned long charged = 0;
+	bool locked = false;
+	int distributed= 0;
+
+	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
+		return ret;
+
+	if (flags & MREMAP_FIXED && !(flags & MREMAP_MAYMOVE))
+		return ret;
+
+	if (addr & ~PAGE_MASK)
+		return ret;
+
+	old_len = PAGE_ALIGN(old_len);
+	new_len = PAGE_ALIGN(new_len);
+
+	/*
+	 * We allow a zero old-len as a special case
+	 * for DOS-emu "duplicate shm area" thing. But
+	 * a zero new-len is nonsensical.
+	 */
+	if (!new_len)
+		return ret;
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
+		distributed =1;
+		printk("WARNING: remap called\n");
+		distr_ret= process_server_do_mremap_start(addr,
+				old_len,  new_len,
+				flags, new_addr);
+
+		if(distr_ret<0 && distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE)
+			return distr_ret;
+
+		/* Only the server can have as output VMA_OP_SAVE and VMA_OP_NOT_SAVE.
+		 * the only output of server are VMA_OP_SAVE and VMA_OP_NOT_SAVE.
+		 * the client should always overwrite new_addr, the server never.
+		 * */
+		if(distr_ret!=VMA_OP_SAVE && distr_ret!=VMA_OP_NOT_SAVE){
+			new_addr= ret;
+			flags|= MREMAP_FIXED;
+		}
+
+	}
+
+	if (flags & MREMAP_FIXED) {
+		ret = mremap_to(addr, old_len, new_addr, new_len,
+				&locked);
+		goto out;
+	}
+
+	/*
+	 * Always allow a shrinking remap: that just unmaps
+	 * the unnecessary pages..
+	 * do_munmap does all the needed commit accounting
+	 */
+	if (old_len >= new_len) {
+		ret = do_munmap(mm, addr+new_len, old_len - new_len);
+		if (ret && old_len != new_len)
+			goto out;
+		ret = addr;
+		goto out;
+	}
+
+	/*
+	 * Ok, we need to grow..
+	 */
+	vma = vma_to_resize(addr, old_len, new_len, &charged);
+	if (IS_ERR(vma)) {
+		ret = PTR_ERR(vma);
+		goto out;
+	}
+
+	/* old_len exactly to the end of the area..
+	 */
+	if (old_len == vma->vm_end - addr) {
+		/* can we just expand the current mapping? */
+		if (vma_expandable(vma, new_len - old_len)) {
+			int pages = (new_len - old_len) >> PAGE_SHIFT;
+
+			if (vma_adjust(vma, vma->vm_start, addr + new_len,
+						vma->vm_pgoff, NULL)) {
+				ret = -ENOMEM;
+				goto out;
+			}
+
+			vm_stat_account(mm, vma->vm_flags, vma->vm_file, pages);
+			if (vma->vm_flags & VM_LOCKED) {
+				mm->locked_vm += pages;
+				locked = true;
+				new_addr = addr;
+			}
+			ret = addr;
+			goto out;
+		}
+	}
+
+	/*
+	 * We weren't able to just expand or shrink the area,
+	 * we need to create a new one and move it..
+	 */
+	ret = -ENOMEM;
+	if (flags & MREMAP_MAYMOVE) {
+		unsigned long map_flags = 0;
+		if (vma->vm_flags & VM_MAYSHARE)
+			map_flags |= MAP_SHARED;
+
+		new_addr = get_unmapped_area(vma->vm_file, 0, new_len,
+				vma->vm_pgoff +
+				((addr - vma->vm_start) >> PAGE_SHIFT),
+				map_flags);
+		if (new_addr & ~PAGE_MASK) {
+			ret = new_addr;
+			goto out;
+		}
+
+		ret = move_vma(vma, addr, old_len, new_len, new_addr, &locked);
+	}
+out:
+	if (ret & ~PAGE_MASK)
+		vm_unacct_memory(charged);
+
+	//Multikernel
+	if(current->tgroup_distributed==1 && distributed == 1){
+		process_server_do_mremap_end( addr,
+				old_len,new_len,
+				flags,  new_addr, distr_ret);
+
+	}
+
+	if (locked && new_len > old_len)
+		mm_populate(new_addr + old_len, new_len - old_len);
+	return ret;
+}

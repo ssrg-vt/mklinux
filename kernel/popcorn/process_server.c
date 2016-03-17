@@ -1257,8 +1257,7 @@ static void main_for_distributed_kernel_thread(memory_t* mm_data, thread_pull_t 
 				down_write(&mm_data->mm->mmap_sem);
 				if (current->tgroup_home_cpu != _cpu)
 					mm_data->mm->distribute_unmap = 0;
-				ret = mremap_to(mm_data->addr, mm_data->len, mm_data->new_addr, mm_data->new_len,
-						&vma_locked);
+				ret = kernel_mremap(mm_data->addr, mm_data->len, mm_data->new_len, 0, mm_data->new_addr);
 				if (current->tgroup_home_cpu != _cpu)
 					mm_data->mm->distribute_unmap = 1;
 				up_write(&mm_data->mm->mmap_sem);
