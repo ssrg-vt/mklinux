@@ -55,88 +55,76 @@ extern struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_fl
  */
 int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch *arch)
 {
-	int ret = -1;
 	unsigned short fsindex, gsindex;
 	unsigned short es, ds;
 	unsigned long fs, gs;
 
-	if((task == NULL)  || (arch == NULL)){
+	if ((task == NULL)  || (arch == NULL)) {
 		printk(KERN_ERR"%s: invalid params\n", __func__);
 		goto exit;
 	}
 
-	// have a look at: copy_thread() arch/x86/kernel/process_64.c
-	// have a look at: struct thread_struct arch/x86/include/asm/processor.h
-	memcpy(&arch->regs, regs, sizeof(struct pt_regs));
-	arch->thread_usersp = task->thread.usersp;
+	if (task->migration_pc == 0){
+		printk(KERN_ERR"%s: migration_pc == 0\n", __func__);
+                goto exit;
+        }
 
-	/* Ajith - check*/
+	arch->migration_pc = task->migration_pc;
+
+	memcpy(&arch->regs, regs, sizeof(struct pt_regs));
+
+	arch->thread_usersp = task->thread.usersp;
 	task->saved_old_rsp = read_old_rsp();
+	arch->old_rsp = read_old_rsp();
 
 	/*
-	 * Also save frame pointer, required for stack transformation
+	 * Also save frame pointer and return address, required for stack
+         * transformation.
 	 */
 	arch->bp = regs->bp;
 	arch->ra = task->return_addr;
 
-	arch->old_rsp = read_old_rsp();
+        /* Segments */
 
 	arch->thread_es = task->thread.es;
 	savesegment(es, es);
-	if ((current == task) && (es != arch->thread_es)) {
-		/* PSPRINTK("%s: es %x thread %x\n", __func__, es, arch->thread_es); */
-	}
 
 	arch->thread_ds = task->thread.ds;
 	savesegment(ds, ds);
-	if (ds != arch->thread_ds) {
-		/* PSPRINTK("%s: ds %x thread %x\n", __func__, ds, arch->thread_ds); */
-	}
 
 	arch->thread_fsindex = task->thread.fsindex;
 	savesegment(fs, fsindex);
 	if (fsindex != arch->thread_fsindex) {
-		/* PSPRINTK("%s: fsindex %x thread %x\n", __func__, fsindex, arch->thread_fsindex); */
 		arch->thread_fsindex = fsindex;
 	}
 
 	arch->thread_gsindex = task->thread.gsindex;
 	savesegment(gs, gsindex);
 	if (gsindex != arch->thread_gsindex) {
-		/* PSPRINTK("%s: gsindex %x thread %x\n", __func__, gsindex, arch->thread_gsindex); */
 		arch->thread_gsindex = gsindex;
 	}
 
 	arch->thread_fs = task->thread.fs;
 	rdmsrl(MSR_FS_BASE, fs);
 	if (fs != arch->thread_fs) {
-		/* PSPRINTK("%s: fs %lx thread %lx\n", __func__, fs, arch->thread_fs); */
 		arch->thread_fs = fs;
 	}
-
-	printk(KERN_EMERG"%s: %s FS task %lx[%lx] saved %lx[%lx] current %lx[%lx]\n",
-	      __func__, task->comm,
-	      (unsigned long)task->thread.fs, (unsigned long)task->thread.fsindex,
-	      (unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
-	      (unsigned long)fs, (unsigned long)fsindex);
 
 	arch->thread_gs = task->thread.gs;
 	rdmsrl(MSR_KERNEL_GS_BASE, gs);
 	if (gs != arch->thread_gs) {
-		/* PSPRINTK("%s: gs %lx thread %lx\n", __func__, gs, arch->thread_gs); */
 		arch->thread_gs = gs;
 	}
 
-	/*Ajith - for het migration */
-	if(task->migration_pc != 0){
-		arch->migration_pc = task->migration_pc;
-		/* PSPRINTK("IN %s:%d migration PC = %lx %lx\n", __func__, __LINE__, arch->migration_pc, read_old_rsp()); */
-	}
+	printk("%s: pc %lx sp %lx bp %lx ra %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp, arch->ra);
 
-	ret = 0;
+	printk("%s: fs task %lx[%lx] saved %lx[%lx] current %lx[%lx]\n", __func__,
+	      (unsigned long)task->thread.fs, (unsigned long)task->thread.fsindex,
+	      (unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
+	      (unsigned long)fs, (unsigned long)fsindex);
 
 exit:
-	return ret;
+	return 0;
 }
 
 /*
@@ -165,41 +153,28 @@ exit:
 int restore_thread_info(struct task_struct *task, field_arch *arch)
 {
 	int passed;
-	int ret = -1;
 	unsigned long fsindex, fs_val;
 
-	/* PSPRINTK("%s [+] TID: %d\n", __func__, task->pid); */
-	
 	if((task == NULL)  || (arch == NULL)){
 		printk(KERN_ERR"process_server: invalid params to restore_thread_info()");
 		goto exit;
 	}
 
-#if 0
-	task->thread.usersp = arch->old_rsp;
-	
-	memcpy(task_pt_regs(task), &arch->regs, sizeof(struct pt_regs));
-
-	dump_processor_regs(&arch->regs);
-	//__show_regs(&arch->regs, 1);
-
-	//task_pt_regs(task)->sp = arch->old_rsp; // ?
-
-	task->thread.es = arch->thread_es;
-	task->thread.ds = arch->thread_ds;
-	task->thread.fsindex = arch->thread_fsindex;
-	task->thread.fs = arch->thread_fs;
-	task->thread.gs = arch->thread_gs;
-	task->thread.gsindex = arch->thread_gsindex;
-#endif
-
 	/* For het migration */
 	if (arch->migration_pc != 0) {
 		task_pt_regs(task)->ip = arch->migration_pc;
-		task_pt_regs(task)->sp = task->saved_old_rsp;
 		task_pt_regs(task)->bp = arch->bp;
 
-		/* PSPRINTK("IN %s:%d migration values: IP: %lx PC:%lx SP:%lx SP:%lx\n", __func__, __LINE__, task_pt_regs(task)->ip, arch->migration_pc, arch->regs.sp, task_pt_regs(task)->sp); */
+		/* task_pt_regs(task)->sp = task->saved_old_rsp; */
+		task_pt_regs(task)->sp = arch->old_rsp;
+		task->thread.usersp = arch->old_rsp;
+
+		/* task_pt_regs(task)->cs = __KERNEL_CS | get_kernel_rpl(); */
+		//task_pt_regs(task)->cs = __USER_CS;
+		//task_pt_regs(task)->ds = __USER_DS;
+		//task_pt_regs(task)->es = __USER_ES;
+
+                //printk("%s cs %lx KERNEL_CS %lx\n", __func__, task_pt_regs(task)->cs, __KERNEL_CS);
 	}
 
 	task->thread.fs = arch->thread_fs;
@@ -217,14 +192,16 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 
 	savesegment(fs, fsindex);
 	rdmsrl(MSR_FS_BASE, fs_val);
+
+        printk("%s: ip %lx sp %lx bp %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp);
+
 	printk(KERN_EMERG"%s: task=%s current=%s (%d) FS saved %lx[%lx] curr %lx[%lx]\n",
 	       __func__, task->comm, current->comm, passed,
 	       (unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
 	       (unsigned long)fs_val, (unsigned long)fsindex);
-	ret = 0;
 
 exit:
-	return ret;
+	return 0;
 }
 
 /*
