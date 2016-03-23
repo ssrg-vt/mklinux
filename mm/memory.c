@@ -1160,11 +1160,19 @@ again:
 		//Multikernel
 		else{
 
+#if defined(CONFIG_X86_64)
+			if(pte_none(pte_clear_flags(ptent, _PAGE_UNUSED1))){
+				ptent= pte_clear_flags(ptent, _PAGE_UNUSED1);
+				set_pte_at_notify(mm, addr, pte, ptent);
+				continue;
+			}
+#elif defined(CONFIG_ARM64)
 			if(pte_none(ptent)){
 				//ptent= pte_clear_flags(ptent, _PAGE_UNUSED1);
 				set_pte_at_notify(mm, addr, pte, ptent);
 				continue;
 			}
+#endif
 
 			page= pte_page(ptent);
 
