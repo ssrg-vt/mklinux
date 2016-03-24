@@ -300,3 +300,8 @@ void update_vsyscall_tz(void)
 	vdso_data->tz_minuteswest	= sys_tz.tz_minuteswest;
 	vdso_data->tz_dsttime		= sys_tz.tz_dsttime;
 }
+
+void update_popcorn_migrate(int migrate)
+{
+	vdso_data->popcorn_migrate = migrate;
+}

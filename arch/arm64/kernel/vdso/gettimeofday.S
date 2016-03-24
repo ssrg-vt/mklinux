@@ -203,7 +203,13 @@ ENDPROC(__kernel_clock_getres)
 /* void __kernel_popcorn_migrate(void); */
 ENTRY(__kernel_popcorn_migrate)
 	.cfi_startproc
+
+	adr	vdso_data, _vdso_data
+	ldp     w11, w12, [vdso_data, #VDSO_POPCORN_MIGRATE]
+
+	mov	w0, w11
 	ret
+
 	.cfi_endproc
 ENDPROC(__kernel_popcorn_migrate)
 
