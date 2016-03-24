@@ -11,7 +11,7 @@
 notrace long
 __vdso_popcorn_migrate(void)
 {
-	return 0;
+	return __get_popcorn_migrate();
 }
 
 long popcorn_migrate(void)

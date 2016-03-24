@@ -55,6 +55,7 @@
 
 DEFINE_VVAR(int, vgetcpu_mode);
 DEFINE_VVAR(struct vsyscall_gtod_data, vsyscall_gtod_data);
+DEFINE_VVAR(int, vpopcorn_migrate);
 
 static enum { EMULATE, NATIVE, NONE } vsyscall_mode = EMULATE;
 

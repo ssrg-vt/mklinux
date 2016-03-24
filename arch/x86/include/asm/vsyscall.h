@@ -11,6 +11,8 @@
 extern int vgetcpu_mode;
 extern struct timezone sys_tz;
 
+extern int vpopcorn_migrate;
+
 #include <asm/vvar.h>
 
 extern void map_vsyscall(void);
@@ -39,6 +41,12 @@ static inline unsigned int __getcpu(void)
 
 	return p;
 }
+
+static inline int __get_popcorn_migrate(void)
+{
+	return VVAR(vpopcorn_migrate);
+}
+
 #endif /* CONFIG_X86_64 */
 
 #endif /* _ASM_X86_VSYSCALL_H */
