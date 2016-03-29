@@ -112,6 +112,7 @@ enum pcn_kmsg_type {
 	PCN_KMSG_TYPE_FILE_OFFSET_UPDATE,			 /*when some thread reads a file updates the offset value*/
 	PCN_KMSG_TYPE_FILE_OFFSET_CONFIRM,
 	PCN_KMSG_TYPE_FILE_LSEEK_NOTIFICATION,   /*when some thread lseek a file updates the offset value*/
+	PCN_KMSG_TYPE_SCHED_PERIODIC,
 	PCN_KMSG_TYPE_MAX
 };
 

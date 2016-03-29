@@ -76,6 +76,12 @@
 static int _cpu = -1;
 int _file_cpu = 1;
 
+#define POPCORN_POWER_N_VALUES 10
+int *popcorn_power_x86;
+int *popcorn_power_arm;
+EXPORT_SYMBOL_GPL(popcorn_power_x86);
+EXPORT_SYMBOL_GPL(popcorn_power_arm);
+
 data_header_t* _data_head = NULL; // General purpose data store
 fetching_t* _fetching_head = NULL;
 
@@ -7010,11 +7016,45 @@ out:
 	return retval >> PAGE_SHIFT;
 }
 
+static int popcorn_sched_sync(void)
+{
+        sched_periodic_req req;
+
+        while (1) {
+                printk("%s\n", __func__);
+                usleep_range(10000, 12000);
+
+		req.header.type = PCN_KMSG_TYPE_SCHED_PERIODIC;
+		req.header.prio = PCN_KMSG_PRIO_NORMAL;
+
+		req.power = popcorn_power_x86[0];
+
+		pcn_kmsg_send_long(0, (struct pcn_kmsg_long_message*) &req,
+                                   sizeof(sched_periodic_req) - sizeof(struct pcn_kmsg_hdr));
+        }
+
+        return 0;
+}
+
+static int handle_sched_periodic(struct pcn_kmsg_message *inc_msg)
+{
+        sched_periodic_req *req = (sched_periodic_req *)inc_msg;
+
+        printk("power: %d\n", req->power);
+
+        return 0;
+}
+
 /**
  * process_server_init
  * Start the process loop in a new kthread.
  */
-static int __init process_server_init(void) {
+static int __init process_server_init(void)
+{
+        int i;
+	uint16_t copy_cpu;
+
+        struct task_struct *kt_sched;
 
 	printk("\n\nPopcorn version with user data replication\n\n");
 	printk("Per me si va ne la città dolente,\n"
@@ -7035,7 +7075,6 @@ static int __init process_server_init(void) {
 	  #endif
 	*/
 
-	uint16_t copy_cpu;
 	if(pcn_kmsg_get_node_ids(NULL, 0, &copy_cpu)==-1)
 		printk("ERROR process_server cannot initialize _cpu\n");
 	else{
@@ -7149,7 +7188,23 @@ static int __init process_server_init(void) {
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_UPDATE,
 				   handle_file_pos_update);
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_FILE_OFFSET_CONFIRM,
-				   handle_file_pos_confirm);
+			handle_file_pos_confirm);
+
+	pcn_kmsg_register_callback(PCN_KMSG_TYPE_SCHED_PERIODIC,
+				   handle_sched_periodic);
+
+	popcorn_power_x86 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
+	popcorn_power_arm = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
+
+        for (i = 0; i < POPCORN_POWER_N_VALUES; i++) {
+                popcorn_power_x86[i] = 0;
+                popcorn_power_arm[i] = 0;
+        }
+
+	kt_sched = kthread_run(popcorn_sched_sync, NULL, "popcorn_sched_sync");
+
+        if (kt_sched < 0)
+                printk("ERROR: cannot create popcorn_sched_sync thread\n");
 
 	return 0;
 }

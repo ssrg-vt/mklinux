@@ -752,6 +752,12 @@ typedef struct {
 typedef struct info_page_walk {
 	struct vm_area_struct* vma;
 } info_page_walk_t;
+
+typedef struct _sched_periodic_req {
+	struct pcn_kmsg_hdr header;
+	int power;
+} sched_periodic_req;
+
 /*
  * Migration hook.
  */
