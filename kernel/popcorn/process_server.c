@@ -7039,9 +7039,16 @@ static int popcorn_sched_sync(void)
 		req.header.type = PCN_KMSG_TYPE_SCHED_PERIODIC;
 		req.header.prio = PCN_KMSG_PRIO_NORMAL;
 
-		req.power_1 = popcorn_power_x86_1[POPCORN_POWER_N_VALUES - 1];
-		req.power_2 = popcorn_power_x86_2[POPCORN_POWER_N_VALUES - 1];
-		req.power_3 = 0;
+#if CONFIG_ARM64
+                req.power_1 = popcorn_power_arm_1[POPCORN_POWER_N_VALUES - 1];
+                req.power_2 = popcorn_power_arm_2[POPCORN_POWER_N_VALUES - 1];
+                req.power_3 = popcorn_power_arm_3[POPCORN_POWER_N_VALUES - 1];
+#else
+                req.power_1 = popcorn_power_x86_1[POPCORN_POWER_N_VALUES - 1];
+                req.power_2 = popcorn_power_x86_2[POPCORN_POWER_N_VALUES - 1];
+                req.power_3 = 0;
+#endif
+
 
 		pcn_kmsg_send_long(cpu, (struct pcn_kmsg_long_message*) &req,
                                    sizeof(sched_periodic_req) - sizeof(struct pcn_kmsg_hdr));
