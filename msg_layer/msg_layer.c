@@ -857,7 +857,7 @@ int connection_handler(void* arg0)
 		atomic_inc(&recv_count);
 #endif
 
-		if (pcn_msg->hdr.type < 0 || pcn_msg->hdr.type >= PCN_KMSG_TYPE_MAX) {
+		if (pcn_msg->hdr.type < 0) {
 			printk("Received invalid message type %d\n", pcn_msg->hdr.type);
 
 #if TEST_MSG_LAYER

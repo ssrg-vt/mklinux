@@ -77,10 +77,16 @@ static int _cpu = -1;
 int _file_cpu = 1;
 
 #define POPCORN_POWER_N_VALUES 10
-int *popcorn_power_x86;
-int *popcorn_power_arm;
-EXPORT_SYMBOL_GPL(popcorn_power_x86);
-EXPORT_SYMBOL_GPL(popcorn_power_arm);
+int *popcorn_power_x86_1;
+int *popcorn_power_x86_2;
+int *popcorn_power_arm_1;
+int *popcorn_power_arm_2;
+int *popcorn_power_arm_3;
+EXPORT_SYMBOL_GPL(popcorn_power_x86_1);
+EXPORT_SYMBOL_GPL(popcorn_power_x86_2);
+EXPORT_SYMBOL_GPL(popcorn_power_arm_1);
+EXPORT_SYMBOL_GPL(popcorn_power_arm_2);
+EXPORT_SYMBOL_GPL(popcorn_power_arm_3);
 
 data_header_t* _data_head = NULL; // General purpose data store
 fetching_t* _fetching_head = NULL;
@@ -7018,18 +7024,26 @@ out:
 
 static int popcorn_sched_sync(void)
 {
+        int cpu;
         sched_periodic_req req;
 
+#if CONFIG_ARM64
+        cpu = 1;
+#else
+        cpu = 0;
+#endif
+
         while (1) {
-                printk("%s\n", __func__);
                 usleep_range(10000, 12000);
 
 		req.header.type = PCN_KMSG_TYPE_SCHED_PERIODIC;
 		req.header.prio = PCN_KMSG_PRIO_NORMAL;
 
-		req.power = popcorn_power_x86[0];
+		req.power_1 = popcorn_power_x86_1[POPCORN_POWER_N_VALUES - 1];
+		req.power_2 = popcorn_power_x86_2[POPCORN_POWER_N_VALUES - 1];
+		req.power_3 = 0;
 
-		pcn_kmsg_send_long(0, (struct pcn_kmsg_long_message*) &req,
+		pcn_kmsg_send_long(cpu, (struct pcn_kmsg_long_message*) &req,
                                    sizeof(sched_periodic_req) - sizeof(struct pcn_kmsg_hdr));
         }
 
@@ -7040,7 +7054,7 @@ static int handle_sched_periodic(struct pcn_kmsg_message *inc_msg)
 {
         sched_periodic_req *req = (sched_periodic_req *)inc_msg;
 
-        printk("power: %d\n", req->power);
+        /* printk("power: %d %d %d\n", req->power_1, req->power_2, req->power_3); */
 
         return 0;
 }
@@ -7193,12 +7207,18 @@ static int __init process_server_init(void)
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_SCHED_PERIODIC,
 				   handle_sched_periodic);
 
-	popcorn_power_x86 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
-	popcorn_power_arm = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
+	popcorn_power_x86_1 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
+	popcorn_power_x86_2 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
+	popcorn_power_arm_1 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
+	popcorn_power_arm_2 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
+	popcorn_power_arm_3 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
 
         for (i = 0; i < POPCORN_POWER_N_VALUES; i++) {
-                popcorn_power_x86[i] = 0;
-                popcorn_power_arm[i] = 0;
+                popcorn_power_x86_1[i] = 0;
+                popcorn_power_x86_2[i] = 0;
+                popcorn_power_arm_1[i] = 0;
+                popcorn_power_arm_2[i] = 0;
+                popcorn_power_arm_3[i] = 0;
         }
 
 	kt_sched = kthread_run(popcorn_sched_sync, NULL, "popcorn_sched_sync");

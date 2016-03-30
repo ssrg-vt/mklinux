@@ -755,7 +755,9 @@ typedef struct info_page_walk {
 
 typedef struct _sched_periodic_req {
 	struct pcn_kmsg_hdr header;
-	int power;
+	int power_1;
+	int power_2;
+	int power_3;
 } sched_periodic_req;
 
 /*
