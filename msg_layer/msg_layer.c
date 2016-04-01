@@ -820,7 +820,8 @@ int connection_handler(void* arg0)
 
 		temp = (struct pcn_kmsg_message*)recv_vaddr[channel_num];
 
-		printk("Receive message: %d (%s)\n", temp->hdr.type, msg_names[temp->hdr.type]);
+		if (temp->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
+			printk("Receive message: %d (%s)\n", temp->hdr.type, msg_names[temp->hdr.type]);
 
 #if TEST_MSG_LAYER
 		down_interruptible(&recv_buf_cnt);
@@ -975,7 +976,8 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	lmsg->hdr.size = payload_size+sizeof(struct pcn_kmsg_hdr);
 	lmsg->hdr.from_cpu = my_cpu;
 
-	printk("Send message: %d (%s)\n", lmsg->hdr.type, msg_names[lmsg->hdr.type]);
+	if (lmsg->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
+		printk("Send message: %d (%s) pid %d\n", lmsg->hdr.type, msg_names[lmsg->hdr.type], current->pid);
 
 #if !TEST_MSG_LAYER
 	if (dest_cpu==my_cpu) {	
