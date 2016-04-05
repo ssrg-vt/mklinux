@@ -3708,7 +3708,8 @@ long sched_setaffinity_on_popcorn(pid_t pid, struct task_struct *p,
 				  const struct cpumask *in_mask,
 				  unsigned int len,
 				  unsigned long migration_pc,
-				  unsigned long return_addr)
+				  unsigned long return_addr,
+				  void __user *uregs)
 {
 	cpumask_var_t cpus_allowed, new_mask;
 	int retval;
@@ -3762,7 +3763,7 @@ long sched_setaffinity_on_popcorn(pid_t pid, struct task_struct *p,
 				p->return_addr = return_addr;
 
 				printk("MIGRATE: PID %d\n", p->pid);
-				ret = process_server_do_migration(p, i, regs);
+				ret = process_server_do_migration(p, i, regs, uregs);
 				put_task_struct(p);
 				put_online_cpus();
 
@@ -3928,7 +3929,7 @@ asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long 
 		if ( (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) ) {
 			printk("%s: ERROR with cpu masks (migration pc 0)\n", __func__);
 			retval = sched_setaffinity_on_popcorn(pid,p, pmask,
-							      len, 0, 0);
+							      len, 0, 0, NULL);
 		} else {
 			retval = sched_setaffinity(pid, pmask);
 		}
@@ -3958,7 +3959,8 @@ asmlinkage long sys_sched_setaffinity(pid_t pid, unsigned int len,unsigned long 
 asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
 					      unsigned long __user *user_mask_ptr,
 					      unsigned long migration_pc,
-					      unsigned long return_addr)
+					      unsigned long return_addr,
+					      void __user *uregs)
 {
 	cpumask_var_t new_mask;
 	int retval;
@@ -4013,7 +4015,7 @@ asmlinkage long sys_sched_setaffinity_popcorn(pid_t pid, unsigned int len,
 		if ((p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns))) {
 			retval = sched_setaffinity_on_popcorn(pid, p, pmask,
 							      len, migration_pc,
-							      return_addr);
+							      return_addr, uregs);
 		} else {
 			retval = sched_setaffinity(pid, pmask);
 		}

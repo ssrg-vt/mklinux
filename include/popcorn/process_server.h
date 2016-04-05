@@ -43,7 +43,7 @@
 #define REPLICATION_STATUS_NOT_REPLICATED 0
 
 int process_server_do_migration(struct task_struct* task, int cpu,
-                                struct pt_regs* regs);
+                                struct pt_regs* regs, void __user *uregs);
 int process_server_dup_task(struct task_struct* orig, struct task_struct* task);
 void process_server_clean_page(struct page* page);
 int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,

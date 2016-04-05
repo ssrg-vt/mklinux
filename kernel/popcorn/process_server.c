@@ -4897,8 +4897,8 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task) 
  * This is a back migration => <task> must already been migrated at least once in <dst_cpu>.
  * It returns -1 in error case.
  */
-static int do_back_migration(struct task_struct* task, int dst_cpu,
-			     struct pt_regs * regs)
+static int do_back_migration(struct task_struct *task, int dst_cpu,
+			     struct pt_regs *regs, void __user *uregs)
 {
 	unsigned long flags;
 	int ret;
@@ -4935,7 +4935,7 @@ static int do_back_migration(struct task_struct* task, int dst_cpu,
 		request->action[cnt] = task->sighand->action[cnt];
 
 	// TODO: Handle return value
-	save_thread_info(task, regs, &request->arch);
+	save_thread_info(task, regs, &request->arch, uregs);
 
 #if MIGRATE_FPU
 	// TODO: Handle return value
@@ -4979,7 +4979,9 @@ static int do_back_migration(struct task_struct* task, int dst_cpu,
  */
 //static
 int do_migration(struct task_struct* task, int dst_cpu,
-		 struct pt_regs * regs, int* is_first){
+		 struct pt_regs * regs, int* is_first,
+                 void __user *uregs)
+{
 	struct task_struct *kthread_main = NULL;
 
 	clone_request_t* request;
@@ -5045,7 +5047,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 	request->personality = task->personality;
 
 	// TODO: Handle return value
-	save_thread_info(task, regs, &request->arch);
+	save_thread_info(task, regs, &request->arch, uregs);
 
 #if MIGRATE_FPU
 	save_fpu_info(task, &request->arch);
@@ -5153,7 +5155,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
  * PROCESS_SERVER_CLONE_SUCCESS otherwise.
  */
 int process_server_do_migration(struct task_struct *task, int dst_cpu,
-				struct pt_regs *regs)
+				struct pt_regs *regs, void __user *uregs)
 {
 	int first = 0;
 	int back = 0;
@@ -5163,11 +5165,11 @@ int process_server_do_migration(struct task_struct *task, int dst_cpu,
 
 	if (task->prev_cpu == dst_cpu) {
 		back = 1;
-		ret = do_back_migration(task, dst_cpu, regs);
+		ret = do_back_migration(task, dst_cpu, regs, uregs);
 		if (ret == -1)
 			return PROCESS_SERVER_CLONE_FAIL;
 	} else {
-		ret = do_migration(task, dst_cpu, regs,&first);
+		ret = do_migration(task, dst_cpu, regs,&first, uregs);
 	}
 
 	if (ret != -1) {

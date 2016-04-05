@@ -53,8 +53,10 @@ extern struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_fl
  *	on success, returns 0
  * 	on failure, returns negative integer
  */
-int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch *arch)
+int save_thread_info(struct task_struct *task, struct pt_regs *regs,
+                     field_arch *arch, void __user *uregs)
 {
+	int ret;
 	unsigned short fsindex, gsindex;
 	unsigned short es, ds;
 	unsigned long fs, gs;
@@ -67,6 +69,13 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	if (task->migration_pc == 0){
 		printk(KERN_ERR"%s: migration_pc == 0\n", __func__);
                 goto exit;
+        }
+
+        if (uregs != NULL) {
+	        ret = copy_from_user(&arch->regs_aarch, uregs, sizeof(struct popcorn_regset_aarch64));
+                if (ret = -EFAULT) {
+		        printk("%s: error while copying registers\n", __func__);
+                }
         }
 
 	arch->migration_pc = task->migration_pc;
@@ -175,6 +184,13 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 		//task_pt_regs(task)->es = __USER_ES;
 
                 //printk("%s cs %lx KERNEL_CS %lx\n", __func__, task_pt_regs(task)->cs, __KERNEL_CS);
+
+                task_pt_regs(task)->ax = arch->regs_x86.rax;
+                task_pt_regs(task)->dx = arch->regs_x86.rdx;
+                task_pt_regs(task)->cx = arch->regs_x86.rcx;
+                task_pt_regs(task)->bx = arch->regs_x86.rbx;
+                task_pt_regs(task)->si = arch->regs_x86.rsi;
+                task_pt_regs(task)->di = arch->regs_x86.rdi;
 	}
 
 	task->thread.fs = arch->thread_fs;
