@@ -16,6 +16,7 @@
 
 /* File includes */
 #include <linux/sched.h>
+#include <linux/uaccess.h>
 #include <linux/cpu_namespace.h>
 #include <linux/popcorn_cpuinfo.h>
 #include <popcorn/process_server.h>
@@ -56,8 +57,11 @@ extern struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_fl
  *	on success, returns 0
  * 	on failure, returns negative integer
  */
-int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch *arch)
+int save_thread_info(struct task_struct *task, struct pt_regs *regs,
+		     field_arch *arch, void __user *uregs)
 {
+	int ret;
+
 	arch->migration_pc = task_pt_regs(task)->user_regs.pc;
 	arch->regs.sp = task_pt_regs(task)->user_regs.sp;
 	arch->old_rsp = task_pt_regs(task)->user_regs.sp;
@@ -68,8 +72,18 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
 	/*Ajith - for het migration */
 	if (task->migration_pc != 0){
 		arch->migration_pc = task->migration_pc;
-		PSPRINTK("IN %s:%d migration PC = %lx\n", __func__, __LINE__, arch->migration_pc);
 	}
+
+	if (uregs != NULL) {
+		ret = copy_from_user(&arch->regs_x86, uregs, sizeof(struct popcorn_regset_x86_64));
+		if (ret = -EFAULT) {
+			printk("%s: error while copying registers\n", __func__);
+		}
+	}
+
+	// printk("IN %s:%d migration PC = %lx\n", __func__, __LINE__, arch->migration_pc);
+
+	printk("%s: pc %lx sp %lx bp %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp);
 
 	return 0;
 }
@@ -99,19 +113,24 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs, field_arch 
  */
 int restore_thread_info(struct task_struct *task, field_arch *arch)
 {
+	int i;
+
 	task_pt_regs(task)->user_regs.pc = arch->regs.ip;
 	task_pt_regs(task)->user_regs.pstate = PSR_MODE_EL0t;
 	task_pt_regs(task)->user_regs.sp = arch->old_rsp;
 
+	task->thread.tp_value = arch->thread_fs;
+
+	for (i = 0; i < 31; i++)
+		task_pt_regs(task)->regs[i] =  arch->regs_aarch.x[i];
+	
 	task_pt_regs(task)->regs[29] = arch->bp;
 	task_pt_regs(task)->regs[30] = arch->ra;
 
-	task->thread.tp_value = arch->thread_fs;
-	
-	PSPRINTK("IP value during restore %lx %lx %ld\n", arch->regs.ip, arch->old_rsp, task->thread.tp_value);
-
 	if(arch->migration_pc != 0)
 		task_pt_regs(task)->user_regs.pc = arch->migration_pc;
+
+	printk("%s: pc %lx sp %lx bp %lx ra %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp, arch->ra);
 
 	return 0;
 }

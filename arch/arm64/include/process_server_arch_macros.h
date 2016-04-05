@@ -75,6 +75,48 @@ union thread_xstate {
         struct sh_fpu_soft_struct softfpu;
 };
 
+struct popcorn_regset_x86_64
+{
+        /* Program counter/instruction pointer */
+        void* rip;
+
+        /* General purpose registers */
+        uint64_t rax, rdx, rcx, rbx,
+                 rsi, rdi, rbp, rsp,
+                 r8, r9, r10, r11,
+                 r12, r13, r14, r15;
+
+        /* Multimedia-extension (MMX) registers */
+        uint64_t mmx[8];
+
+        /* Streaming SIMD Extension (SSE)
+         * registers */
+        unsigned __int128 xmm[16];
+
+        /* x87 floating point registers
+         * */
+        long double st[8];
+
+        /* Segment registers */
+        uint32_t cs, ss, ds, es, fs, gs;
+
+        /* Flag register
+         * */
+        uint64_t rflags;
+};
+
+struct popcorn_regset_aarch64
+{
+        /* Stack pointer & program counter */
+        void* sp;
+        void* pc;
+
+        /* General purpose registers */
+        uint64_t x[31];
+
+        /* FPU/SIMD registers */
+        unsigned __int128 v[32];
+};
 
 /*
  * Constant macros
@@ -95,6 +137,8 @@ union thread_xstate {
 	unsigned char thread_has_fpu;\
 	unsigned long bp;\
 	unsigned long ra;\
+	struct popcorn_regset_x86_64 regs_x86;\
+	struct popcorn_regset_aarch64 regs_aarch;\
 	union thread_xstate fpu_state;
 
 /*
