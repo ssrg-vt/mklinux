@@ -1960,7 +1960,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 
 	PSPRINTK("In %s:%d vma_flags = %lx\n", __func__, __LINE__, vma->vm_flags);	
 
-	if(vma->vm_flags & VM_FETCH_LOCAL)
+	if(vma && vma->vm_flags & VM_FETCH_LOCAL)
 	{
 		PSPRINTK("%s:%d - VM_FETCH_LOCAL flag set - Going to void response\n", __func__, __LINE__);
 		up_read(&mm->mmap_sem);
