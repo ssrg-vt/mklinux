@@ -2959,7 +2959,7 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 				msg->prev_pid = tsk->prev_pid;
 
 				// TODO: Handle return value
-				save_thread_info(tsk, task_pt_regs(tsk), &msg->arch);
+				save_thread_info(tsk, task_pt_regs(tsk), &msg->arch, NULL);
 
 				if (tsk->group_exit == 1)
 					msg->group_exit = 1;
