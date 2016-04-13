@@ -1941,9 +1941,9 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 		vma = NULL;
 		if(_cpu == request->tgroup_home_cpu){
 			printk(KERN_ALERT"%s: vma NULL in xeon address{%lx} \n",__func__,address);
+			up_read(&mm->mmap_sem);
+			goto out;
 		}
-		up_read(&mm->mmap_sem);
-		goto out;
 	} else {
 
 		if (unlikely(is_vm_hugetlb_page(vma))
