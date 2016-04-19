@@ -88,6 +88,9 @@ extern u8 acpi_gbl_disable_ssdt_table_load;
  * be configured out of the ACPICA build if the ACPI_REDUCED_HARDWARE flag
  * is set to TRUE.
  */
+#ifndef ACPI_REDUCED_HARDWARE
+#define ACPI_REDUCED_HARDWARE 0
+#endif
 #if (!ACPI_REDUCED_HARDWARE)
 #define ACPI_HW_DEPENDENT_RETURN_STATUS(prototype) \
 	prototype;

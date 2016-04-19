@@ -835,6 +835,25 @@ ENTRY(stub_\func)
 END(stub_\func)
 	.endm
 
+	.macro POPCORN_LIKE func
+ENTRY(stub_\func)
+	CFI_STARTPROC
+	popq	%r11			/* save return address */
+	PARTIAL_FRAME 0
+	SAVE_REST
+	pushq	%r11			/* put it back on stack */
+	FIXUP_TOP_OF_STACK %r11, 8
+	DEFAULT_FRAME 0 8		/* offset 8: return address */
+	call	sys_\func
+	RESTORE_TOP_OF_STACK %r11, 8
+	popq	%r11
+	RESTORE_REST
+	pushq	%r11
+	ret				/* pop extended registers */
+	CFI_ENDPROC
+END(stub_\func)
+	.endm
+
 	.macro FIXED_FRAME label,func
 ENTRY(\label)
 	CFI_STARTPROC
@@ -856,6 +875,7 @@ END(\label)
 
 	FORK_LIKE sched_setaffinity
 
+	POPCORN_LIKE sched_setaffinity_popcorn
 
 ENTRY(stub_execve)
 	CFI_STARTPROC
