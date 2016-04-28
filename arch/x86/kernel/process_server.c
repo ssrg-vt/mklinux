@@ -61,6 +61,8 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs,
 	unsigned short es, ds;
 	unsigned long fs, gs;
 
+	//dump_processor_regs(task_pt_regs(task));
+
 	if ((task == NULL)  || (arch == NULL)) {
 		printk(KERN_ERR"%s: invalid params\n", __func__);
 		goto exit;
@@ -73,7 +75,7 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs,
 
         if (uregs != NULL) {
 	        ret = copy_from_user(&arch->regs_aarch, uregs, sizeof(struct popcorn_regset_aarch64));
-                if (ret = -EFAULT) {
+                if (ret == -EFAULT) {
 		        printk("%s: error while copying registers\n", __func__);
                 }
         }
@@ -185,6 +187,14 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 
                 //printk("%s cs %lx KERNEL_CS %lx\n", __func__, task_pt_regs(task)->cs, __KERNEL_CS);
 
+                task_pt_regs(task)->r15 = arch->regs_x86.r15;
+                task_pt_regs(task)->r14 = arch->regs_x86.r14;
+                task_pt_regs(task)->r13 = arch->regs_x86.r13;
+                task_pt_regs(task)->r12 = arch->regs_x86.r12;
+                task_pt_regs(task)->r11 = arch->regs_x86.r11;
+                task_pt_regs(task)->r10 = arch->regs_x86.r10;
+                task_pt_regs(task)->r9 = arch->regs_x86.r9;
+                task_pt_regs(task)->r8 = arch->regs_x86.r8;
                 task_pt_regs(task)->ax = arch->regs_x86.rax;
                 task_pt_regs(task)->dx = arch->regs_x86.rdx;
                 task_pt_regs(task)->cx = arch->regs_x86.rcx;
@@ -215,6 +225,8 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	       __func__, task->comm, current->comm, passed,
 	       (unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
 	       (unsigned long)fs_val, (unsigned long)fsindex);
+
+	//dump_processor_regs(task_pt_regs(task));
 
 exit:
 	return 0;
@@ -267,7 +279,7 @@ int update_thread_info(struct task_struct *task)
 	if (task->thread.gs)
 		wrmsrl_safe(MSR_KERNEL_GS_BASE, task->thread.gs);
 
-	//dump_processor_regs(task_pt_regs(task));
+	dump_processor_regs(task_pt_regs(task));
 	//__show_regs(task_pt_regs(task), 1);
 
 	ret = 0;
@@ -583,5 +595,9 @@ int dump_processor_regs(struct pt_regs* regs) {
 exit:
 
 	return ret;
+}
+
+void suggest_migration (int suggestion) {
+        vpopcorn_migrate = suggestion;
 }
 

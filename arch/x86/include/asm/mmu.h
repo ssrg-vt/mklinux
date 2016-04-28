@@ -19,6 +19,7 @@ typedef struct {
 
 	struct mutex lock;
 	void *vdso;
+        void *popcorn_vdso;
 } mm_context_t;
 
 #ifdef CONFIG_SMP

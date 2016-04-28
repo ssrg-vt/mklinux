@@ -250,7 +250,8 @@ typedef struct {
         struct sigpending remote_pending;\
         unsigned long sas_ss_sp;\
         size_t sas_ss_size;\
-        struct k_sigaction action[_NSIG];
+        struct k_sigaction action[_NSIG];\
+	unsigned long popcorn_vdso;
 
 struct _clone_request {
 	CLONE_FIELDS

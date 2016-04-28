@@ -983,6 +983,8 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	if (dest_cpu==my_cpu) {	
 		pcn_msg = lmsg;
 
+		printk("Send message: dest_cpu == my_cpu\n");
+
 		if (pcn_msg->hdr.type < 0 || pcn_msg->hdr.type >= PCN_KMSG_TYPE_MAX) {
 			printk("Received invalid message type %d\n", pcn_msg->hdr.type);
 			vfree(pcn_msg);

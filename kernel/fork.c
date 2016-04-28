@@ -1654,6 +1654,10 @@ long do_fork(unsigned long clone_flags,
 	int trace = 0;
 	long nr;
 
+	if (current->tgroup_distributed == 1) {
+                printk("%s: pid %d\n", __func__, current->pid);
+        }
+
 	/*
 	 * Determine whether and which event to report to ptracer.  When
 	 * called from kernel_thread or CLONE_UNTRACED is explicitly
@@ -1674,6 +1678,11 @@ long do_fork(unsigned long clone_flags,
 
 	p = copy_process(clone_flags, stack_start, stack_size,
 			child_tidptr, NULL, trace);
+
+	if (current->tgroup_distributed == 1) {
+                printk("%s: new pid %d\n", __func__, p->pid);
+        }
+
 	/*
 	 * Do this prior waking up the new thread - the thread pointer
 	 * might get invalid after that point, if the thread exits quickly.

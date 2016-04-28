@@ -154,20 +154,21 @@ static int setup_additional_pages(struct linux_binprm *bprm,
 				  unsigned size)
 {
 	struct mm_struct *mm = current->mm;
-	unsigned long addr;
+	unsigned long addr, popcorn_addr, tmp;
 	int ret;
+	struct page ** popcorn_pagelist;
 
 	if (!vdso_enabled)
 		return 0;
 
 	down_write(&mm->mmap_sem);
-	addr = vdso_addr(mm->start_stack, size);
-	addr = get_unmapped_area(NULL, addr, size, 0, 0);
+	tmp = popcorn_addr = addr = vdso_addr(mm->start_stack, (size + PAGE_SIZE));
+
+        addr = get_unmapped_area(NULL, addr, size, 0, 0);
 	if (IS_ERR_VALUE(addr)) {
 		ret = addr;
 		goto up_fail;
 	}
-
 	current->mm->context.vdso = (void *)addr;
 
 	ret = install_special_mapping(mm, addr, size,
@@ -178,6 +179,44 @@ static int setup_additional_pages(struct linux_binprm *bprm,
 		current->mm->context.vdso = NULL;
 		goto up_fail;
 	}
+
+///////////////////////////////////////////////////////////////////////////////
+// should create two functions
+///////////////////////////////////////////////////////////////////////////////
+        popcorn_addr = get_unmapped_area(NULL, popcorn_addr, PAGE_SIZE, 0, 0);
+	if (IS_ERR_VALUE(popcorn_addr)) {
+                pr_err("Failed to get unmapped area!\n");
+                ret = popcorn_addr;
+                goto up_fail;
+        }
+        current->mm->context.popcorn_vdso = (void *)popcorn_addr;
+
+	popcorn_pagelist = kzalloc(sizeof(struct page *) * (1 + 1), GFP_KERNEL);
+        if (popcorn_pagelist == NULL) {
+                 pr_err("Failed to allocate vDSO pagelist!\n");
+                 ret = -ENOMEM;
+		goto up_fail;
+        }         
+	popcorn_pagelist[0] = alloc_pages(GFP_KERNEL | __GFP_ZERO, 0);
+         
+	ret = install_special_mapping(mm, popcorn_addr, PAGE_SIZE,
+                                      VM_READ|VM_EXEC|
+                                      VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC,
+                                      popcorn_pagelist);
+        if (ret) {
+                current->mm->context.popcorn_vdso = NULL;
+                goto up_fail;
+        }
+        // NOTE popcorn_pagelist shouldn't be freed because saved in
+        // vma->vm_private_data
+
+        /*printk(KERN_INFO"%s: current 0x%lx (%s) stack 0x%lx"
+               " addr 0x%lx (0x%lx) -0x%lx- size 0x%lx (0x%lx) ret 0x%lx (tmp %lx)\n",
+                __func__, (unsigned long)current, current->comm, 
+                (unsigned long)mm->start_stack,
+                (unsigned long)addr, (unsigned long) popcorn_addr, (unsigned long)(addr+size),
+                (unsigned long)size, (unsigned long) PAGE_SIZE,
+                (unsigned long)ret, tmp);*/
 
 up_fail:
 	up_write(&mm->mmap_sem);
