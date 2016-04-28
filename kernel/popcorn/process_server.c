@@ -7186,6 +7186,9 @@ out:
 	return retval >> PAGE_SHIFT;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// scheduling stuff
+///////////////////////////////////////////////////////////////////////////////
 static int popcorn_sched_sync(void)
 {
         int cpu;
@@ -7224,11 +7227,55 @@ static int handle_sched_periodic(struct pcn_kmsg_message *inc_msg)
 {
         sched_periodic_req *req = (sched_periodic_req *)inc_msg;
 
+#if CONFIG_ARM64
+        popcorn_power_x86_1[POPCORN_POWER_N_VALUES - 1] = req->power_1;
+        popcorn_power_x86_2[POPCORN_POWER_N_VALUES - 1] = req->power_2;
+//        popcorn_power_x86_3[POPCORN_POWER_N_VALUES - 1] = req->power_3;
+#else
+        popcorn_power_arm_1[POPCORN_POWER_N_VALUES - 1] = req->power_1;
+        popcorn_power_arm_2[POPCORN_POWER_N_VALUES - 1] = req->power_2;
+        popcorn_power_arm_3[POPCORN_POWER_N_VALUES - 1] = req->power_3;
+#endif
         /* printk("power: %d %d %d\n", req->power_1, req->power_2, req->power_3); */
 
+	pcn_kmsg_free_msg(inc_msg);
         return 0;
 }
 
+static ssize_t power_read (struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+        int ret, len = 0;
+        char buffer[256];
+        memset(buffer, 0, sizeof(buffer));
+        if (*ppos > 0)
+                return 0; //EOF
+
+        len += snprintf(buffer, sizeof(buffer),
+                "ARM\nSoC\t%d mW\nCPU\t%d mW\nDRAM\t%d mW\n",
+                popcorn_power_arm_1[POPCORN_POWER_N_VALUES - 1],
+                popcorn_power_arm_2[POPCORN_POWER_N_VALUES - 1],
+                popcorn_power_arm_3[POPCORN_POWER_N_VALUES - 1]);
+        len += snprintf((buffer +len), sizeof(buffer) -len,
+                "x86\nUncore\t%d mW\nCore\t%d mW\n",
+                popcorn_power_x86_1[POPCORN_POWER_N_VALUES - 1],
+                popcorn_power_x86_2[POPCORN_POWER_N_VALUES - 1]);
+
+        if (count < len)
+                len = count;
+        ret = copy_to_user(buf, buffer, len);
+
+        *ppos += len;
+        return len;
+}
+
+static const struct file_operations power_fops = {
+        .owner = THIS_MODULE,
+        .read = power_read,
+};
+
+///////////////////////////////////////////////////////////////////////////////
+// Global VDSO Support (to be removed)
+///////////////////////////////////////////////////////////////////////////////
 long tell_migration = 0;
 static ssize_t mtrig_write (struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 {
@@ -7267,7 +7314,7 @@ static ssize_t mtrig_read (struct file *file, char __user *buf, size_t count, lo
 static const struct file_operations mtrig_fops = {
         .owner = THIS_MODULE,
         .read = mtrig_read,
-        .write = mtrig_write,
+	.write = mtrig_write,
 };
 
 /**
@@ -7438,9 +7485,13 @@ static int __init process_server_init(void)
         if (kt_sched < 0)
                 printk("ERROR: cannot create popcorn_sched_sync thread\n");
 
+        res = proc_create("power", S_IRUGO, NULL, &power_fops);
+        if (!res)
+                printk("ERROR: failed to create proc entry for power\n");
+
         res = proc_create("mtrig", S_IRUGO, NULL, &mtrig_fops);
         if (!res)
-                printk("ERROR: failed to create proc entry for triggering miggrations\n");
+                printk("ERROR: failed to create proc entry for triggering miggrations (global VDSO)\n");
 
 	return 0;
 }
