@@ -494,7 +494,7 @@ static void do_disable_cpu_turbo(void *data)
 		wrmsrl(IA32_PERF_CTL, perf_ctl);
 	}
 	printk(KERN_INFO"%s: on_cpu %d saved %lx cur %lx\n",
-		 __func__, (int)smp_processor_id(),
+		__func__, (int)smp_processor_id(),
 		(unsigned long)saved, (unsigned long)perf_ctl);
 }
 

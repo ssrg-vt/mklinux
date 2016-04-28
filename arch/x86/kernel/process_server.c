@@ -185,22 +185,22 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 		//task_pt_regs(task)->ds = __USER_DS;
 		//task_pt_regs(task)->es = __USER_ES;
 
-                //printk("%s cs %lx KERNEL_CS %lx\n", __func__, task_pt_regs(task)->cs, __KERNEL_CS);
+		//printk("%s cs %lx KERNEL_CS %lx\n", __func__, task_pt_regs(task)->cs, __KERNEL_CS);
 
-                task_pt_regs(task)->r15 = arch->regs_x86.r15;
-                task_pt_regs(task)->r14 = arch->regs_x86.r14;
-                task_pt_regs(task)->r13 = arch->regs_x86.r13;
-                task_pt_regs(task)->r12 = arch->regs_x86.r12;
-                task_pt_regs(task)->r11 = arch->regs_x86.r11;
-                task_pt_regs(task)->r10 = arch->regs_x86.r10;
-                task_pt_regs(task)->r9 = arch->regs_x86.r9;
-                task_pt_regs(task)->r8 = arch->regs_x86.r8;
-                task_pt_regs(task)->ax = arch->regs_x86.rax;
-                task_pt_regs(task)->dx = arch->regs_x86.rdx;
-                task_pt_regs(task)->cx = arch->regs_x86.rcx;
-                task_pt_regs(task)->bx = arch->regs_x86.rbx;
-                task_pt_regs(task)->si = arch->regs_x86.rsi;
-                task_pt_regs(task)->di = arch->regs_x86.rdi;
+		task_pt_regs(task)->r15 = arch->regs_x86.r15;
+		task_pt_regs(task)->r14 = arch->regs_x86.r14;
+		task_pt_regs(task)->r13 = arch->regs_x86.r13;
+		task_pt_regs(task)->r12 = arch->regs_x86.r12;
+		task_pt_regs(task)->r11 = arch->regs_x86.r11;
+		task_pt_regs(task)->r10 = arch->regs_x86.r10;
+		task_pt_regs(task)->r9 = arch->regs_x86.r9;
+		task_pt_regs(task)->r8 = arch->regs_x86.r8;
+		task_pt_regs(task)->ax = arch->regs_x86.rax;
+		task_pt_regs(task)->dx = arch->regs_x86.rdx;
+		task_pt_regs(task)->cx = arch->regs_x86.rcx;
+		task_pt_regs(task)->bx = arch->regs_x86.rbx;
+		task_pt_regs(task)->si = arch->regs_x86.rsi;
+		task_pt_regs(task)->di = arch->regs_x86.rdi;
 	}
 
 	task->thread.fs = arch->thread_fs;
@@ -219,7 +219,7 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	savesegment(fs, fsindex);
 	rdmsrl(MSR_FS_BASE, fs_val);
 
-        printk("%s: ip %lx sp %lx bp %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp);
+	printk("%s: ip %lx sp %lx bp %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp);
 
 	printk(KERN_EMERG"%s: task=%s current=%s (%d) FS saved %lx[%lx] curr %lx[%lx]\n",
 	       __func__, task->comm, current->comm, passed,

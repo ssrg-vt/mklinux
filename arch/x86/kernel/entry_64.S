@@ -844,7 +844,7 @@ ENTRY(stub_\func)
 	pushq	%r11			/* put it back on stack */
 	FIXUP_TOP_OF_STACK %r11, 8
 	DEFAULT_FRAME 0 8		/* offset 8: return address */
-	call sys_\func
+	call	sys_\func
 	RESTORE_TOP_OF_STACK %r11, 8
 	popq	%r11
 	RESTORE_REST
