@@ -1023,9 +1023,12 @@ static struct file *saif_do_sys_open(int dfd, const char *filename, int flags, i
 				f = fcheck_files(tsk_ftable, fd);
 			}
 			printk("%s after lock opened agian\n",__func__);
+			printk("%s pos %d\n", __func__, f->f_pos);
 			return f;
 		}
 	}
+
+	printk("%s %d\n", __func__, f->f_pos);
 
 	return f;
 }
@@ -1033,6 +1036,8 @@ static struct file *saif_do_sys_open(int dfd, const char *filename, int flags, i
 struct file *saif_open(char *filename, int flags, int mode, int fd, pid_t actual_owner)
 {
 	struct file* ret;
+
+	printk("%s\n", __func__);
 
 	if (force_o_largefile())
 		flags |= O_LARGEFILE;
@@ -1048,16 +1053,30 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 	int fd = build_open_flags(flags, mode, &op);
 	struct filename *tmp;
 
+	if (current->tgroup_distributed == 1) {
+		printk("%s: O Origin PID %d filename _%s_ %x fd %d mode %d flags %d\n", __func__,
+		       current->pid, filename, filename, fd, mode, flags);
+		/* dump_stack(); */
+	}
+
 	if (fd)
 		return fd;
 
 	tmp = getname(filename);
-	if (IS_ERR(tmp))
-		return PTR_ERR(tmp);
 
+	if (IS_ERR(tmp)) {
+		if (current->tgroup_distributed == 1) {
+			printk("%s ERR\n", __func__);
+		}
+
+		return PTR_ERR(tmp);
+	}
+
+	/*
 	if (current->tgroup_distributed == 1) {
 		fd = pcn_get_fd_from_home(tmp, flags, mode);
 	}
+	*/
 
 	fd = get_unused_fd_flags(flags);
 	if (fd >= 0) {
@@ -1066,8 +1085,10 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 			put_unused_fd(fd);
 			fd = PTR_ERR(f);
 		} else {
+			/*
 			f->f_omode = mode;
 			f->owner_pid = current->tgid;
+			*/
 			/* new implementation I don't set the owner to the one
 			 * that has opened it */
 

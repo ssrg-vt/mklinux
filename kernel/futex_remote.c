@@ -530,6 +530,9 @@ void global_worher_fn(struct work_struct* work) {
 
 	FRPRINTK(KERN_ALERT "%s:GRQ started {%s}\n",__func__,current->comm);
 
+	printk("%s\n", __func__);
+	dump_stack();
+
         this = (_global_rq*) w->gq;
 
 	has_work = 0;

@@ -43,6 +43,10 @@ static struct file *get_file_struct(int fd, pid_t orgin_pid)
 {
 	struct file *file;
 
+	if (current->tgroup_distributed == 1) {
+		printk("%s: fd %d pid %d\n", __func__, fd, orgin_pid);
+	}
+
 	if (current->tgroup_distributed == 0 || fd < 3)
 		return NULL;
 
@@ -519,8 +523,11 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
 
+	if (current->tgroup_distributed == 1) {
+		printk("%s: R Origin PID %d fd %d distro %d\n", __func__, current->pid, fd, current->tgroup_distributed);
+	}
+
 	if (!f.file) {
-		printk("%s: R Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
 		f.file = get_file_struct(fd, current->tgroup_home_id);
 	}
 
@@ -540,6 +547,11 @@ SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
 
+	if (current->tgroup_distributed == 1) {
+		printk("%s: W Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
+	}
+
+#if 0
 	if (!f.file && current->tgroup_distributed == 1 && fd == 1)
 	{
 		printk("%s", buf);
@@ -548,9 +560,9 @@ SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 
 	if (!f.file)
 	{
-		printk("%s: W Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
 		f.file = get_file_struct(fd, current->tgroup_home_id);
 	}
+#endif
 
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);
@@ -840,8 +852,11 @@ SYSCALL_DEFINE3(readv, unsigned long, fd, const struct iovec __user *, vec,
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
 
-	if (!f.file) {
+	if (current->tgroup_distributed == 1) {
 		printk("%s: RV Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
+	}
+
+	if (!f.file) {
 		f.file = get_file_struct(fd, current->tgroup_home_id);
 	}
 
@@ -865,17 +880,21 @@ SYSCALL_DEFINE3(writev, unsigned long, fd, const struct iovec __user *, vec,
 	struct fd f = fdget(fd);
 	ssize_t ret = -EBADF;
 
+	if (current->tgroup_distributed == 1) {
+		printk("%s: W Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
+	}
+
+#if 0
 	if (!f.file && current->tgroup_distributed == 1 && fd == 1)
 	{
 		printk("%s", __func__);
 		return -1;
 	}
 
-	if (!f.file)
-	{
-		printk("%s: W Origin PID %d fd %d distro %d\n", __func__, current->tgroup_home_id, fd, current->tgroup_distributed);
+	if (!f.file) {
 		f.file = get_file_struct(fd, current->tgroup_home_id);
 	}
+#endif
 
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);
@@ -1103,6 +1122,10 @@ COMPAT_SYSCALL_DEFINE3(writev, unsigned long, fd,
 	struct fd f = fdget(fd);
 	ssize_t ret;
 	loff_t pos;
+
+	if (current->tgroup_distributed == 1) {
+		printk("%s: WRONG\n", __func__);
+	}
 
 	if (!f.file)
 		return -EBADF;

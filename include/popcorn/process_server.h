@@ -3,6 +3,7 @@
 #define __POPCORN_PROCESS_SERVER_H
 
 #include <process_server_arch_macros.h>
+#include <linux/process_server_macro.h>
 
 /**
  * Use the preprocessor to turn off printk.
@@ -49,7 +50,8 @@ void process_server_clean_page(struct page* page);
 int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
                                struct vm_area_struct *vma,
                                unsigned long address,
-                               unsigned long page_fault_flags);
+                               unsigned long page_fault_flags,
+			       int retrying);
 int process_server_try_handle_mm_fault(struct task_struct *tsk,
                                        struct mm_struct *mm,
                                        struct vm_area_struct *vma,
@@ -95,5 +97,7 @@ long process_server_mprotect_start(unsigned long start, size_t len,
                                    unsigned long prot);
 long process_server_mprotect_end(unsigned long start, size_t len,
                                  unsigned long prot, int start_ret);
+
+void synchronize_migrations(int tgroup_home_cpu,int tgroup_home_id);
 
 #endif /* __POPCORN_PROCESS_SERVER_H */

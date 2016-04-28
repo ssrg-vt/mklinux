@@ -32,6 +32,7 @@
 
 #include <linux/process_server.h>
 #include <linux/cpu_namespace.h>
+#include <process_server_arch.h>
 
 #include <asm/exception.h>
 #include <asm/debug-monitors.h>
@@ -185,16 +186,15 @@ static int __do_page_fault(struct mm_struct *mm, unsigned long addr,
 
 	vma = find_vma(mm, addr);
 
-	
-	/*if(my_pid == tsk->prev_pid)
-	{
-		printk("coming to page fault for thread %ld\n", tsk->pid, tsk->prev_pid);
-	}*/
+	if (tsk->tgroup_distributed == 1) {
+		printk("%s: pid %ld, addr %lx\n", __func__, tsk->pid, addr);
+	}
 
 	//Ajith - Multikernel changes taken from X86
 	ret_reply = 0;
 	// Nothing to do for a thread group that's not distributed.
 	if(tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0)) {
+		printk("%s: call process_server_try_handle_mm_fault retrying %d\n", __func__, retrying);
 		ret_reply = process_server_try_handle_mm_fault(tsk,mm,vma,addr,mm_flags, esr);
 
 		if(ret_reply==0)
@@ -360,6 +360,13 @@ retry:
 			if(tsk->tgroup_distributed==1)
 				retrying = 1;
 
+			vma = find_vma(mm, addr);
+
+			if((tsk->tgroup_distributed == 1 && tsk->main==0) && (fault & VM_CONTINUE_WITH_CHECK))
+			{
+				fault = process_server_update_page(tsk,mm,vma,addr,mm_flags, 1);
+			}
+
 			goto retry;
 		}
 	}
@@ -372,7 +379,7 @@ retry:
                 vma = find_vma(mm, addr);
                 if((tsk->tgroup_distributed == 1 && tsk->main==0) && (fault & VM_CONTINUE_WITH_CHECK))
                 {
-                        fault = process_server_update_page(tsk,mm,vma,addr,mm_flags);
+			fault = process_server_update_page(tsk,mm,vma,addr,mm_flags, 0);
                 }
         }
 
@@ -558,6 +565,30 @@ static const char *fault_name(unsigned int esr)
 	return inf->name;
 }
 
+void dump_processor_regs_arm64(struct pt_regs* regs)
+{
+	int i;
+
+	if (regs == NULL) {
+		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
+		return;
+	}
+
+	dump_stack();
+
+	printk(KERN_ALERT"DUMP REGS %s\n", __func__);
+
+	if (NULL != regs) {
+		printk(KERN_ALERT"sp: 0x%lx\n", regs->sp);
+		printk(KERN_ALERT"pc: 0x%lx\n", regs->pc);
+		printk(KERN_ALERT"pstate: 0x%lx\n", regs->pstate);
+
+		for (i = 0; i < 31; i++) {
+			printk(KERN_ALERT"regs[%d]: 0x%lx\n", i, regs->regs[i]);
+		}
+	}
+}
+
 /*
  * Dispatch a data abort to the relevant handler.
  */
@@ -572,6 +603,9 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
 
 	pr_alert("Unhandled fault: %s (0x%08x) at 0x%016lx\n",
 		 inf->name, esr, addr);
+
+	/* dump_stack(); */
+	dump_processor_regs(regs);
 
 	info.si_signo = inf->sig;
 	info.si_errno = 0;

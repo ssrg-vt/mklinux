@@ -859,7 +859,7 @@ int connection_handler(void* arg0)
 #endif
 
 		if (pcn_msg->hdr.type < 0) {
-			printk("Received invalid message type %d\n", pcn_msg->hdr.type);
+			printk("Received invalid message type %d (max %d)\n", pcn_msg->hdr.type, PCN_KMSG_TYPE_MAX);
 
 #if TEST_MSG_LAYER
 			recv_buf[i].is_free = 1;
@@ -977,7 +977,7 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	lmsg->hdr.from_cpu = my_cpu;
 
 	if (lmsg->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
-		printk("Send message: %d (%s) pid %d\n", lmsg->hdr.type, msg_names[lmsg->hdr.type], current->pid);
+		printk("Send message: %d (%s)\n", lmsg->hdr.type, msg_names[lmsg->hdr.type]);
 
 #if !TEST_MSG_LAYER
 	if (dest_cpu==my_cpu) {	

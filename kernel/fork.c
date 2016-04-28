@@ -1497,6 +1497,34 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 
 	trace_task_newtask(p, clone_flags);
 
+	/* printk("%s: pid current %d new pid %d\n", __func__, current->pid, p->pid); */
+
+	if (current->tgroup_distributed == 1) {
+
+		/*
+		struct pt_regs *current_regs = task_pt_regs(current);
+		struct pt_regs *new_regs = task_pt_regs(p);
+
+		printk("%s: stack start %lx stack size %lx\n", __func__, stack_start, stack_size);
+		printk("%s: current stack %lx\n", __func__, current->stack);
+		printk("%s: new stack %lx\n", __func__, p->stack);
+		printk("%s: current pc %lx sp %lx\n", __func__, current_regs->pc, current_regs->sp);
+		printk("%s: new pc %lx sp %lx\n", __func__, new_regs->pc, new_regs->sp);
+		 */
+
+#if 0
+		int i;
+
+		for (i = -20; i < 20; i++) {
+			unsigned int addr;
+
+			get_user(addr, new_regs->sp + i * 0x8);
+
+			printk("%s: %lx %lx\n", __func__, new_regs->sp + i * 0x8, addr);
+		}
+#endif
+	}
+
 	return p;
 
 bad_fork_free_pid:
@@ -1593,6 +1621,8 @@ struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
 		if (likely(!ptrace_event_enabled(current, trace)))
 			trace = 0;
 	}
+
+	/* printk("%s: pid current %d\n", __func__, current->pid); */
 
 	p = copy_process(clone_flags, stack_start, stack_size,
 			child_tidptr, NULL, trace);

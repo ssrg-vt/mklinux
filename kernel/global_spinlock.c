@@ -247,6 +247,9 @@ __releases(&value->_sp)
 	int res = 0;
 	unsigned int flgs;
 
+	printk("%s\n", __func__);
+	dump_stack();
+
 	 _remote_key_request_t* wait_req= (_remote_key_request_t*) kmalloc(sizeof(_remote_key_request_t),
 				GFP_ATOMIC);
 	 _remote_wakeup_request_t *wake_req = (_remote_wakeup_request_t*) kmalloc(sizeof(_remote_wakeup_request_t),

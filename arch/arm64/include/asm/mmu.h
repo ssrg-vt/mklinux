@@ -21,6 +21,7 @@ typedef struct {
 	raw_spinlock_t id_lock;
 	void *vdso;
 	atomic_t	gup_readers;
+	void *popcorn_vdso;
 } mm_context_t;
 
 #define ASID(mm)	((mm)->context.id & 0xffff)

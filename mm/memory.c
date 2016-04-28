@@ -1894,6 +1894,7 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 					fault_flags |= (FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_RETRY_NOWAIT);
 
 				if (current->tgroup_distributed == 1) {
+					printk("%s: call process_server_try_handle_mm_fault\n", __func__);
 					ret = process_server_try_handle_mm_fault(current, mm, vma, start, fault_flags, 0);
 				} else {
 					ret = handle_mm_fault(mm, vma, start, fault_flags);
@@ -2019,6 +2020,7 @@ int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
                 if (!vma || address < vma->vm_start)
                         vma = NULL;
 
+		printk("%s: call process_server_try_handle_mm_fault\n", __func__);
                 ret = process_server_try_handle_mm_fault(tsk, mm, vma, address, fault_flags, 0);
 
                 if (ret & VM_FAULT_ERROR) {

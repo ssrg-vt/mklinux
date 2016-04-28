@@ -3768,7 +3768,9 @@ long sched_setaffinity_on_popcorn(pid_t pid, struct task_struct *p,
 				put_online_cpus();
 
 sleep_again:
+				printk("%s: before scheduler\n", __func__);
                                 schedule();
+				printk("%s: after scheduler\n", __func__);
 
 				if (ret == PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote && current->group_exit != -1){
 					printk("MIGRATED-RET: PID %d\n", p->pid);

@@ -184,8 +184,10 @@ int arch_setup_additional_pages(struct linux_binprm *bprm,
 {
 	struct mm_struct *mm = current->mm;
 	unsigned long vdso_base, vdso_mapping_len;
+	unsigned long popcorn_addr, tmp;
 	int ret;
 	struct page **pagelist;
+	struct page **popcorn_pagelist;
 	unsigned long pages;	
 
 	//Ajith - disabling vdso
@@ -205,7 +207,7 @@ int arch_setup_additional_pages(struct linux_binprm *bprm,
 	vdso_mapping_len = (pages + 1) << PAGE_SHIFT;
 
 	down_write(&mm->mmap_sem);
-	vdso_base = get_unmapped_area(NULL, 0, vdso_mapping_len, 0, 0);
+	tmp = popcorn_addr = vdso_base = get_unmapped_area(NULL, 0, (vdso_mapping_len + PAGE_SIZE), 0, 0);
 	if (IS_ERR_VALUE(vdso_base)) {
 		ret = vdso_base;
 		goto up_fail;
@@ -220,10 +222,42 @@ int arch_setup_additional_pages(struct linux_binprm *bprm,
 		mm->context.vdso = NULL;
 		goto up_fail;
 	}
+///////////////////////////////////////////////////////////////////////////////
+        popcorn_addr = get_unmapped_area(NULL, popcorn_addr, PAGE_SIZE, 0, 0);
+        if (IS_ERR_VALUE(popcorn_addr)) {
+                pr_err("Failed to get unmapped area!\n");
+                ret = popcorn_addr;
+                goto up_fail;
+        }
+        current->mm->context.popcorn_vdso = (void *)popcorn_addr;
+
+        popcorn_pagelist = kzalloc(sizeof(struct page *) * (1 + 1), GFP_KERNEL);
+        if (vdso_pagelist == NULL) {
+                 pr_err("Failed to allocate vDSO pagelist!\n");
+		ret = -ENOMEM;
+		goto up_fail;
+        }
+        popcorn_pagelist[0] = alloc_pages(GFP_KERNEL, 0);
+
+        ret = install_special_mapping(mm, popcorn_addr, PAGE_SIZE,
+                                      VM_READ|VM_EXEC|
+                                      VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC,
+                                      popcorn_pagelist);
+        if (ret) {
+                current->mm->context.popcorn_vdso = NULL;
+                goto up_fail;
+        }
+
+        /*printk(KERN_INFO"%s: current 0x%lx (%s) stack 0x%lx"
+               " addr 0x%lx (0x%lx) -0x%lx- size 0x%lx (0x%lx) ret 0x%lx (tmp %lx)\n",
+                __func__, (unsigned long)current, current->comm,
+                (unsigned long)mm->start_stack,
+                (unsigned long)vdso_base, (unsigned long) popcorn_addr, (unsigned long)(vdso_base+vdso_mapping_len),
+                (unsigned long)vdso_mapping_len, (unsigned long) PAGE_SIZE,
+                (unsigned long)ret, tmp);*/
 
 up_fail:
 	up_write(&mm->mmap_sem);
-
 	return ret;
 }
 
@@ -241,6 +275,9 @@ const char *arch_vma_name(struct vm_area_struct *vma)
 			return "[vectors]";
 #endif
 		return "[vdso]";
+	}
+	if (vma->vm_mm && vma->vm_start == (long)vma->vm_mm->context.popcorn_vdso) {
+		return "[popcorn]";
 	}
 
 	return NULL;

@@ -62,6 +62,8 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs,
 {
 	int ret;
 
+	dump_processor_regs(task_pt_regs(task));
+
 	arch->migration_pc = task_pt_regs(task)->user_regs.pc;
 	arch->regs.sp = task_pt_regs(task)->user_regs.sp;
 	arch->old_rsp = task_pt_regs(task)->user_regs.sp;
@@ -132,6 +134,8 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 
 	printk("%s: pc %lx sp %lx bp %lx ra %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp, arch->ra);
 
+	dump_processor_regs(task_pt_regs(task));
+
 	return 0;
 }
 
@@ -156,6 +160,8 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
  */
 int update_thread_info(struct task_struct *task)
 {
+	printk("%s\n", __func__);
+
 	return 0;
 }
 
@@ -325,7 +331,7 @@ int dump_processor_regs(struct pt_regs *regs)
 
 	if (regs == NULL) {
 		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
-		return;
+		return 0;
 	}
 
 	dump_stack();
@@ -341,6 +347,8 @@ int dump_processor_regs(struct pt_regs *regs)
 			printk(KERN_ALERT"regs[%d]: 0x%lx\n", i, regs->regs[i]);
 		}
 	}
+
+	return 0;
 }
 
 unsigned long futex_atomic_add(unsigned long ptr, unsigned long val)
@@ -351,5 +359,11 @@ unsigned long futex_atomic_add(unsigned long ptr, unsigned long val)
 	
 	result = atomic64_add_return(val, &v);
 	return (result - val);
+}
+
+extern void update_popcorn_migrate(int a);
+void suggest_migration(int suggestion) 
+{
+	update_popcorn_migrate(suggestion);
 }
 

@@ -29,8 +29,6 @@
 #include <linux/platform_device.h>
 #include <linux/spinlock.h>
 #include <linux/uaccess.h>
-#include <linux/acpi.h>
-#include <linux/efi.h>
 
 #include <asm/cputype.h>
 #include <asm/irq.h>
@@ -70,17 +68,6 @@ int perf_num_counters(void)
 	return armpmu_get_max_events();
 }
 EXPORT_SYMBOL_GPL(perf_num_counters);
-
-const char *perf_pmu_name(void)
-{
-        const char *name = NULL;
-
-        if (cpu_pmu != NULL) 
-                name = cpu_pmu->name;
-
-        return name;
-}
-EXPORT_SYMBOL_GPL(perf_pmu_name);
 
 #define HW_OP_UNSUPPORTED		0xFFFF
 
@@ -686,6 +673,7 @@ enum armv8_pmuv3_perf_types {
 	ARMV8_PMUV3_PERFCTR_MEM_ERROR				= 0x1A,
 	ARMV8_PMUV3_PERFCTR_BUS_CYCLES				= 0x1D,
 };
+// NOTE that 0x20-0x30 are defined in PMCEID1_EL0
 
 /* PMUv3 HW events mapping. */
 static const unsigned armv8_pmuv3_perf_map[PERF_COUNT_HW_MAX] = {
@@ -693,8 +681,8 @@ static const unsigned armv8_pmuv3_perf_map[PERF_COUNT_HW_MAX] = {
 	[PERF_COUNT_HW_INSTRUCTIONS]		= ARMV8_PMUV3_PERFCTR_INSTR_EXECUTED,
 	[PERF_COUNT_HW_CACHE_REFERENCES]	= ARMV8_PMUV3_PERFCTR_L1_DCACHE_ACCESS,
 	[PERF_COUNT_HW_CACHE_MISSES]		= ARMV8_PMUV3_PERFCTR_L1_DCACHE_REFILL,
-	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS]	= HW_OP_UNSUPPORTED,
-	[PERF_COUNT_HW_BRANCH_MISSES]		= ARMV8_PMUV3_PERFCTR_PC_BRANCH_MIS_PRED,
+	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS]	= HW_OP_UNSUPPORTED, //0x21
+	[PERF_COUNT_HW_BRANCH_MISSES]		= ARMV8_PMUV3_PERFCTR_PC_BRANCH_MIS_PRED, //0x22
 	[PERF_COUNT_HW_BUS_CYCLES]		= HW_OP_UNSUPPORTED,
 	[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND]	= HW_OP_UNSUPPORTED,
 	[PERF_COUNT_HW_STALLED_CYCLES_BACKEND]	= HW_OP_UNSUPPORTED,
@@ -1294,26 +1282,10 @@ static struct of_device_id armpmu_of_device_ids[] = {
 	{},
 };
 
-#ifdef CONFIG_ACPI
-static const struct acpi_device_id armpmu_acpi_match[] = {
-	{ "LNRO0007", },
-	{},
-};
-#endif
-
 static int armpmu_device_probe(struct platform_device *pdev)
 {
 	if (!cpu_pmu)
 		return -ENODEV;
-
-	/* This if-statement is here because XGENE currently also
-	 * loads ACPI tables when booting with DT. To make sure we
-	 * get the DT node when booting with DTB we have this check.
-	 */
-	if (efi_enabled(EFI_BOOT) || pdev->dev.of_node != NULL) {
-		cpu_pmu->plat_device = pdev;
-		return 0;
-	}
 
 	cpu_pmu->plat_device = pdev;
 	return 0;
@@ -1323,7 +1295,6 @@ static struct platform_driver armpmu_driver = {
 	.driver		= {
 		.name	= "arm-pmu",
 		.of_match_table = armpmu_of_device_ids,
-		.acpi_match_table = ACPI_PTR(armpmu_acpi_match),
 	},
 	.probe		= armpmu_device_probe,
 };

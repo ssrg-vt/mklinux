@@ -3500,6 +3500,10 @@ out:
 	SYSCALL_DEFINE2(set_robust_list, struct robust_list_head __user *, head,
 			size_t, len)
 	{
+		if (current->tgroup_distributed == 1) {
+			printk("%s: pid %d\n", __func__, current->pid);
+		} 
+
 		if (!futex_cmpxchg_enabled)
 			return -ENOSYS;
 		/*
@@ -3763,10 +3767,38 @@ retry:
 	}
 
 
+int dump_processor_regs_futex(struct pt_regs *regs)
+{
+	int i;
+
+	if (regs == NULL) {
+		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
+		return;
+	}
+
+	dump_stack();
+
+	printk(KERN_ALERT"DUMP REGS %s\n", __func__);
+
+	if (NULL != regs) {
+		printk(KERN_ALERT"sp: 0x%lx\n", regs->sp);
+		printk(KERN_ALERT"pc: 0x%lx\n", regs->pc);
+		printk(KERN_ALERT"pstate: 0x%lx\n", regs->pstate);
+
+		for (i = 0; i < 31; i++) {
+			printk(KERN_ALERT"regs[%d]: 0x%lx\n", i, regs->regs[i]);
+		}
+	}
+}
 	SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 			struct timespec __user *, utime, u32 __user *, uaddr2,
 			u32, val3)
 	{
+		if (current->tgroup_distributed == 1) {
+			printk("%s: pid %d\n", __func__, current->pid);
+			dump_processor_regs_futex(task_pt_regs(current));
+		} 
+
 		/*	if( (strcmp(current->comm,"matrix_mult")==0)){
 			printk(KERN_ALERT"%s: start futex uadd{%lx} op{%d} val{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,val,utime,uaddr2,current->pid,smp_processor_id());
 		//		dump_regs(task_pt_regs(current));

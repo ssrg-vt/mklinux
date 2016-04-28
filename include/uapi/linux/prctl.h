@@ -149,4 +149,6 @@
 
 #define PR_GET_TID_ADDRESS	40
 
+#define PR_GET_POPCORN_VDSO	41
+
 #endif /* _LINUX_PRCTL_H */

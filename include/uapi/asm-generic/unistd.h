@@ -693,8 +693,12 @@ __SYSCALL(__NR_kcmp, sys_kcmp)
 #define __NR_finit_module 273
 __SYSCALL(__NR_finit_module, sys_finit_module)
 
+/* ajith - new syscall added for pocron het migration */
+#define __NR_sched_setaffinity_popcorn 274
+__SYSCALL(__NR_sched_setaffinity_popcorn, sys_sched_setaffinity_popcorn)
+
 #undef __NR_syscalls
-#define __NR_syscalls 274
+#define __NR_syscalls 275
 
 /*
  * All syscalls below here should go away really,
@@ -868,8 +872,11 @@ __SYSCALL(__NR_fork, sys_ni_syscall)
  * they take different names.
  * Here we map the numbers so that both versions
  * use the same syscall table layout.
+ * For 32bit abis where 64bit can be passed via one
+ * register, use the same naming as the 64bit ones
+ * as they will only have a 64 bit off_t.
  */
-#if __BITS_PER_LONG == 64 && !defined(__SYSCALL_COMPAT)
+#if (__BITS_PER_LONG == 64 && !defined(__SYSCALL_COMPAT)) || defined(__SYSCALL_NONCOMPAT)
 #define __NR_fcntl __NR3264_fcntl
 #define __NR_statfs __NR3264_statfs
 #define __NR_fstatfs __NR3264_fstatfs

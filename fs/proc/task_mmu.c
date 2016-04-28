@@ -866,6 +866,119 @@ const struct file_operations proc_clear_refs_operations = {
 	.llseek		= noop_llseek,
 };
 
+/* Popcorn Linux
+ * migration trigger interface (mtrig)
+ */
+static ssize_t mtrig_write (struct file *file, const char __user *buf,
+                                size_t count, loff_t *ppos)
+{
+        struct task_struct * task;
+        struct mm_struct * mm;
+        struct vm_area_struct * vma;
+        char buffer[PROC_NUMBUF];
+        int rv, itype;
+
+        memset(buffer, 0, sizeof(buffer));
+        if (count > sizeof(buffer) - 1)
+                count = sizeof(buffer) - 1;
+        if (copy_from_user(buffer, buf, count))
+                return -EFAULT;
+        rv = kstrtoint(strstrip(buffer), 10, &itype);
+        if (rv < 0)
+                return rv;
+
+        task = get_proc_task(file_inode(file));
+        if (!task)
+                return -ESRCH;
+        mm = get_task_mm(task);
+        if (mm) {
+                if (mm->context.popcorn_vdso) {
+                        struct page ** popcorn_pagelist;
+                        long * pval;
+
+                        vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
+                        if ( vma == NULL )
+                                return -ESRCH;
+                        if ( (unsigned long)mm->context.popcorn_vdso >= vma->vm_end)
+                                return -ESRCH;
+
+                        popcorn_pagelist = (struct page**)vma->vm_private_data;
+                        if ( popcorn_pagelist == NULL )
+                                return -ESRCH;
+
+                        pval = page_address(popcorn_pagelist[0]);
+                        *pval = (long)itype;
+                        printk(KERN_INFO"%s: mm present, vdso @ 0x%lx, %s -- 0x%lx(%s) @ 0x%lx vma 0x%lx(0x%lx)\n",
+                          __func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
+                          (long)itype, buffer, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);
+                } else {
+                        printk(KERN_INFO"%s: mm present, no popcorn_vdso, %s\n",
+                                __func__, task->comm);
+                }
+        }
+        return count;
+}
+
+static ssize_t mtrig_read (struct file *file, char __user *buf,
+                            size_t count, loff_t *ppos)
+{
+        struct task_struct * task;
+        struct mm_struct * mm;
+        struct vm_area_struct * vma;
+        char buffer[PROC_NUMBUF];
+        long rv = -1;
+        int len;
+
+        if (*ppos > 0)
+                return 0; //eof
+
+        task = get_proc_task(file_inode(file));
+        if (!task)
+                return -ESRCH;
+        mm = get_task_mm(task);
+        if (mm) {
+                if (mm->context.popcorn_vdso) {
+                        struct page ** popcorn_pagelist;
+                        long * pval;
+
+                        vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
+                        if ( vma == NULL )
+                                return -ESRCH;
+                        if ( (unsigned long)mm->context.popcorn_vdso >= vma->vm_end)
+                                return -ESRCH;
+
+                        popcorn_pagelist = (struct page**)vma->vm_private_data;
+                        if ( popcorn_pagelist == NULL )
+                                return -ESRCH;
+
+                        pval = page_address(popcorn_pagelist[0]);
+                        rv = *pval;
+                        printk(KERN_INFO"%s: mm present, vdso @ 0x%lx, %s -- 0x%lx @ 0x%lx vma 0x%lx(0x%lx)\n",
+                          __func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
+                          (long)rv, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);
+                } else {
+                        printk(KERN_INFO"%s: mm present, no popcorn_vdso, %s\n",
+                          __func__, task->comm);
+                        return -ESRCH;
+                }
+        }
+
+        memset(buffer, 0, sizeof(buffer));
+        len = snprintf(buffer, sizeof(buffer), "%ld", (long)rv);
+        if (count < len)
+                len = count;
+        if (copy_to_user(buf, buffer, len))
+                return -EFAULT;
+
+        *ppos += len;
+        return len;
+}
+
+const struct file_operations proc_mtrig_operations = {
+        .write          = mtrig_write,
+        .read           = mtrig_read,
+};
+
 typedef struct {
 	u64 pme;
 } pagemap_entry_t;
