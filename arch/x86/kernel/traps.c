@@ -74,6 +74,15 @@ gate_desc debug_idt_table[NR_VECTORS] __page_aligned_bss;
 asmlinkage int system_call(void);
 #endif
 
+#define PROCESS_SERVER_VERBOSE  0
+#if PROCESS_SERVER_VERBOSE
+#define PSPRINTK(...) printk(__VA_ARGS__)
+#undef STATISTICS
+#define STATISTICS 1
+#else
+#define PSPRINTK(...) ;
+#endif
+
 /* Must be page-aligned because the real IDT is used in a fixmap. */
 gate_desc idt_table[NR_VECTORS] __page_aligned_bss;
 
@@ -288,7 +297,7 @@ do_general_protection(struct pt_regs *regs, long error_code)
 	struct task_struct *tsk;
 	enum ctx_state prev_state;
 
-		printk("In %s:%d\n", __func__, __LINE__);
+		PSPRINTK("In %s:%d\n", __func__, __LINE__);
 
 	prev_state = exception_enter();
 	conditional_sti(regs);
@@ -304,10 +313,10 @@ do_general_protection(struct pt_regs *regs, long error_code)
 	tsk = current;
 	if (!user_mode(regs)) {
 		if (fixup_exception(regs)) {
-printk(KERN_EMERG"%s: fixup exception\n", __func__);
-dump_stack();
+PSPRINTK(KERN_EMERG"%s: fixup exception\n", __func__);
+//dump_stack();
 			goto exit;
-}
+		}
 
 		tsk->thread.error_code = error_code;
 		tsk->thread.trap_nr = X86_TRAP_GP;
@@ -315,7 +324,7 @@ dump_stack();
 			       X86_TRAP_GP, SIGSEGV) != NOTIFY_STOP) {
 printk(KERN_EMERG"%s: general protection fault %d\n", __func__, error_code);
 			die("general protection fault", regs, error_code);
-}
+		}
 printk(KERN_EMERG"%s: without notify\n", __func__);
 		goto exit;
 	}
@@ -343,7 +352,7 @@ rdmsrl(MSR_FS_BASE, fs);
 rdmsrl(MSR_GS_BASE, gs);
 savesegment(fs, fsindex);
 savesegment(gs, gsindex);
-printk(KERN_EMERG"%s: %s(%s) fs %lx %lx gs %lx %lx\n",
+PSPRINTK(KERN_EMERG"%s: %s(%s) fs %lx %lx gs %lx %lx\n",
         __func__, current->comm, tsk->comm, fs, fsindex, gs, gsindex);
 }
 	exception_exit(prev_state);

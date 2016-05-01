@@ -72,7 +72,7 @@
 #include <linux/uprobes.h>
 #include <linux/aio.h>
 
-#include <popcorn/process_server.h>
+#include <linux/process_server.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -1655,7 +1655,7 @@ long do_fork(unsigned long clone_flags,
 	long nr;
 
 	if (current->tgroup_distributed == 1) {
-                printk("%s: pid %d\n", __func__, current->pid);
+                PSPRINTK("%s: pid %d\n", __func__, current->pid);
         }
 
 	/*
@@ -1680,7 +1680,7 @@ long do_fork(unsigned long clone_flags,
 			child_tidptr, NULL, trace);
 
 	if (current->tgroup_distributed == 1) {
-                printk("%s: new pid %d\n", __func__, p->pid);
+                PSPRINTK("%s: new pid %d\n", __func__, p->pid);
         }
 
 	/*

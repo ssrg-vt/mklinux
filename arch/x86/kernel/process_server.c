@@ -18,10 +18,12 @@
 #include <linux/sched.h>
 #include <linux/cpu_namespace.h>
 #include <linux/popcorn_cpuinfo.h>
-#include <popcorn/process_server.h>
+#include <linux/process_server.h>
 #include <asm/i387.h>
 #include <asm/uaccess.h>
 #include <process_server_arch.h>
+
+#define PSPRINTK(...)
 
 /* External function declarations */
 extern void __show_regs(struct pt_regs *regs, int all);
@@ -76,7 +78,7 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs,
         if (uregs != NULL) {
 	        ret = copy_from_user(&arch->regs_aarch, uregs, sizeof(struct popcorn_regset_aarch64));
                 if (ret == -EFAULT) {
-		        printk("%s: error while copying registers\n", __func__);
+		        printk(KERN_ERR"%s: error while copying registers\n", __func__);
                 }
         }
 
@@ -127,9 +129,9 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs,
 		arch->thread_gs = gs;
 	}
 
-	printk("%s: pc %lx sp %lx bp %lx ra %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp, arch->ra);
+	PSPRINTK("%s: pc %lx sp %lx bp %lx ra %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp, arch->ra);
 
-	printk("%s: fs task %lx[%lx] saved %lx[%lx] current %lx[%lx]\n", __func__,
+	PSPRINTK("%s: fs task %lx[%lx] saved %lx[%lx] current %lx[%lx]\n", __func__,
 	      (unsigned long)task->thread.fs, (unsigned long)task->thread.fsindex,
 	      (unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
 	      (unsigned long)fs, (unsigned long)fsindex);
@@ -219,9 +221,9 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	savesegment(fs, fsindex);
 	rdmsrl(MSR_FS_BASE, fs_val);
 
-	printk("%s: ip %lx sp %lx bp %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp);
+	PSPRINTK("%s: ip %lx sp %lx bp %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp);
 
-	printk(KERN_EMERG"%s: task=%s current=%s (%d) FS saved %lx[%lx] curr %lx[%lx]\n",
+	PSPRINTK(KERN_EMERG"%s: task=%s current=%s (%d) FS saved %lx[%lx] curr %lx[%lx]\n",
 	       __func__, task->comm, current->comm, passed,
 	       (unsigned long)arch->thread_fs, (unsigned long)arch->thread_fsindex,
 	       (unsigned long)fs_val, (unsigned long)fsindex);
@@ -279,7 +281,7 @@ int update_thread_info(struct task_struct *task)
 	if (task->thread.gs)
 		wrmsrl_safe(MSR_KERNEL_GS_BASE, task->thread.gs);
 
-	dump_processor_regs(task_pt_regs(task));
+	//dump_processor_regs(task_pt_regs(task));
 	//__show_regs(task_pt_regs(task), 1);
 
 	ret = 0;
