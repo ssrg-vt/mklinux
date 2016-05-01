@@ -1072,11 +1072,9 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 		return PTR_ERR(tmp);
 	}
 
-	/*
-	if (current->tgroup_distributed == 1) {
+	/*if (current->tgroup_distributed == 1) {
 		fd = pcn_get_fd_from_home(tmp, flags, mode);
-	}
-	*/
+	}*/
 
 	fd = get_unused_fd_flags(flags);
 	if (fd >= 0) {

@@ -338,6 +338,10 @@ void update_vsyscall_tz(void)
 	vdso_data->tz_dsttime		= sys_tz.tz_dsttime;
 }
 
+/*
+ * This changes the vdso content for Popcorn in all processes (not just all
+ * threads!)
+ */
 void update_popcorn_migrate(int migrate)
 {
 	vdso_data->popcorn_migrate = migrate;

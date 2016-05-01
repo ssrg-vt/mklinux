@@ -1056,12 +1056,12 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		pid_task(find_get_pid(current->surrogate), PIDTYPE_PID);
 	mm = tsk->mm;
 
-	/*	if(current->surrogate != -1)
-		printk("%s: server {%s} in action for {%s} ",__func__,current->comm,tsk->comm);
-	 */
-
 	/* Get the faulting address: */
 	address = read_cr2();
+
+/*	if(tsk->tgroup_distributed == 1) {
+		PSPRINTK("%s: pid %d addr %lx\n", __func__, tsk->pid, address);
+	}*/
 
 	if(tsk->tgroup_distributed==1 && tsk->main==1){
 
@@ -1217,7 +1217,10 @@ retry:
 	repl_ret= 0;
 	// Nothing to do for a thread group that's not distributed.
 	if(tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0)) {
+/*		PSPRINTK("%s: call process_server_try_handle_mm_fault retrying %d\n", __func__, retrying);*/
 		repl_ret= process_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
+
+/*		PSPRINTK("%s: repl_ret %d\n", __func__, repl_ret);*/
 
 		if(repl_ret==0)
 			goto out;

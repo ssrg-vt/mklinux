@@ -321,7 +321,8 @@
 312	common	kcmp			sys_kcmp
 313	common	finit_module		sys_finit_module
 314	common	take_time		sys_take_time
-315	common	sched_setaffinity_popcorn	sys_sched_setaffinity_popcorn
+315	common	sched_setaffinity_popcorn	stub_sched_setaffinity_popcorn
+#315	common	sched_setaffinity_popcorn	sys_sched_setaffinity_popcorn
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact

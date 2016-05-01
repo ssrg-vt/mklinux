@@ -485,13 +485,17 @@ static void ips_enable_cpu_turbo(struct ips_driver *ips)
  */
 static void do_disable_cpu_turbo(void *data)
 {
-	u64 perf_ctl;
+	u64 perf_ctl, saved;
 
 	rdmsrl(IA32_PERF_CTL, perf_ctl);
+	saved = perf_ctl;
 	if (!(perf_ctl & IA32_PERF_TURBO_DIS)) {
 		perf_ctl |= IA32_PERF_TURBO_DIS;
 		wrmsrl(IA32_PERF_CTL, perf_ctl);
 	}
+	printk(KERN_INFO"%s: on_cpu %d saved %lx cur %lx\n",
+		__func__, (int)smp_processor_id(),
+		(unsigned long)saved, (unsigned long)perf_ctl);
 }
 
 /**

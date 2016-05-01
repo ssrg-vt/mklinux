@@ -1989,10 +1989,10 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		error = put_user(me->signal->is_child_subreaper,
 				 (int __user *)arg2);
 		break;
-        case PR_GET_POPCORN_VDSO:
-                error = put_user((unsigned long)me->mm->context.popcorn_vdso,
-                                (unsigned long __user *) arg2);
-                break;
+	case PR_GET_POPCORN_VDSO:
+		error = put_user((unsigned long)me->mm->context.popcorn_vdso, 
+				(unsigned long __user *) arg2);
+		break;
 	case PR_SET_NO_NEW_PRIVS:
 		if (arg2 != 1 || arg3 || arg4 || arg5)
 			return -EINVAL;

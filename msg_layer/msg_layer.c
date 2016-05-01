@@ -978,11 +978,13 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	lmsg->hdr.from_cpu = my_cpu;
 
 /*	if (lmsg->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
-		printk("Send message: %d (%s)\n", lmsg->hdr.type, msg_names[lmsg->hdr.type]);*/
+		printk("Send message: %d (%s) pid %d\n", lmsg->hdr.type, msg_names[lmsg->hdr.type], current->pid);*/
 
 #if !TEST_MSG_LAYER
 	if (dest_cpu==my_cpu) {	
 		pcn_msg = lmsg;
+
+		printk("Send message: dest_cpu == my_cpu\n");
 
 		if (pcn_msg->hdr.type < 0 || pcn_msg->hdr.type >= PCN_KMSG_TYPE_MAX) {
 			printk(KERN_ERR"Received invalid message type %d\n", pcn_msg->hdr.type);
@@ -1007,7 +1009,6 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	}
 
 	down_interruptible(&pool_buf_cnt);
-	
 do_retry:
 	for (i = 0; i<MAX_NUM_BUF; i++) {
 		if (send_buf[i].is_free != 0) {

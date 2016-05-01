@@ -3501,8 +3501,8 @@ out:
 			size_t, len)
 	{
 		if (current->tgroup_distributed == 1) {
-			printk("%s: pid %d\n", __func__, current->pid);
-		} 
+                        printk("%s: pid %d\n", __func__, current->pid);
+                }
 
 		if (!futex_cmpxchg_enabled)
 			return -ENOSYS;
@@ -3765,7 +3765,107 @@ retry:
 		}
 		return -ENOSYS;
 	}
+#if 0
+	int dump_processor_regs_futex(struct pt_regs* regs) {
+		int ret = -1;
+		unsigned long fs, gs;
+		unsigned long fsindex, gsindex;
 
+		if (regs == NULL) {
+			printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
+			goto exit;
+		}
+		dump_stack();
+		printk(KERN_ALERT"DUMP REGS %s\n", __func__);
+
+		if (NULL != regs) {
+			printk(KERN_ALERT"r15{%lx}\n",regs->r15);
+			printk(KERN_ALERT"r14{%lx}\n",regs->r14);
+			printk(KERN_ALERT"r13{%lx}\n",regs->r13);
+			printk(KERN_ALERT"r12{%lx}\n",regs->r12);
+			printk(KERN_ALERT"r11{%lx}\n",regs->r11);
+			printk(KERN_ALERT"r10{%lx}\n",regs->r10);
+			printk(KERN_ALERT"r9{%lx}\n",regs->r9);
+			printk(KERN_ALERT"r8{%lx}\n",regs->r8);
+			printk(KERN_ALERT"bp{%lx}\n",regs->bp);
+			printk(KERN_ALERT"bx{%lx}\n",regs->bx);
+			printk(KERN_ALERT"ax{%lx}\n",regs->ax);
+			printk(KERN_ALERT"cx{%lx}\n",regs->cx);
+			printk(KERN_ALERT"dx{%lx}\n",regs->dx);
+			printk(KERN_ALERT"di{%lx}\n",regs->di);
+			printk(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
+			printk(KERN_ALERT"ip{%lx}\n",regs->ip);
+			printk(KERN_ALERT"cs{%lx}\n",regs->cs);
+			printk(KERN_ALERT"flags{%lx}\n",regs->flags);
+			printk(KERN_ALERT"sp{%lx}\n",regs->sp);
+			printk(KERN_ALERT"ss{%lx}\n",regs->ss);
+		}
+		rdmsrl(MSR_FS_BASE, fs);
+		rdmsrl(MSR_GS_BASE, gs);
+		printk(KERN_ALERT"fs{%lx} - %lx content %lx\n",fs, current->thread.fs, fs ? * (unsigned long*) fs : 0x1234567l);
+		printk(KERN_ALERT"gs{%lx} - %lx content %lx\n",gs, current->thread.gs, fs ? * (unsigned long*)gs : 0x1234567l);
+
+		savesegment(fs, fsindex);
+		savesegment(gs, gsindex);
+		printk(KERN_ALERT"fsindex{%lx} - %x\n",fsindex, current->thread.fsindex);
+		printk(KERN_ALERT"gsindex{%lx} - %x\n",gsindex, current->thread.gsindex);
+		printk(KERN_ALERT"REGS DUMP COMPLETE\n");
+		ret = 0;
+
+	exit:
+		return ret;
+	}
+#endif
+int dump_processor_regs_futex(struct pt_regs* regs) {
+	int ret = -1;
+	unsigned long fs, gs;
+	unsigned long fsindex, gsindex;
+
+	if (regs == NULL){
+		printk(KERN_ERR"process_server: invalid params to dump_processor_regs()");
+		goto exit;
+	}
+	dump_stack();
+	printk(KERN_ALERT"DUMP REGS %s\n", __func__);
+
+	if (NULL != regs) {
+		printk(KERN_ALERT"r15{%lx}\n",regs->r15);
+		printk(KERN_ALERT"r14{%lx}\n",regs->r14);
+		printk(KERN_ALERT"r13{%lx}\n",regs->r13);
+		printk(KERN_ALERT"r12{%lx}\n",regs->r12);
+		printk(KERN_ALERT"r11{%lx}\n",regs->r11);
+		printk(KERN_ALERT"r10{%lx}\n",regs->r10);
+		printk(KERN_ALERT"r9{%lx}\n",regs->r9);
+		printk(KERN_ALERT"r8{%lx}\n",regs->r8);
+		printk(KERN_ALERT"bp{%lx}\n",regs->bp);
+		printk(KERN_ALERT"bx{%lx}\n",regs->bx);
+		printk(KERN_ALERT"ax{%lx}\n",regs->ax);
+		printk(KERN_ALERT"cx{%lx}\n",regs->cx);
+		printk(KERN_ALERT"dx{%lx}\n",regs->dx);
+		printk(KERN_ALERT"di{%lx}\n",regs->di);
+		printk(KERN_ALERT"orig_ax{%lx}\n",regs->orig_ax);
+		printk(KERN_ALERT"ip{%lx}\n",regs->ip);
+		printk(KERN_ALERT"cs{%lx}\n",regs->cs);
+		printk(KERN_ALERT"flags{%lx}\n",regs->flags);
+		printk(KERN_ALERT"sp{%lx}\n",regs->sp);
+		printk(KERN_ALERT"ss{%lx}\n",regs->ss);
+	}
+	rdmsrl(MSR_FS_BASE, fs);
+	rdmsrl(MSR_GS_BASE, gs);
+        printk(KERN_ALERT"fs{%lx} - %lx content %lx\n",fs, current->thread.fs, fs ? * (unsigned long*) fs : 0x1234567l);
+        printk(KERN_ALERT"gs{%lx} - %lx content %lx\n",gs, current->thread.gs, fs ? * (unsigned long*)gs : 0x1234567l);
+
+	savesegment(fs, fsindex);
+	savesegment(gs, gsindex);
+	printk(KERN_ALERT"fsindex{%lx} - %x\n",fsindex, current->thread.fsindex);
+	printk(KERN_ALERT"gsindex{%lx} - %x\n",gsindex, current->thread.gsindex);
+	printk(KERN_ALERT"REGS DUMP COMPLETE\n");
+	ret = 0;
+
+exit:
+
+	return ret;
+}
 
 int dump_processor_regs_futex(struct pt_regs *regs)
 {
@@ -3795,10 +3895,11 @@ int dump_processor_regs_futex(struct pt_regs *regs)
 			u32, val3)
 	{
 		if (current->tgroup_distributed == 1) {
-			printk("%s: pid %d\n", __func__, current->pid);
-			dump_processor_regs_futex(task_pt_regs(current));
-		} 
-
+                        //printk("--------------------------\n", __func__);
+                        //printk("POPCORN DEBUG -- not error\n", __func__);
+                        printk("%s: pid %d\n", __func__, current->pid);
+                        //dump_processor_regs_futex(task_pt_regs(current));
+                }
 		/*	if( (strcmp(current->comm,"matrix_mult")==0)){
 			printk(KERN_ALERT"%s: start futex uadd{%lx} op{%d} val{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,val,utime,uaddr2,current->pid,smp_processor_id());
 		//		dump_regs(task_pt_regs(current));

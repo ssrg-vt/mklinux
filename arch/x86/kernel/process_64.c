@@ -259,7 +259,7 @@ start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 			    __USER_CS, __USER_DS, 0);
 }
 
-unsigned long read_old_rsp(){
+unsigned long read_old_rsp(void){
 	//return percpu_read(old_rsp);
 	return this_cpu_read(old_rsp);
 }
@@ -544,7 +544,10 @@ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
 		ret = put_user(base, (unsigned long __user *)addr);
 		break;
 	}
-
+/*	case ARCH_GET_POPCORN: {
+		ret = put_user((unsigned long)task->mm->context.popcorn_vdso, (unsigned long __user *) addr);
+		break;
+	}*/
 	default:
 		ret = -EINVAL;
 		break;

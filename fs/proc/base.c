@@ -2611,7 +2611,7 @@ static const struct pid_entry tgid_base_stuff[] = {
 	REG("smaps",      S_IRUGO, proc_pid_smaps_operations),
 	REG("pagemap",    S_IRUGO, proc_pagemap_operations),
 #endif
-	REG("mtrig", S_IRUSR|S_IWUSR, proc_mtrig_operations),
+	REG("mtrig", S_IRUGO|S_IWUSR, proc_mtrig_operations),
 #ifdef CONFIG_SECURITY
 	DIR("attr",       S_IRUGO|S_IXUGO, proc_attr_dir_inode_operations, proc_attr_dir_operations),
 #endif
