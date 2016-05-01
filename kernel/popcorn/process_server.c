@@ -884,7 +884,7 @@ static int handle_new_kernel_answer(struct pcn_kmsg_message* inc_msg){
 			pcn_kmsg_free_msg(inc_msg);
 	}
 	else{
-		printk("ERROR: received an answer new kernel but memory not present\n");
+		printk("ERROR: %s(), received an answer new kernel but memory not present for cpu %d id %d\n", __func__, answer->tgroup_home_cpu, answer->tgroup_home_id);
 		pcn_kmsg_free_msg(inc_msg);
 	}
 	
@@ -895,7 +895,7 @@ void process_new_kernel(struct work_struct* work){
 	new_kernel_work_t* new_kernel_work= (new_kernel_work_t*) work;
 	memory_t* memory;
 
-	PSNEWTHREADPRINTK("received new kernel request\n");
+	printk("received new kernel request cpu %d id %d\n", new_kernel_work->request->tgroup_home_cpu, new_kernel_work->request->tgroup_home_id);
 
 	new_kernel_answer_t* answer= (new_kernel_answer_t*) kmalloc(sizeof(new_kernel_answer_t), GFP_ATOMIC);
 
@@ -903,7 +903,7 @@ void process_new_kernel(struct work_struct* work){
 		memory = find_memory_entry(new_kernel_work->request->tgroup_home_cpu,
 					   new_kernel_work->request->tgroup_home_id);
 		if (memory != NULL) {
-
+			printk("memory present cpu %d id %d\n", new_kernel_work->request->tgroup_home_cpu,new_kernel_work->request->tgroup_home_id);	
 			down_write(&memory->kernel_set_sem);
 			memory->kernel_set[new_kernel_work->request->header.from_cpu]= 1;
 			memcpy(answer->my_set,memory->kernel_set,MAX_KERNEL_IDS*sizeof(int));
@@ -918,6 +918,7 @@ void process_new_kernel(struct work_struct* work){
 
 		}
 		else{
+			printk("memory not present\n");
 			memset(answer->my_set,0,MAX_KERNEL_IDS*sizeof(int));
 		}
 
@@ -1058,13 +1059,13 @@ find:
 	unlock_task_sighand(current, &flags);
 
 	if (mm_data->alive == 0 && !is_last_thread_in_local_group && atomic_read(&(mm_data->pending_migration))==0) {
-		printk("ERROR: mm_data->alive is 0 but there are alive threads\n");
+		printk("%s: ERROR: mm_data->alive is 0 but there are alive threads (id %d, cpu %d)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 		return 0;
 	}
 
 	if (mm_data->alive == 0  && atomic_read(&(mm_data->pending_migration))==0) {
 		if (status == EXIT_THREAD) {
-			printk("ERROR: alive is 0 but status is exit thread\n");
+			printk("%s: ERROR: alive is 0 but status is exit thread (id %d, cpu %d)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 			return flush;
 		}
 
@@ -1088,11 +1089,11 @@ find:
 
 		if (flush == 1 && mm_data->arrived_op == 0) {
 			if (status == EXIT_FLUSHING)
-				printk("ERROR: status exit flush but arrived op is 0\n");
+				printk("%s: ERROR: status exit flush but arrived op is 0 (id %d, cpu %d)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 			return 1;
 		} else {			
 			if(atomic_read(&(mm_data->pending_migration))!=0)
-				printk(KERN_ALERT"ERROR pending migration when cleaning memory\n");
+				printk(KERN_ALERT"%s: ERROR pending migration when cleaning memory (id %d, cpu %d)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 			shadow_thread_t* my_shadow= NULL;
 
 			my_shadow = (shadow_thread_t*) pop_data( (data_header_t **)&(my_thread_pull->threads),
@@ -1109,8 +1110,8 @@ find:
 			mmput(mm_data->mm);
 			kfree(mm_data);
 #if STATISTICS
-			PSPRINTK("page_fault %i fetch %i local_fetch %i write %i read %i most_long_read %i invalid %i ack %i answer_request %i answer_request_void %i request_data %i most_written_page %i concurrent_writes %i most long write %i pages_allocated %i compressed_page_sent %i not_compressed_page %i not_compressed_diff_page %i\n",
-				 page_fault_mio,fetch,local_fetch,write,read,most_long_read,invalid,ack,answer_request,answer_request_void, request_data,most_written_page, concurrent_write,most_long_write, pages_allocated,compressed_page_sent,not_compressed_page,not_compressed_diff_page);
+			PSPRINTK("%s: page_fault %i fetch %i local_fetch %i write %i read %i most_long_read %i invalid %i ack %i answer_request %i answer_request_void %i request_data %i most_written_page %i concurrent_writes %i most long write %i pages_allocated %i compressed_page_sent %i not_compressed_page %i not_compressed_diff_page %i  (id %d, cpu %d)\n", __func__ , 
+				 page_fault_mio,fetch,local_fetch,write,read,most_long_read,invalid,ack,answer_request,answer_request_void, request_data,most_written_page, concurrent_write,most_long_write, pages_allocated,compressed_page_sent,not_compressed_page,not_compressed_diff_page, current->tgroup_home_id, current->tgroup_home_cpu);
 #endif
 
 			struct work_struct* work = kmalloc(sizeof(struct work_struct),
@@ -1181,7 +1182,7 @@ find:
 					return 1;
 
 				} else {
-					printk("ERROR: flush is 1 during first exit (alive set to 0 now)\n");
+					printk("%s: ERROR: flush is 1 during first exit (alive set to 0 now) (id %d, cpu %d)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 					return 1;
 				}
 			}else {
@@ -1411,7 +1412,7 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 	answer_request_void++;
 #endif
 
-	printk("%s: answer_request_void %i address %lx from cpu %i. This is a void response.\n", __func__, 0, response->address, inc_msg->hdr.from_cpu);
+	PSPRINTK("%s: answer_request_void %i address %lx from cpu %i. This is a void response.\n", __func__, 0, response->address, inc_msg->hdr.from_cpu);
 
 	PSMINPRINTK("answer_request_void address %lx from cpu %i. This is a void response.\n", response->address, inc_msg->hdr.from_cpu);
 
@@ -1478,7 +1479,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 	answer_request++;
 #endif
 
-	printk("%s: Answer_request %i address %lx from cpu %i \n", __func__, 0, response->address, inc_msg->hdr.from_cpu);
+	PSPRINTK("%s: Answer_request %i address %lx from cpu %i \n", __func__, 0, response->address, inc_msg->hdr.from_cpu);
 	PSMINPRINTK("Received answer for address %lx last write %d from cpu %i\n", response->address, response->last_write,inc_msg->hdr.from_cpu);
 
 	if (fetched_data == NULL) {
@@ -1909,7 +1910,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 #endif
 
 	PSMINPRINTK("Request for address %lx is fetch %i is write %i\n", request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
-	printk("%s: request %i address %lx is fetch %i is write %i\n", __func__, 0, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
+	PSPRINTK("%s: request %i address %lx is fetch %i is write %i\n", __func__, 0, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
 
 	memory = find_memory_entry(request->tgroup_home_cpu,
 				   request->tgroup_home_id);
@@ -1963,11 +1964,11 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 			goto out;
 		}
 
-		printk("%s: Find vma from %s start %lx end %lx\n", __func__, ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"), vma->vm_start, vma->vm_end);
+		PSPRINTK("%s: Find vma from %s start %lx end %lx\n", __func__, ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"), vma->vm_start, vma->vm_end);
 
 	}
 
-	printk("%s: vma_flags = %lx\n", __func__, vma->vm_flags);	
+	PSPRINTK("%s: vma_flags = %lx\n", __func__, vma->vm_flags);	
 
 	if(vma && vma->vm_flags & VM_FETCH_LOCAL)
 	{
@@ -2248,10 +2249,10 @@ retry:	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 	}
 	else{
 		//replicated page case
-		printk("%s: Page replicated...\n", __func__);
+		PSPRINTK("%s: Page replicated...\n", __func__);
 
 		if(request->is_fetch==1){
-			printk("ERROR: received a fetch request in a replicated status\n");
+			printk("ERROR: %s(), received a fetch request in a replicated status (cpu %d, id %d)\n", __func__, current->tgroup_home_cpu, current->tgroup_home_id);
 		}
 
 		if(page->writing==1){
@@ -2300,7 +2301,7 @@ retry:	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 		//valid page case
 		if (page->status == REPLICATION_STATUS_VALID) {
 
-			printk(" Page requested valid\n");
+			PSPRINTK(" Page requested valid\n");
 
 			if(page->owner!=1)
 				printk("ERROR: request in a not owner valid page\n");
@@ -2324,7 +2325,7 @@ retry:	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 					flush_tlb_page(vma, address);
 				}
 				else{
-					printk("ERROR: received a read request in valid status\n");
+					printk("ERROR: %s(), received a read request in valid status (cpu %d, id %d)\n", __func__, current->tgroup_home_cpu, current->tgroup_home_id);
 				}
 			}
 
@@ -2333,7 +2334,7 @@ retry:	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 
 		if (page->status == REPLICATION_STATUS_WRITTEN) {
 
-			printk(" Page requested in written status\n");
+			PSPRINTK(" Page requested in written status\n");
 
 			if(page->owner!=1)
 				printk("ERROR: page in written status without ownership\n");
@@ -2386,9 +2387,9 @@ retry:	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 
 resolved:
 
-	printk("%s: Resolved Copy from %s\n", __func__, ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"));
+	PSPRINTK("%s: Resolved Copy from %s\n", __func__, ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"));
 
-	printk("%s: Page read only?%i Page shared?%i \n", __func__, (vma->vm_flags & VM_WRITE)?0:1, (vma->vm_flags & VM_SHARED)?1:0);
+	PSPRINTK("%s: Page read only?%i Page shared?%i \n", __func__, (vma->vm_flags & VM_WRITE)?0:1, (vma->vm_flags & VM_SHARED)?1:0);
 
 	response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
 	if (response == NULL) {
@@ -2937,7 +2938,7 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 	unsigned long flags;
 	
 	PSPRINTK("MORTEEEEEE-Process_server_task_exit_notification - pid{%d}\n", tsk->pid);
-	printk("%s - pid %d\n", __func__, tsk->pid);
+	PSPRINTK("%s - pid %d\n", __func__, tsk->pid);
 
 	if(tsk->distributed_exit==EXIT_ALIVE){
 
@@ -2947,7 +2948,7 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code) {
 				schedule();
 
 		} else {
-			printk("ERROR: Mapping disappeared, cannot wake up main thread...\n");
+			printk("ERROR: %s(), Mapping disappeared, cannot wake up main thread... (current->tgroup_home_id, current->tgroup_home_cpu)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 			return -1;
 		}
 
@@ -3310,7 +3311,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		}
 	}
 	else{
-		printk("ERROR: impossible to send read message, no destination kernel\n");
+		printk("%s: ERROR: impossible to send read message, no destination kernel\n", __func__);
 		ret= VM_FAULT_REPLICATION_PROTOCOL;
 		down_read(&mm->mmap_sem);
 		spin_lock(ptl);
@@ -4094,7 +4095,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	data_request_for_2_kernels_t* fetch_message;
 	int ret= 0,i,reachable,other_cpu=-1;
 
-	printk("%s: fetch for address %lx write %i pid %d is local?%d\n", __func__, address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),current->pid,pte_none(value_pte));
+	PSPRINTK("%s: fetch for address %lx write %i pid %d is local?%d\n", __func__, address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),current->pid,pte_none(value_pte));
 #if STATISTICS
 	fetch++;
 #endif
@@ -4484,7 +4485,7 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 #if STATISTICS
 	page_fault_mio++;
 #endif
-	printk("%s: page fault for address %lx in page %lx task pid %d t_group_cpu %d t_group_id %d %s\n",
+	PSPRINTK("%s: page fault for address %lx in page %lx task pid %d t_group_cpu %d t_group_id %d %s\n",
                  __func__, page_faul_address, address, tsk->pid,
                  tgroup_home_cpu, tgroup_home_id,
 	         page_fault_flags & FAULT_FLAG_WRITE ? "WRITE" : "READ");
@@ -4498,7 +4499,7 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	}
 
 	if (address == 0) {
-		printk("ERROR: accessing page at address 0 pid %i\n", tsk->pid);
+		printk("ERROR: %s(), accessing page at address 0 pid %i (cpu %d, id %d)\n", __func__, tsk->pid, current->tgroup_home_cpu, current->tgroup_home_id);
 		dump_processor_regs(task_pt_regs(tsk));
 		return VM_FAULT_ACCESS_ERROR | VM_FAULT_VMA;
 	}
@@ -5344,13 +5345,13 @@ void process_vma_op(struct work_struct* work)
 
 		pcn_kmsg_free_msg(operation);
 		kfree(work);
-		printk("SERVER: vma_operation_index is %d\n",mm->vma_operation_index);
-		printk("%s, SERVER: end requested operation\n",__func__);
+		PSPRINTK("SERVER: vma_operation_index is %d\n",mm->vma_operation_index);
+		PSPRINTK("%s, SERVER: end requested operation\n",__func__);
 
 		return ;
 
 	} else {
-		printk("%s, CLIENT: Starting operation %i of index %i\n ",__func__, operation->operation, operation->vma_operation_index);
+		PSPRINTK("%s, CLIENT: Starting operation %i of index %i\n ",__func__, operation->operation, operation->vma_operation_index);
 		//CLIENT
 
 		//NOTE: the current->mm->distribute_sem is already held
@@ -5388,7 +5389,7 @@ void process_vma_op(struct work_struct* work)
 			memory->addr = operation->addr;
 			memory->arrived_op = 1;
 			//mm->vma_operation_index = operation->vma_operation_index;
-			printk("CLIENT: vma_operation_index is %d\n",mm->vma_operation_index);
+			PSPRINTK("CLIENT: vma_operation_index is %d\n",mm->vma_operation_index);
 			PSVMAPRINTK("%s, CLIENT: Operation %i started by a local thread pid %d\n ",__func__,operation->operation,memory->waiting_for_op->pid);
 			up_write(&mm->mmap_sem);
 
@@ -5404,7 +5405,7 @@ void process_vma_op(struct work_struct* work)
 		if (operation->from_cpu == _cpu) {
 
 			if (memory->my_lock != 1) {
-				printk("ERROR: wrong distributed lock aquisition\n");
+				printk("ERROR:%s(), wrong distributed lock aquisition\n",__func__);
 				up_write(&mm->mmap_sem);
 				pcn_kmsg_free_msg(operation);
 				kfree(work);
@@ -5413,7 +5414,7 @@ void process_vma_op(struct work_struct* work)
 
 			if (memory->waiting_for_op == NULL) {
 				printk(
-					"ERROR:received a push operation started by me but nobody is waiting\n");
+					"ERROR:%s(), received a push operation started by me but nobody is waiting\n", __func__);
 				up_write(&mm->mmap_sem);
 				pcn_kmsg_free_msg(operation);
 				kfree(work);
@@ -5425,8 +5426,8 @@ void process_vma_op(struct work_struct* work)
 
 			memory->arrived_op = 1;
 			//mm->vma_operation_index = operation->vma_operation_index;
-			printk("%s, CLIENT: Operation %i started by a local thread pid %d\n ",__func__,operation->operation,memory->waiting_for_op->pid);
-			printk("CLIENT: vma_operation_index is %d\n",mm->vma_operation_index);
+			PSPRINTK("%s, CLIENT: Operation %i started by a local thread pid %d\n ",__func__,operation->operation,memory->waiting_for_op->pid);
+			PSPRINTK("CLIENT: vma_operation_index is %d\n",mm->vma_operation_index);
 			up_write(&mm->mmap_sem);
 
 			wake_up_process(memory->waiting_for_op);
@@ -5491,7 +5492,7 @@ void process_vma_op(struct work_struct* work)
 		mm->distr_vma_op_counter--;
 
 		//mm->vma_operation_index = operation->vma_operation_index;
-		printk("CLIENT: Incremeting vma_operation_index\n");
+		PSPRINTK("CLIENT: Incremeting vma_operation_index\n");
 		mm->vma_operation_index++;
 
 		if (memory->my_lock != 1) {
@@ -5499,8 +5500,8 @@ void process_vma_op(struct work_struct* work)
 			up_write(&mm->distribute_sem);
 		}
 
-		printk("CLIENT: vma_operation_index is %d\n",mm->vma_operation_index);
-		printk("CLIENT: Ending distributed vma operation\n");
+		PSPRINTK("CLIENT: vma_operation_index is %d\n",mm->vma_operation_index);
+		PSPRINTK("CLIENT: Ending distributed vma operation\n");
 		up_write(&mm->mmap_sem);
 
 		wake_up(&request_distributed_vma_op);
@@ -5650,15 +5651,15 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 	if (current->mm->distr_vma_op_counter <= 0
 	    || (current->main == 0 && current->mm->distr_vma_op_counter > 2)
 	    || (current->main == 1 && current->mm->distr_vma_op_counter > 3))
-		printk("ERROR: exiting from a distributed vma operation with distr_vma_op_counter = %i\n",
-		       current->mm->distr_vma_op_counter);
+		printk("ERROR: %s(), exiting from a distributed vma operation with distr_vma_op_counter = %i (cpu %d, id %d)\n", 
+			__func__, current->mm->distr_vma_op_counter, current->tgroup_home_cpu, current->tgroup_home_id);
 
 	(current->mm->distr_vma_op_counter)--;
 
 	if (operation == VMA_OP_MAP || operation == VMA_OP_BRK) {
 		if (current->mm->was_not_pushed <= 0)
-			printk("ERROR: exiting from a mapping operation with was_not_pushed = %i\n",
-			       current->mm->was_not_pushed);
+			printk("ERROR: %s(), exiting from a mapping operation with was_not_pushed = %i (cpu %d, id %d)\n",
+			       __func__, current->mm->was_not_pushed, current->tgroup_home_cpu, current->tgroup_home_id);
 		current->mm->was_not_pushed--;
 	}
 
@@ -5742,11 +5743,11 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 		entry->my_lock = 0;
 
 		if(!(operation == VMA_OP_MAP || operation == VMA_OP_BRK)){
-			printk("%s incrementing vma_operation_index\n",__func__);
+			PSPRINTK("%s incrementing vma_operation_index\n",__func__);
 			current->mm->vma_operation_index++;
 		}
 
-		printk("Releasing distributed lock\n");
+		PSPRINTK("Releasing distributed lock\n");
 		up_write(&current->mm->distribute_sem);
 
 		if(_cpu == current->tgroup_home_cpu && !(operation == VMA_OP_MAP || operation == VMA_OP_BRK)){
@@ -5774,7 +5775,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 				//nested operation
 				if(operation != VMA_OP_UNMAP)
-					printk("ERROR exiting fom a nest operation that is %d",operation);
+					printk("ERROR: %s(), exiting fom a nest operation that is %d  (cpu %d, id %d)", __func__, operation, current->tgroup_home_cpu, current->tgroup_home_id);
 
 				//nested operation do not release the lock
 				printk("%s incrementing vma_operation_index\n",__func__);
@@ -5783,7 +5784,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		}
 
-	printk("%s: operation index is %d\n", __func__, current->mm->vma_operation_index);
+	PSPRINTK("%s: operation index is %d\n", __func__, current->mm->vma_operation_index);
 }
 
 /*I assume that down_write(&mm->mmap_sem) is held
@@ -5835,7 +5836,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 		return ret;
 	}
 
-	printk("%s: starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lx len %lx end %lx\n",
+	PSPRINTK("%s: starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lx len %lx end %lx\n",
 		    __func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
 
 
@@ -5914,8 +5915,8 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 	}
 
 	if (current->mm->distr_vma_op_counter != 0) {
-		printk("ERROR: a new vma operation can be started, but distr_vma_op_counter is %i\n",
-		       current->mm->distr_vma_op_counter);
+		printk("ERROR: %s(), a new vma operation can be started, but distr_vma_op_counter is %i (cpu %d, id %d)\n",
+		       __func__, current->mm->distr_vma_op_counter, current->tgroup_home_cpu, current->tgroup_home_id);
 		return -EPERM;
 	}
 
@@ -5938,14 +5939,14 @@ start: current->mm->distr_vma_op_counter++;
 			//(current->mm->vma_operation_index)++;
 			int index = current->mm->vma_operation_index;
 
-			printk("SERVER MAIN: starting operation %d, current index is %d \n", operation, index);
+			PSPRINTK("SERVER MAIN: starting operation %d, current index is %d \n", operation, index);
 
 			up_write(&current->mm->mmap_sem);
 
 			memory_t* entry = find_memory_entry(current->tgroup_home_cpu,
 							    current->tgroup_home_id);
 			if (entry == NULL || entry->message_push_operation == NULL) {
-				printk("ERROR: Mapping disappeared or cannot find message to update \n");
+				printk("ERROR: %s(), Mapping disappeared or cannot find message to update (id %d, cpu %d) \n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 				down_write(&current->mm->mmap_sem);
 				ret = -ENOMEM;
 				goto out;
@@ -6034,7 +6035,7 @@ start: current->mm->distr_vma_op_counter++;
 
 			}
 
-			printk("SERVER MAIN: Received all ack to lock\n");
+			PSPRINTK("SERVER MAIN: Received all ack to lock\n");
 
 			unsigned long flags;
 			raw_spin_lock_irqsave(&(acks->lock), flags);
@@ -6060,7 +6061,7 @@ start: current->mm->distr_vma_op_counter++;
 			if (operation == VMA_OP_UNMAP || operation == VMA_OP_PROTECT
 			    || ((operation == VMA_OP_REMAP) && (flags & MREMAP_FIXED))) {
 
-				printk("SERVER MAIN: sending done for operation, we can execute the operation in parallel! %d\n",operation);
+				PSPRINTK("SERVER MAIN: sending done for operation, we can execute the operation in parallel! %d\n",operation);
 				// the list does not include the current processor group descirptor (TODO)
 				struct list_head *iter;
 				_remote_cpu_info_list_t *objPtr;
@@ -6081,7 +6082,7 @@ start: current->mm->distr_vma_op_counter++;
 				return ret;
 
 			} else {
-				printk("SERVER MAIN: going to execute the operation locally %d\n",operation);
+				PSPRINTK("SERVER MAIN: going to execute the operation locally %d\n",operation);
 				kfree(lock_message);
 				kfree(acks);
 
@@ -6163,7 +6164,7 @@ start: current->mm->distr_vma_op_counter++;
 			memory_t* entry = find_memory_entry(current->tgroup_home_cpu,
 							    current->tgroup_home_id);
 			if (entry==NULL) {
-				printk("ERROR: Mapping disappeared, cannot save message to update by exit_distribute_operation\n");
+				printk("ERROR: %s(), Mapping disappeared, cannot save message to update by exit_distribute_operation (id %d , cpu %d)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 				kfree(lock_message);
 				kfree(acks);
 				down_write(&current->mm->mmap_sem);
@@ -6292,7 +6293,7 @@ start: current->mm->distr_vma_op_counter++;
 
 	} else {
 		//CLIENT
-		printk("CLIENT: starting operation %i for pid %d current index is%d\n", operation, current->pid, current->mm->vma_operation_index);
+		PSPRINTK("CLIENT: starting operation %i for pid %d current index is%d\n", operation, current->pid, current->mm->vma_operation_index);
 
 
 		/*First: send the operation to the server*/
@@ -6334,7 +6335,7 @@ start: current->mm->distr_vma_op_counter++;
 		if (entry) {
 
 			if (entry->waiting_for_op != NULL) {
-				printk("ERROR: Somebody is already waiting for an op\n");
+				printk("ERROR: %s(), Somebody is already waiting for an op (cur_id %d, cur_cpu %d)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 				kfree(operation_to_send);
 				ret = -EPERM;
 				goto out;
@@ -6344,7 +6345,7 @@ start: current->mm->distr_vma_op_counter++;
 			entry->arrived_op = 0;
 
 		} else {
-			printk("ERROR: Mapping disappeared, cannot wait for push op\n");
+			printk("%s: ERROR: Mapping disappeared, cannot wait for push op (id %d, cpu %d)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
 			kfree(operation_to_send);
 			ret = -EPERM;
 			goto out;
@@ -6379,7 +6380,7 @@ start: current->mm->distr_vma_op_counter++;
 			set_task_state(current, TASK_RUNNING);
 		}
 
-		printk("My operation finally arrived pid %d vma operation %d\n",current->pid,current->mm->vma_operation_index);
+		PSPRINTK("My operation finally arrived pid %d vma operation %d\n",current->pid,current->mm->vma_operation_index);
 
 		/*Note, the distributed lock already has been acquired*/
 		down_write(&current->mm->mmap_sem);
@@ -6570,13 +6571,13 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 	struct task_struct* task;
 	int ret;
 
-	printk("%s\n", __func__);
+	PSPRINTK("%s\n", __func__);
 
 	my_shadow = (shadow_thread_t*) pop_data((data_header_t**)&(my_thread_pull->threads),
 						&(my_thread_pull->spinlock));
 	if (my_shadow) {
 		task = my_shadow->thread;
-		printk("%s: pop_data pid %d\n", __func__, task->pid);
+		PSPRINTK("%s: pop_data pid %d\n", __func__, task->pid);
 		if (task == NULL) {
 			printk("%s, ERROR task is NULL\n", __func__);
 			return -1;
@@ -6680,7 +6681,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 	unsigned long flags;
 	int i;
 
-	printk("%s current %d\n", __func__, current->pid);
+	PSPRINTK("%s current %d\n", __func__, current->pid);
 
 	spin_lock_irq(&current->sighand->siglock);
 	flush_signal_handlers(current, 1);
@@ -6761,6 +6762,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 		__set_task_state(current, TASK_RUNNING);
 	}
 
+	printk("new thread pull aquired! %p\n", my_thread_pull->memory);
 	entry = my_thread_pull->memory;
 
 	entry->operation = VMA_OP_NOP;
@@ -6797,6 +6799,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 		printk("sending new kernel message to %d\n",i);
 		printk("cpu %d id %d\n",new_kernel_msg->tgroup_home_cpu,
 		       new_kernel_msg->tgroup_home_id);
+		printk("memory pointer from list is %p\n",find_memory_entry(new_kernel_msg->tgroup_home_cpu,new_kernel_msg->tgroup_home_id));
 		//if (pcn_kmsg_send(i, (struct pcn_kmsg_message*) (new_kernel_msg))
 		//		!= -1) {
 		if (pcn_kmsg_send_long(i,
@@ -6807,7 +6810,7 @@ static int create_kernel_thread_for_distributed_process(void *data) {
 		}
 	}
 
-	printk("%s: sent %d new kernel messages, current %d\n", __func__, entry->exp_answ, current->pid);
+	PSPRINTK("%s: sent %d new kernel messages, current %d\n", __func__, entry->exp_answ, current->pid);
 
 	while (entry->exp_answ != entry->answers) {
 
@@ -6931,7 +6934,7 @@ static int clone_remote_thread(clone_request_t* clone,int inc) {
 	unsigned long flags;
 	int ret;
 
-	printk("%s inc %d cpu %d id %d prev pid %d origin pid %d\n", __func__,
+	PSPRINTK("%s inc %d cpu %d id %d prev pid %d origin pid %d\n", __func__,
 			inc, clone->tgroup_home_cpu, clone->tgroup_home_id,
 			clone->prev_pid, clone->origin_pid);
 
@@ -6939,6 +6942,7 @@ retry:	memory = find_memory_entry(clone->tgroup_home_cpu,
 			clone->tgroup_home_id);
 
 	if (memory) {
+		printk("%s memory found cpu %d id %d\n", __func__, clone->tgroup_home_cpu, clone->tgroup_home_id);
 		if(inc){
 			atomic_inc(&(memory->pending_migration));
 			/*int app= atomic_add_return(1,&(memory->pending_migration));
@@ -7160,11 +7164,11 @@ static unsigned long get_file_offset(struct file *file, int start_addr)
 	for (i = 0; i < elf_ex.e_phnum; i++, elf_eppnt++) {
 		if (elf_eppnt->p_type == PT_LOAD) {
 
-			printk("%s: page offset for %lx %lx %lx\n", __func__, start_addr, elf_eppnt->p_vaddr, elf_eppnt->p_memsz);
+			PSPRINTK("%s: page offset for %lx %lx %lx\n", __func__, start_addr, elf_eppnt->p_vaddr, elf_eppnt->p_memsz);
 
 			if((start_addr >= elf_eppnt->p_vaddr) && (start_addr <= (elf_eppnt->p_vaddr+elf_eppnt->p_memsz)))
 			{
-				printk("%s: finding page offset for %lx %lx %lx\n", __func__, start_addr, elf_eppnt->p_vaddr, elf_eppnt->p_memsz);
+				PSPRINTK("%s: finding page offset for %lx %lx %lx\n", __func__, start_addr, elf_eppnt->p_vaddr, elf_eppnt->p_memsz);
 				retval = (elf_eppnt->p_offset - (elf_eppnt->p_vaddr & (ELF_MIN_ALIGN-1)));
 				goto out;
 			}
@@ -7251,12 +7255,12 @@ static ssize_t power_read (struct file *file, char __user *buf, size_t count, lo
                 return 0; //EOF
 
         len += snprintf(buffer, sizeof(buffer),
-                "ARM\nSoC\t%d mW\nCPU\t%d mW\nDRAM\t%d mW\n",
+                "ARM\t%d\t%d\t%d\n",
                 popcorn_power_arm_1[POPCORN_POWER_N_VALUES - 1],
                 popcorn_power_arm_2[POPCORN_POWER_N_VALUES - 1],
                 popcorn_power_arm_3[POPCORN_POWER_N_VALUES - 1]);
         len += snprintf((buffer +len), sizeof(buffer) -len,
-                "x86\nUncore\t%d mW\nCore\t%d mW\n",
+                "x86\t%d\t%d\n",
                 popcorn_power_x86_1[POPCORN_POWER_N_VALUES - 1],
                 popcorn_power_x86_2[POPCORN_POWER_N_VALUES - 1]);
 

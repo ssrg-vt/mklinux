@@ -28,6 +28,8 @@
 
 #include <uapi/asm/ptrace.h>
 
+#define PSPRINTK(...)
+
 /* External function declarations */
 extern unsigned long read_old_rsp(void);
 extern struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
@@ -62,7 +64,7 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs,
 {
 	int ret;
 
-	dump_processor_regs(task_pt_regs(task));
+	//dump_processor_regs(task_pt_regs(task));
 
 	arch->migration_pc = task_pt_regs(task)->user_regs.pc;
 	arch->regs.sp = task_pt_regs(task)->user_regs.sp;
@@ -79,13 +81,13 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs,
 	if (uregs != NULL) {
 		ret = copy_from_user(&arch->regs_x86, uregs, sizeof(struct popcorn_regset_x86_64));
 		if (ret = -EFAULT) {
-			printk("%s: error while copying registers\n", __func__);
+			printk(KERN_ERR"%s: error while copying registers\n", __func__);
 		}
 	}
 
 	// printk("IN %s:%d migration PC = %lx\n", __func__, __LINE__, arch->migration_pc);
 
-	printk("%s: pc %lx sp %lx bp %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp);
+	PSPRINTK("%s: pc %lx sp %lx bp %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp);
 
 	return 0;
 }
@@ -132,9 +134,9 @@ int restore_thread_info(struct task_struct *task, field_arch *arch)
 	if(arch->migration_pc != 0)
 		task_pt_regs(task)->user_regs.pc = arch->migration_pc;
 
-	printk("%s: pc %lx sp %lx bp %lx ra %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp, arch->ra);
+	PSPRINTK("%s: pc %lx sp %lx bp %lx ra %lx\n", __func__, arch->migration_pc, arch->old_rsp, arch->bp, arch->ra);
 
-	dump_processor_regs(task_pt_regs(task));
+//	dump_processor_regs(task_pt_regs(task));
 
 	return 0;
 }

@@ -711,7 +711,7 @@ void do_exit(long code)
 	 */
 	if (tsk->tgroup_distributed) {
 		/* process_server_task_exit_notification(tsk, code); */
-		printk("%s for task %d\n", __func__, tsk->pid);
+		PSPRINTK("%s for task %d\n", __func__, tsk->pid);
 	}
 
 	profile_task_exit(tsk);

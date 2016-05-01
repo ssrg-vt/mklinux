@@ -197,7 +197,7 @@ static int handle_remote_pid_request(struct pcn_kmsg_message* inc_msg) {
 	response->count = iterate_process(pid_arr);
 	memcpy(response->remote_pid, pid_arr, SIZE * sizeof(long));
 
-	printk("%s: Remote:pid count : %d \n", __func__, response->count);
+	PRINTK("%s: Remote:pid count : %d \n", __func__, response->count);
 	// Send response
 	pcn_kmsg_send_long(msg->header.from_cpu,
 			(struct pcn_kmsg_message*) (response),
@@ -733,7 +733,7 @@ static int __init pid_handler_init(void)
 		printk(KERN_ALERT"remote pid  cannot initialize _cpu\n");
 	else{
 		_cpu= copy_cpu;
-		printk(KERN_ALERT"remote pid I am cpu %d\n",_cpu);	
+		PRINTK(KERN_ALERT"remote pid I am cpu %d\n",_cpu);	
 	}
 
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_REMOTE_PID_REQUEST,

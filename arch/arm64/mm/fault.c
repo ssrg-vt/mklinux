@@ -187,14 +187,14 @@ static int __do_page_fault(struct mm_struct *mm, unsigned long addr,
 	vma = find_vma(mm, addr);
 
 	if (tsk->tgroup_distributed == 1) {
-		printk("%s: pid %ld, addr %lx\n", __func__, tsk->pid, addr);
+		PSPRINTK("%s: pid %ld, addr %lx\n", __func__, tsk->pid, addr);
 	}
 
 	//Ajith - Multikernel changes taken from X86
 	ret_reply = 0;
 	// Nothing to do for a thread group that's not distributed.
 	if(tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0)) {
-		printk("%s: call process_server_try_handle_mm_fault retrying %d\n", __func__, retrying);
+		PSPRINTK("%s: call process_server_try_handle_mm_fault retrying %d\n", __func__, retrying);
 		ret_reply = process_server_try_handle_mm_fault(tsk,mm,vma,addr,mm_flags, esr);
 
 		if(ret_reply==0)

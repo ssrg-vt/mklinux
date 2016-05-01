@@ -820,8 +820,8 @@ int connection_handler(void* arg0)
 
 		temp = (struct pcn_kmsg_message*)recv_vaddr[channel_num];
 
-		if (temp->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
-			printk("Receive message: %d (%s)\n", temp->hdr.type, msg_names[temp->hdr.type]);
+/*		if (temp->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
+			printk("Receive message: %d (%s)\n", temp->hdr.type, msg_names[temp->hdr.type]);*/
 
 #if TEST_MSG_LAYER
 		down_interruptible(&recv_buf_cnt);
@@ -835,13 +835,13 @@ int connection_handler(void* arg0)
 		}
 
 		if (i == MAX_NUM_BUF)
-			printk("ERROR: Couldnt find a free buffer\n");
+			printk(KERN_ERR"%s: ERROR: Couldnt find a free buffer (TEST_MSG_LAYER) \n", __func__);
 
 		pcn_msg = recv_buf[i].buff;
 #else
 		pcn_msg = (struct pcn_kmsg_message *) vmalloc(temp->hdr.size);
 		if (pcn_msg == NULL) {
-			printk("Failed to allocate recv buffer\n");
+			printk(KERN_ERR"Failed to allocate recv buffer\n");
 		}
 #endif
 
@@ -967,6 +967,7 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	send_wait *send_data = NULL;
 	struct pcn_kmsg_long_message *pcn_msg = NULL;
 	pcn_kmsg_cbftn ftn;
+	int retry=0;
 
 	if (pcn_connection_status() != PCN_CONN_CONNECTED) {
 		printk("PCN_CONNECTION is not yet established\n");
@@ -976,15 +977,15 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	lmsg->hdr.size = payload_size+sizeof(struct pcn_kmsg_hdr);
 	lmsg->hdr.from_cpu = my_cpu;
 
-	if (lmsg->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
-		printk("Send message: %d (%s)\n", lmsg->hdr.type, msg_names[lmsg->hdr.type]);
+/*	if (lmsg->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
+		printk("Send message: %d (%s)\n", lmsg->hdr.type, msg_names[lmsg->hdr.type]);*/
 
 #if !TEST_MSG_LAYER
 	if (dest_cpu==my_cpu) {	
 		pcn_msg = lmsg;
 
 		if (pcn_msg->hdr.type < 0 || pcn_msg->hdr.type >= PCN_KMSG_TYPE_MAX) {
-			printk("Received invalid message type %d\n", pcn_msg->hdr.type);
+			printk(KERN_ERR"Received invalid message type %d\n", pcn_msg->hdr.type);
 			vfree(pcn_msg);
 		} else {
 			ftn = callbacks[pcn_msg->hdr.type];
@@ -992,7 +993,7 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 				ftn(pcn_msg);
 
 			} else {
-				printk("Recieved message type %d size %d has no registered callback!\n", pcn_msg->hdr.type,pcn_msg->hdr.size);
+				printk(KERN_ERR"Recieved message type %d size %d has no registered callback!\n", pcn_msg->hdr.type,pcn_msg->hdr.size);
 				vfree(pcn_msg);
 			}
 		}
@@ -1007,6 +1008,7 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 
 	down_interruptible(&pool_buf_cnt);
 	
+do_retry:
 	for (i = 0; i<MAX_NUM_BUF; i++) {
 		if (send_buf[i].is_free != 0) {
 			send_buf[i].is_free = 0;
@@ -1015,8 +1017,11 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 		}
 	}
 
-	if (i == MAX_NUM_BUF)
-		printk("ERROR: Couldnt find a free buffer\n");
+	if (i == MAX_NUM_BUF){ 
+		printk("%s: ERROR: Couldnt find a free buffer. Retry %d\n", __func__, retry);
+ 		retry++;
+		goto do_retry;
+       }
 
 	send_data->assoc_buf = &send_buf[i];
 	send_data->msg=send_buf[i].buff;
