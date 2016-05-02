@@ -302,25 +302,22 @@ static int add_memory_entry_with_check(memory_t* entry) {
 		entry->prev = NULL;
 	} else {
 		curr = _memory_head;
-		prev= NULL;
+		prev = NULL;
 		do{
 			if ( (curr->tgroup_home_cpu == entry->tgroup_home_cpu
 			      && curr->tgroup_home_id == entry->tgroup_home_id)) {
-
 				raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 				return -1;
-
 			}
-			prev=curr;
-			curr= curr->next;
+			prev = curr;
+			curr = curr->next;
 		}
-		while (curr->next != NULL) ;
+		while (curr != NULL) ;
 
-		// Now curr should be the last entry.
 		// Append the new entry to curr.
-		curr->next = entry;
+		prev->next = entry;
 		entry->next = NULL;
-		entry->prev = curr;
+		entry->prev = prev;
 	}
 
 	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);

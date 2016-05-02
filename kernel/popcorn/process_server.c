@@ -326,7 +326,7 @@ static int handle_new_kernel_answer(struct pcn_kmsg_message* inc_msg)
 	}
 	else {
 		printk("%s: ERROR: received an answer new kernel but memory_t not present cpu %d id %d\n",
-				answer->tgroup_home_cpu, answer->tgroup_home_id);
+				__func__, answer->tgroup_home_cpu, answer->tgroup_home_id);
 		pcn_kmsg_free_msg(inc_msg);
 	}
 	
@@ -684,7 +684,7 @@ static void main_for_distributed_kernel_thread(memory_t* mm_data, thread_pull_t 
 	int spare_threads = 2;
 	// TODO: Need to explore how this has to be used
 	//       added to port to Linux 3.12 API's
-	bool vma_locked = false;
+	//bool vma_locked = false;
 	unsigned long populate = 0;
 	
 	while (1) {
@@ -805,7 +805,7 @@ static int create_kernel_thread_for_distributed_process_from_user_one(void *data
 	my_thread_pull = (thread_pull_t*) kmalloc(sizeof(thread_pull_t),
 						  GFP_ATOMIC);
 	if (!my_thread_pull) {
-		printk(KERN_ERR"%s: ERROR: kmalloc thread pull\n");
+		printk(KERN_ERR"%s: ERROR: kmalloc thread pull\n", __func__);
 		return -1;
 	}
 
@@ -941,8 +941,8 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 			printk("%s: WARN: a kernel that is not the server is sending the mapping (%d %d)\n",
 					__func__, response->header.from_cpu, response->tgroup_home_cpu);
 
-		printk("%s: response->vma_pesent %d reresponse->vaddr_start %lx response->vaddr_size %lx response->prot %lx response->vm_flags %lx response->pgoff %lx response->path %s response->fowner %d\n", __func__,
-			 response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
+		printk("%s: response->vma_pesent %d reresponse->vaddr_start %lx response->vaddr_size %lx response->prot %lx response->vm_flags %lx response->pgoff %lx response->path %s response->fowner %d\n", 
+			__func__, response->vma_present, response->vaddr_start , response->vaddr_size, (unsigned long)response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
 
 		if (fetched_data->vma_present == 0) {
 			PSPRINTK("Set vma\n");
@@ -1094,7 +1094,7 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 	vma = find_vma(mm, address);
 	if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 		vma = NULL;
-		if(_cpu == request->tgroup_home_cpu)
+		if(_cpu == data->tgroup_home_cpu)
 					printk(KERN_ALERT"%s: vma NULL in cpu %d address 0x%lx\n",
 							__func__, _cpu, address);
 	} else {
@@ -1242,7 +1242,7 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 			 */
 			response->writing=1;
 			if(page->owner==1 || page->status==REPLICATION_STATUS_WRITTEN)
-				printk("%s: WARN: Incorrect invalid received while writing address %lx, my status is %d, page last write %lx, invalid for version %lx page owner %d (cpu %d id %d)\n",
+				printk("%s: WARN: Incorrect invalid received while writing address %lx, my status is %d, page last write %lx, invalid for version %lx page owner %d (cpu %d id %d)\n", __func__,
 				       address,page->status,page->last_write,data->last_write,page->owner,
 					   data->tgroup_home_cpu, data->tgroup_home_id);
 
@@ -1365,7 +1365,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	//check the vma era first
 	if (mm->vma_operation_index < request->vma_operation_index) {
 		printk("%s: WARN: different era request (mm %d data %d)\n", //NOTE this is int, how to handle overflow?
-				__func__, mm->vma_operation_index, data->vma_operation_index);
+				__func__, mm->vma_operation_index, mm->vma_operation_index);
 		delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
 
 		if (delay) {
@@ -1458,7 +1458,8 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 		}
 	}
 
-retry:	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
+//retry:	
+	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 	/*PTE LOCKED*/
 	entry = *pte;
 	lock= 1;
@@ -1901,7 +1902,7 @@ out:
 	printk("%s sending void answer\n", __func__);
 
 	char tmpchar;
-	char *addrp = address & PAGE_MASK;
+	char *addrp = (char*)(address & PAGE_MASK);
 	int ii;
 
 	for (ii = 1; ii < PAGE_SIZE; ii++) {
@@ -3674,7 +3675,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		if (vma == NULL) {
 			//PSPRINTK
 			dump_stack();
-			printk(KERN_ALERT"%s: ERROR: no vma for address %lx in the system {%d} (cpu %d id %d)\n"
+			printk(KERN_ALERT"%s: ERROR: no vma for address %lx in the system {%d} (cpu %d id %d)\n",
 					__func__, address,current->pid, tgroup_home_cpu, tgroup_home_id);
 			ret = VM_FAULT_VMA;
 			goto exit_fetch_message;
@@ -4010,7 +4011,7 @@ start:
 				    || address < vma->vm_start)) {
 
 				printk("%s: ERROR: vma not valid after waiting for another thread to fetch (cpu %d id %d)\n",
-						__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id););
+						__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id);
 				spin_unlock(ptl);
 				return VM_FAULT_VMA;
 			}
@@ -4498,7 +4499,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 		entry = (memory_t*) kmalloc(sizeof(memory_t), GFP_ATOMIC);
 		if (!entry){
 			unlock_task_sighand(task, &flags);
-			printk("%s: ERROR: Impossible allocate memory_t while migrating thread (cpu %d id %d\n"
+			printk("%s: ERROR: Impossible allocate memory_t while migrating thread (cpu %d id %d\n",
 					__func__, task->tgroup_home_cpu, task->tgroup_home_id);
 			return -1;
 		}
@@ -6304,34 +6305,6 @@ retry:
 				entry->mm->end_data = clone->end_data;
 				entry->mm->def_flags = clone->def_flags;
                                 // if popcorn_vdso is zero it should be initialized with the address provided by the home kernel
-                                if (entry->mm->context.popcorn_vdso == 0) {
-                                        unsigned long popcorn_addr = clone->popcorn_vdso;
-                                        struct page ** popcorn_pagelist = kzalloc(sizeof(struct page *) * (1 + 1), GFP_KERNEL);
-                                        if (popcorn_pagelist == NULL) {
-                                                 pr_err("Failed to allocate vDSO pagelist!\n");
-                                                 ret = -ENOMEM;
-                                                goto up_fail;
-                                        }
-                                        popcorn_pagelist[0] = alloc_pages(GFP_KERNEL, 0);
-
-                                        ret = install_special_mapping(entry->mm, popcorn_addr, PAGE_SIZE,
-                                                                      VM_READ|VM_EXEC|
-                                                                      VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC,
-                                                                      popcorn_pagelist);
-                                        if (!ret)
-                                                entry->mm->context.popcorn_vdso = popcorn_addr;
-                                        else
-                                                free_page(popcorn_pagelist[0]);
-                                }
-up_fail:
-                                // popcorn_vdso cannot be different
-                                if (entry->mm->context.popcorn_vdso != clone->popcorn_vdso) {
-                                        printk(KERN_ERR"%s: popcorn_vdso entry:0x%lx clone:0x%lx\n",
-                                                __func__, entry->mm->context.popcorn_vdso, clone->popcorn_vdso);
-                                        BUG();
-                                }
-
-				// if popcorn_vdso is zero it should be initialized with the address provided by the home kernel
                 if (entry->mm->context.popcorn_vdso == 0) {
                 	unsigned long popcorn_addr = clone->popcorn_vdso;
                 	struct page ** popcorn_pagelist = kzalloc(sizeof(struct page *) * (1 + 1), GFP_KERNEL);
@@ -6342,8 +6315,8 @@ up_fail:
 				    }
                 	popcorn_pagelist[0] = alloc_pages(GFP_KERNEL | __GFP_ZERO, 0);
                 	if (!popcorn_pagelist[0]) {
-                		printk("%s: ERROR: alloc_pages failed for popcorn_vdso\n", __func__)
-                		ret = -ENOMEM
+                		printk("%s: ERROR: alloc_pages failed for popcorn_vdso\n", __func__);
+                		ret = -ENOMEM;
                 		goto up_fail;
                 	}
                 	ret = install_special_mapping(entry->mm, popcorn_addr, PAGE_SIZE,
