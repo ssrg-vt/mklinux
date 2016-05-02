@@ -79,6 +79,9 @@
 static int _cpu = -1;
 int _file_cpu = 1;
 
+///////////////////////////////////////////////////////////////////////////////
+// Vincent's scheduling infrasrtucture based on Antonio's power/pmu readings
+///////////////////////////////////////////////////////////////////////////////
 #define POPCORN_POWER_N_VALUES 10
 int *popcorn_power_x86_1;
 int *popcorn_power_x86_2;
@@ -362,7 +365,7 @@ void process_new_kernel(struct work_struct* work)
 			}
 
 		}
-		else{
+		else {
 			memset(answer->my_set,0,MAX_KERNEL_IDS*sizeof(int));
 		}
 
@@ -1072,10 +1075,16 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 	}
 
 	down_read(&mm->mmap_sem);
-	//check the vma era first
+	//check the vma era first -- check the comment about VMA era in this file
+	if (mm->vma_operation_index > data->vma_operation_index)
+			printk("%s: WARN: different era > invalid [mm %d data %d] (cpu %d id %d)\n",
+					__func__, mm->vma_operation_index, data->vma_operation_index,
+					data->tgroup_home_cpu, data->tgroup_home_id);
+
 	if (mm->vma_operation_index < data->vma_operation_index) {
-		printk("%s: WARN: different era invalid (mm %d data %d)\n", //NOTE this is int, how to handle overflow?
-				__func__, mm->vma_operation_index, data->vma_operation_index);
+		printk("%s: WARN: different era < invalid [mm %d data %d] (cpu %d id %d)\n",
+				__func__, mm->vma_operation_index, data->vma_operation_index,
+				data->tgroup_home_cpu, data->tgroup_home_id);
 		delay = (invalid_work_t*) kmalloc(sizeof(invalid_work_t), GFP_ATOMIC);
 
 		if (delay!=NULL) {
@@ -1359,10 +1368,21 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 
 	down_read(&mm->mmap_sem);
 
-	//check the vma era first
+	/*
+	 * check the vma era first -- this is an error only if it keeps printing forever
+	 * if it is still a problem do increment the delay
+	 * In Marina's design we should only apply the same modifications at the same era
+	 * Added the next check only to make sure that > is not a problem (but cannot be re-queued)
+	 */
+	if (mm->vma_operation_index > request->vma_operation_index)
+		printk("%s: INFO: different era request [mm %d > request %d] (cpu %d id %d)\n",
+				__func__, mm->vma_operation_index, request->vma_operation_index,
+				request->tgroup_home_cpu, request->tgroup_home_id);
+
 	if (mm->vma_operation_index < request->vma_operation_index) {
-		printk("%s: WARN: different era request (mm %d data %d)\n", //NOTE this is int, how to handle overflow?
-				__func__, mm->vma_operation_index, mm->vma_operation_index);
+		printk("%s: WARN: different era request [mm %d < request %d] (cpu %d id %d)\n",
+				__func__, mm->vma_operation_index, request->vma_operation_index,
+				request->tgroup_home_cpu, request->tgroup_home_id);
 		delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
 
 		if (delay) {
@@ -2104,7 +2124,8 @@ static int handle_process_pairing_request(struct pcn_kmsg_message* inc_msg) {
 	return 1;
 }
 
-static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg) {
+static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
+{
 	remote_thread_count_response_t* msg= (remote_thread_count_response_t*) inc_msg;
 	count_answers_t* data = find_count_entry(msg->tgroup_home_cpu,
 						 msg->tgroup_home_id);
@@ -2141,7 +2162,8 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
 	return 0;
 }
 
-void process_count_request(struct work_struct* work) {
+void process_count_request(struct work_struct* work)
+{
 	count_work_t* request_work = (count_work_t*) work;
 	remote_thread_count_request_t* msg = request_work->request;
 	remote_thread_count_response_t* response;
@@ -2216,7 +2238,8 @@ static int handle_remote_thread_count_request(struct pcn_kmsg_message* inc_msg)
 ///////////////////////////////////////////////////////////////////////////////
 // synch migrations (?)
 ///////////////////////////////////////////////////////////////////////////////
-void synchronize_migrations(int tgroup_home_cpu,int tgroup_home_id ){
+void synchronize_migrations(int tgroup_home_cpu,int tgroup_home_id )
+{
 	memory_t* memory = NULL;
 
 	memory = find_memory_entry(tgroup_home_cpu, tgroup_home_id);
@@ -2665,7 +2688,6 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	read_message->is_write= 0;
 	read_message->last_write= page->last_write;
 	read_message->vma_operation_index= current->mm->vma_operation_index;
-
 	PSPRINTK("%s vma_operation_index %d\n", __func__, read_message->vma_operation_index);
 
 	//object to held responses
@@ -4263,8 +4285,8 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
 		task->tgroup_home_cpu = orig->tgroup_home_cpu;
 		task->tgroup_home_id = orig->tgroup_home_id;
 		task->tgroup_distributed = 1;
+		printk("%s: INFO: dup task (cpu %d id %d)\n", __func__, task->tgroup_home_cpu, task->tgroup_home_id);
 	}
-
 	unlock_task_sighand(orig, &flags);
 
 	return 1;
@@ -4435,10 +4457,11 @@ int do_migration(struct task_struct* task, int dst_cpu,
 	 */
 	lock_task_sighand(task, &flags);
 
-	if (task->tgroup_distributed == 0) {
+	if (task->tgroup_distributed == 0) { // convert the task to distributed
 		task->tgroup_distributed = 1;
 		task->tgroup_home_id = task->tgid;
 		task->tgroup_home_cpu = _cpu;
+		printk("%s: INFO: migrate task (cpu %d id %d)\n", __func__, task->tgroup_home_cpu, task->tgroup_home_id);
 
 		entry = (memory_t*) kmalloc(sizeof(memory_t), GFP_ATOMIC);
 		if (!entry){
@@ -4534,7 +4557,8 @@ int process_server_do_migration(struct task_struct *task, int dst_cpu,
 	int back = 0;
 	int ret = 0;
 
-	PSPRINTK("%s: migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
+	PSPRINTK("%s: migrating pid %d tgid %d task->tgroup_home_id %d task->tgroup_home_cpu %d\n",
+			__func__,current->pid,current->tgid,task->tgroup_home_id,task->tgroup_home_cpu);
 
 	if (task->prev_cpu == dst_cpu) {
 		back = 1;
@@ -4821,9 +4845,10 @@ void process_vma_op(struct work_struct* work)
 		mm->thread_op = prev;
 		mm->distr_vma_op_counter--;
 
-		//mm->vma_operation_index = operation->vma_operation_index;
-		PSPRINTK("CLIENT: Incrementing vma_operation_index\n");
 		mm->vma_operation_index++;
+		if ( mm->vma_operation_index < 0 )
+			printk("%s: WARN: vma_operation_index is underflow detected %d (cpu %d id %d)\n",
+					__func__, mm->vma_operation_index, operation->tgroup_home_cpu, operation->tgroup_home_id);
 
 		if (memory->my_lock != 1) {
 			PSVMAPRINTK("Released distributed lock\n");
@@ -5056,6 +5081,9 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 		if(!(operation == VMA_OP_MAP || operation == VMA_OP_BRK)){
 			PSVMAPRINTK("%s incrementing vma_operation_index\n",__func__);
 			current->mm->vma_operation_index++;
+			if (current->mm->vma_operation_index < 0)
+				printk("%s: WARN: vma_operation_index underflow detected %d [if:if].(cpu %d id %d)\n",
+						__func__, current->mm->vma_operation_index, current->tgroup_home_cpu, current->tgroup_home_id);
 		}
 
 		PSPRINTK("Releasing distributed lock\n");
@@ -5073,6 +5101,10 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 			if(!(operation == VMA_OP_MAP || operation == VMA_OP_BRK)){
 				PSVMAPRINTK("%s incrementing vma_operation_index\n",__func__);
 				current->mm->vma_operation_index++;
+				if (current->mm->vma_operation_index < 0)
+					printk("%s: WARN: vma_operation_index underflow detected %d [else:if].(cpu %d id %d)\n",
+							__func__, current->mm->vma_operation_index, current->tgroup_home_cpu, current->tgroup_home_id);
+
 				up_read(&entry->kernel_set_sem);
 			}
 
@@ -5091,8 +5123,10 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				//nested operation do not release the lock
 				PSPRINTK("%s incrementing vma_operation_index\n",__func__);
 				current->mm->vma_operation_index++;
+				if (current->mm->vma_operation_index < 0)
+					printk("%s: WARN: vma_operation_index underflow detected %d [else:else].(cpu %d id %d)\n",
+							__func__, current->mm->vma_operation_index, current->tgroup_home_cpu, current->tgroup_home_id);
 			}
-
 		}
 	PSPRINTK("%s: operation index is %d\n", __func__, current->mm->vma_operation_index);
 }
