@@ -693,7 +693,7 @@ static void main_for_distributed_kernel_thread(memory_t* mm_data, thread_pull_t 
 	unsigned long populate = 0;
 	
 	while (1) {
-	again:
+again:
 		create_new_threads(my_thread_pull, &spare_threads);
 
 		while (current->distributed_exit != EXIT_ALIVE) {
