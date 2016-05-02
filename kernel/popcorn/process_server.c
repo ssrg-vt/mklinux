@@ -935,7 +935,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 	PSMINPRINTK("Received answer for address %lx last write %d from cpu %i\n", response->address, response->last_write,inc_msg->hdr.from_cpu);
 
 	if (fetched_data == NULL) {
-		printk(KERN_ERR"%s: data not found in local list (cpu %d id %d address 0x%lx)\n",
+		printk(KERN_ERR"%s: WARN: data not found in local list (cpu %d id %d address 0x%lx)\n",
 				__func__, response->tgroup_home_cpu, response->tgroup_home_id, response->address);
 		pcn_kmsg_free_msg(inc_msg);
 		return -1;
@@ -1782,8 +1782,9 @@ fetch:
 			else {
 				if (request->is_write==1) {
 					if (page->last_write!= (request->last_write+1))
-						printk("%s: ERROR: received a write for copy %lx but my copy is %lx\n",
-								__func__, request->last_write,page->last_write);
+						printk("%s: ERROR: received a write for copy %lx but my copy is %lx (cpu %d id %d address 0x%lx)\n",
+								__func__, request->last_write,page->last_write,
+								request->tgroup_home_cpu, request->tgroup_home_id, request->address );
 
 					page->status= REPLICATION_STATUS_INVALID;
 					page->owner= 0;
@@ -5614,7 +5615,7 @@ start:
 			 * */
 			if (!(operation == VMA_OP_REMAP) || (flags & MREMAP_FIXED)) {
 
-				printk("SERVER NOT MAIN: sending done for operation, we can execute the operation in parallel! %d\n",operation);
+				PSPRINTK("SERVER NOT MAIN: sending done for operation, we can execute the operation in parallel! %d\n",operation);
 				// the list does not include the current processor group descirptor (TODO)
 				struct list_head *iter;
 				_remote_cpu_info_list_t * objPtr;
@@ -5634,7 +5635,7 @@ start:
 				return ret;
 			}
 			else {
-				printk("SERVER NOT MAIN: going to execute the operation locally %d\n",operation);
+				PSPRINTK("SERVER NOT MAIN: going to execute the operation locally %d\n",operation);
 				entry->message_push_operation = operation_to_send;
 
 				kfree(lock_message);
