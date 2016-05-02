@@ -1093,7 +1093,7 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 	vma = find_vma(mm, address);
 	if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 		vma = NULL;
-		if(_cpu == request->tgroup_home_cpu)
+		if (_cpu == data->tgroup_home_cpu)
 					printk(KERN_ALERT"%s: vma NULL in cpu %d address 0x%lx\n",
 							__func__, _cpu, address);
 	} else {
@@ -1360,7 +1360,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	//check the vma era first
 	if (mm->vma_operation_index < request->vma_operation_index) {
 		printk("%s: WARN: different era request (mm %d data %d)\n", //NOTE this is int, how to handle overflow?
-				__func__, mm->vma_operation_index, data->vma_operation_index);
+				__func__, mm->vma_operation_index, mm->vma_operation_index);
 		delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
 
 		if (delay) {
@@ -3642,7 +3642,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		if (vma == NULL) {
 			//PSPRINTK
 			dump_stack();
-			printk(KERN_ALERT"%s: ERROR: no vma for address %lx in the system {%d} (cpu %d id %d)\n"
+			printk(KERN_ALERT"%s: ERROR: no vma for address %lx in the system {%d} (cpu %d id %d)\n",
 					__func__, address,current->pid, tgroup_home_cpu, tgroup_home_id);
 			ret = VM_FAULT_VMA;
 			goto exit_fetch_message;
@@ -3955,7 +3955,7 @@ start:
 				    || address < vma->vm_start)) {
 
 				printk("%s: ERROR: vma not valid after waiting for another thread to fetch (cpu %d id %d)\n",
-						__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id););
+						__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id);
 				spin_unlock(ptl);
 				return VM_FAULT_VMA;
 			}
@@ -4441,7 +4441,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 		entry = (memory_t*) kmalloc(sizeof(memory_t), GFP_ATOMIC);
 		if (!entry){
 			unlock_task_sighand(task, &flags);
-			printk("%s: ERROR: Impossible allocate memory_t while migrating thread (cpu %d id %d\n"
+			printk("%s: ERROR: Impossible allocate memory_t while migrating thread (cpu %d id %d)\n",
 					__func__, task->tgroup_home_cpu, task->tgroup_home_id);
 			return -1;
 		}
@@ -6176,8 +6176,8 @@ retry:
 				    }
                 	popcorn_pagelist[0] = alloc_pages(GFP_KERNEL | __GFP_ZERO, 0);
                 	if (!popcorn_pagelist[0]) {
-                		printk("%s: ERROR: alloc_pages failed for popcorn_vdso\n", __func__)
-                		ret = -ENOMEM
+                		printk("%s: ERROR: alloc_pages failed for popcorn_vdso\n", __func__);
+                		ret = -ENOMEM;
                 		goto up_fail;
                 	}
                 	ret = install_special_mapping(entry->mm, popcorn_addr, PAGE_SIZE,
