@@ -368,6 +368,7 @@ static memory_t* find_memory_entry(int cpu, int id)
 	return ret;
 }
 
+#ifdef USE_FIND_DEAD_MAPPING
 static struct mm_struct* find_dead_mapping(int cpu, int id)
 {
 	memory_t* curr = NULL;
@@ -389,7 +390,9 @@ static struct mm_struct* find_dead_mapping(int cpu, int id)
 
 	return ret;
 }
+#endif
 
+#ifdef USE_FIND_AND_REMOVE_MEMORY_ENTRY
 static memory_t* find_and_remove_memory_entry(int cpu, int id)
 {
 	memory_t* curr = NULL;
@@ -407,7 +410,7 @@ static memory_t* find_and_remove_memory_entry(int cpu, int id)
 			while (curr) {
 				if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id)
 					printk(KERN_ERR"%s: ERROR: duplicates in list ret mm 0x%lx curr mm 0x%lx (cpu %d id %d)\n",
-							__func__, ret->mm, curr->mm, cpu, id);
+							__func__, (unsigned long)ret->mm, (unsigned long)curr->mm, cpu, id);
 				curr = curr->next;
 			}
 #endif
@@ -436,6 +439,7 @@ static memory_t* find_and_remove_memory_entry(int cpu, int id)
 	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 	return ret;
 }
+#endif
 
 static void remove_memory_entry(memory_t* entry)
 {
