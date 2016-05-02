@@ -946,7 +946,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 			printk("%s: WARN: a kernel that is not the server is sending the mapping (%d %d)\n",
 					__func__, response->header.from_cpu, response->tgroup_home_cpu);
 
-		printk("%s: response->vma_pesent %d reresponse->vaddr_start %lx response->vaddr_size %lx response->prot %lx response->vm_flags %lx response->pgoff %lx response->path %s response->fowner %d\n", 
+		PSPRINTK("%s: response->vma_pesent %d reresponse->vaddr_start %lx response->vaddr_size %lx response->prot %lx response->vm_flags %lx response->pgoff %lx response->path %s response->fowner %d\n", 
 			__func__, response->vma_present, response->vaddr_start , response->vaddr_size, (unsigned long)response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
 
 		if (fetched_data->vma_present == 0) {
