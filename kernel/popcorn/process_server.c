@@ -3099,7 +3099,7 @@ exit_answers:
 					schedule();
 				set_task_state(current, TASK_RUNNING);
 				counter++;
-				if (counter % 1000)
+				if (!(counter % 1000))
 					printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 			}
