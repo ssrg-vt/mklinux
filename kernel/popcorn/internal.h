@@ -9,66 +9,61 @@
 #define KERNEL_POPCORN_INTERNAL_H_
 
 static void push_data(data_header_t** phead, raw_spinlock_t* spinlock,
-		      data_header_t* entry) {
-	unsigned long flags;
+		      data_header_t* entry)
+{
 	data_header_t* head;
+	unsigned long flags;
 
-        /* printk("%s\n", __func__); */
-
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 	entry->prev = NULL;
 
 	raw_spin_lock_irqsave(spinlock, flags);
-
-	head= *phead;
+	head = *phead;
 
 	if (!head) {
 		entry->next = NULL;
 		*phead = entry;
-	} else {
+	}
+	else {
 		entry->next = head;
 		head->prev = entry;
 		*phead = entry;
 	}
-
 	raw_spin_unlock_irqrestore(spinlock, flags);
 }
 
-static data_header_t* pop_data(data_header_t** phead, raw_spinlock_t* spinlock) {
+static data_header_t* pop_data(data_header_t** phead, raw_spinlock_t* spinlock)
+{
 	data_header_t* ret = NULL;
 	data_header_t* head;
 	unsigned long flags;
 
-        /* printk("%s\n", __func__); */
-
 	raw_spin_lock_irqsave(spinlock, flags);
-
 	head= *phead;
+
 	if (head) {
 		ret = head;
-		if (head->next){
+		if (head->next) {
 			head->next->prev = NULL;
 		}
 		*phead = head->next;
 		ret->next = NULL;
 		ret->prev = NULL;
 	}
-
 	raw_spin_unlock_irqrestore(spinlock, flags);
 
 	return ret;
 }
 
-static int count_data(data_header_t** phead, raw_spinlock_t* spinlock) {
+static int count_data(data_header_t** phead, raw_spinlock_t* spinlock)
+{
 	int ret = 0;
 	unsigned long flags;
 	data_header_t* head;
 	data_header_t* curr;
 
 	raw_spin_lock_irqsave(spinlock, flags);
-
 	head= *phead;
 
 	curr = head;
@@ -76,23 +71,26 @@ static int count_data(data_header_t** phead, raw_spinlock_t* spinlock) {
 		ret++;
 		curr = curr->next;
 	}
-
 	raw_spin_unlock_irqrestore(spinlock, flags);
 
 	return ret;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// Specialized functions (TODO need massive refactoring)
+///////////////////////////////////////////////////////////////////////////////
+
+#define CHECK_FOR_DUPLICATES
 
 /* Functions to add,find and remove an entry from the mapping list (head:_mapping_head , lock:_mapping_head_lock)
  */
 static void add_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 {
 	mapping_answers_for_2_kernels_t* curr;
-
 	unsigned long flags;
 
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 
 	raw_spin_lock_irqsave(&_mapping_head_lock, flags);
 
@@ -113,7 +111,6 @@ static void add_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 	}
 
 	raw_spin_unlock_irqrestore(&_mapping_head_lock, flags);
-
 }
 
 static mapping_answers_for_2_kernels_t* find_mapping_entry(int cpu, int id, unsigned long address)
@@ -126,11 +123,20 @@ static mapping_answers_for_2_kernels_t* find_mapping_entry(int cpu, int id, unsi
 
 	curr = _mapping_head;
 	while (curr) {
-
 		if (curr->tgroup_home_cpu == cpu
 				&& curr->tgroup_home_id == id
 				&& curr->address == address) {
 			ret = curr;
+#ifdef CHECK_FOR_DUPLICATES
+			curr = curr->next;
+			while (curr) {
+				if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id
+						&& curr->address == address)
+					printk(KERN_ERR"%s: ERROR: duplicates in list %s %s (cpu %d id %d address %lx)\n",
+							__func__, ret->path, curr->path, cpu, id, address);
+				curr = curr->next;
+			}
+#endif
 			break;
 		}
 		curr = curr->next;
@@ -145,9 +151,8 @@ static void remove_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 {
 	unsigned long flags;
 
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 
 	raw_spin_lock_irqsave(&_mapping_head_lock, flags);
 
@@ -167,7 +172,6 @@ static void remove_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 	entry->next = NULL;
 
 	raw_spin_unlock_irqrestore(&_mapping_head_lock, flags);
-
 }
 
 /* Functions to add,find and remove an entry from the ack list (head:_ack_head , lock:_ack_head_lock)
@@ -177,9 +181,8 @@ static void add_ack_entry(ack_answers_for_2_kernels_t* entry)
 	ack_answers_for_2_kernels_t* curr;
 	unsigned long flags;
 
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 
 	raw_spin_lock_irqsave(&_ack_head_lock, flags);
 
@@ -201,6 +204,7 @@ static void add_ack_entry(ack_answers_for_2_kernels_t* entry)
 
 	raw_spin_unlock_irqrestore(&_ack_head_lock, flags);
 }
+
 static ack_answers_for_2_kernels_t* find_ack_entry(int cpu, int id, unsigned long address)
 {
 	ack_answers_for_2_kernels_t* curr = NULL;
@@ -211,15 +215,25 @@ static ack_answers_for_2_kernels_t* find_ack_entry(int cpu, int id, unsigned lon
 
 	curr = _ack_head;
 	while (curr) {
-
 		if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id
-		    && curr->address == address) {
+				&& curr->address == address) {
 			ret = curr;
+#ifdef CHECK_FOR_DUPLICATES
+			curr = curr->next;
+			while (curr) {
+				if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id
+						&& curr->address == address)
+					printk(KERN_ERR"%s: ERROR: duplicates in list %s %s (cpu %d id %d address %lx)\n",
+							__func__, ret->waiting ? ret->waiting->comm : "?", curr->waiting ? curr->waiting->comm : "?",
+							cpu, id, address);
+				curr = curr->next;
+			}
+#endif
 			break;
 		}
-
 		curr = curr->next;
 	}
+
 	raw_spin_unlock_irqrestore(&_ack_head_lock, flags);
 	return ret;
 }
@@ -255,17 +269,15 @@ static void remove_ack_entry(ack_answers_for_2_kernels_t* entry)
 
 /* Functions to add,find and remove an entry from the memory list (head:_memory_head , lock:_memory_head_lock)
  */
-
-static void add_memory_entry(memory_t* entry) {
+static void add_memory_entry(memory_t* entry)
+{
 	memory_t* curr;
 	unsigned long flags;
 
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 
 	raw_spin_lock_irqsave(&_memory_head_lock,flags);
-
 	if (!_memory_head) {
 		_memory_head = entry;
 		entry->next = NULL;
@@ -281,11 +293,11 @@ static void add_memory_entry(memory_t* entry) {
 		entry->next = NULL;
 		entry->prev = curr;
 	}
-
 	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 }
 
-static int add_memory_entry_with_check(memory_t* entry) {
+static int add_memory_entry_with_check(memory_t* entry)
+{
 	memory_t* curr;
 	memory_t* prev;
 	unsigned long flags;
@@ -302,8 +314,9 @@ static int add_memory_entry_with_check(memory_t* entry) {
 		entry->prev = NULL;
 	} else {
 		curr = _memory_head;
-		prev = NULL;
-		do{
+		prev= NULL;
+		do {
+			/* check for duplicates */
 			if ( (curr->tgroup_home_cpu == entry->tgroup_home_cpu
 			      && curr->tgroup_home_id == entry->tgroup_home_id)) {
 				raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
@@ -331,10 +344,20 @@ static memory_t* find_memory_entry(int cpu, int id)
 	unsigned long flags;
 
 	raw_spin_lock_irqsave(&_memory_head_lock,flags);
+
 	curr = _memory_head;
 	while (curr) {
 		if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id) {
 			ret = curr;
+#ifdef CHECK_FOR_DUPLICATES
+			curr = curr->next;
+			while (curr) {
+				if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id)
+					printk(KERN_ERR"%s: ERROR: duplicates in list %s %s (cpu %d id %d)\n",
+							__func__, ret->path, curr->path, cpu, id);
+				curr = curr->next;
+			}
+#endif
 			break;
 		}
 		curr = curr->next;
@@ -344,6 +367,7 @@ static memory_t* find_memory_entry(int cpu, int id)
 	return ret;
 }
 
+#ifdef USE_FIND_DEAD_MAPPING
 static struct mm_struct* find_dead_mapping(int cpu, int id)
 {
 	memory_t* curr = NULL;
@@ -351,6 +375,7 @@ static struct mm_struct* find_dead_mapping(int cpu, int id)
 	unsigned long flags;
 
 	raw_spin_lock_irqsave(&_memory_head_lock,flags);
+
 	curr = _memory_head;
 	while (curr) {
 		if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id) {
@@ -360,13 +385,15 @@ static struct mm_struct* find_dead_mapping(int cpu, int id)
 		curr = curr->next;
 	}
 
-
 	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
 
 	return ret;
 }
+#endif
 
-static memory_t* find_and_remove_memory_entry(int cpu, int id) {
+#ifdef USE_FIND_AND_REMOVE_MEMORY_ENTRY
+static memory_t* find_and_remove_memory_entry(int cpu, int id)
+{
 	memory_t* curr = NULL;
 	memory_t* ret = NULL;
 	unsigned long flags;
@@ -377,6 +404,15 @@ static memory_t* find_and_remove_memory_entry(int cpu, int id) {
 	while (curr) {
 		if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id) {
 			ret = curr;
+#ifdef CHECK_FOR_DUPLICATES
+			curr = curr->next;
+			while (curr) {
+				if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id)
+					printk(KERN_ERR"%s: ERROR: duplicates in list ret mm 0x%lx curr mm 0x%lx (cpu %d id %d)\n",
+							__func__, (unsigned long)ret->mm, (unsigned long)curr->mm, cpu, id);
+				curr = curr->next;
+			}
+#endif
 			break;
 		}
 		curr = curr->next;
@@ -400,16 +436,16 @@ static memory_t* find_and_remove_memory_entry(int cpu, int id) {
 	}
 
 	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
-
 	return ret;
 }
+#endif
 
-static void remove_memory_entry(memory_t* entry) {
+static void remove_memory_entry(memory_t* entry)
+{
 	unsigned long flags;
 
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 
 	raw_spin_lock_irqsave(&_memory_head_lock,flags);
 
@@ -434,13 +470,13 @@ static void remove_memory_entry(memory_t* entry) {
 /* Functions to add,find and remove an entry from the count list (head:_count_head , lock:_count_head_lock)
  */
 
-static void add_count_entry(count_answers_t* entry) {
+static void add_count_entry(count_answers_t* entry)
+{
 	count_answers_t* curr;
 	unsigned long flags;
 
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 
 	raw_spin_lock_irqsave(&_count_head_lock, flags);
 
@@ -463,7 +499,8 @@ static void add_count_entry(count_answers_t* entry) {
 	raw_spin_unlock_irqrestore(&_count_head_lock, flags);
 }
 
-static count_answers_t* find_count_entry(int cpu, int id) {
+static count_answers_t* find_count_entry(int cpu, int id)
+{
 	count_answers_t* curr = NULL;
 	count_answers_t* ret = NULL;
 	unsigned long flags;
@@ -474,6 +511,16 @@ static count_answers_t* find_count_entry(int cpu, int id) {
 	while (curr) {
 		if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id) {
 			ret = curr;
+#ifdef CHECK_FOR_DUPLICATES
+			curr = curr->next;
+			while (curr) {
+				if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id)
+					printk(KERN_ERR"%s: ERROR: duplicates in list %s %s (cpu %d id %d)\n",
+							__func__, ret->waiting ? ret->waiting->comm : "?", curr->waiting ? curr->waiting->comm : "?",
+							cpu, id);
+				curr = curr->next;
+			}
+#endif
 			break;
 		}
 		curr = curr->next;
@@ -484,13 +531,12 @@ static count_answers_t* find_count_entry(int cpu, int id) {
 	return ret;
 }
 
-static void remove_count_entry(count_answers_t* entry) {
-
+static void remove_count_entry(count_answers_t* entry)
+{
 	unsigned long flags;
 
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 
 	raw_spin_lock_irqsave(&_count_head_lock, flags);
 
@@ -512,13 +558,13 @@ static void remove_count_entry(count_answers_t* entry) {
 	raw_spin_unlock_irqrestore(&_count_head_lock, flags);
 }
 
-static void add_vma_ack_entry(vma_op_answers_t* entry) {
+static void add_vma_ack_entry(vma_op_answers_t* entry)
+{
 	vma_op_answers_t* curr;
 	unsigned long flags;
 
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 
 	raw_spin_lock_irqsave(&_vma_ack_head_lock, flags);
 
@@ -541,7 +587,8 @@ static void add_vma_ack_entry(vma_op_answers_t* entry) {
 	raw_spin_unlock_irqrestore(&_vma_ack_head_lock, flags);
 }
 
-static vma_op_answers_t* find_vma_ack_entry(int cpu, int id) {
+static vma_op_answers_t* find_vma_ack_entry(int cpu, int id)
+{
 	vma_op_answers_t* curr = NULL;
 	vma_op_answers_t* ret = NULL;
 
@@ -550,9 +597,18 @@ static vma_op_answers_t* find_vma_ack_entry(int cpu, int id) {
 
 	curr = _vma_ack_head;
 	while (curr) {
-
 		if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id) {
 			ret = curr;
+#ifdef CHECK_FOR_DUPLICATES
+			curr = curr->next;
+			while (curr) {
+				if (curr->tgroup_home_cpu == cpu && curr->tgroup_home_id == id)
+					printk(KERN_ERR"%s: ERROR: duplicates in list %s %s (cpu %d id %d)\n",
+							__func__, ret->waiting ? ret->waiting->comm : "?", curr->waiting ? curr->waiting->comm : "?",
+							cpu, id);
+				curr = curr->next;
+			}
+#endif
 			break;
 		}
 
@@ -564,12 +620,12 @@ static vma_op_answers_t* find_vma_ack_entry(int cpu, int id) {
 	return ret;
 }
 
-static void remove_vma_ack_entry(vma_op_answers_t* entry) {
+static void remove_vma_ack_entry(vma_op_answers_t* entry)
+{
 	unsigned long flags;
 
-	if (!entry) {
+	if (!entry)
 		return;
-	}
 
 	raw_spin_lock_irqsave(&_vma_ack_head_lock, flags);
 

@@ -963,11 +963,10 @@ int pcn_kmsg_unregister_callback(enum pcn_kmsg_type type)
 
 int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg, unsigned int payload_size)
 {
-	int i = 0;
+	int i = 0, retry = 0;
 	send_wait *send_data = NULL;
 	struct pcn_kmsg_long_message *pcn_msg = NULL;
 	pcn_kmsg_cbftn ftn;
-	int retry=0;
 
 	if (pcn_connection_status() != PCN_CONN_CONNECTED) {
 		printk("PCN_CONNECTION is not yet established\n");
@@ -1018,9 +1017,10 @@ do_retry:
 		}
 	}
 
-	if (i == MAX_NUM_BUF){ 
-		printk("%s: ERROR: Couldnt find a free buffer. Retry %d\n", __func__, retry);
- 		retry++;
+	if (i == MAX_NUM_BUF) {
+		if ( !(retry % 100) )
+			printk("%s: WARN: Couldnt find a free buffer. Retry %d\n", __func__, retry);
+		retry++;
 		goto do_retry;
        }
 

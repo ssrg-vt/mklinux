@@ -164,11 +164,13 @@ static unsigned long get_file_offset(struct file* file, int start_addr);
 ktime_t migration_start, migration_end;
 #endif
 
-asmlinkage long sys_take_time(int start){
-	if (start==1)
+asmlinkage long sys_take_time(int start)
+{
+	if (start == 1)
 		trace_printk("s\n");
 	else
 		trace_printk("e\n");
+	return 0;
 }
 
 #if STATISTICS
@@ -1744,7 +1746,7 @@ fetch:
 				}
 				else {
 					printk("%s: ERROR: received a read request in valid status (cpu %d, id %d)\n",
-							__func__, current->tgroup_home_cpu, current->tgroup_home_id);
+							__func__, request->tgroup_home_cpu, request->tgroup_home_id);
 				}
 			}
 
@@ -1902,7 +1904,7 @@ out:
 	printk("%s sending void answer\n", __func__);
 
 	char tmpchar;
-	char *addrp = (char*)(address & PAGE_MASK);
+	char *addrp = (char *) (address & PAGE_MASK);
 	int ii;
 
 	for (ii = 1; ii < PAGE_SIZE; ii++) {
@@ -2359,9 +2361,9 @@ static int handle_back_migration(struct pcn_kmsg_message* inc_msg)
 		migration_end = ktime_get();
 		printk("m exec %lld\n", (long)ktime_to_ns(migration_end));
 #if defined(CONFIG_ARM64)
-		printk(KERN_ERR "Time for x86->arm back migration - ARM side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+  		printk(KERN_ERR "Time for x86->arm back migration - ARM side: %ld ns\n", (unsigned long)ktime_to_ns(ktime_sub(migration_end, migration_start)));
 #else
-		printk(KERN_ERR "Time for arm->x86 back migration - x86 side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+		printk(KERN_ERR "Time for arm->x86 back migration - x86 side: %ld ns\n", (unsigned long)ktime_to_ns(ktime_sub(migration_end, migration_start)));
 #endif
 #endif
 	}
@@ -2560,7 +2562,7 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 			ret = VM_FAULT_VMA;
 			goto out_not_locked;
 		}
-retry:
+//retry:
 		pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 		entry= *pte;
 		page = pte_page(entry);
@@ -2846,7 +2848,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	}
 	else {
 		printk("%s: ERROR: no copy received for a read (cpu %d id %d address 0x%lx)\n",
-				__func__, tgroup_home_cpu, tgroup_home_id);
+				__func__, tgroup_home_cpu, tgroup_home_id, address);
 		ret= VM_FAULT_REPLICATION_PROTOCOL;
 		remove_mapping_entry(reading_page);
 		kfree(reading_page);
@@ -3150,7 +3152,7 @@ exit_write_message:
 
 			if(invalid){
 				printk("%s: ERROR: writing an invalid page but not received a copy address 0x%lx (cpu %d id %d)\n",
-						__func__, tgroup_home_cpu, tgroup_home_id);
+						__func__, address, tgroup_home_cpu, tgroup_home_id);
 				ret= VM_FAULT_REPLICATION_PROTOCOL;
 				goto exit;
 			}
@@ -3750,7 +3752,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			}
 			if (fetching_page->data->address != address) {
 				printk("%s: ERROR: trying to copy wrong address 0x%lx\n (cpu %d id %d)\n",
-						__func__, tgroup_home_cpu, tgroup_home_id);
+						__func__, address, tgroup_home_cpu, tgroup_home_id);
 				pcn_kmsg_free_msg(fetching_page->data);
 				ret = VM_FAULT_REPLICATION_PROTOCOL;
 				goto exit_fetch_message;
@@ -4134,7 +4136,7 @@ start:
 
 				if(!pte_write(value_pte)){
 					printk("%s: WARN: page not writable after cow (cpu %d id %d page 0x%lx)\n",
-							__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id, page);
+							__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id, (unsigned long)page);
 					goto retry_cow;
 				}
 
@@ -4391,8 +4393,8 @@ static int do_back_migration(struct task_struct *task, int dst_cpu,
 
 #if MIGRATION_PROFILE
 	migration_end = ktime_get();
-	printk("value of migration_start = %ld\n", ktime_to_ns(migration_start));
-	printk(KERN_ERR "Time for arm->x86 back migration - ARM side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+	printk("value of migration_start = %ld\n", (unsigned long)ktime_to_ns(migration_start));
+        printk(KERN_ERR "Time for x86->arm back migration - x86 side: %ld ns\n", (unsigned long)ktime_to_ns(ktime_sub(migration_end,migration_start)));
 #endif
 
 	ret = pcn_kmsg_send_long(dst_cpu,
@@ -4448,7 +4450,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 	request->start_data = task->mm->start_data;
 	request->end_data = task->mm->end_data;
 	request->def_flags = task->mm->def_flags;
-	request->popcorn_vdso = task->mm->context.popcorn_vdso;
+	request->popcorn_vdso = (unsigned long)task->mm->context.popcorn_vdso;
 	// struct task_struct ---------------------------------------------------------
 	request->placeholder_pid = task->pid;
 	request->placeholder_tgid = task->tgid;
@@ -4499,7 +4501,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 		entry = (memory_t*) kmalloc(sizeof(memory_t), GFP_ATOMIC);
 		if (!entry){
 			unlock_task_sighand(task, &flags);
-			printk("%s: ERROR: Impossible allocate memory_t while migrating thread (cpu %d id %d\n",
+			printk("%s: ERROR: Impossible allocate memory_t while migrating thread (cpu %d id %d)\n",
 					__func__, task->tgroup_home_cpu, task->tgroup_home_id);
 			return -1;
 		}
@@ -4553,7 +4555,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 
 #if MIGRATION_PROFILE
 	migration_end = ktime_get();
-	printk(KERN_ERR "Time for arm->x86 migration - ARM side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+        printk(KERN_ERR "Time for x86->arm migration - x86 side: %ld ns\n", (unsigned long)ktime_to_ns(ktime_sub(migration_end,migration_start)));
 #endif
 	tx_ret = pcn_kmsg_send_long(dst_cpu,
 				    (struct pcn_kmsg_long_message*) request,
@@ -5952,7 +5954,7 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 
 #if MIGRATION_PROFILE
 		migration_end = ktime_get();
-		printk(KERN_ERR "Time for x86->arm migration - ARM side: %ld ns\n", ktime_to_ns(ktime_sub(migration_end,migration_start)));
+		printk(KERN_ERR "Time for arm->x86 migration - x86 side: %ld ns\n", (unsigned long)ktime_to_ns(ktime_sub(migration_end,migration_start)));
 #endif
 		//printk("%s pc %lx\n", __func__, (&clone_data->arch)->migration_pc);
 		//printk("%s pc %lx\n", __func__, task_pt_regs(task)->pc);
@@ -5960,14 +5962,14 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 		//printk("%s bp %lx\n", __func__, task_pt_regs(task)->bp);
 
 		printk("####### MIGRATED - PID: %ld to %ld CPU: %d to %d \n",
-				task->prev_pid, task->pid, task->prev_cpu, _cpu);
+				(unsigned long)task->prev_pid, (unsigned long)task->pid, task->prev_cpu, _cpu);
 		kfree(my_shadow);
 		pcn_kmsg_free_msg(clone_data);
 		return 0;
 	}
 	else {
 		printk("%s: ERROR: no shadows found! (cpu %d id %ld)\n",
-				__func__, clone_data->header.from_cpu, clone_data->placeholder_pid);
+				__func__, clone_data->header.from_cpu, (unsigned long)clone_data->placeholder_pid);
 		wake_up_process(my_thread_pull->main);
 		return -1;
 	}
@@ -6324,15 +6326,15 @@ retry:
 				                                      VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC,
 				                                      popcorn_pagelist);
                 	if (!ret)
-                		entry->mm->context.popcorn_vdso = popcorn_addr;
+                		entry->mm->context.popcorn_vdso = (void *)popcorn_addr;
                 	else
-                		free_page(popcorn_pagelist[0]);
+                		free_page((unsigned long)popcorn_pagelist[0]);
                 }
 up_fail:
 				// popcorn_vdso cannot be different
-				if (entry->mm->context.popcorn_vdso != clone->popcorn_vdso) {
+				if ( ((unsigned long)entry->mm->context.popcorn_vdso) != clone->popcorn_vdso) {
 					printk(KERN_ERR"%s: ERROR: popcorn_vdso entry:0x%lx clone:0x%lx\n",
-							__func__, entry->mm->context.popcorn_vdso, clone->popcorn_vdso);
+							__func__, (unsigned long)entry->mm->context.popcorn_vdso, clone->popcorn_vdso);
 					BUG();
 				}
 
@@ -6462,11 +6464,13 @@ static unsigned long get_file_offset(struct file *file, int start_addr)
 	for (i = 0; i < elf_ex.e_phnum; i++, elf_eppnt++) {
 		if (elf_eppnt->p_type == PT_LOAD) {
 
-			PSPRINTK("%s: page offset for %lx %lx %lx\n", __func__, start_addr, elf_eppnt->p_vaddr, elf_eppnt->p_memsz);
+			printk("%s: Page offset for 0x%x 0x%lx 0x%lx\n",
+				__func__, start_addr, (unsigned long)elf_eppnt->p_vaddr, (unsigned long)elf_eppnt->p_memsz);
 
 			if((start_addr >= elf_eppnt->p_vaddr) && (start_addr <= (elf_eppnt->p_vaddr+elf_eppnt->p_memsz)))
 			{
-				PSPRINTK("%s: finding page offset for %lx %lx %lx\n", __func__, start_addr, elf_eppnt->p_vaddr, elf_eppnt->p_memsz);
+				printk("%s: Finding page offset for 0x%x 0x%lx 0x%lx\n",
+					__func__, start_addr, (unsigned long)elf_eppnt->p_vaddr, (unsigned long)elf_eppnt->p_memsz);
 				retval = (elf_eppnt->p_offset - (elf_eppnt->p_vaddr & (ELF_MIN_ALIGN-1)));
 				goto out;
 			}
@@ -6495,7 +6499,7 @@ static int popcorn_sched_sync(void)
         int cpu;
         sched_periodic_req req;
 
-#if CONFIG_ARM64
+#if defined(CONFIG_ARM64)
         cpu = 1;
 #else
         cpu = 0;
@@ -6507,7 +6511,7 @@ static int popcorn_sched_sync(void)
 		req.header.type = PCN_KMSG_TYPE_SCHED_PERIODIC;
 		req.header.prio = PCN_KMSG_PRIO_NORMAL;
 
-#if CONFIG_ARM64
+#if defined(CONFIG_ARM64)
                 req.power_1 = popcorn_power_arm_1[POPCORN_POWER_N_VALUES - 1];
                 req.power_2 = popcorn_power_arm_2[POPCORN_POWER_N_VALUES - 1];
                 req.power_3 = popcorn_power_arm_3[POPCORN_POWER_N_VALUES - 1];
@@ -6527,7 +6531,7 @@ static int handle_sched_periodic(struct pcn_kmsg_message *inc_msg)
 {
         sched_periodic_req *req = (sched_periodic_req *)inc_msg;
 
-#if CONFIG_ARM64
+#if defined(CONFIG_ARM64)
 	popcorn_power_x86_1[POPCORN_POWER_N_VALUES - 1] = req->power_1;
         popcorn_power_x86_2[POPCORN_POWER_N_VALUES - 1] = req->power_2;
 //        popcorn_power_x86_3[POPCORN_POWER_N_VALUES - 1] = req->power_3;
