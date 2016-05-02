@@ -3073,7 +3073,7 @@ exit_answers:
 		int sent= 0;
 		writing_page->arrived_response=0;
 
-		// the list does not include the current processor group descirptor (TODO)
+		// the list does not include the current processor group descriptor (TODO)
 		struct list_head *iter;
 		_remote_cpu_info_list_t *objPtr;
 		list_for_each(iter, &rlist_head) {
@@ -3092,11 +3092,16 @@ exit_answers:
 		}
 
 		if (sent) {
+			long counter =0;
 			while (writing_page->arrived_response == 0) {
 				set_task_state(current, TASK_UNINTERRUPTIBLE);
 				if (writing_page->arrived_response == 0)
 					schedule();
 				set_task_state(current, TASK_RUNNING);
+				counter++;
+				if (counter % 1000)
+					printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
+							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 			}
 		}
 		else {
