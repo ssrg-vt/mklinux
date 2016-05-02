@@ -172,6 +172,10 @@ static void remove_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 	entry->next = NULL;
 
 	raw_spin_unlock_irqrestore(&_mapping_head_lock, flags);
+
+	printk("%s: INFO: %s %pB (cpu %d id %d address 0x%lx)\n",
+			__func__, __builtin_return_address(1), current->comm,
+			entry->tgroup_home_cpu, entry->tgroup_home_id, entry->address);
 }
 
 /* Functions to add,find and remove an entry from the ack list (head:_ack_head , lock:_ack_head_lock)
