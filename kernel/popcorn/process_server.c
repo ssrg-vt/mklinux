@@ -1077,13 +1077,14 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 
 	down_read(&mm->mmap_sem);
 	//check the vma era first -- check the comment about VMA era in this file
+	//if delayed is not a problem (but if > it is maybe a problem)
 	if (mm->vma_operation_index > data->vma_operation_index)
-			printk("%s: WARN: different era > invalid [mm %d data %d] (cpu %d id %d)\n",
+			printk("%s: WARN: different era invalid [mm %d > data %d] (cpu %d id %d)\n",
 					__func__, mm->vma_operation_index, data->vma_operation_index,
 					data->tgroup_home_cpu, data->tgroup_home_id);
 
 	if (mm->vma_operation_index < data->vma_operation_index) {
-		printk("%s: WARN: different era < invalid [mm %d data %d] (cpu %d id %d)\n",
+		printk("%s: WARN: different era invalid [mm %d < data %d] (cpu %d id %d)\n",
 				__func__, mm->vma_operation_index, data->vma_operation_index,
 				data->tgroup_home_cpu, data->tgroup_home_id);
 		delay = (invalid_work_t*) kmalloc(sizeof(invalid_work_t), GFP_ATOMIC);
@@ -1765,8 +1766,8 @@ fetch:
 					flush_tlb_fix_spurious_fault(vma, address);
 				}
 				else {
-					printk("%s: ERROR: received a read request in valid status (cpu %d, id %d)\n",
-							__func__, request->tgroup_home_cpu, request->tgroup_home_id);
+					printk("%s: ERROR: received a read request in valid status (cpu %d id %d address 0x%lx)\n",
+							__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
 				}
 			}
 
@@ -2421,7 +2422,6 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code)
 		if (entry) {
 			while (entry->main == NULL)
 				schedule();
-
 		}
 		else {
 			printk("%s: ERROR: Mapping disappeared, cannot wake up main thread... (cpu %d id %d)\n",
