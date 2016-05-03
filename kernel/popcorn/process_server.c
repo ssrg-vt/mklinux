@@ -902,15 +902,16 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
 		} else {
-			printk("%s: WARN: received more than one mapping (cpu %d id %d address 0x%lx)\n",
-					__func__, response->header.from_cpu, response->tgroup_home_cpu, response->address);
+			printk("%s: WARN: received more than one mapping %d (cpu %d id %d address 0x%lx)\n",
+					__func__, fetched_data->vma_present,
+					response->tgroup_home_cpu, response->tgroup_home_id, response->address);
 		}
 	}
 
-	if(fetched_data->arrived_response!=0)
-		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address)\n",
+	if (fetched_data->arrived_response!=0)
+		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address 0x%lx)\n",
 				__func__, fetched_data->arrived_response,
-				response->header.from_cpu, response->tgroup_home_cpu, response->address);
+				response->tgroup_home_cpu, response->tgroup_home_id, response->address);
 
 	fetched_data->arrived_response++;
 	fetched_data->futex_owner = response->futex_owner;
@@ -970,14 +971,16 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
 		} else {
-			printk("%s: WARN: received more than one mapping (cpu %d id %d address 0x%lx)\n",
-					__func__, response->header.from_cpu, response->tgroup_home_cpu, response->address);
+			printk("%s: WARN: received more than one mapping %d (cpu %d id %d address 0x%lx)\n",
+					__func__, fetched_data->vma_present,
+					response->tgroup_home_cpu, response->tgroup_home_id, response->address);
 		}
 	}
 
 	if (fetched_data->address_present == 1) {
-		printk("%s: WARN: received more than one answer with a copy of the page (cpu %d id %d address)\n",
-						__func__, response->header.from_cpu, response->tgroup_home_cpu, response->address);
+		printk("%s: WARN: received more than one answer with a copy of the page from %d (cpu %d id %d address 0x%lx)\n",
+						__func__, response->header.from_cpu,
+						response->tgroup_home_cpu, response->tgroup_home_id, response->address);
 	}
 	else  {
 		fetched_data->address_present= 1;
@@ -986,10 +989,10 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 		set = 1;
 	}
 
-	if(fetched_data->arrived_response!=0)
-		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address)\n",
+	if (fetched_data->arrived_response!=0)
+		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address 0x%lx)\n",
 				__func__, fetched_data->arrived_response,
-				response->header.from_cpu, response->tgroup_home_cpu, response->address);
+				response->tgroup_home_cpu, response->tgroup_home_id, response->address);
 
 	fetched_data->owners[inc_msg->hdr.from_cpu] = 1;
 	fetched_data->arrived_response++;
@@ -1405,13 +1408,16 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 				__func__, mm->vma_operation_index, request->vma_operation_index,
 				request->tgroup_home_cpu, request->tgroup_home_id);
 		delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
-
 		if (delay) {
 			delay->request = request;
 			INIT_DELAYED_WORK( (struct delayed_work*)delay,
 					   process_mapping_request_for_2_kernels);
 			queue_delayed_work(message_request_wq,
 					   (struct delayed_work*) delay, 10);
+		}
+		else {
+			printk("%s: ERROR: cannot allocate memory to delay work 1 (cpu %d id %d)\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id);
 		}
 
 		up_read(&mm->mmap_sem);
@@ -1450,11 +1456,6 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 		goto out;
 	}
 
-	/*if((vma->vm_flags & VM_EXEC) &&(address >= mm->start_code) && (address <= mm->end_code))
-	  {
-	  printk("%s:%d going to void response\n", __func__, __LINE__);
-	  goto out;
-	  }*/
 	if (_cpu != request->tgroup_home_cpu) {
 		pgd = pgd_offset(mm, address);
 		if (!pgd || pgd_none(*pgd)) {
@@ -1543,13 +1544,17 @@ fetch:
 							__func__, request->tgroup_home_cpu, request->tgroup_home_id, address);
 
 				delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
-				if (delay!=NULL) {
+				if (delay) {
 					delay->request = request;
 					INIT_DELAYED_WORK(
 						(struct delayed_work*)delay,
 						process_mapping_request_for_2_kernels);
 					queue_delayed_work(message_request_wq,
 							   (struct delayed_work*) delay, 10);
+				}
+				else {
+					printk("%s: ERROR: cannot allocate memory to delay work 2 (cpu %d id %d)\n",
+							__func__, request->tgroup_home_cpu, request->tgroup_home_id);
 				}
 
 				spin_unlock(ptl);
@@ -1719,20 +1724,18 @@ fetch:
 		}
 		if (page->writing==1) {
 			PSPRINTK("Page currently in writing\n");
-			if (request->is_write==0) {
-				PSPRINTK("Concurrent read request\n");
-			}
-			else {
-				PSPRINTK("Concurrent write request\n");
-			}
-			delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
 
-			if (delay!=NULL) {
+			delay = (request_work_t*)kmalloc(sizeof(request_work_t), GFP_ATOMIC);
+			if (delay) {
 				delay->request = request;
 				INIT_DELAYED_WORK( (struct delayed_work*)delay,
 						   process_mapping_request_for_2_kernels);
 				queue_delayed_work(message_request_wq,
 						   (struct delayed_work*) delay, 10);
+			}
+			else {
+				printk("%s: ERROR: cannot allocate memory to delay work 3 (cpu %d id %d)\n",
+						__func__, request->tgroup_home_cpu, request->tgroup_home_id);
 			}
 
 			spin_unlock(ptl);
@@ -1916,16 +1919,17 @@ resolved:
 		response->pgoff = vma->vm_pgoff;
 		if (vma->vm_file == NULL) {
 			response->path[0] = '\0';
-		} else {
+		}
+		else {
 			plpath = d_path(&vma->vm_file->f_path, lpath, 512);
 			strcpy(response->path, plpath);
 		}
 		PSPRINTK("response->vma_present %d response->vaddr_start %lx response->vaddr_size %lx response->prot %lx response->vm_flags %lx response->pgoff %lx response->path %s response->futex_owner %d\n",
 			 response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
-	} else {
+	}
+	else {
 		response->vma_present = 0;
 	}
-
 	spin_unlock(ptl);
 	up_read(&mm->mmap_sem);
 
@@ -1967,7 +1971,7 @@ out:
 	void_response = (data_void_response_for_2_kernels_t*) kmalloc(
 		sizeof(data_void_response_for_2_kernels_t), GFP_ATOMIC);
 	if (void_response == NULL) {
-		if(lock){
+		if (lock) {
 			spin_unlock(ptl);
 			up_read(&mm->mmap_sem);
 		}
