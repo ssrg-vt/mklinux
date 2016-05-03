@@ -1943,12 +1943,12 @@ resolved:
 out:
 	printk("%s sending void answer\n", __func__);
 
-	char tmpchar;
+/*	char tmpchar; // Marina and Vincent debugging
 	char *addrp = (char *) (address & PAGE_MASK);
 	int ii;
-	for (ii = 1; ii < PAGE_SIZE; ii++) { // THIS IS NO SENSE FOR ME!
-		copy_from_user(&tmpchar, addrp++, 1); //WHATTT?!?!?!?!?!?!?!?!?!?!? why copy from user?!
-	}
+	for (ii = 1; ii < PAGE_SIZE; ii++) {
+		copy_from_user(&tmpchar, addrp++, 1);
+	}*/
 
 #if 0
 	void* vto2 = kmalloc(GFP_ATOMIC, PAGE_SIZE * 2);
