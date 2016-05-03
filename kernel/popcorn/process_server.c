@@ -2801,7 +2801,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				schedule();
 			//set_task_state(current, TASK_RUNNING); // TODO put it back
 			if (!(++counter % 1000000))
-				printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
+				printk("%s: WARN: reading_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 		}
 	}
@@ -3634,8 +3634,8 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 	add_mapping_entry(fetching_page);
 
-	if(_cpu==tgroup_home_cpu){
-		if(pte_none(value_pte)){
+	if (_cpu==tgroup_home_cpu) {
+		if (pte_none(value_pte)) {
 			//not marked pte
 
 #if STATISTICS
@@ -3703,12 +3703,16 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	up_read(&memory->kernel_set_sem);
 
 	if (reachable>0) {
+		long counter = 0;
 		while (fetching_page->arrived_response==0) {
-			set_task_state(current, TASK_UNINTERRUPTIBLE);
+			//set_task_state(current, TASK_UNINTERRUPTIBLE);
 			if (fetching_page->arrived_response==0) {
 				schedule();
 			}
-			set_task_state(current, TASK_RUNNING);
+			//set_task_state(current, TASK_RUNNING);
+			if (!(++counter % 1000000))
+				printk("%s: WARN: fetching_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
+						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 		}
 	}
 
