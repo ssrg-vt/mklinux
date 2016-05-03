@@ -1721,6 +1721,7 @@ fetch:
 		if (request->is_fetch==1) {
 			printk("%s: ERROR: received a fetch request in a replicated status (cpu %d id %d address 0x%lx)\n",
 					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+					//BUG(); // TODO removed for debugging but really needed here
 		}
 		if (page->writing==1) {
 			PSPRINTK("Page currently in writing\n");
