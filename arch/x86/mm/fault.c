@@ -1363,7 +1363,7 @@ good_area:
 				retrying = 1;
 
 			if ((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
-				repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
+				repl_ret= process_server_update_page(tsk, mm, vma, address, flags, 1);
 			}
 
 			goto retry;
@@ -1371,7 +1371,7 @@ good_area:
 	}
 
         if((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
-                repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
+                repl_ret= process_server_update_page(tsk, mm, vma, address, flags, 0);
 
                 if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
                         bad_area(regs, error_code, address);

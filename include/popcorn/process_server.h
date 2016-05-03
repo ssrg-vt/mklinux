@@ -50,8 +50,7 @@ void process_server_clean_page(struct page* page);
 int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
                                struct vm_area_struct *vma,
                                unsigned long address,
-                               unsigned long page_fault_flags,
-			       int retrying);
+                               unsigned long page_fault_flags, int retrying);
 int process_server_try_handle_mm_fault(struct task_struct *tsk,
                                        struct mm_struct *mm,
                                        struct vm_area_struct *vma,
