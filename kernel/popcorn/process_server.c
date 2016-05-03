@@ -1819,16 +1819,15 @@ fetch:
 					flush_tlb_fix_spurious_fault(vma, address);
 				}
 			}
-
 			goto resolved;
 		}
 	}
 
 resolved:
-
-	PSPRINTK("%s: Resolved Copy from %s\n", __func__, ((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"));
-
-	PSPRINTK("%s: Page read only?%i Page shared?%i \n", __func__, (vma->vm_flags & VM_WRITE)?0:1, (vma->vm_flags & VM_SHARED)?1:0);
+	PSPRINTK("Resolved Copy from %s\n",
+			((vma->vm_file!=NULL)?d_path(&vma->vm_file->f_path,lpath,512):"no file"));
+	PSPRINTK("Page read only?%i Page shared?%i\n",
+			(vma->vm_flags & VM_WRITE)?0:1, (vma->vm_flags & VM_SHARED)?1:0);
 
 	response = (data_response_for_2_kernels_t*) kmalloc(sizeof(data_response_for_2_kernels_t)+PAGE_SIZE, GFP_ATOMIC);
 	if (response == NULL) {
@@ -2689,14 +2688,14 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				 pmd_t* pmd, pte_t* pte,
 				 spinlock_t* ptl, struct page* page)
 {
+	int i, ret=0;
 	pte_t value_pte;
-	int ret=0,i;
+	page->reading= 1;
 
 #if STATISTICS
 	read++;
 #endif
 	PSPRINTK("%s Read for address %lx pid %d\n", __func__, address,current->pid);
-	page->reading= 1;
 
 	//message to ask for a copy
 	data_request_for_2_kernels_t* read_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
@@ -2772,11 +2771,15 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	}
 
 	if (sent) {
+		long counter = 0;
 		while (reading_page->arrived_response == 0) {
 			set_task_state(current, TASK_UNINTERRUPTIBLE);
 			if (reading_page->arrived_response == 0)
 				schedule();
 			set_task_state(current, TASK_RUNNING);
+			if (!(counter % 1000))
+				printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
+						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 		}
 	}
 	else {
@@ -2909,8 +2912,7 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				  struct page* page,int invalid)
 {
 
-	int  i;
-	int ret= 0;
+	int i, ret= 0;
 	pte_t value_pte;
 	page->writing = 1;
 
@@ -2983,16 +2985,25 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		}
 
 		if (sent) {
+			long counter = 0;
 			while (answers->response_arrived==0) {
 				set_task_state(current, TASK_UNINTERRUPTIBLE);
 				if (answers->response_arrived==0)
 					schedule();
 				set_task_state(current, TASK_RUNNING);
+				if (!(counter % 1000))
+					printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
+							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 			}
 		}
-		else
-			printk("%s: WARN: Impossible to send invalid, no destination kernel (cpu %d id %d)\n",
+		else {
+			printk("%s: ERROR: impossible to send read message, no destination kernel (cpu %d id %d)n",
 					__func__, tgroup_home_cpu, tgroup_home_id);
+			ret= VM_FAULT_REPLICATION_PROTOCOL;
+			down_read(&mm->mmap_sem);
+			spin_lock(ptl);
+			goto exit_invalid;
+		}
 
 		down_read(&mm->mmap_sem);
 		spin_lock(ptl);
@@ -3100,7 +3111,7 @@ exit_answers:
 				set_task_state(current, TASK_RUNNING);
 				counter++;
 				if (!(counter % 1000))
-					printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
+					printk("%s: WARN: writing_page->arrived_response 0 [%ld] !owner (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 			}
 		}
