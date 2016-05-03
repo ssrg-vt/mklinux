@@ -873,8 +873,8 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 	PSMINPRINTK("answer_request_void address %lx from cpu %i. This is a void response.\n", response->address, inc_msg->hdr.from_cpu);
 
 	if (fetched_data == NULL) {
-		printk(KERN_ERR"%s: WARN: data not found in local list (cpu %d id %d address 0x%lx)\n",
-				__func__, response->tgroup_home_cpu, response->tgroup_home_id, response->address);
+		printk(KERN_ERR"%s: WARN: data not found in local list (cpu %d id %d address 0x%lx) 0x%lx\n",
+				__func__, response->tgroup_home_cpu, response->tgroup_home_id, response->address, (unsigned long)response);
 		pcn_kmsg_free_msg(inc_msg);
 		return -1;
 	}
@@ -941,8 +941,8 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 	PSMINPRINTK("Received answer for address %lx last write %d from cpu %i\n", response->address, response->last_write,inc_msg->hdr.from_cpu);
 
 	if (fetched_data == NULL) {
-		printk(KERN_ERR"%s: WARN: data not found in local list (cpu %d id %d address 0x%lx)\n",
-				__func__, response->tgroup_home_cpu, response->tgroup_home_id, response->address);
+		printk(KERN_ERR"%s: WARN: data not found in local list (cpu %d id %d address 0x%lx) 0x%lx\n",
+				__func__, response->tgroup_home_cpu, response->tgroup_home_id, response->address, (unsigned long)response);
 		pcn_kmsg_free_msg(inc_msg);
 		return -1;
 	}
@@ -2796,7 +2796,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			if (reading_page->arrived_response == 0)
 				schedule();
 			//set_task_state(current, TASK_RUNNING); // TODO put it back
-			if (!(++counter % 1000))
+			if (!(++counter % 1000000))
 				printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 		}
@@ -3010,7 +3010,7 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				if (answers->response_arrived==0)
 					schedule();
 				//set_task_state(current, TASK_RUNNING); // TODO put it back
-				if (!(++counter % 1000))
+				if (!(++counter % 1000000))
 					printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 			}
@@ -3128,7 +3128,7 @@ exit_answers:
 				if (writing_page->arrived_response == 0)
 					schedule();
 				//set_task_state(current, TASK_RUNNING); // TODO put it back
-				if (!(++counter % 1000))
+				if (!(++counter % 1000000))
 					printk("%s: WARN: writing_page->arrived_response 0 [%ld] !owner (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 			}
