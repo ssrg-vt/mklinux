@@ -98,7 +98,8 @@ static void add_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 		_mapping_head = entry;
 		entry->next = NULL;
 		entry->prev = NULL;
-	} else {
+	}
+	else {
 		curr = _mapping_head;
 		while (curr->next != NULL) {
 			curr = curr->next;
@@ -111,6 +112,11 @@ static void add_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 	}
 
 	raw_spin_unlock_irqrestore(&_mapping_head_lock, flags);
+
+	printk("%s: INFO: %pB %s pid %d f%dw%d (cpu %d id %d address 0x%lx)\n",
+			__func__, __builtin_return_address(1), current->comm, (int)current->pid,
+			entry->is_fetch, entry->is_write,
+			entry->tgroup_home_cpu, entry->tgroup_home_id, entry->address);
 }
 
 static mapping_answers_for_2_kernels_t* find_mapping_entry(int cpu, int id, unsigned long address)
@@ -173,8 +179,9 @@ static void remove_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 
 	raw_spin_unlock_irqrestore(&_mapping_head_lock, flags);
 
-	printk("%s: INFO: %pB %s (cpu %d id %d address 0x%lx)\n",
-			__func__, __builtin_return_address(1), current->comm,
+	printk("%s: INFO: %pB %s pid %d f%dw%d (cpu %d id %d address 0x%lx)\n",
+			__func__, __builtin_return_address(1), current->comm, (int)current->pid,
+			entry->is_fetch, entry->is_write,
 			entry->tgroup_home_cpu, entry->tgroup_home_id, entry->address);
 }
 
@@ -194,7 +201,8 @@ static void add_ack_entry(ack_answers_for_2_kernels_t* entry)
 		_ack_head = entry;
 		entry->next = NULL;
 		entry->prev = NULL;
-	} else {
+	}
+	else {
 		curr = _ack_head;
 		while (curr->next != NULL) {
 			curr = curr->next;
@@ -268,7 +276,6 @@ static void remove_ack_entry(ack_answers_for_2_kernels_t* entry)
 	entry->next = NULL;
 
 	raw_spin_unlock_irqrestore(&_ack_head_lock, flags);
-
 }
 
 /* Functions to add,find and remove an entry from the memory list (head:_memory_head , lock:_memory_head_lock)
@@ -286,7 +293,8 @@ static void add_memory_entry(memory_t* entry)
 		_memory_head = entry;
 		entry->next = NULL;
 		entry->prev = NULL;
-	} else {
+	}
+	else {
 		curr = _memory_head;
 		while (curr->next != NULL) {
 			curr = curr->next;
@@ -316,7 +324,8 @@ static int add_memory_entry_with_check(memory_t* entry)
 		_memory_head = entry;
 		entry->next = NULL;
 		entry->prev = NULL;
-	} else {
+	}
+	else {
 		curr = _memory_head;
 		prev= NULL;
 		do {
@@ -488,7 +497,8 @@ static void add_count_entry(count_answers_t* entry)
 		_count_head = entry;
 		entry->next = NULL;
 		entry->prev = NULL;
-	} else {
+	}
+	else {
 		curr = _count_head;
 		while (curr->next != NULL) {
 			curr = curr->next;
@@ -576,7 +586,8 @@ static void add_vma_ack_entry(vma_op_answers_t* entry)
 		_vma_ack_head = entry;
 		entry->next = NULL;
 		entry->prev = NULL;
-	} else {
+	}
+	else {
 		curr = _vma_ack_head;
 		while (curr->next != NULL) {
 			curr = curr->next;

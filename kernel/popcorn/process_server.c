@@ -855,6 +855,7 @@ static int create_kernel_thread_for_distributed_process_from_user_one(void *data
 ///////////////////////////////////////////////////////////////////////////////
 // Mappings handling
 ///////////////////////////////////////////////////////////////////////////////
+/* TODO the following two functions can be refactored into one */
 static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 {
 	data_void_response_for_2_kernels_t* response;
@@ -885,8 +886,11 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 
 	if (response->vma_present == 1) {
 		if (response->header.from_cpu != response->tgroup_home_cpu)
-			printk("%s: WARN: a kernel that is not the server is sending the mapping (%d %d)\n",
-					__func__, response->header.from_cpu, response->tgroup_home_cpu);
+			printk("%s: WARN: a kernel that is not the server is sending the mapping (cpu %d id %d address 0x%lx)\n",
+					__func__, response->header.from_cpu, response->tgroup_home_cpu, response->address);
+
+		PSPRINTK("%s: response->vma_pesent %d response->vaddr_start %lx response->vaddr_size %lx response->prot %lx response->vm_flags %lx response->pgoff %lx response->path %s response->fowner %d\n", __func__,
+					 response->vma_present, response->vaddr_start , response->vaddr_size,response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
 
 		if (fetched_data->vma_present == 0) {
 			PSPRINTK("Set vma\n");
@@ -898,13 +902,15 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
 		} else {
-			printk("%s: WARN: received more than one mapping\n", __func__);
+			printk("%s: WARN: received more than one mapping (cpu %d id %d address 0x%lx)\n",
+					__func__, response->header.from_cpu, response->tgroup_home_cpu, response->address);
 		}
 	}
 
 	if(fetched_data->arrived_response!=0)
-		printk("%s: WARN: received more than one answer, arrived_response is %d\n",
-				__func__, fetched_data->arrived_response);
+		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address)\n",
+				__func__, fetched_data->arrived_response,
+				response->header.from_cpu, response->tgroup_home_cpu, response->address);
 
 	fetched_data->arrived_response++;
 	fetched_data->futex_owner = response->futex_owner;
@@ -941,10 +947,15 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 		return -1;
 	}
 
+	if (response->owner == 1) {
+		PSPRINTK("Response with ownership\n");
+		fetched_data->owner = 1;
+	}
+
 	if (response->vma_present == 1) {
 		if (response->header.from_cpu != response->tgroup_home_cpu)
-			printk("%s: WARN: a kernel that is not the server is sending the mapping (%d %d)\n",
-					__func__, response->header.from_cpu, response->tgroup_home_cpu);
+			printk("%s: WARN: a kernel that is not the server is sending the mapping (cpu %d id %d address 0x%lx)\n",
+					__func__, response->header.from_cpu, response->tgroup_home_cpu, response->address);
 
 		PSPRINTK("%s: response->vma_pesent %d reresponse->vaddr_start %lx response->vaddr_size %lx response->prot %lx response->vm_flags %lx response->pgoff %lx response->path %s response->fowner %d\n", 
 			__func__, response->vma_present, response->vaddr_start , response->vaddr_size, (unsigned long)response->prot, response->vm_flags , response->pgoff, response->path,response->futex_owner);
@@ -959,18 +970,16 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
 		} else {
-			printk("%s: WARN: received more than one mapping\n", __func__);
+			printk("%s: WARN: received more than one mapping (cpu %d id %d address 0x%lx)\n",
+					__func__, response->header.from_cpu, response->tgroup_home_cpu, response->address);
 		}
 	}
 
-	if (response->owner == 1) {
-		PSPRINTK("Response with ownership\n");
-		fetched_data->owner = 1;
-	}
-
 	if (fetched_data->address_present == 1) {
-		printk("%s: WARN: received more than one answer with a copy of the page\n", __func__);
-	} else  {
+		printk("%s: WARN: received more than one answer with a copy of the page (cpu %d id %d address)\n",
+						__func__, response->header.from_cpu, response->tgroup_home_cpu, response->address);
+	}
+	else  {
 		fetched_data->address_present= 1;
 		fetched_data->data = response;
 		fetched_data->last_write = response->last_write;
@@ -978,8 +987,9 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 	}
 
 	if(fetched_data->arrived_response!=0)
-		printk("%s: WARN: received more than one answer, arrived_response is %d\n",
-				__func__, fetched_data->arrived_response);
+		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address)\n",
+				__func__, fetched_data->arrived_response,
+				response->header.from_cpu, response->tgroup_home_cpu, response->address);
 
 	fetched_data->owners[inc_msg->hdr.from_cpu] = 1;
 	fetched_data->arrived_response++;
@@ -989,7 +999,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 	wake_up_process(fetched_data->waiting);
 
 	if (set == 0)
-		pcn_kmsg_free_msg(inc_msg);  // TODO who is removing this mapping?!
+		pcn_kmsg_free_msg(inc_msg);  // This is deleted by do_remote_*_for_2_kernels
 	return 1;
 }
 
@@ -1329,14 +1339,19 @@ extern int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *v
 void process_mapping_request_for_2_kernels(struct work_struct* work)
 {
 	request_work_t* request_work = (request_work_t*) work;
+
 	data_request_for_2_kernels_t* request = request_work->request;
-	memory_t * memory;
-	struct mm_struct* mm = NULL;
-	struct vm_area_struct* vma = NULL;
-	data_void_response_for_2_kernels_t* void_response;
+	data_void_response_for_2_kernels_t * void_response = NULL;
+	data_response_for_2_kernels_t * response = NULL;
+	mapping_answers_for_2_kernels_t * fetched_data = NULL;
+
+	memory_t * memory = NULL;
+	struct mm_struct * mm = NULL;
+	struct vm_area_struct * vma = NULL;
+	struct page * page = NULL, * old_page = NULL;
+
 	int owner= 0;
-	char* plpath;
-	char lpath[512];
+	char * plpath; char lpath[512];
 	int from_cpu = request->header.from_cpu;
 	unsigned long address = request->address & PAGE_MASK;
 	pgd_t* pgd;
@@ -1344,36 +1359,36 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	pmd_t* pmd;
 	pte_t* pte;
 	pte_t entry;
+
 	spinlock_t* ptl;
 	request_work_t* delay;
-	struct page* page, *old_page;
-	data_response_for_2_kernels_t* response;
-	mapping_answers_for_2_kernels_t* fetched_data;
+
 	int lock =0;
 	void *vfrom;
 
 #if STATISTICS
 	request_data++;
 #endif
+	PSPRINTK("%s: Request address %lx is fetch %i is write %i\n",
+			__func__, request->address, ((request->is_fetch==1)?1:0), ((request->is_write==1)?1:0));
 
-	PSMINPRINTK("Request for address %lx is fetch %i is write %i\n", request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
-	PSPRINTK("%s: request %i address %lx is fetch %i is write %i\n", __func__, 0, request->address,((request->is_fetch==1)?1:0),((request->is_write==1)?1:0));
-
-	memory = find_memory_entry(request->tgroup_home_cpu,
-				   request->tgroup_home_id);
+	memory = find_memory_entry(request->tgroup_home_cpu, request->tgroup_home_id);
 	if (memory != NULL) {
-		if(memory->setting_up==1){
+		if (memory->setting_up==1) {
 			owner=1;
 			goto out;
 		}
 		mm = memory->mm;
-	} else {
+		if (memory->tgroup_home_cpu != request->tgroup_home_cpu
+				|| memory->tgroup_home_id != request->tgroup_home_id)
+			printk("%s: ERROR: tgroup_home_cpu and tgroup_home_id DON'T match", __func__);
+	}
+	else {
 		owner=1;
 		goto out;
 	}
 
 	down_read(&mm->mmap_sem);
-
 	/*
 	 * check the vma era first -- this is an error only if it keeps printing forever
 	 * if it is still a problem do increment the delay
@@ -1409,7 +1424,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 		vma = NULL;
 		if(_cpu == request->tgroup_home_cpu){
-			printk(KERN_ALERT"%s: vma NULL in cpu %d address 0x%lx\n",
+			printk(KERN_ALERT"%s: ERROR: vma NULL in cpu %d address 0x%lx\n",
 					__func__, _cpu, address);
 			up_read(&mm->mmap_sem);
 			goto out;
@@ -1440,18 +1455,18 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	  printk("%s:%d going to void response\n", __func__, __LINE__);
 	  goto out;
 	  }*/
-	if (_cpu!=request->tgroup_home_cpu) {
+	if (_cpu != request->tgroup_home_cpu) {
 		pgd = pgd_offset(mm, address);
 		if (!pgd || pgd_none(*pgd)) {
 			up_read(&mm->mmap_sem);
 			goto out;
 		}
-		pud = pud_offset(pgd, address);
+		pud = pud_offset(pgd, address); //pud_alloc below
 		if (!pud || pud_none(*pud)) {
 			up_read(&mm->mmap_sem);
 			goto out;
 		}
-		pmd = pmd_offset(pud, address);
+		pmd = pmd_offset(pud, address); //pmd_alloc below
 		if (!pmd || pmd_none(*pmd) || pmd_trans_huge(*pmd)) {
 			up_read(&mm->mmap_sem);
 			goto out;
@@ -1459,7 +1474,10 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	}
 	else {
 		pgd = pgd_offset(mm, address);
-
+		if (!pgd || pgd_none(*pgd)) {
+			up_read(&mm->mmap_sem);
+			goto out;
+		}
 		pud = pud_alloc(mm, pgd, address);
 		if (!pud){
 			up_read(&mm->mmap_sem);
@@ -1470,6 +1488,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 			up_read(&mm->mmap_sem);
 			goto out;
 		}
+
 		if (pmd_none(*pmd) && __pte_alloc(mm, vma, pmd, address)){
 			up_read(&mm->mmap_sem);
 			goto out;
@@ -1480,12 +1499,13 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 			goto out;
 		}
 	}
-
 //retry:	
 	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 	/*PTE LOCKED*/
 	entry = *pte;
 	lock= 1;
+///////////////////////////////////////////////////////////////////////////////
+// Got pte, now proceed with the rest
 
 #if defined(CONFIG_ARM64)
 	//Ajith - Removing optimization used for local fetch - _PAGE_UNUSED1 case
@@ -1564,12 +1584,13 @@ fetch:
 		owner= 1;
 		goto out;
 	}
-
 	page = pte_page(entry);
 	if (page != vm_normal_page(vma, address, entry)) {
 		PSPRINTK("Page different from vm_normal_page in request page\n");
 	}
 	old_page = NULL;
+///////////////////////////////////////////////////////////////////////////////
+// Got page, proceed with the rest
 
 	if (is_zero_page(pte_pfn(entry)) || !(page->replicated == 1)) {
 		PSPRINTK("Page not replicated\n");
@@ -1605,35 +1626,31 @@ fetch:
 						up_read(&mm->mmap_sem);
 						goto out;
 					}
-
 					if (ret & (VM_FAULT_HWPOISON | VM_FAULT_HWPOISON_LARGE)){
 						printk("ERROR: %s EHWPOISON\n",__func__);
 						up_read(&mm->mmap_sem);
 						goto out;
 					}
-
 					if (ret & VM_FAULT_SIGBUS){
 						printk("ERROR: %s EFAULT\n",__func__);
 						up_read(&mm->mmap_sem);
 						goto out;
 					}
-
-					printk("%s: ERROR: bug from do_wp_page_for_popcorn\n",__func__);
+					printk("%s: ERROR: bug from do_wp_page_for_popcorn (cpu %d id %d address 0x%lx)\n",
+							__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
 					up_read(&mm->mmap_sem);
 					goto out;
 				}
-
 				spin_lock(ptl);
 				/*PTE LOCKED*/
 				lock = 1;
-
 				entry = *pte;
 
-				if(!pte_write(entry)){
-					printk("%s: WARN: page not writable after cow\n", __func__);
+				if (!pte_write(entry)) {
+					printk("%s: WARN: page not writable after cow (cpu %d id %d address 0x%lx)\n",
+							__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
 					goto retry_cow;
 				}
-
 				page = pte_page(entry);
 			}
 
@@ -1656,7 +1673,6 @@ fetch:
 				owner= 1;
 				page->owner= 0;
 			}
-
 			page->last_write= 1;
 
 			entry = pte_set_user_access_flag(entry);
@@ -1680,9 +1696,9 @@ fetch:
 			page->replicated=0;
 			page->status= REPLICATION_STATUS_NOT_REPLICATED;
 
-			if(request->is_write==1){
+			if (request->is_write==1) {
 				printk("%s: ERROR: received a write in a read-only not replicated page(cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, address);
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
 			}
 			page->owner= 1;
 			owner= 0;
@@ -1693,16 +1709,15 @@ fetch:
 
 		goto resolved;
 	}
-	else{
+	else {
 		//replicated page case
 		PSPRINTK("%s: Page replicated...\n", __func__);
 
-		if(request->is_fetch==1){
-			printk("%s: ERROR: received a fetch request in a replicated status (cpu %d, id %d)\n",
-					__func__, current->tgroup_home_cpu, current->tgroup_home_id);
+		if (request->is_fetch==1) {
+			printk("%s: ERROR: received a fetch request in a replicated status (cpu %d id %d address 0x%lx)\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
 		}
-
-		if(page->writing==1){
+		if (page->writing==1) {
 			PSPRINTK("Page currently in writing\n");
 			if (request->is_write==0) {
 				PSPRINTK("Concurrent read request\n");
@@ -1725,17 +1740,16 @@ fetch:
 			kfree(work);
 			return;
 		}
-
 		if (page->reading==1) {
 			printk("%s: ERROR: page in reading but received a request (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, address);
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
 			goto out;
 		}
 
 		//invalid page case
 		if (page->status == REPLICATION_STATUS_INVALID) {
-			printk("%s: ERROR: received a request in invalid status without reading or writing(cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, address);
+			printk("%s: ERROR: received a request in invalid status without reading or writing (cpu %d id %d address 0x%lx)\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
 			goto out;
 		}
 
@@ -1743,8 +1757,10 @@ fetch:
 		if (page->status == REPLICATION_STATUS_VALID) {
 			PSPRINTK("Page requested valid\n");
 
-			if (page->owner!=1)
-				printk("%s: ERROR: request in a not owner valid page\n", __func__);
+			if (page->owner!=1) {
+				printk("%s: ERROR: request in a not owner valid page (cpu %d id %d address 0x%lx)\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+			}
 			else {
 				if (request->is_write) {
 					if (page->last_write!= request->last_write)
@@ -1770,15 +1786,16 @@ fetch:
 							__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
 				}
 			}
-
 			goto out;
 		}
 
 		if (page->status == REPLICATION_STATUS_WRITTEN) {
 			PSPRINTK("Page requested in written status\n");
 
-			if(page->owner!=1)
-				printk("%s: ERROR: page in written status without ownership\n", __func__);
+			if (page->owner!=1) {
+				printk("%s: ERROR: page in written status without ownership (cpu %d id %d address 0x%lx)\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+			}
 			else {
 				if (request->is_write==1) {
 					if (page->last_write!= (request->last_write+1))
@@ -1801,8 +1818,9 @@ fetch:
 				}
 				else {
 					if (page->last_write!= (request->last_write+1))
-						printk("%s: ERROR: received an read for copy %lx but my copy is %lx\n",
-								__func__, request->last_write,page->last_write);
+						printk("%s: ERROR: received an read for copy %lx but my copy is %lx (cpu %d id %d address 0x%lx)\n",
+								__func__, request->last_write,page->last_write,
+								request->tgroup_home_cpu, request->tgroup_home_id, request->address);
 
 					page->status = REPLICATION_STATUS_VALID;
 					page->owner= 1;
@@ -1822,6 +1840,8 @@ fetch:
 			goto resolved;
 		}
 	}
+///////////////////////////////////////////////////////////////////////////////
+// Everything resolved at this point, going to respond
 
 resolved:
 	PSPRINTK("Resolved Copy from %s\n",
@@ -1848,8 +1868,8 @@ resolved:
 	int ct=0;
 	unsigned long _buff[16];
 
-	if(address == PAGE_ADDR){
-		for(ct=0;ct<8;ct++){
+	if (address == PAGE_ADDR) {
+		for (ct=0;ct<8;ct++) {
 			_buff[ct]=(unsigned long) *(((unsigned long *)vfrom) + ct);
 		}
 	}
@@ -1864,8 +1884,8 @@ resolved:
 
 
 #if READ_PAGE
-	if(address == PAGE_ADDR){
-		for(ct=8;ct<16;ct++){
+	if (address == PAGE_ADDR) {
+		for(ct=8;ct<16;ct++) {
 			_buff[ct]=(unsigned long) *((unsigned long*)(&(response->data))+ct-8);
 		}
 		for(ct=0;ct<16;ct++){
@@ -1921,15 +1941,13 @@ resolved:
 	return;
 
 out:
-
 	printk("%s sending void answer\n", __func__);
 
 	char tmpchar;
 	char *addrp = (char *) (address & PAGE_MASK);
 	int ii;
-
-	for (ii = 1; ii < PAGE_SIZE; ii++) {
-		copy_from_user(&tmpchar, addrp++, 1);
+	for (ii = 1; ii < PAGE_SIZE; ii++) { // THIS IS NO SENSE FOR ME!
+		copy_from_user(&tmpchar, addrp++, 1); //WHATTT?!?!?!?!?!?!?!?!?!?!? why copy from user?!
 	}
 
 #if 0
@@ -1981,11 +1999,12 @@ out:
 			plpath = d_path(&vma->vm_file->f_path, lpath, 512);
 			strcpy(void_response->path, plpath);
 		}
-	} else {
+	}
+	else {
 		void_response->vma_present = 0;
 	}
 
-	if(lock){
+	if(lock) {
 		spin_unlock(ptl);
 		up_read(&mm->mmap_sem);
 	}
@@ -2773,10 +2792,10 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	if (sent) {
 		long counter = 0;
 		while (reading_page->arrived_response == 0) {
-			set_task_state(current, TASK_UNINTERRUPTIBLE);
+			//set_task_state(current, TASK_UNINTERRUPTIBLE); // TODO put it back
 			if (reading_page->arrived_response == 0)
 				schedule();
-			set_task_state(current, TASK_RUNNING);
+			//set_task_state(current, TASK_RUNNING); // TODO put it back
 			if (!(++counter % 1000))
 				printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
@@ -2987,10 +3006,10 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		if (sent) {
 			long counter = 0;
 			while (answers->response_arrived==0) {
-				set_task_state(current, TASK_UNINTERRUPTIBLE);
+				//set_task_state(current, TASK_INTERRUPTIBLE); // TODO put it back
 				if (answers->response_arrived==0)
 					schedule();
-				set_task_state(current, TASK_RUNNING);
+				//set_task_state(current, TASK_RUNNING); // TODO put it back
 				if (!(++counter % 1000))
 					printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
@@ -3105,10 +3124,10 @@ exit_answers:
 		if (sent) {
 			long counter =0;
 			while (writing_page->arrived_response == 0) {
-				set_task_state(current, TASK_UNINTERRUPTIBLE);
+				//set_task_state(current, TASK_UNINTERRUPTIBLE); // TODO put it back
 				if (writing_page->arrived_response == 0)
 					schedule();
-				set_task_state(current, TASK_RUNNING);
+				//set_task_state(current, TASK_RUNNING); // TODO put it back
 				if (!(++counter % 1000))
 					printk("%s: WARN: writing_page->arrived_response 0 [%ld] !owner (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
