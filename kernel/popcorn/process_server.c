@@ -990,9 +990,9 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 	}
 
 	if (fetched_data->arrived_response!=0)
-		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address 0x%lx)\n",
+		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address 0x%lx) 0x%lx\n",
 				__func__, fetched_data->arrived_response,
-				response->tgroup_home_cpu, response->tgroup_home_id, response->address);
+				response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 
 	fetched_data->owners[inc_msg->hdr.from_cpu] = 1;
 	fetched_data->arrived_response++;
