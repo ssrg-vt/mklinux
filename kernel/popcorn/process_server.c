@@ -902,16 +902,16 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
 		} else {
-			printk("%s: WARN: received more than one mapping %d (cpu %d id %d address 0x%lx)\n",
+			printk("%s: WARN: received more than one mapping %d (cpu %d id %d address 0x%lx) 0x%lx\n",
 					__func__, fetched_data->vma_present,
-					response->tgroup_home_cpu, response->tgroup_home_id, response->address);
+					response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 		}
 	}
 
 	if (fetched_data->arrived_response!=0)
-		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address 0x%lx)\n",
+		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address 0x%lx) 0x%lx\n",
 				__func__, fetched_data->arrived_response,
-				response->tgroup_home_cpu, response->tgroup_home_id, response->address);
+				response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 
 	fetched_data->arrived_response++;
 	fetched_data->futex_owner = response->futex_owner;
@@ -971,16 +971,16 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
 		} else {
-			printk("%s: WARN: received more than one mapping %d (cpu %d id %d address 0x%lx)\n",
+			printk("%s: WARN: received more than one mapping %d (cpu %d id %d address 0x%lx) 0x%lx\n",
 					__func__, fetched_data->vma_present,
-					response->tgroup_home_cpu, response->tgroup_home_id, response->address);
+					response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 		}
 	}
 
 	if (fetched_data->address_present == 1) {
-		printk("%s: WARN: received more than one answer with a copy of the page from %d (cpu %d id %d address 0x%lx)\n",
+		printk("%s: WARN: received more than one answer with a copy of the page from %d (cpu %d id %d address 0x%lx) 0x%lx\n",
 						__func__, response->header.from_cpu,
-						response->tgroup_home_cpu, response->tgroup_home_id, response->address);
+						response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 	}
 	else  {
 		fetched_data->address_present= 1;
