@@ -2522,7 +2522,8 @@ int process_server_notify_delegated_subprocess_starting(pid_t pid,
  * 0, updated;
  */
 int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
-			       struct vm_area_struct *vma, unsigned long address_not_page, unsigned long page_fault_flags)
+			       struct vm_area_struct *vma, unsigned long address_not_page, unsigned long page_fault_flags,
+				   int retrying)
 {
 	unsigned long address;
 
@@ -2558,6 +2559,11 @@ int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 					  address);
 
 	if (fetched_data != NULL) {
+		if (retrying == 1) {
+			ret = 0;
+			goto out_not_locked;
+		}
+
 		if(fetched_data->is_fetch!=1 ){
 			printk("%s: ERROR: data structure is not for fetch (cpu %d id %d)\n",
 					__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id);
