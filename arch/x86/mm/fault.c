@@ -1364,8 +1364,9 @@ good_area:
 
 			if ((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
 				repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
+				printk("%s: WARN: retry called pid %d\n", __func__, current->pid);
 			}
-
+			
 			goto retry;
 		}
 	}
