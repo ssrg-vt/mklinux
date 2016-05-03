@@ -1359,15 +1359,18 @@ good_area:
 			flags &= ~FAULT_FLAG_ALLOW_RETRY;
 			flags |= FAULT_FLAG_TRIED;
 
-			if(tsk->tgroup_distributed == 1)
+			if (tsk->tgroup_distributed == 1)
 				retrying = 1;
+
+			if ((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
+				repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
+			}
 
 			goto retry;
 		}
 	}
 
-        if((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)){
-
+        if((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
                 repl_ret= process_server_update_page(tsk,mm,vma,address,flags);
 
                 if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
