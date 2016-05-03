@@ -113,10 +113,14 @@ static void add_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 
 	raw_spin_unlock_irqrestore(&_mapping_head_lock, flags);
 
-	printk("%s: INFO: %pS %s pid %d f%dw%d (cpu %d id %d address 0x%lx)\n",
+	{
+	data_response_for_2_kernels_t *	response = (data_response_for_2_kernels_t*) entry->data;
+	printk("%s: INFO: %pS %s pid %d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
 			__func__, __builtin_return_address(0), current->comm, (int)current->pid,
 			entry->is_fetch, entry->is_write,
-			entry->tgroup_home_cpu, entry->tgroup_home_id, entry->address);
+			entry->tgroup_home_cpu, entry->tgroup_home_id, entry->address,
+			(unsigned long) response);
+	}
 }
 
 static mapping_answers_for_2_kernels_t* find_mapping_entry(int cpu, int id, unsigned long address)
@@ -179,10 +183,14 @@ static void remove_mapping_entry(mapping_answers_for_2_kernels_t* entry)
 
 	raw_spin_unlock_irqrestore(&_mapping_head_lock, flags);
 
-	printk("%s: INFO: %pS %s pid %d f%dw%d (cpu %d id %d address 0x%lx)\n",
+	{
+	data_response_for_2_kernels_t *	response = (data_response_for_2_kernels_t*) entry->data;
+	printk("%s: INFO: %pS %s pid %d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
 			__func__, __builtin_return_address(0), current->comm, (int)current->pid,
 			entry->is_fetch, entry->is_write,
-			entry->tgroup_home_cpu, entry->tgroup_home_id, entry->address);
+			entry->tgroup_home_cpu, entry->tgroup_home_id, entry->address,
+			(unsigned long) response);
+	}
 }
 
 /* Functions to add,find and remove an entry from the ack list (head:_ack_head , lock:_ack_head_lock)
