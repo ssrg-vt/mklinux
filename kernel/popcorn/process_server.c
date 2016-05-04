@@ -3607,7 +3607,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		goto exit_fetching_page;
 	}
 
-	memset(fetching_message, 0, sizeof(data_request_for_2_kernels_t));
+	memset(fetch_message, 0, sizeof(data_request_for_2_kernels_t));
 	fetch_message->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
 	fetch_message->header.prio = PCN_KMSG_PRIO_NORMAL;
 	fetch_message->address = address;
