@@ -3905,19 +3905,19 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #if STATISTICS
 		local_fetch++;
 #endif
-			printk("%s: Copy not present in the other kernel, local fetch of address %lx\n", __func__, address);
-			PSMINPRINTK("Local fetch for address %lx\n",address);
+			printk("%s: WARN: Copy not present in the other kernel, local fetch of address 0x%lx\n",
+					__func__, address);
 			kfree(fetch_message);
 			ret = VM_CONTINUE_WITH_CHECK;
 			goto exit;
 		}
 
-		// NOTE none of these paths release resources (pcn_msg, specifically but the second leaves the entry enqueued)
+		// NOTE none of these paths releases all resources (pcn_msg, specifically but the second leaves the entry enqueued)
 
 	}
 	else {
-		printk("%s: ERROR: I do not know what to do at this point %d Release resources?!\n",
-				__func__, fetching_page->address_present);
+		printk("%s: ERROR: I do not know what to do at this point (address_present %d) Release resources?! 0x%lx\n",
+				__func__, fetching_page->address_present, address);
 	}
 
 exit_fetch_message:
