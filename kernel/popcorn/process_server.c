@@ -3606,30 +3606,13 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		goto exit;
 	}
 
+	memset(fetching_page, 0, sizeof(mapping_answers_for_2_kernels_t));
 	fetching_page->tgroup_home_cpu = tgroup_home_cpu;
 	fetching_page->tgroup_home_id = tgroup_home_id;
 	fetching_page->address = address;
-
-	fetching_page->vma_present = 0;
-	fetching_page->vaddr_start = 0;
-	fetching_page->vaddr_size = 0;
-	fetching_page->pgoff = 0;
-	memset(fetching_page->path,0,sizeof(char)*512);
-	memset(&(fetching_page->prot),0,sizeof(pgprot_t));
-	fetching_page->vm_flags = 0;
-
-	if(page_fault_flags & FAULT_FLAG_WRITE)
-		fetching_page->is_write= 1;
-	else
-		fetching_page->is_write= 0;
-
+	fetching_page->is_write = (page_fault_flags & FAULT_FLAG_WRITE) ? 1 : 0;
 	fetching_page->is_fetch= 1;
-	fetching_page->owner= 0;
-	fetching_page->address_present= 0;
-	fetching_page->last_write= 0;
-	fetching_page->data= NULL;
 	fetching_page->futex_owner = -1;//akshay
-
 	fetching_page->waiting = current;
 
 	add_mapping_entry(fetching_page);
@@ -3637,7 +3620,6 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	if (_cpu==tgroup_home_cpu) {
 		if (pte_none(value_pte)) {
 			//not marked pte
-
 #if STATISTICS
 			local_fetch++;
 #endif
@@ -3654,17 +3636,20 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		goto exit_fetching_page;
 	}
 
+	memset(fetching_message, 0, sizeof(data_request_for_2_kernels_t));
 	fetch_message->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
 	fetch_message->header.prio = PCN_KMSG_PRIO_NORMAL;
 	fetch_message->address = address;
 	fetch_message->tgroup_home_cpu = tgroup_home_cpu;
 	fetch_message->tgroup_home_id = tgroup_home_id;
 	fetch_message->is_write = fetching_page->is_write;
-	fetch_message->is_fetch= 1;
+	fetch_message->is_fetch = 1;
 	fetch_message->vma_operation_index= current->mm->vma_operation_index;
 
 	PSPRINTK("%s vma_operation_index %d\n", __func__, fetch_message->vma_operation_index);
 	PSPRINTK("%s: Fetch %i address %lx\n", __func__, 0, address);
+///////////////////////////////////////////////////////////////////////////////
+// Ticket (Marina's data store) and message created
 
 	spin_unlock(ptl);
 	up_read(&mm->mmap_sem);
@@ -3715,6 +3700,8 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 		}
 	}
+///////////////////////////////////////////////////////////////////////////////
+// Response received, continuing
 
 	down_read(&mm->mmap_sem);
 	spin_lock(ptl);
@@ -3738,23 +3725,18 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			ret = VM_FAULT_VMA;
 			goto exit_fetch_message;
 		}
-
 		if (vma == NULL) {
-			//PSPRINTK
 			dump_stack();
 			printk(KERN_ALERT"%s: ERROR: no vma for address %lx in the system {%d} (cpu %d id %d)\n",
-					__func__, address,current->pid, tgroup_home_cpu, tgroup_home_id);
+					__func__, address, current->pid, tgroup_home_cpu, tgroup_home_id);
 			ret = VM_FAULT_VMA;
 			goto exit_fetch_message;
 		}
 	}
+///////////////////////////////////////////////////////////////////////////////
+// ?
 
-	if (_cpu==tgroup_home_cpu && fetching_page->address_present == 0) {
-		printk("%s: ERROR: No response for a marked page\n", __func__);
-		ret = VM_FAULT_REPLICATION_PROTOCOL;
-		goto exit_fetch_message;
-	}
-	if (fetching_page->address_present == 1) {
+	if (fetching_page->address_present == 1) { // OR > 0
 		struct page* page;
 		spin_unlock(ptl);
 		/*PTE UNLOCKED*/
@@ -3846,14 +3828,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			//if the page is read only no need to keep replicas coherent
 			if (vma->vm_flags & VM_WRITE) {
 				page->replicated = 1;
-
-				if (fetching_page->is_write) {
-					page->last_write = fetching_page->last_write + 1;
-				}
-				else {
-					page->last_write = fetching_page->last_write;
-				}
-
+				page->last_write = fetching_page->last_write + ((fetching_page->is_write) ? 1 : 0);
 #if STATISTICS
 				if(page->last_write> most_written_page)
 					most_written_page= page->last_write;
@@ -3870,11 +3845,11 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #endif
 				}
 			}
-			else {
-				if(fetching_page->is_write)
+			else { /* !(vma->vm_flags & VM_WRITE) */
+				if (fetching_page->is_write)
 					printk("%s: ERROR: trying to write a read only page\n", __func__);
 
-				if(fetching_page->owner==1)
+				if (fetching_page->owner==1)
 					printk("%s: ERROR: received ownership with a copy of a read only page\n", __func__);
 
 				page->replicated = 0;
@@ -3920,15 +3895,29 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		ret= 0;
 		goto exit_fetch_message;
 	}
-	else { /* copy not present on the other kernel */
+	else if (fetching_page->address_present == 0) { // In both these cases we are not releasing the resources is it correct?
+		if (_cpu==tgroup_home_cpu) {
+			printk("%s: ERROR: No response for a marked page\n", __func__);
+			ret = VM_FAULT_REPLICATION_PROTOCOL;
+			goto exit_fetch_message;
+		}
+		else { /* copy not present on the other kernel */
 #if STATISTICS
 		local_fetch++;
 #endif
-		PSPRINTK("Copy not present in the other kernel, local fetch %d of address %lx\n", local_fetch, address);
-		PSMINPRINTK("Local fetch for address %lx\n",address);
-		kfree(fetch_message);
-		ret = VM_CONTINUE_WITH_CHECK;
-		goto exit;
+			printk("%s: Copy not present in the other kernel, local fetch %d of address %lx\n", __func__, local_fetch, address);
+			PSMINPRINTK("Local fetch for address %lx\n",address);
+			kfree(fetch_message);
+			ret = VM_CONTINUE_WITH_CHECK;
+			goto exit;
+		}
+
+		// NOTE none of these paths release resources (pcn_msg, specifically but the second leaves the entry enqueued)
+
+	}
+	else {
+		printk("%s: ERROR: I do not know what to do at this point %d Release resources?!\n",
+				__func__, fetching_page->address_present);
 	}
 
 exit_fetch_message:
