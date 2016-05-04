@@ -1015,9 +1015,10 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	down_interruptible(&pool_buf_cnt);
 do_retry:
 	for (i = 0; i<MAX_NUM_BUF; i++) {
-		if ( atomic_cmpxchg( ((atomic_t *) &send_buf[i].is_free), 1, 0) == 1 )
+		if ( atomic_cmpxchg( ((atomic_t *) &send_buf[i].is_free), 1, 0) == 1 ) {
 			smp_wmb();
 			break;
+		}
 		/*if (send_buf[i].is_free != 0) { //this is not atomic
 			send_buf[i].is_free = 0;
 			smp_wmb();
