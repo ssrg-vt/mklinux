@@ -993,7 +993,7 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	if (dest_cpu==my_cpu) {	
 		pcn_msg = lmsg;
 
-		printk("Send message: dest_cpu == my_cpu\n");
+		printk("%s: INFO: Send message: dest_cpu == my_cpu\n", __func__);
 
 		if (pcn_msg->hdr.type < 0 || pcn_msg->hdr.type >= PCN_KMSG_TYPE_MAX) {
 			printk(KERN_ERR"Received invalid message type %d\n", pcn_msg->hdr.type);
@@ -1013,12 +1013,14 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	}
 #endif
 
-	send_data = kmalloc(sizeof(send_wait),GFP_ATOMIC);
+	send_data = kmalloc(sizeof(send_wait),GFP_ATOMIC); // TODO use a cache
 	if (send_data == NULL) {
-		printk("Failed to allocate send data\n");
+		printk("%s: ERROR: Failed to allocate send data kmalloc\n", __func__);
+		return -1;
 	}
 
-	down_interruptible(&pool_buf_cnt);
+	down_interruptible(&pool_buf_cnt); // released in the sender thread, it blocks all possible other senders
+
 do_retry:
 	for (i = 0; i<MAX_NUM_BUF; i++) {
 		if ( atomic_cmpxchg( ((atomic_t *) &send_buf[i].is_free), 1, 0) == 1 ) {
@@ -1042,6 +1044,7 @@ do_retry:
 	send_data->assoc_buf = &send_buf[i];
 	send_data->msg=send_buf[i].buff;
 
+	memset(send_buf[i].buff, 0, SEG_SIZE); // NOTE probably not needed
 	memcpy(send_data->msg,lmsg,lmsg->hdr.size);
 	send_data->dst_cpu = dest_cpu;
 
