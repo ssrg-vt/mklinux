@@ -3636,7 +3636,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		goto exit_fetching_page;
 	}
 
-	memset(fetching_message, 0, sizeof(data_request_for_2_kernels_t));
+	memset(fetch_message, 0, sizeof(data_request_for_2_kernels_t));
 	fetch_message->header.type = PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST;
 	fetch_message->header.prio = PCN_KMSG_PRIO_NORMAL;
 	fetch_message->address = address;
@@ -3905,7 +3905,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #if STATISTICS
 		local_fetch++;
 #endif
-			printk("%s: Copy not present in the other kernel, local fetch %d of address %lx\n", __func__, local_fetch, address);
+			printk("%s: Copy not present in the other kernel, local fetch of address %lx\n", __func__, address);
 			PSMINPRINTK("Local fetch for address %lx\n",address);
 			kfree(fetch_message);
 			ret = VM_CONTINUE_WITH_CHECK;
