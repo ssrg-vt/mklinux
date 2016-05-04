@@ -3883,7 +3883,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #if STATISTICS
 		local_fetch++;
 #endif
-			printk("%s: WARN: Copy not present in the other kernel, local fetch of address 0x%lx\n",
+			PSPRINTK("%s: WARN: Copy not present in the other kernel, local fetch of address 0x%lx\n",
 					__func__, address);
 			kfree(fetch_message);
 			ret = VM_CONTINUE_WITH_CHECK;
