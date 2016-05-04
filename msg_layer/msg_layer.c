@@ -992,12 +992,13 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 		if (pcn_msg->hdr.type < 0 || pcn_msg->hdr.type >= PCN_KMSG_TYPE_MAX) {
 			printk(KERN_ERR"Received invalid message type %d\n", pcn_msg->hdr.type);
 			vfree(pcn_msg);
-		} else {
+		}
+		else {
 			ftn = callbacks[pcn_msg->hdr.type];
 			if (ftn != NULL) {
 				ftn(pcn_msg);
-
-			} else {
+			}
+			else {
 				printk(KERN_ERR"Recieved message type %d size %d has no registered callback!\n", pcn_msg->hdr.type,pcn_msg->hdr.size);
 				vfree(pcn_msg);
 			}
@@ -1014,15 +1015,18 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 	down_interruptible(&pool_buf_cnt);
 do_retry:
 	for (i = 0; i<MAX_NUM_BUF; i++) {
-		if (send_buf[i].is_free != 0) {
+		if ( atomic_cmpxchg( ((atomic_t *) &send_buf[i].is_free), 1, 0) == 1 )
+			smp_wmb();
+			break;
+		/*if (send_buf[i].is_free != 0) { //this is not atomic
 			send_buf[i].is_free = 0;
 			smp_wmb();
 			break;
-		}
+		} */
 	}
 
 	if (i == MAX_NUM_BUF) {
-		if ( !(retry % 100) )
+		if ( !(retry % 1000) )
 			printk("%s: WARN: Couldnt find a free buffer. Retry %d\n", __func__, retry);
 		retry++;
 		goto do_retry;
