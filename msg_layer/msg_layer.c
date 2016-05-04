@@ -973,9 +973,13 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 		return -1;
 	}
 
-	lmsg->hdr.size = payload_size+sizeof(struct pcn_kmsg_hdr);
 	lmsg->hdr.from_cpu = my_cpu;
+	lmsg->hdr.size = (payload_size + sizeof(struct pcn_kmsg_hdr));
 
+	if ( lmsg->hdr.size > SEG_SIZE) {
+		printk("%s: ALERT: trying to send a message bigger than the supported size %d (%pS) %s\n",
+				__func__, (int)SEG_SIZE, __builtin_return_address(0), msg_names[lmsg->hdr.type]);
+	}
 /*	if (lmsg->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
 		printk("Send message: %d (%s) pid %d\n", lmsg->hdr.type, msg_names[lmsg->hdr.type], current->pid);*/
 
