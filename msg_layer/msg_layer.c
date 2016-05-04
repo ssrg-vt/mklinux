@@ -770,11 +770,11 @@ int send_thread(int arg0)
 	return 0;
 }
 
-
+static int connection_handler_cnt = 0;
 int connection_handler(void* arg0)
 {
 	struct pcn_kmsg_message *pcn_msg, *temp;
-	int status = 0, i = 0, channel_num = 0;
+	int status = 0, i = 0, channel_num = 0, retry =0;
 	unsigned long long average = 0;
 	pcn_kmsg_cbftn ftn;
 	recv_data_t* thread_data;
@@ -788,22 +788,19 @@ int connection_handler(void* arg0)
 	channel_num = thread_data->channel_num;
 
 	msleep(100);
-	printk("PAssing %d %d\n", thread_data->channel_num, thread_data->is_worker);
-
-	printk(" IN %s %d\n", __func__, channel_num);
-
+	printk("%s: INFO: Channel  %d %d\n", thread_data->channel_num, thread_data->is_worker);
 	if (thread_data->is_worker == 0) {
-		printk("Initializing recv channel %d\n", channel_num);
+		printk("%s: INFO: Initializing recv channel %d\n", __func__, channel_num);
 		status = pcie_recv_init(channel_num);
 		if (status != 0) {
-			printk("Failed to initialize pcie connection\n");
+			printk("%s: ALERT: Failed to initialize pcie connection\n", __func__);
+			return;
 		}
 
 		up(&recv_connDone[channel_num]);
-		printk(" Recieve connection successfully completed..!!\n");
+		printk("%s: INFO Receive connection successfully completed..!!\n", __func__);
 
 	}
-
 	kfree(thread_data);
 
 	while (1) {
@@ -814,20 +811,26 @@ int connection_handler(void* arg0)
 
 		/* Wait on remote to complete using the channel */
 		wait_for_completion(&recv_intr_flag[channel_num]);
+		/* Ajith :  the wait for completion will wake up only one thread on interrupt callback */
 
 #if TEST_MSG_LAYER
                 if (atomic_read(&recv_count) == NUM_MSGS*MAX_NUM_CHANNELS)
                         break;
 #endif
 
+        connection_handler_cnt++;
+        if (connection_handler_cnt > 1)
+        	printk("%s: ALERT: detected connection_handler_cnt %d\n", __func__, connection_handler_cnt);
 		temp = (struct pcn_kmsg_message*)recv_vaddr[channel_num];
+		if (!temp)
+			printk("%s: ERROR: temp is zero\n", __func__);
 
 /*		if (temp->hdr.type != PCN_KMSG_TYPE_SCHED_PERIODIC)
 			printk("Receive message: %d (%s)\n", temp->hdr.type, msg_names[temp->hdr.type]);*/
 
 #if TEST_MSG_LAYER
 		down_interruptible(&recv_buf_cnt);
-	
+do_retry:
 		for (i = 0; i<MAX_NUM_BUF; i++) {
 			if ( atomic_cmpxchg( ((atomic_t *) &recv_buf[i].is_free), 1, 0) == 1 ) {
 				smp_wmb();
@@ -840,14 +843,22 @@ int connection_handler(void* arg0)
 			}*/
 		}
 
-		if (i == MAX_NUM_BUF)
-			printk(KERN_ERR"%s: ERROR: Couldnt find a free buffer (TEST_MSG_LAYER) \n", __func__);
+		if (i == MAX_NUM_BUF) {
+			if ( !(retry % 1000))
+				printk(KERN_ERR"%s: ERROR: Couldnt find a free buffer. Retry %d\n", __func__, retry);
+			retry++;
+			goto do_retry;
+		}
 
 		pcn_msg = recv_buf[i].buff;
 #else
+do_retry:
 		pcn_msg = (struct pcn_kmsg_message *) vmalloc(temp->hdr.size);
 		if (pcn_msg == NULL) {
-			printk(KERN_ERR"Failed to allocate recv buffer\n");
+			if ( !(retry % 1000))
+				printk(KERN_ERR"%s: ERROR: Failed to allocate recv buffer size %d\n", __func__, temp->hdr.size);
+			retry++;
+			goto do_retry;
 		}
 #endif
 
@@ -857,15 +868,16 @@ int connection_handler(void* arg0)
 		status = sci_trigger_interrupt_flag(remote_send_intr_hdl[channel_num],
 		                                NO_FLAGS);
 		if (status != 0) {
-		        printk(" Error in sci_trigger_interrupt_flag: %d\n", status);
+		        printk("%s: ERROR: in sci_trigger_interrupt_flag: %d\n", status);
 		}
+		connection_handler_cnt--; // safe to release the control here
 
 #if TEST_MSG_LAYER
 		atomic_inc(&recv_count);
 #endif
 
 		if (pcn_msg->hdr.type < 0) {
-			printk("Received invalid message type %d (max %d)\n", pcn_msg->hdr.type, PCN_KMSG_TYPE_MAX);
+			printk("%s: ERROR: Received invalid message type %d\n", pcn_msg->hdr.type);
 
 #if TEST_MSG_LAYER
 			recv_buf[i].is_free = 1;
@@ -885,7 +897,8 @@ int connection_handler(void* arg0)
 				up(&recv_buf_cnt);
 #endif
 			} else {
-				printk("Recieved message type %d size %d has no registered callback!\n", pcn_msg->hdr.type,pcn_msg->hdr.size);
+				printk("%s: ERROR: Received message type %d size %d has no registered callback!\n",
+						__func__, pcn_msg->hdr.type,pcn_msg->hdr.size);
 #if TEST_MSG_LAYER
 				recv_buf[i].is_free = 1;
 				smp_wmb();
@@ -1005,7 +1018,8 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 				ftn(pcn_msg);
 			}
 			else {
-				printk(KERN_ERR"Recieved message type %d size %d has no registered callback!\n", pcn_msg->hdr.type,pcn_msg->hdr.size);
+				printk(KERN_ERR"%s: ERROR: Recieved message type %d size %d has no registered callback!\n",
+						__func__, pcn_msg->hdr.type,pcn_msg->hdr.size);
 				vfree(pcn_msg);
 			}
 		}
