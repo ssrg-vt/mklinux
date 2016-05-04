@@ -459,6 +459,7 @@ int __init initialize()
 		}
 
 		send_buf[i].is_free = 1;
+		smp_wmb();
 
 		printk("allocated buffer %p\n", send_buf[i].buff);
 	}
@@ -475,6 +476,7 @@ int __init initialize()
 		}
 
 		recv_buf[i].is_free = 1;
+		smp_wmb();
 
 		printk("allocated buffer %p\n", recv_buf[i].buff);
 	}
@@ -827,11 +829,15 @@ int connection_handler(void* arg0)
 		down_interruptible(&recv_buf_cnt);
 	
 		for (i = 0; i<MAX_NUM_BUF; i++) {
-			if (recv_buf[i].is_free != 0) {
-				recv_buf[i].is_free = 0;
+			if ( atomic_cmpxchg( ((atomic_t *) &recv_buf[i].is_free), 1, 0) == 1 ) {
 				smp_wmb();
 				break;
 			}
+			/*if (recv_buf[i].is_free != 0) {
+				recv_buf[i].is_free = 0;
+				smp_wmb();
+				break;
+			}*/
 		}
 
 		if (i == MAX_NUM_BUF)
@@ -1016,9 +1022,10 @@ int pci_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 
 do_retry:
 	for (i = 0; i<MAX_NUM_BUF; i++) {
-		if ( atomic_cmpxchg( ((atomic_t *) &send_buf[i].is_free), 1, 0) == 1 )
+		if ( atomic_cmpxchg( ((atomic_t *) &send_buf[i].is_free), 1, 0) == 1 ) {
 			smp_wmb();
 			break;
+		}
 		/*if (send_buf[i].is_free != 0) { //this is not atomic
 			send_buf[i].is_free = 0;
 			smp_wmb();
