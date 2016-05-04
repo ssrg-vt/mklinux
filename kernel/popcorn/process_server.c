@@ -868,13 +868,13 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 #if STATISTICS
 	answer_request_void++;
 #endif
-
 	PSPRINTK("%s: answer_request_void %i address %lx from cpu %i. This is a void response.\n", __func__, 0, response->address, inc_msg->hdr.from_cpu);
 	PSMINPRINTK("answer_request_void address %lx from cpu %i. This is a void response.\n", response->address, inc_msg->hdr.from_cpu);
 
 	if (fetched_data == NULL) {
-		printk(KERN_ERR"%s: WARN: data not found in local list (cpu %d id %d address 0x%lx) 0x%lx\n",
-				__func__, response->tgroup_home_cpu, response->tgroup_home_id, response->address, (unsigned long)response);
+		printk(KERN_ERR"%s: WARN: data not found in local list r%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
+				__func__, response->fetching_read, response->fetching_write,
+				response->tgroup_home_cpu, response->tgroup_home_id, response->address, (unsigned long)response);
 		pcn_kmsg_free_msg(inc_msg);
 		return -1;
 	}
@@ -902,15 +902,17 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
 		} else {
-			printk("%s: WARN: received more than one mapping %d (cpu %d id %d address 0x%lx) 0x%lx\n",
-					__func__, fetched_data->vma_present,
+			printk("%s: WARN: received more than one mapping %d r%dw%d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
+					__func__, fetched_data->vma_present, response->fetching_read, response->fetching_write,
+					fetched_data->is_fetch, fetched_data->is_write,
 					response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 		}
 	}
 
 	if (fetched_data->arrived_response!=0)
-		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address 0x%lx) 0x%lx\n",
-				__func__, fetched_data->arrived_response,
+		printk("%s: WARN: received more than one answer, arrived_response is %d r%dw%d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
+				__func__, fetched_data->arrived_response, response->fetching_read, response->fetching_write,
+				fetched_data->is_fetch, fetched_data->is_write,
 				response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 
 	fetched_data->arrived_response++;
@@ -937,7 +939,6 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 #if STATISTICS
 	answer_request++;
 #endif
-
 	PSPRINTK("%s: Answer_request %i address %lx from cpu %i\n", __func__, 0, response->address, inc_msg->hdr.from_cpu);
 	PSMINPRINTK("Received answer for address %lx last write %d from cpu %i\n", response->address, response->last_write,inc_msg->hdr.from_cpu);
 
@@ -971,15 +972,15 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 			fetched_data->vm_flags = response->vm_flags;
 			strcpy(fetched_data->path, response->path);
 		} else {
-			printk("%s: WARN: received more than one mapping %d (cpu %d id %d address 0x%lx) 0x%lx\n",
-					__func__, fetched_data->vma_present,
+			printk("%s: WARN: received more than one mapping %d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
+					__func__, fetched_data->vma_present, fetched_data->is_fetch, fetched_data->is_write,
 					response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 		}
 	}
 
 	if (fetched_data->address_present == 1) {
-		printk("%s: WARN: received more than one answer with a copy of the page from %d (cpu %d id %d address 0x%lx) 0x%lx\n",
-						__func__, response->header.from_cpu,
+		printk("%s: WARN: received more than one answer with a copy of the page from %d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
+						__func__, response->header.from_cpu, fetched_data->is_fetch, fetched_data->is_write,
 						response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 	}
 	else  {
@@ -990,8 +991,8 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 	}
 
 	if (fetched_data->arrived_response!=0)
-		printk("%s: WARN: received more than one answer, arrived_response is %d (cpu %d id %d address 0x%lx) 0x%lx\n",
-				__func__, fetched_data->arrived_response,
+		printk("%s: WARN: received more than one answer, arrived_response is %d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
+				__func__, fetched_data->arrived_response, fetched_data->is_fetch, fetched_data->is_write,
 				response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
 
 	fetched_data->owners[inc_msg->hdr.from_cpu] = 1;
@@ -3742,25 +3743,40 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		/*PTE UNLOCKED*/
 
 		if (unlikely(anon_vma_prepare(vma))) {
+			printk("%s: ALERT: not implemented -- not anon_vma_prepare pid %d (cpu %d id %d address 0x%lx)\n",
+					__func__, current->pid, tgroup_home_cpu, tgroup_home_id, address);
+
 			spin_lock(ptl);
 			/*PTE LOCKED*/
+			if (fetching_page->data)
+				pcn_kmsg_free_msg(fetching_page->data);
 			ret = VM_FAULT_OOM;
 			goto exit_fetch_message;
 		}
 
 		page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
 		if (!page) {
+			printk("%s: ALERT: not implemented -- no page pid %d (cpu %d id %d address 0x%lx)\n",
+					__func__, current->pid, tgroup_home_cpu, tgroup_home_id, address);
+
 			spin_lock(ptl);
 			/*PTE LOCKED*/
+			if (fetching_page->data)
+				pcn_kmsg_free_msg(fetching_page->data);
 			ret = VM_FAULT_OOM;
 			goto exit_fetch_message;
 		}
 
 		__SetPageUptodate(page);
 		if (mem_cgroup_newpage_charge(page, mm, GFP_ATOMIC)) {
+			printk("%s: ALERT: not implemented -- not mem_cgroup_newpage_charge %d (cpu %d id %d address 0x%lx)\n",
+					__func__, current->pid, tgroup_home_cpu, tgroup_home_id, address);
+
 			page_cache_release(page);
 			spin_lock(ptl);
 			/*PTE LOCKED*/
+			if (fetching_page->data)
+				pcn_kmsg_free_msg(fetching_page->data);
 			ret = VM_FAULT_OOM;
 			goto exit_fetch_message;
 		}
@@ -3884,7 +3900,8 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #endif
 		}
 		else {
-			PSPRINTK("pte changed while fetching\n");
+			printk("%s: WARN: pte changed while fetching pid %d (cpu %d id %d address 0x%lx)\n",
+					__func__, (int)current->pid, tgroup_home_cpu, tgroup_home_id, address);
 			status = REPLICATION_STATUS_INVALID;
 			mem_cgroup_uncharge_page(page);
 			page_cache_release(page);
@@ -3898,24 +3915,22 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	else if (fetching_page->address_present == 0) { // In both these cases we are not releasing the resources is it correct?
 		if (_cpu==tgroup_home_cpu) {
 			printk("%s: ERROR: No response for a marked page\n", __func__);
+			// here is broken protocol all resources should be released in case
 			ret = VM_FAULT_REPLICATION_PROTOCOL;
 			goto exit_fetch_message;
 		}
-		else { /* copy not present on the other kernel */
+		else { /* copy not present on the other kernel, thus we have to allocate it locally, the last part of the page fault handler will take care of this, i.e. allocating and removing resources */
 #if STATISTICS
 		local_fetch++;
 #endif
-			printk("%s: WARN: Copy not present in the other kernel, local fetch of address 0x%lx\n",
+			PSPRINTK("%s: WARN: Copy not present in the other kernel, local fetch of address 0x%lx\n",
 					__func__, address);
 			kfree(fetch_message);
 			ret = VM_CONTINUE_WITH_CHECK;
 			goto exit;
 		}
-
-		// NOTE none of these paths releases all resources (pcn_msg, specifically but the second leaves the entry enqueued)
-
 	}
-	else {
+	else { /* this can be a situation of broken protocol. For example if we have multiple answers the protocol is implemented for more than 2 kernels */
 		printk("%s: ERROR: I do not know what to do at this point (address_present %d) Release resources?! 0x%lx\n",
 				__func__, fetching_page->address_present, address);
 	}
