@@ -6760,20 +6760,45 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
                 return 0; //EOF
 
         for_each_process(ppp) {
+        	/* NOTEs
+        	 * All process in the popcorn namespace can migrate, however it doesn't have sense to migrate
+        	 * init (in fact we should check that any request of migrating init will return error)
+        	 * and it doesn't make much sense to migrate a shell (for other reasons tho).
+        	 */
         	if (ppp->nsproxy->cpu_ns == popcorn_ns) {
         		struct task_struct * t;
 
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        				"%d %d:%d:%d %d %s", i++,
-						ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed,
-						(int)ppp->pid, ppp->comm);
+        				"%s %d %d:%d:%d",
+						ppp->comm, (int)ppp->pid,
+						ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed);
+
+        		/* NOTEs
+        		 * A Popcorn process is a mix of different threads and Popcorn uses different tricks
+        		 * to speed up migrations, one of those is setting up a pool of threads (Marina's pull)
+        		 * and another is to use a kernel thread called main_for_distributed_kernel_thread. The threads
+        		 * in the pool of threads are sleeping in a function sleep_shadow, thus called shadow threads.
+        		 */
         		t = ppp;
         		do {
-            		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-            				" %d:%d:%d;", i++,
-    						(int)t->pid, t->represents_remote, t->main);
-//check if it is the main thread, if is a shadow, if is a real thread (that is here or no)
+        			// here I want to list only user/kernel threads
+        			if (t->main) {
+        				// this is the main thread (kernel space only) nothing to do
+				}
+        			else {
+        				if (t->executing_for_remote == 0 && t->distributed_exit== EXIT_NOT_ACTIVE) {
+        					// this is the nothing to fo
+					}
+        				else {
+        					// TODO print only the one that are currently running (not migrated!)
+        					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
+        							" %d:%d:%d;",
+									(int)t->pid, t->represents_remote, t->main);
+					}
+				}
         		} while_each_thread(ppp, t);
+
+        		len += snprintf((buffer +len), PROC_BUFFER_PS -len, "\n");
         	}
         }
 
