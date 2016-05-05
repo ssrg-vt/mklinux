@@ -6723,12 +6723,33 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
         if (*ppos > 0)
                 return 0; //EOF
 
-        for (i = 0; i < written; i++)
+        for (i = 0; i < written; i++) {
+        	struct task_srtuct * t;
+        	struct task_struct * ppp = lista[i]->main;
+
         	len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-                "%d %d:%d:%d %d %s %d\n", i,
-				lista[i]->tgroup_home_cpu, lista[i]->tgroup_home_id, lista[i]->main->tgroup_distributed,
-				(int)lista[i]->main->pid, lista[i]->main->comm,
-				lista[i]->main->represents_remote);
+        		"%s %d:%d:%d", ppp->comm,
+				ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed);
+
+    			t = ppp;
+    			do {
+/*        			// here I want to list only user/kernel threads
+    			if (t->main) {
+    				// this is the main thread (kernel space only) nothing to do
+			}
+    			else {
+    				if (t->executing_for_remote == 0 && t->distributed_exit== EXIT_NOT_ACTIVE) {
+    					// this is the nothing to fo
+				}
+    				else { */
+    					// TODO print only the one that are currently running (not migrated!)
+    					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
+    							" %d:%d:%d:%d:%d;",
+								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit);
+				/*}
+    			}*/
+    			} while_each_thread(ppp, t);
+        }
         if (written == 0)
         	len += snprintf(buffer, PROC_BUFFER_PS, "none\n");
 
@@ -6759,20 +6780,23 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         if (*ppos > 0)
                 return 0; //EOF
 
+        if (popcorn_ns == 0) {
+        	printk("%s: popcorn_ns is ZERO\n", __func__);
+        	return 0;
+        }
+
         for_each_process(ppp) {
         	/* NOTEs
         	 * All process in the popcorn namespace can migrate, however it doesn't have sense to migrate
         	 * init (in fact we should check that any request of migrating init will return error)
         	 * and it doesn't make much sense to migrate a shell (for other reasons tho).
         	 */
-if (popcorn_ns == 0)
-	printk("%s: popcorn_ns is ZERO\n", __func__);
+
         	if ( ppp && (ppp->nsproxy) && (ppp->nsproxy->cpu_ns == popcorn_ns) ) {
         		struct task_struct * t;
 
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        				"%s %d %d:%d:%d",
-						ppp->comm, (int)ppp->pid,
+        				"%s %d:%d:%d", ppp->comm,
 						ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed);
 
         		/* NOTEs
@@ -6793,9 +6817,9 @@ if (popcorn_ns == 0)
 					}
         				else { */
         					// TODO print only the one that are currently running (not migrated!)
-        					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        							" %d:%d:%d:%d;", (int)t->pid, t->represents_remote, t->executing_for_remote, t->main);
-					/*}
+					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
+							" %d:%d:%d:%d:%d;",
+							(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit);					/*}
         			}*/
         		} while_each_thread(ppp, t);
 
