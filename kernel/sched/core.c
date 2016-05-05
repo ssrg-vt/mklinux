@@ -6299,7 +6299,7 @@ static int sched_domains_numa_masks_update(struct notifier_block *nfb,
 }
 #endif /* CONFIG_NUMA */
 
-//#ifdef CONFIG_POPCORN // TODO
+#ifdef CONFIG_POPCORN_SCHED_DOMAIN
 /* the following are copied from sd_numa_init, sd_numa_mask, and smp_numa_init */
 static struct sched_domain *
 	sd_popcorn_init(struct sched_domain_topology_level *tl, int cpu)
@@ -6342,7 +6342,7 @@ static struct sched_domain *
 		/*
 		 * Ugly hack to pass state to sd_numa_mask()...
 		 */
-		sched_domains_curr_level = tl->numa_level; // TODO
+		sched_domains_curr_level = tl->numa_level; // TODO we may not need this
 
 		return sd;
 	}
@@ -6359,10 +6359,11 @@ static const struct cpumask *sd_popcorn_mask(int cpu)
 	}
 }
 
+// TODO this code is not enough by itself to add another scheduling domain for popcorn
 static void sched_init_popcorn(void)
 {
 	struct sched_domain_topology_level *tl;
-	int level = 1;
+	int level = 1; // adding the last level
 	int i, j, numa_level;
 
 	tl = kzalloc((ARRAY_SIZE(default_topology) + level) *
@@ -6373,10 +6374,10 @@ static void sched_init_popcorn(void)
 	/*
 	 * Copy the default topology bits..
 	 */
-	for (i = 0; default_topology[i].init; i++)
+	for (i = 0; default_topology[i].init; i++)	// TODO this is wrong because if sched_init_numa adds more levels ...
 		tl[i] = default_topology[i];
 
-	numa_level = tl[(i-1)].numa_level;
+	numa_level = tl[(i-1)].numa_level;			// TODO this is probably not correct either
 	/*
 	 * .. and append 'j' levels of NUMA goodness.
 	 */
@@ -6391,7 +6392,11 @@ static void sched_init_popcorn(void)
 
 	sched_domain_topology = tl;
 }
-//#endif /* !CONFIG_POPCORN */ // TODO
+#else
+static inline void sched_init_popcorn(void)
+{
+}
+#endif /* !CONFIG_POPCORN_SCHED_DOMAIN */
 
 static int __sdt_alloc(const struct cpumask *cpu_map)
 {
