@@ -1947,7 +1947,7 @@ resolved:
 	return;
 
 out:
-	printk("%s sending void answer\n", __func__);
+	PSPRINTK("%s sending void answer\n", __func__);
 
 /*	char tmpchar; // Marina and Vincent debugging
 	char *addrp = (char *) (address & PAGE_MASK);
@@ -4956,7 +4956,7 @@ void process_vma_op(struct work_struct* work)
 					__func__, mm->vma_operation_index, operation->tgroup_home_cpu, operation->tgroup_home_id);
 
 		if (memory->my_lock != 1) {
-			printk("Released distributed lock\n");
+			PSVMAPRINTK("Released distributed lock\n");
 			up_write(&mm->distribute_sem);
 		}
 

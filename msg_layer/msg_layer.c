@@ -1053,8 +1053,8 @@ do_retry:
 			printk("%s: WARN: Couldnt find a free buffer. Retry %d\n", __func__, retry);
 		if ( !(retry % 10000) )
 			for (i=0; i<MAX_NUM_BUF; i++)
-				printk("%s: WARN: i %d is_free %d buff 0x%lx\n",
-						__func__, i, send_buf[i]is_free, send_buf[i].buff);
+				printk("%s: warn: i %d is_free %d buff 0x%lx\n",
+						__func__, i, send_buf[i].is_free, send_buf[i].buff);
 		retry++;
 		goto do_retry;
        }

@@ -80,8 +80,8 @@ int save_thread_info(struct task_struct *task, struct pt_regs *regs,
 
 	if (uregs != NULL) {
 		ret = copy_from_user(&arch->regs_x86, uregs, sizeof(struct popcorn_regset_x86_64));
-		if (ret = -EFAULT) {
-			printk(KERN_ERR"%s: error while copying registers\n", __func__);
+		if ( ret != 0 ) {
+			printk(KERN_ERR"%s: ERROR: while copying registers (%d)\n", __func__, ret);
 		}
 	}
 
