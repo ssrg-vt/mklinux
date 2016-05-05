@@ -393,6 +393,31 @@ static memory_t* find_memory_entry(int cpu, int id)
 	return ret;
 }
 
+static int dump_memory_entries(memory_t * list[], int num, int * written)
+{
+	memory_t* curr = NULL;
+	int i = 0, ret = 0;
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&_memory_head_lock,flags);
+
+	curr = _memory_head;
+	while (curr && i<num) {
+		list[i] = curr;
+		curr = curr->next;
+		i++;
+	}
+	if ((curr != NULL) && (i == num))
+		ret = -1;
+
+	raw_spin_unlock_irqrestore(&_memory_head_lock,flags);
+
+	if (written)
+		*written = i;
+
+	return ret;
+}
+
 #ifdef USE_FIND_DEAD_MAPPING
 static struct mm_struct* find_dead_mapping(int cpu, int id)
 {

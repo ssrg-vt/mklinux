@@ -6697,6 +6697,53 @@ static const struct file_operations mtrig_fops = {
         .write = mtrig_write,
 };
 
+///////////////////////////////////////////////////////////////////////////////
+// List of Popcorn processes
+///////////////////////////////////////////////////////////////////////////////
+#define PROC_BUFFER_PS 4096
+static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+        int ret, len = 0, written = 0, i;
+        char * buffer;
+        memory_t ** lista;
+
+        lista = (memory_t **) kmalloc(sizeof(memory_t*) * 1024, GFP_KERNEL);
+        if (!lista)
+        	return 0; // error
+        memset(lista, 0, (sizeof(memory_t*) * 1024));
+        ret = dump_memory_entries(lista, 1024, &written);
+        if (!ret)
+        	printk("%s: WARN: there are more memory_t entries than %d\n", __func__, written);
+
+        buffer = kmalloc(PROC_BUFFER_PS, GFP_KERNEL);
+        if (!buffer)
+        	return 0; // error
+        memset(buffer, 0, PROC_BUFFER_PS);
+
+        if (*ppos > 0)
+                return 0; //EOF
+
+        for (i = 0; i < written; i++)
+        	len += snprintf((buffer +len), PROC_BUFFER_PS -len,
+                "%d %d %d %d %s\n", i,
+				lista[i]->tgroup_home_cpu, lista[i]->tgroup_home_id,
+				(int)lista[i]->main->pid, lista[i]->main->comm);
+        if (written == 0)
+        	len += snprintf(buffer, PROC_BUFFER_PS, "none");
+
+        if (count < len)
+                len = count;
+        ret = copy_to_user(buf, buffer, len);
+
+        *ppos += len;
+        return len;
+}
+
+static const struct file_operations popcorn_ps_fops = {
+        .owner = THIS_MODULE,
+        .read = popcorn_ps_read,
+};
+
 /**
  * process_server_init
  * Start the process loop in a new kthread.
@@ -6872,6 +6919,11 @@ static int __init process_server_init(void)
         res = proc_create("mtrig", S_IRUGO, NULL, &mtrig_fops);
         if (!res)
                 printk("ERROR: failed to create proc entry for triggering miggrations (global VDSO)\n");
+
+        res = proc_create("popcorn_ps", S_IRUGO, NULL, &popcorn_ps_fops);
+        if (!res)
+                printk("ERROR: failed to create proc entry for popcorn process list\n");
+
 	return 0;
 }
 

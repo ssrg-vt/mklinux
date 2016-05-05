@@ -6299,6 +6299,105 @@ static int sched_domains_numa_masks_update(struct notifier_block *nfb,
 }
 #endif /* CONFIG_NUMA */
 
+#ifdef CONFIG_POPCORN_SCHED_DOMAIN
+/* the following are copied from sd_numa_init, sd_numa_mask, and smp_numa_init */
+static struct sched_domain *
+	sd_popcorn_init(struct sched_domain_topology_level *tl, int cpu)
+	{
+		struct sched_domain *sd = *per_cpu_ptr(tl->data.sd, cpu);
+		int level = tl->numa_level;
+		int sd_weight = cpumask_weight(
+				sched_domains_numa_masks[level][cpu_to_node(cpu)]);
+
+		*sd = (struct sched_domain){
+			.min_interval		= sd_weight,
+				.max_interval		= 2*sd_weight,
+				.busy_factor		= 32,
+				.imbalance_pct		= 125,
+				.cache_nice_tries	= 2,
+				.busy_idx		= 3,
+				.idle_idx		= 2,
+				.newidle_idx		= 0,
+				.wake_idx		= 0,
+				.forkexec_idx		= 0,
+
+				.flags			= 1*SD_LOAD_BALANCE
+					| 1*SD_BALANCE_NEWIDLE
+					| 0*SD_BALANCE_EXEC
+					| 0*SD_BALANCE_FORK
+					| 0*SD_BALANCE_WAKE
+					| 0*SD_WAKE_AFFINE
+					| 0*SD_SHARE_CPUPOWER
+					| 0*SD_SHARE_PKG_RESOURCES
+					| 1*SD_SERIALIZE
+					| 0*SD_PREFER_SIBLING
+					| sd_local_flags(level)
+					,
+				.last_balance		= jiffies,
+				.balance_interval	= sd_weight,
+		};
+		SD_INIT_NAME(sd, POPCORN);
+		sd->private = &tl->data;
+
+		/*
+		 * Ugly hack to pass state to sd_numa_mask()...
+		 */
+		sched_domains_curr_level = tl->numa_level; // TODO we may not need this
+
+		return sd;
+	}
+
+static const struct cpumask *sd_popcorn_mask(int cpu)
+{
+	if (sched_domains_numa_masks) {
+		printk("%s: INFO: sched_domains_numa_masks cpu %d\n", __func__, cpu);
+		return sched_domains_numa_masks[sched_domains_curr_level][cpu_to_node(cpu)];
+	}
+	else {
+		printk("%s: INFO: cpumask_of_node %d\n", __func__, cpu);
+		return cpumask_of_node(cpu_to_node(cpu));
+	}
+}
+
+// TODO this code is not enough by itself to add another scheduling domain for popcorn
+static void sched_init_popcorn(void)
+{
+	struct sched_domain_topology_level *tl;
+	int level = 1; // adding the last level
+	int i, j, numa_level;
+
+	tl = kzalloc((ARRAY_SIZE(default_topology) + level) *
+		sizeof(struct sched_domain_topology_level), GFP_KERNEL);
+	if (!tl)
+		return;
+
+	/*
+	 * Copy the default topology bits..
+	 */
+	for (i = 0; default_topology[i].init; i++)	// TODO this is wrong because if sched_init_numa adds more levels ...
+		tl[i] = default_topology[i];
+
+	numa_level = tl[(i-1)].numa_level;			// TODO this is probably not correct either
+	/*
+	 * .. and append 'j' levels of NUMA goodness.
+	 */
+	for (j = 0; j < level; i++, j++) {
+		tl[i] = (struct sched_domain_topology_level){
+			.init = sd_popcorn_init,
+			.mask = sd_popcorn_mask,
+			.flags = SDTL_OVERLAP,
+			.numa_level = (numa_level+1), // TODO decide what to put here
+		};
+	}
+
+	sched_domain_topology = tl;
+}
+#else
+static inline void sched_init_popcorn(void)
+{
+}
+#endif /* !CONFIG_POPCORN_SCHED_DOMAIN */
+
 static int __sdt_alloc(const struct cpumask *cpu_map)
 {
 	struct sched_domain_topology_level *tl;
@@ -6732,6 +6831,7 @@ void __init sched_init_smp(void)
 	alloc_cpumask_var(&fallback_doms, GFP_KERNEL);
 
 	sched_init_numa();
+	sched_init_popcorn();
 
 	get_online_cpus();
 	mutex_lock(&sched_domains_mutex);
