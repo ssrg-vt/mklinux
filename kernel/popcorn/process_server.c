@@ -6625,7 +6625,7 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         	 * init (in fact we should check that any request of migrating init will return error)
         	 * and it doesn't make much sense to migrate a shell (for other reasons tho).
         	 */
-        	if (ppp->nsproxy->cpu_ns == popcorn_ns) {
+        	if ( ppp && (ppp->nsproxy) && (ppp->nsproxy->cpu_ns == popcorn_ns) ) {
         		struct task_struct * t;
 
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
@@ -6642,16 +6642,17 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         		t = ppp;
         		do {
         			// here I want to list only user/kernel threads
-        			if (t->main)
+        			if (t->main) {
         				// this is the main thread (kernel space only) nothing to do
-        			else
+        			}
+        			else {
         				if (t->executing_for_remote == 0 && t->distributed_exit== EXIT_NOT_ACTIVE)
         					// this is the nothing to fo
         				else
         					// TODO print only the one that are currently running (not migrated!)
         					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        							" %d:%d:%d;",
-									(int)t->pid, t->represents_remote, t->main);
+        							" %d:%d:%d:%d;", (int)t->pid, t->represents_remote, t->executing_for_remote, t->main);
+        			}
         		} while_each_thread(ppp, t);
 
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len, "\n");
