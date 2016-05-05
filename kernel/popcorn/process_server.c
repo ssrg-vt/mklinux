@@ -292,12 +292,12 @@ static void process_new_kernel_answer(struct work_struct* work)
 	memory->answers++;
 
 	if (memory->answers >= memory->exp_answ) {
-		printk("%s: wake up %d (%s)\n", __func__, memory->main->pid, memory->main->comm);
+		PSPRINTK("%s: wake up %d (%s)\n", __func__, memory->main->pid, memory->main->comm);
 		wake_up_process(memory->main);
 	}
 
 	if (memory->answers >= memory->exp_answ) {
-		printk("%s: wake up %d (%s)\n", __func__, memory->main->pid, memory->main->comm);
+		PSPRINTK("%s: wake up %d (%s)\n", __func__, memory->main->pid, memory->main->comm);
 		wake_up_process(memory->main);
 	}
 
@@ -426,7 +426,7 @@ static void _create_thread_pull(struct work_struct* work)
 	int i;
 
 	for(i=0;i<NR_THREAD_PULL;i++){
-		printk("%s creating thread pull %d\n", __func__, i);
+		PSPRINTK("%s creating thread pull %d\n", __func__, i);
 		kernel_thread(create_kernel_thread_for_distributed_process, NULL, SIGCHLD);
 	}
 
@@ -2799,7 +2799,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			if (reading_page->arrived_response == 0)
 				schedule();
 			//set_task_state(current, TASK_RUNNING); // TODO put it back
-			if (!(++counter % 1000000))
+			if (!(++counter % RATE_DO_REMOTE_OPERATION))
 				printk("%s: WARN: reading_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 		}
@@ -3013,7 +3013,7 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				if (answers->response_arrived==0)
 					schedule();
 				//set_task_state(current, TASK_RUNNING); // TODO put it back
-				if (!(++counter % 1000000))
+				if (!(++counter % RATE_DO_REMOTE_OPERATION))
 					printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 			}
@@ -3131,7 +3131,7 @@ exit_answers:
 				if (writing_page->arrived_response == 0)
 					schedule();
 				//set_task_state(current, TASK_RUNNING); // TODO put it back
-				if (!(++counter % 1000000))
+				if (!(++counter % RATE_DO_REMOTE_OPERATION))
 					printk("%s: WARN: writing_page->arrived_response 0 [%ld] !owner (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 			}
@@ -3694,7 +3694,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				schedule();
 			}
 			//set_task_state(current, TASK_RUNNING);
-			if (!(++counter % 1000000))
+			if (!(++counter % RATE_DO_REMOTE_OPERATION))
 				printk("%s: WARN: fetching_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
 		}
@@ -4292,7 +4292,7 @@ start:
 			 * both read and write can be performed on this page.
 			 * */
 			if (page->status == REPLICATION_STATUS_WRITTEN) {
-				printk("%s: Page status written address %lx\n", __func__, address);
+				PSPRINTK("%s: Page status written address %lx\n", __func__, address);
 				spin_unlock(ptl);
 				return 0;
 			}
@@ -5968,10 +5968,6 @@ int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 	const char *name;
 	char tcomm[sizeof(task->comm)];
 
-	printk("%s\n", __func__);
-
-	PSPRINTK("%s\n", __func__);
-
 	my_shadow = (shadow_thread_t*) pop_data((data_header_t**)&(my_thread_pull->threads),
 						&(my_thread_pull->spinlock));
 	if (my_shadow) {
@@ -6182,8 +6178,8 @@ static int create_kernel_thread_for_distributed_process(void *data)
 	list_for_each(iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
-		printk("sending new kernel message to %d\n",i);
-		printk("cpu %d id %d\n",new_kernel_msg->tgroup_home_cpu,
+		PSPRINTK("sending new kernel message to %d\n",i);
+		PSPRINTK("cpu %d id %d\n",new_kernel_msg->tgroup_home_cpu,
 		       new_kernel_msg->tgroup_home_id);
 		printk("memory pointer from list is %p\n",find_memory_entry(new_kernel_msg->tgroup_home_cpu,new_kernel_msg->tgroup_home_id));
 		//if (pcn_kmsg_send(i, (struct pcn_kmsg_message*) (new_kernel_msg))

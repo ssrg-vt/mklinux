@@ -3850,13 +3850,10 @@ int dump_processor_regs_futex(struct pt_regs *regs)
 		int cmd = op & FUTEX_CMD_MASK;
 		int retn=0;
 		if (current->tgroup_distributed == 1) {
-			printk("%s: WARN: pid %d (cpu %d id %d)\n",
-					__func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id);
+			printk("%s: WARN: uadd 0x%lx op %d val %d utime 0x%lx uaddr2 0x%lx val3 %d - pid %d (cpu %d id %d)\n",
+					__func__, (unsigned long)uaddr, val, op, (unsigned long)utime, (unsigned long)uaddr2, val3,
+					current->pid, current->tgroup_home_cpu, current->tgroup_home_id););
 		}
-		/*	if(current->tgroup_distributed ==1 || (strcmp(current->comm,"cond")==0)){
-			printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id());
-			}
-		 */	
 		if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
 					 cmd == FUTEX_WAIT_BITSET ||
 					 cmd == FUTEX_WAIT_REQUEUE_PI)) {
@@ -3882,10 +3879,6 @@ int dump_processor_regs_futex(struct pt_regs *regs)
 			 val2 = (u32) (unsigned long) utime;
 		 retn =  do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
 
-		 /*if( (strcmp(current->comm,"matrix_mult")==0)){
-		   printk(KERN_ALERT"%s: END +++++++++++++pid{%d} retn{%d} uaddr{%lx}\n",__func__,current->pid,retn,uaddr);
-		 //		dump_regs(task_pt_regs(current));
-		 }*/
 		 return retn;
 	}
 
