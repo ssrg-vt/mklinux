@@ -6619,7 +6619,7 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
                 return 0; //EOF
 
         for_each_process(ppp) {
-        	if (ppp->nsproxy->vpu_ns == popcorn_ns)
+        	if (ppp->nsproxy->cpu_ns == popcorn_ns)
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
         				"%d %d %d %d %s (%d)\n", i++,
 						ppp->tgroup_home_cpu, ppp->tgroup_home_id,
