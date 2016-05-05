@@ -258,9 +258,9 @@ int update_thread_info(struct task_struct *task)
 	int ret = -1;
 	unsigned int fsindex, gsindex;
 
-	printk("%s [+] TID: %d\n", __func__, task->pid);
+	//printk("%s [+] TID: %d\n", __func__, task->pid);
 	if(task == NULL){
-		printk(KERN_ERR"process_server: invalid params to update_thread_info()");
+		printk(KERN_ERR"%s: ERROR: process_server: invalid params\n", __func__);
 		goto exit;
 	}
 
@@ -285,7 +285,7 @@ int update_thread_info(struct task_struct *task)
 	//__show_regs(task_pt_regs(task), 1);
 
 	ret = 0;
-	printk("%s [-] TID: %d\n", __func__, task->pid);
+	//printk("%s [-] TID: %d\n", __func__, task->pid);
 exit:
 	return ret;
 }
