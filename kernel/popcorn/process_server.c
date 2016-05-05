@@ -6744,6 +6744,41 @@ static const struct file_operations popcorn_ps_fops = {
         .read = popcorn_ps_read,
 };
 
+static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+        int ret, len = 0, i;
+        char * buffer;
+        struct task_struct * ppp;
+
+        buffer = kmalloc(PROC_BUFFER_PS, GFP_KERNEL);
+        if (!buffer)
+        	return 0; // error
+        memset(buffer, 0, PROC_BUFFER_PS);
+
+        if (*ppos > 0)
+                return 0; //EOF
+
+        for_each_process(ppp) {
+        	if (ppp->nsproxy->cpu_ns == popcorn_ns)
+        		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
+        				"%d %d %d %d %s (%d)\n", i++,
+						ppp->tgroup_home_cpu, ppp->tgroup_home_id,
+						(int)ppp->pid, ppp->comm, ppp->tgroup_distributed);
+        }
+
+        if (count < len)
+                len = count;
+        ret = copy_to_user(buf, buffer, len);
+
+        *ppos += len;
+        return len;
+}
+
+static const struct file_operations popcorn_ps_fops1 = {
+        .owner = THIS_MODULE,
+        .read = popcorn_ps_read1,
+};
+
 /**
  * process_server_init
  * Start the process loop in a new kthread.
@@ -6923,6 +6958,10 @@ static int __init process_server_init(void)
         res = proc_create("popcorn_ps", S_IRUGO, NULL, &popcorn_ps_fops);
         if (!res)
                 printk("ERROR: failed to create proc entry for popcorn process list\n");
+
+        res = proc_create("popcorn_ps1", S_IRUGO, NULL, &popcorn_ps_fops1);
+        if (!res)
+                printk("ERROR: failed to create proc entry for popcorn process list 1\n");
 
 	return 0;
 }
