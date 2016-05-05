@@ -6642,16 +6642,20 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         		t = ppp;
         		do {
         			// here I want to list only user/kernel threads
-        			if (t->main)
+        			if (t->main) {
         				// this is the main thread (kernel space only) nothing to do
-        			else
-        				if (t->executing_for_remote == 0 && t->distributed_exit== EXIT_NOT_ACTIVE)
+				}
+        			else {
+        				if (t->executing_for_remote == 0 && t->distributed_exit== EXIT_NOT_ACTIVE) {
         					// this is the nothing to fo
-        				else
+					}
+        				else {
         					// TODO print only the one that are currently running (not migrated!)
         					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
         							" %d:%d:%d;",
 									(int)t->pid, t->represents_remote, t->main);
+					}
+				}
         		} while_each_thread(ppp, t);
 
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len, "\n");
