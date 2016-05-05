@@ -3852,7 +3852,7 @@ int dump_processor_regs_futex(struct pt_regs *regs)
 		if (current->tgroup_distributed == 1) {
 			printk("%s: WARN: uadd 0x%lx op %d val %d utime 0x%lx uaddr2 0x%lx val3 %d - pid %d (cpu %d id %d)\n",
 					__func__, (unsigned long)uaddr, val, op, (unsigned long)utime, (unsigned long)uaddr2, val3,
-					current->pid, current->tgroup_home_cpu, current->tgroup_home_id););
+					current->pid, current->tgroup_home_cpu, current->tgroup_home_id);
 		}
 		if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
 					 cmd == FUTEX_WAIT_BITSET ||
