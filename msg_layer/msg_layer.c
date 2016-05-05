@@ -58,6 +58,7 @@
 typedef struct _pool_buffer{
 	char* buff;
 	int is_free;
+	int status;
 }pool_buffer_t;
 
 typedef struct _send_wait{
@@ -459,6 +460,7 @@ int __init initialize()
 		}
 
 		send_buf[i].is_free = 1;
+		send_buf[i].status = 0;
 		smp_wmb();
 
 		printk("allocated buffer %p\n", send_buf[i].buff);
@@ -687,7 +689,6 @@ int send_thread(int arg0)
 	if (status != 0) {
 		printk("Failed to initialize pcie connection\n");
 	}
-	
 
 #if ENABLE_DMA
 	status = dma_init(channel_num);
@@ -697,7 +698,7 @@ int send_thread(int arg0)
 #endif
 	
 	up(&send_connDone[channel_num]);
-	printk("Connection Done...PCN_SEND Thread\n");
+	printk("%s: INFO: Connection Done...PCN_SEND Thread\n", __func__);
 
 	while (1) {
 #if SEND_QUEUE_POOL
@@ -740,7 +741,7 @@ int send_thread(int arg0)
 		status = sci_trigger_interrupt_flag(remote_recv_intr_hdl[channel_num],
 			                        NO_FLAGS);
 		if (status != 0) {
-			printk(" Error in sci_trigger_interrupt_flag: %d\n", status);
+			printk("%s: ERROR: in sci_trigger_interrupt_flag: %d\n", __func__, status);
 		}
 
 #if TEST_MSG_LAYER
@@ -1053,13 +1054,14 @@ do_retry:
 			printk("%s: WARN: Couldnt find a free buffer. Retry %d\n", __func__, retry);
 		if ( !(retry % 10000) )
 			for (i=0; i<MAX_NUM_BUF; i++)
-				printk("%s: warn: i %d is_free %d buff 0x%lx\n",
-						__func__, i, send_buf[i].is_free, send_buf[i].buff);
+				printk("%s: WARN: i %d is_free %d buff 0x%lx status %d\n",
+						__func__, i, send_buf[i].is_free, send_buf[i].buff, send_buf[i].status);
 		retry++;
 		goto do_retry;
        }
 
 	send_data->assoc_buf = &send_buf[i];
+	send_data->assoc_buf->status = 0;
 	send_data->msg=send_buf[i].buff;
 
 	memset(send_buf[i].buff, 0, SEG_SIZE); // NOTE probably not needed
@@ -1071,6 +1073,7 @@ do_retry:
 	enq_send(send_data, channel_select);
 #else
 	enq_send(send_data);
+	send_data->assoc_buf->status = 1;
 #endif
 
 	return 1;

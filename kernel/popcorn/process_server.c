@@ -411,8 +411,6 @@ static int create_kernel_thread_for_distributed_process(void *data);
 static void update_thread_pull(struct work_struct* work) {
 
 	int i, count;
-    printk("%s\n", __func__);
-
 	count = count_data((data_header_t**)&thread_pull_head, &thread_pull_head_lock);
 
 	for (i = 0; i < NR_THREAD_PULL - count; i++) {
@@ -4389,7 +4387,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
 		task->tgroup_home_cpu = orig->tgroup_home_cpu;
 		task->tgroup_home_id = orig->tgroup_home_id;
 		task->tgroup_distributed = 1;
-		printk("%s: INFO: dup task (cpu %d id %d)\n", __func__, task->tgroup_home_cpu, task->tgroup_home_id);
+		PSPRINTK("%s: INFO: dup task (cpu %d id %d)\n", __func__, task->tgroup_home_cpu, task->tgroup_home_id);
 	}
 	unlock_task_sighand(orig, &flags);
 
@@ -4670,7 +4668,8 @@ int process_server_do_migration(struct task_struct *task, int dst_cpu,
 		ret = do_back_migration(task, dst_cpu, regs, uregs);
 		if (ret == -1)
 			return PROCESS_SERVER_CLONE_FAIL;
-	} else {
+	}
+	else {
 		ret = do_migration(task, dst_cpu, regs,&first, uregs);
 	}
 
@@ -4678,7 +4677,8 @@ int process_server_do_migration(struct task_struct *task, int dst_cpu,
 		//printk(KERN_ALERT"%s clone request sent ret{%d}\n", __func__,ret);
 		__set_task_state(task, TASK_UNINTERRUPTIBLE);
 		return PROCESS_SERVER_CLONE_SUCCESS;
-	} else {
+	}
+	else {
 		return PROCESS_SERVER_CLONE_FAIL;
 	}
 }

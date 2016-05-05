@@ -3712,9 +3712,8 @@ long sched_setaffinity_on_popcorn(pid_t pid, struct task_struct *p,
 				  void __user *uregs)
 {
 	cpumask_var_t cpus_allowed, new_mask;
-	int retval;
 	int current_cpu = smp_processor_id();
-	int i, ret;
+	int i, ret, retval;
 	struct pt_regs *regs = current_pt_regs(); 
 
 #if MIGRATION_PROFILE
@@ -3730,7 +3729,6 @@ long sched_setaffinity_on_popcorn(pid_t pid, struct task_struct *p,
 	/* the following is similar to intersecting on local */
 
 	if (p->cpus_allowed_map && (p->cpus_allowed_map->ns == p->nsproxy->cpu_ns)) {
-
 		struct list_head *iter;
 		_remote_cpu_info_list_t *objPtr;
 		struct cpumask *pcpum;
@@ -3762,29 +3760,30 @@ long sched_setaffinity_on_popcorn(pid_t pid, struct task_struct *p,
 				p->migration_pc = migration_pc;
 				p->return_addr = return_addr;
 
-				printk("MIGRATE: PID %d\n", p->pid);
+				printk("%s: INFO: migrate PID %d TGID %d\n", __func__, (int)p->pid, (int)p->tgid);
 				ret = process_server_do_migration(p, i, regs, uregs);
 				put_task_struct(p);
 				put_online_cpus();
 
 sleep_again:
-                                schedule();
-				if (ret == PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote && current->group_exit != -1){
-					printk("MIGRATED-RET: PID %d\n", p->pid);
+                schedule();
+				if (ret == PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote && current->group_exit != -1) {
 					if (current->group_exit){
-						printk("MIGRATED-RET: PID %d GP EXIT\n", p->pid);
+						printk("%s:update_ INFO: migrate group_exit PID %d TGID %d\n", __func__,(int)p->pid, (int)p->tgid);
 						do_group_exit(current->distributed_exit_code);
-					} else {
-						printk("MIGRATED-RET: PID %d EXIT\n", p->pid);
+					}
+					else {
+						printk("%s: INFO: migrate exit PID %d TGID %d\n", __func__, (int)p->pid, (int)p->tgid);
 						do_exit(current->distributed_exit_code);
 					}
-
-				} else {
+				}
+				else {
 					if (ret == PROCESS_SERVER_CLONE_SUCCESS && current->represents_remote && current->group_exit == -1){
 						//printk("OCCHIO qualche maledetto tenta di svegliarmi (pid %d)\n",current->pid);
 						__set_task_state(current, TASK_UNINTERRUPTIBLE);
 						goto sleep_again;
 					}
+					printk("%s: INFO: migrate back PID %d TGID %d\n", __func__, (int)p->pid, (int)p->tgid);
 				}
 
 #if defined(CONFIG_ARM64)

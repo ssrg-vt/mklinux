@@ -3844,26 +3844,20 @@ int dump_processor_regs_futex(struct pt_regs *regs)
 			struct timespec __user *, utime, u32 __user *, uaddr2,
 			u32, val3)
 	{
-		if (current->tgroup_distributed == 1) {
-                        //printk("--------------------------\n", __func__);
-                        //printk("POPCORN DEBUG -- not error\n", __func__);
-                        printk("%s: pid %d\n", __func__, current->pid);
-                        //dump_processor_regs_futex(task_pt_regs(current));
-                }
-		/*	if( (strcmp(current->comm,"matrix_mult")==0)){
-			printk(KERN_ALERT"%s: start futex uadd{%lx} op{%d} val{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,val,utime,uaddr2,current->pid,smp_processor_id());
-		//		dump_regs(task_pt_regs(current));
-		}*/
 		struct timespec ts;
 		ktime_t t, *tp = NULL;
 		u32 val2 = 0;
 		int cmd = op & FUTEX_CMD_MASK;
 		int retn=0;
-
+		if (current->tgroup_distributed == 1) {
+			printk("%s: WARN: pid %d (cpu %d id %d)\n",
+					__func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id);
+		}
 		/*	if(current->tgroup_distributed ==1 || (strcmp(current->comm,"cond")==0)){
 			printk(KERN_ALERT"%s: uadd{%lx} op{%d} utime{%lx} uaddr2{%lx} pid{%d} smp{%d} \n",__func__,uaddr,op,utime,uaddr2,current->pid,smp_processor_id());
 			}
-		 */	if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
+		 */	
+		if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
 					 cmd == FUTEX_WAIT_BITSET ||
 					 cmd == FUTEX_WAIT_REQUEUE_PI)) {
 			 if ((retn = copy_from_user(&ts, utime, sizeof(ts))) != 0){
