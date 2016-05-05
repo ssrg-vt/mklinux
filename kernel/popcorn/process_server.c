@@ -6565,17 +6565,17 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
 {
         int ret, len = 0, written = 0, i;
         char * buffer;
-        memory_t * list[];
+        memory_t ** lista;
 
-        list = (memory_t **) kmalloc(sizeof(memory_t*) * 1024);
-        if (!list)
+        lista = (memory_t **) kmalloc(sizeof(memory_t*) * 1024, GFP_KERNEL);
+        if (!lista)
         	return 0; // error
-        memset(list, 0, (sizeof(memory_t*) * 1024));
-        ret = dump_memory_entries(list, 1024, &written);
+        memset(lista, 0, (sizeof(memory_t*) * 1024));
+        ret = dump_memory_entries(lista, 1024, &written);
         if (!ret)
         	printk("%s: WARN: there are more memory_t entries than %d\n", __func__, written);
 
-        buffer = kmalloc(PROC_BUFFER_PS);
+        buffer = kmalloc(PROC_BUFFER_PS, GFP_KERNEL);
         if (!buffer)
         	return 0; // error
         memset(buffer, 0, PROC_BUFFER_PS);
@@ -6586,8 +6586,8 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
         for (i = 0; i < written; i++)
         	len += snprintf((buffer +len), PROC_BUFFER_PS -len,
                 "%d %d %d %d %s\n", i,
-				list[i]->tgroup_home_cpu, list[i]->tgroup_home_id,
-				(int)list[i]->main->pid, list[i]->main->comm);
+				lista[i]->tgroup_home_cpu, lista[i]->tgroup_home_id,
+				(int)lista[i]->main->pid, lista[i]->main->comm);
         if (written == 0)
         	len += snprintf(buffer, PROC_BUFFER_PS, "none");
 
