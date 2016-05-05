@@ -6725,11 +6725,12 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
 
         for (i = 0; i < written; i++)
         	len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-                "%d %d %d %d %s\n", i,
-				lista[i]->tgroup_home_cpu, lista[i]->tgroup_home_id,
-				(int)lista[i]->main->pid, lista[i]->main->comm);
+                "%d %d:%d:%d %d %s %d\n", i,
+				lista[i]->tgroup_home_cpu, lista[i]->tgroup_home_id, lista[i]->main->tgroup_distributed,
+				(int)lista[i]->main->pid, lista[i]->main->comm,
+				lista[i]->main->represents_remote);
         if (written == 0)
-        	len += snprintf(buffer, PROC_BUFFER_PS, "none");
+        	len += snprintf(buffer, PROC_BUFFER_PS, "none\n");
 
         if (count < len)
                 len = count;
@@ -6746,7 +6747,7 @@ static const struct file_operations popcorn_ps_fops = {
 
 static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
-        int ret, len = 0, i;
+        int ret, len = 0, i=0;
         char * buffer;
         struct task_struct * ppp;
 
@@ -6759,11 +6760,21 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
                 return 0; //EOF
 
         for_each_process(ppp) {
-        	if (ppp->nsproxy->cpu_ns == popcorn_ns)
+        	if (ppp->nsproxy->cpu_ns == popcorn_ns) {
+        		struct task_struct * t;
+
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        				"%d %d %d %d %s (%d)\n", i++,
-						ppp->tgroup_home_cpu, ppp->tgroup_home_id,
-						(int)ppp->pid, ppp->comm, ppp->tgroup_distributed);
+        				"%d %d:%d:%d %d %s", i++,
+						ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed,
+						(int)ppp->pid, ppp->comm);
+        		t = ppp;
+        		do {
+            		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
+            				" %d:%d:%d;", i++,
+    						(int)t->pid, t->represents_remote, t->main);
+//check if it is the main thread, if is a shadow, if is a real thread (that is here or no)
+        		} while_each_thread(ppp, t);
+        	}
         }
 
         if (count < len)
