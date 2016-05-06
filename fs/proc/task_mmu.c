@@ -896,7 +896,7 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
         if (mm) {
 		if (mm->context.popcorn_vdso) {
 			struct page ** popcorn_pagelist;
-			struct page *  popcorn_page = follow_page()
+			struct page *  popcorn_page; 
 			long * pval, tmpval;
 
 			vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
