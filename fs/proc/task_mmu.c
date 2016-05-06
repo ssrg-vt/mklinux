@@ -896,7 +896,7 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
         if (mm) {
 		if (mm->context.popcorn_vdso) {
 			struct page ** popcorn_pagelist;
-			long * pval;
+			long * pval, tmpval;
 
 			vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
 			if ( vma == NULL )	
@@ -909,10 +909,11 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 				return -ESRCH;
 
 			pval = page_address(popcorn_pagelist[0]);
+			tmpval = *pval;
 			*pval = (long)itype;
-                        printk(KERN_INFO"%s: mm present, vdso @ 0x%lx, %s -- 0x%lx(%s) @ 0x%lx vma 0x%lx(0x%lx)\n",
-                          __func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
-			  (long)itype, buffer, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);
+            printk(KERN_INFO"%s: mm present, vdso @ 0x%lx, %s -- 0x%lx(%s) was 0x%lx @ 0x%lx vma 0x%lx(0x%lx)\n",
+            		__func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
+					(long)itype, buffer, tmpval, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);
 		} else {
 			printk(KERN_INFO"%s: mm present, no popcorn_vdso, %s\n",
 				__func__, task->comm);
