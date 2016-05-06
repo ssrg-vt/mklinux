@@ -6724,7 +6724,7 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
                 return 0; //EOF
 
         for (i = 0; i < written; i++) {
-        	struct task_srtuct * t;
+        	struct task_struct * t;
         	struct task_struct * ppp = lista[i]->main;
 
         	len += snprintf((buffer +len), PROC_BUFFER_PS -len,
