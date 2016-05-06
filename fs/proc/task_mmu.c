@@ -896,7 +896,7 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
         if (mm) {
 		if (mm->context.popcorn_vdso) {
 			struct page ** popcorn_pagelist;
-			struct page *  popcorn_page; 
+			struct page *  popcorn_page;
 			long * pval, tmpval;
 
 			vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
@@ -918,6 +918,10 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			}
 			else
 				pval = page_address(popcorn_pagelist[0]);
+/* TODO the above is a temporary solution, it must be fixed for in-kernel scheduling
+ * Even if in the process_server.c code at the first migration I am allocating VDSO this is not enough,
+ * in fact the paging protocol kicks in and thinks he must keep the page consistent (but we don't want that)
+ */
 
 			tmpval = *pval;
 			*pval = (long)itype;

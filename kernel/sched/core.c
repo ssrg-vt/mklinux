@@ -4065,7 +4065,8 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 
 	extern unsigned int offset_cpus; //from kernel/smp.c
 	// TODO based on the namespace select cpus_allowed --- more work todo here, but for the moment is ok
-	if ( (ns != &init_cpu_ns) && (ns == p->cpus_allowed_map->ns) )
+	if ( (ns != &init_cpu_ns) &&
+			p->cpus_allowed_map && (ns == p->cpus_allowed_map->ns) )
 	{
 
 		//#ifdef CONFIG_CPUMASK_OFFSTACK

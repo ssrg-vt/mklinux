@@ -6400,8 +6400,8 @@ retry:
                 		goto up_fail;
                 	}
                 	ret = install_special_mapping(entry->mm, popcorn_addr, PAGE_SIZE,
-				                                      VM_READ|VM_EXEC|
-				                                      VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC,
+				                                      VM_READ|VM_EXEC
+													  |VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC,
 				                                      popcorn_pagelist);
                 	if (!ret)
                 		entry->mm->context.popcorn_vdso = (void *)popcorn_addr;
