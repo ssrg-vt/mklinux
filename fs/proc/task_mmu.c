@@ -896,7 +896,8 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
         if (mm) {
 		if (mm->context.popcorn_vdso) {
 			struct page ** popcorn_pagelist;
-			long * pval;
+			struct page *  popcorn_page = follow_page()
+			long * pval, tmpval;
 
 			vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
 			if ( vma == NULL )	
@@ -908,13 +909,23 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			if ( popcorn_pagelist == NULL )
 				return -ESRCH;
 
-			pval = page_address(popcorn_pagelist[0]);
+			popcorn_page = follow_page(vma, (unsigned long)mm->context.popcorn_vdso, 0);
+			if (popcorn_page) {
+				if (popcorn_page != popcorn_pagelist[0])
+					printk(KERN_ALERT"%s: ERROR: vdso page is %ld was %ld\n",
+							__func__, page_to_pfn(popcorn_page), page_to_pfn(popcorn_pagelist[0]));
+				pval = page_address(popcorn_page);
+			}
+			else
+				pval = page_address(popcorn_pagelist[0]);
+
+			tmpval = *pval;
 			*pval = (long)itype;
-                        printk(KERN_INFO"%s: mm present, vdso @ 0x%lx, %s -- 0x%lx(%s) @ 0x%lx vma 0x%lx(0x%lx)\n",
-                          __func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
-			  (long)itype, buffer, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);
+            printk(KERN_INFO"%s: INFO: mm present, vdso @ 0x%lx, %s -- 0x%lx(%s) was 0x%lx @ 0x%lx vma 0x%lx(0x%lx)\n",
+            		__func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
+					(long)itype, buffer, tmpval, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);
 		} else {
-			printk(KERN_INFO"%s: mm present, no popcorn_vdso, %s\n",
+			printk(KERN_ALERT"%s: ERROR: mm present, no popcorn_vdso, %s\n",
 				__func__, task->comm);
 		}
 	}

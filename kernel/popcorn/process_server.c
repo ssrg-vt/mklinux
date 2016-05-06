@@ -6405,8 +6405,9 @@ retry:
 				                                      popcorn_pagelist);
                 	if (!ret)
                 		entry->mm->context.popcorn_vdso = (void *)popcorn_addr;
-                	else
+                	else {
                 		free_page((unsigned long)popcorn_pagelist[0]);
+                	}
                 }
 up_fail:
 				// popcorn_vdso cannot be different
