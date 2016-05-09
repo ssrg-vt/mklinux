@@ -1201,7 +1201,6 @@ retry:
 		 */
 		might_sleep();
 	}
-
 	vma = find_vma(mm, address);
 
 
@@ -1216,16 +1215,19 @@ retry:
 	// Multikernel
 	repl_ret= 0;
 	// Nothing to do for a thread group that's not distributed.
-	if(tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0)) {
+#undef CONFIG_POPCORN_VDSO_SAFE
+#ifdef CONFIG_POPCORN_VDSO_SAFE
+	if ( (vma && vma->vm_start =< address) && vma->vm_start == mm->context.popcorn_vdso )
+		goto skip_popcorn;
+#endif
+	if ( tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0) ) { // Popcorn
 /*		PSPRINTK("%s: call process_server_try_handle_mm_fault retrying %d\n", __func__, retrying);*/
 		repl_ret= process_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
-
 /*		PSPRINTK("%s: repl_ret %d\n", __func__, repl_ret);*/
-
-		if(repl_ret==0)
+		if (repl_ret==0)
 			goto out;
 
-		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
+		if (unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))) {
 			/*printk(KERN_ALERT" stack value old rsp{%lx},cx{%lx} , edi{%lx} address{%lx} \n", read_old_rsp(),regs->cx,regs->di,address);
 			  unsigned long *_base= 0x492e10; //read_old_rsp();
 			  int ret =0;
@@ -1244,7 +1246,6 @@ retry:
 			bad_area_access_error(regs, error_code, address);
 			goto out_distr;
 		}
-
 		if (unlikely(repl_ret & VM_FAULT_ERROR)) {
 			mm_fault_error(regs, error_code, address, repl_ret);
 			dump_regs(regs);
@@ -1252,8 +1253,10 @@ retry:
 		}
 
 		vma = find_vma(mm, address);
-
-	}
+	} /* ( tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0) ) // Popcorn */
+#ifdef CONFIG_POPCORN_VDSO_SAFE
+skip_popcorn:
+#endif
 
 	if (unlikely(!vma)) {
 		bad_area(regs, error_code, address);
@@ -1359,31 +1362,43 @@ good_area:
 			flags &= ~FAULT_FLAG_ALLOW_RETRY;
 			flags |= FAULT_FLAG_TRIED;
 
+#ifdef CONFIG_POPCORN_VDSO_SAFE
+			if ( (vma && vma->vm_start =< address) && vma->vm_start == mm->context.popcorn_vdso )
+				goto skip_popcorn_;
+#endif
 			if (tsk->tgroup_distributed == 1)
 				retrying = 1;
-
 			if ((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
 				repl_ret= process_server_update_page(tsk,mm,vma,address,flags, 1);
 				printk("%s: WARN: retry called pid %d\n", __func__, current->pid);
 			}
-			
+#ifdef CONFIG_POPCORN_VDSO_SAFE
+skip_popcorn_:
+#endif
 			goto retry;
 		}
 	}
 
-        if((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
-                repl_ret= process_server_update_page(tsk, mm, vma, address, flags, 0);
+#ifdef CONFIG_POPCORN_VDSO_SAFE
+	if ( (vma && vma->vm_start =< address) && vma->vm_start == mm->context.popcorn_vdso )
+		goto skip_popcorn__;
+#endif
+	if((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
+		repl_ret= process_server_update_page(tsk, mm, vma, address, flags, 0);
 
-                if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
-                        bad_area(regs, error_code, address);
-                        goto out_distr;
-                }
-
-                if (unlikely(repl_ret & VM_FAULT_ERROR)) {
-                        mm_fault_error(regs, error_code, address, repl_ret);
-                        goto out_distr;
-                }
-        }
+		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
+			bad_area(regs, error_code, address);
+			goto out_distr;
+		}
+		if (unlikely(repl_ret & VM_FAULT_ERROR)) {
+			mm_fault_error(regs, error_code, address, repl_ret);
+			goto out_distr;
+		}
+	}
+#ifdef CONFIG_POPCORN_VDSO_SAFE
+skip_popcorn__:
+	;
+#endif
 
 out:
 	check_v8086_mode(regs, address, tsk);

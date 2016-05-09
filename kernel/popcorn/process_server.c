@@ -2795,10 +2795,10 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	if (sent) {
 		long counter = 0;
 		while (reading_page->arrived_response == 0) {
-			//set_task_state(current, TASK_UNINTERRUPTIBLE); // TODO put it back
+			set_task_state(current, TASK_UNINTERRUPTIBLE); // TODO put it back
 			if (reading_page->arrived_response == 0)
 				schedule();
-			//set_task_state(current, TASK_RUNNING); // TODO put it back
+			set_task_state(current, TASK_RUNNING); // TODO put it back
 			if (!(++counter % RATE_DO_REMOTE_OPERATION))
 				printk("%s: WARN: reading_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
@@ -3009,10 +3009,10 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		if (sent) {
 			long counter = 0;
 			while (answers->response_arrived==0) {
-				//set_task_state(current, TASK_INTERRUPTIBLE); // TODO put it back
+				set_task_state(current, TASK_INTERRUPTIBLE); // TODO put it back
 				if (answers->response_arrived==0)
 					schedule();
-				//set_task_state(current, TASK_RUNNING); // TODO put it back
+				set_task_state(current, TASK_RUNNING); // TODO put it back
 				if (!(++counter % RATE_DO_REMOTE_OPERATION))
 					printk("%s: WARN: writing_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
@@ -3127,10 +3127,10 @@ exit_answers:
 		if (sent) {
 			long counter =0;
 			while (writing_page->arrived_response == 0) {
-				//set_task_state(current, TASK_UNINTERRUPTIBLE); // TODO put it back
+				set_task_state(current, TASK_UNINTERRUPTIBLE); // TODO put it back
 				if (writing_page->arrived_response == 0)
 					schedule();
-				//set_task_state(current, TASK_RUNNING); // TODO put it back
+				set_task_state(current, TASK_RUNNING); // TODO put it back
 				if (!(++counter % RATE_DO_REMOTE_OPERATION))
 					printk("%s: WARN: writing_page->arrived_response 0 [%ld] !owner (cpu %d id %d address 0x%lx)\n",
 							__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
@@ -3689,11 +3689,11 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	if (reachable>0) {
 		long counter = 0;
 		while (fetching_page->arrived_response==0) {
-			//set_task_state(current, TASK_UNINTERRUPTIBLE);
+			set_task_state(current, TASK_UNINTERRUPTIBLE);
 			if (fetching_page->arrived_response==0) {
 				schedule();
 			}
-			//set_task_state(current, TASK_RUNNING);
+			set_task_state(current, TASK_RUNNING);
 			if (!(++counter % RATE_DO_REMOTE_OPERATION))
 				printk("%s: WARN: fetching_page->arrived_response 0 [%ld] (cpu %d id %d address 0x%lx)\n",
 						__func__, counter, tgroup_home_cpu, tgroup_home_id, address);
