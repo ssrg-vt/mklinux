@@ -6367,7 +6367,7 @@ retry:
 				f = filp_open(clone->exe_path, O_RDONLY | O_LARGEFILE | O_EXCL,
 					      0);
 				if (IS_ERR(f)) {
-					printk("%s: ERROR: error opening exe_path\n", __func__);
+					printk("%s: ERROR: error opening exe_path %s\n", __func__, clone->exe_path);
 					return -1;
 				}
 				set_mm_exe_file(entry->mm, f);
