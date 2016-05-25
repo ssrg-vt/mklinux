@@ -665,6 +665,7 @@ again:
 				break;
 
 			case VMA_OP_REMAP:
+				// note that remap calls unmap --- thus is a nested operation ...
 				down_write(&mm_data->mm->mmap_sem);
 				if (current->tgroup_home_cpu != _cpu)
 					mm_data->mm->distribute_unmap = 0;

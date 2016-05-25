@@ -358,10 +358,7 @@ void process_vma_op(struct work_struct* work)
 			operation->header.from_cpu, operation->tgroup_home_cpu, operation->tgroup_home_id, operation->operation);
 
 	down_write(&mm->mmap_sem);
-	if (_cpu == operation->tgroup_home_cpu) {
-
-		//SERVER
-
+	if (_cpu == operation->tgroup_home_cpu) {//SERVER
 		//if another operation is on going, it will be serialized after.
 		while (mm->distr_vma_op_counter > 0) {
 			printk("%s, A distributed operation already started, going to sleep\n",__func__);
@@ -883,23 +880,20 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 				unsigned long prot, unsigned long new_addr, unsigned long new_len,
 				unsigned long flags, struct file *file, unsigned long pgoff)
 {
-	long ret;
-	int server;
-
+	long ret = addr;
+	int server = 1;
 	if (current->tgroup_home_cpu != _cpu)
 		server = 0;
-	else
-		server = 1;
 
-	//set default ret
+	//set default return value
 	if (server)
 		ret = VMA_OP_NOT_SAVE;
 	else if (operation == VMA_OP_REMAP)
 		ret = new_addr;
-	else
-		ret = addr;
 
-	/*Operations can be nested-called.
+	/* Marina: nesting is handled manually (?)
+	 *
+	 * Operations can be nested-called.
 	 * MMAP->UNMAP
 	 * BR->UNMAP
 	 * MPROT->/
@@ -917,8 +911,11 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 	 * and I am NOT the server, it is an error. The server should have pushed that unmap
 	 * before, if I am executing it again something is wrong.
 	 */
+// TODO review nesting
 	/*All the operation pushed by the server are executed as not distributed in clients*/
 	if (current->mm->distribute_unmap == 0) {
+		printk(KERN_ALERT"%s: INFO: vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lx len %lx end %lx RETURNING\n",
+				__func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
 		return ret;
 	}
 	PSPRINTK("%s, Starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lx len %lx end %lx\n",
@@ -926,55 +923,67 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
     PSPRINTK("%s index %d\n", __func__, current->mm->vma_operation_index);
 
 	/*only server can have legal distributed nested operations*/
-	if (current->mm->distr_vma_op_counter > 0
-			&& current->mm->thread_op == current) {
+	if ((current->mm->distr_vma_op_counter > 0) && (current->mm->thread_op == current)) {
 		PSPRINTK("%s, Recursive operation\n",__func__);
 
 		if (server == 0
-		    || (current->main == 0 && current->mm->distr_vma_op_counter > 1)
-		    || (current->main == 0 && operation != VMA_OP_UNMAP)) {
-			printk("ERROR: invalid nested vma operation %i\n", operation);
+				|| (current->main == 0 && current->mm->distr_vma_op_counter > 1)
+				|| (current->main == 0 && operation != VMA_OP_UNMAP)) {
+			printk("%s: ERROR: invalid nested vma operation %d (counter %d)\n",
+					__func__, operation, current->mm->distr_vma_op_counter);
 			return -EPERM;
 		}
-		else
+		else {
 			/*the main executes the operations for the clients
 			 *distr_vma_op_counter is already increased when it start the operation*/
 			if (current->main == 1) {
-				PSVMAPRINTK("%s, I am the main, so it maybe not a real recursive operation...\n",__func__);
-				if (current->mm->distr_vma_op_counter < 1
+				PSVMAPRINTK("%s, I am the main, so it maybe not a real recursive operation...\n",__func__); // what does this mean?
+
+				if (current->mm->distr_vma_op_counter < 1 // who change the value in the meantime?
 						|| current->mm->distr_vma_op_counter > 2
-						|| (current->mm->distr_vma_op_counter == 2
-						&& operation != VMA_OP_UNMAP)) {
-					printk("%s: ERROR: invalid nested vma operation in main server\n", __func__);
+						|| (current->mm->distr_vma_op_counter == 2 && operation != VMA_OP_UNMAP)) {
+					printk("%s: ERROR: invalid nested vma operation in main server, operation %d (counter %d)\n",
+							__func__, operation, current->mm->distr_vma_op_counter);
 					return -EPERM;
-				} else
+				}
+				else {
+					current->mm->distr_vma_op_counter++;
+
 					if (current->mm->distr_vma_op_counter == 2) {
 						PSVMAPRINTK("%s, Recursive operation for the main\n",__func__);
 						/*in this case is a nested operation on main
 						 * if the previous operation was a pushed operation
 						 * do not distribute it again*/
 						if (current->mm->was_not_pushed == 0) {
-							current->mm->distr_vma_op_counter++;
-							PSVMAPRINTK("%s, don't ditribute again, return!\n",__func__);
+							PSVMAPRINTK("%s, don't distribute again, return!\n",__func__);
 							return ret;
-						} else
+						}
+						else
 							goto start;
 					}
 					else
 						goto start;
-			} else
+				}
+			}
+			else { // not the main thread
+				current->mm->distr_vma_op_counter++; // this is decremented in end_distribute_operation
+
 				if (current->mm->was_not_pushed == 0) {
-					current->mm->distr_vma_op_counter++;
-					PSVMAPRINTK("%s, don't ditribute again, return!\n",__func__);
+					PSVMAPRINTK("%s, don't distribute again, return!\n",__func__);
 					return ret;
-				} else
+				}
+				else
 					goto start;
-	}
+			}
+		}
+	} //Antonio: all the possibility are handled but I am not sure their handled correctly
 
 	/* I did not start an operation, but another thread maybe did...
 	 * => no concurrent operations of the same process on the same kernel*/
+	// The following is the original buggy code (concurrency error)
+#if 0
 	while (current->mm->distr_vma_op_counter > 0) {
-		printk("%s Somebody already started a distributed operation (current->mm->thread_op->pid is %d). I am pid %d and I am going to sleep (cpu %d id %d)\n",
+		printk("%s: WARN: Somebody already started a distributed operation (current->mm->thread_op->pid is %d). I am pid %d and I am going to sleep (cpu %d id %d)\n",
 			    __func__,current->mm->thread_op->pid,current->pid, current->tgroup_home_cpu, current->tgroup_home_id);
 
 		up_write(&current->mm->mmap_sem);
@@ -993,11 +1002,28 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 				__func__, current->mm->distr_vma_op_counter);
 		return -EPERM;
 	}
+#endif
+	// ONLY ONE CAN BE IN DISTRIBUTED OPERATION AT THE TIME ... WHAT ABOUT NESTED OPERATIONS?
+	while (	atomic_cmpxchg((atomic_t*)&(current->mm->distr_vma_op_counter), 0, 1) != 0) { //success is indicated by comparing RETURN with OLD (arch/x86/include/asm/cmpxchg.h)
+		up_write(&current->mm->mmap_sem);
 
-start:
-	current->mm->distr_vma_op_counter++;
+		DEFINE_WAIT(wait);
+		prepare_to_wait(&request_distributed_vma_op, &wait, TASK_UNINTERRUPTIBLE);
+		if (current->mm->distr_vma_op_counter > 0) {
+			printk("%s: LOCK: Somebody already started a distributed operation (current->mm->thread_op->pid is %d). I am pid %d and I am going to sleep (cpu %d id %d)\n",
+					__func__,current->mm->thread_op->pid,current->pid, current->tgroup_home_cpu, current->tgroup_home_id);
+			schedule();
+		}
+		finish_wait(&request_distributed_vma_op, &wait);
+
+		down_write(&current->mm->mmap_sem);
+	}
 	current->mm->thread_op = current;
 
+///////////////////////////////////////////////////////////////////////////////
+// start distributed operation
+///////////////////////////////////////////////////////////////////////////////
+start:
 	if (operation == VMA_OP_MAP || operation == VMA_OP_BRK) {
 		current->mm->was_not_pushed++;
 	}
@@ -1022,9 +1048,12 @@ start:
 				goto out;
 			}
 
+/*****************************************************************************/
+/* Locking and Acking                                                        */
+/*****************************************************************************/
+
 			/*First: send a message to everybody to acquire the lock to block page faults*/
-			vma_lock_t* lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t),
-									 GFP_ATOMIC);
+			vma_lock_t* lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t), GFP_ATOMIC);
 			if (lock_message == NULL) {
 				down_write(&current->mm->mmap_sem);
 				ret = -ENOMEM;
@@ -1037,8 +1066,7 @@ start:
 			lock_message->from_cpu = entry->message_push_operation->from_cpu;
 			lock_message->vma_operation_index = index;
 
-			vma_op_answers_t* acks = (vma_op_answers_t*) kmalloc(
-				sizeof(vma_op_answers_t), GFP_ATOMIC);
+			vma_op_answers_t* acks = (vma_op_answers_t*) kmalloc(sizeof(vma_op_answers_t), GFP_ATOMIC);
 			if (acks == NULL) {
 				kfree(lock_message);
 				down_write(&current->mm->mmap_sem);
@@ -1059,8 +1087,7 @@ start:
 			/*Partial replication: mmap and brk need to communicate only between server and one client
 			 * */
 			if (operation == VMA_OP_MAP || operation == VMA_OP_BRK) {
-				error = pcn_kmsg_send_long(
-					entry->message_push_operation->from_cpu,
+				error = pcn_kmsg_send_long(entry->message_push_operation->from_cpu,
 					(struct pcn_kmsg_long_message*) (lock_message),
 					sizeof(vma_lock_t) - sizeof(struct pcn_kmsg_hdr));
 				if (error != -1) {
@@ -1099,11 +1126,14 @@ start:
 			}
 
 			PSPRINTK("SERVER MAIN: Received all ack to lock\n");
-
 			unsigned long flags;
 			raw_spin_lock_irqsave(&(acks->lock), flags);
 			raw_spin_unlock_irqrestore(&(acks->lock), flags);
 			remove_vma_ack_entry(acks);
+/*****************************************************************************/
+/* Locking and Acking                                                        */
+/*****************************************************************************/
+
 			entry->message_push_operation->vma_operation_index = index;
 
 			/*I acquire the lock to block page faults too
@@ -1134,7 +1164,6 @@ start:
 						pcn_kmsg_send_long(i,
 								   (struct pcn_kmsg_long_message*) (entry->message_push_operation),sizeof(vma_operation_t)- sizeof(struct pcn_kmsg_hdr));
 				}
-
 				kfree(lock_message);
 				kfree(acks);
 				down_write(&current->mm->mmap_sem);
@@ -1142,15 +1171,15 @@ start:
 			}
 			else {
 				PSPRINTK("SERVER MAIN: going to execute the operation locally %d\n",operation);
+
 				kfree(lock_message);
 				kfree(acks);
-
 				down_write(&current->mm->mmap_sem);
 				return VMA_OP_SAVE;
 			}
 		}
 		else {
-			//server not main
+			//SERVER not main
 			PSPRINTK("SERVER NOT MAIN: Starting operation %d for pid %d current index is %d\n", operation, current->pid, current->mm->vma_operation_index);
 			switch (operation) {
 			case VMA_OP_MAP:
@@ -1180,6 +1209,9 @@ start:
 			 * mmap_sem have to be unlocked*/
 			up_write(&current->mm->mmap_sem);
 
+/*****************************************************************************/
+/* Locking and Acking                                                        */
+/*****************************************************************************/
 			/*First: send a message to everybody to acquire the lock to block page faults*/
 			vma_lock_t* lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t),
 									 GFP_ATOMIC);
@@ -1257,8 +1289,10 @@ start:
 			unsigned long flags;
 			raw_spin_lock_irqsave(&(acks->lock), flags);
 			raw_spin_unlock_irqrestore(&(acks->lock), flags);
-
 			remove_vma_ack_entry(acks);
+/*****************************************************************************/
+/* Locking and Acking                                                        */
+/*****************************************************************************/
 
 			vma_operation_t* operation_to_send = (vma_operation_t*) kmalloc(
 				sizeof(vma_operation_t), GFP_ATOMIC);
@@ -1329,8 +1363,10 @@ start:
 			}
 		}
 	}
+/*****************************************************************************/
+/* client                                                                    */
+/*****************************************************************************/
 	else {
-		//CLIENT
 		PSPRINTK("CLIENT: starting operation %i for pid %d current index is%d\n",
 				operation, current->pid, current->mm->vma_operation_index);
 
@@ -1443,7 +1479,8 @@ out_dist_lock:
 	PSPRINTK("Released distributed lock from out_dist_lock\n");
 	PSPRINTK("current index is %d in out_dist_lock\n", current->mm->vma_operation_index);
 
-out: current->mm->distr_vma_op_counter--;
+out:
+	current->mm->distr_vma_op_counter--;
 	current->mm->thread_op = NULL;
 	if (operation == VMA_OP_MAP || operation == VMA_OP_BRK) {
 		current->mm->was_not_pushed--;
@@ -1547,3 +1584,10 @@ long vma_server_init(void)
 
 	return 0;
 }
+
+/*
+ * As David Katz thesis the concept of this server is to do consistent modifications to the VMA list
+ * The protocol is for N kernels
+ * The performed operation is shown atomic to every thread of the same application
+ */
+ */
