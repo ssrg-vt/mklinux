@@ -185,7 +185,7 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
                 return 0; //EOF
 
         for (i = 0; i < written; i++) {
-        	struct task_srtuct * t;
+        	struct task_struct * t;
         	struct task_struct * ppp = lista[i]->main;
 
         	len += snprintf((buffer +len), PROC_BUFFER_PS -len,
@@ -309,6 +309,7 @@ static long sched_server_init (void)
 {
 	struct task_struct *kt_sched;
 	struct proc_dir_entry *res;
+	int i;
 
 	pcn_kmsg_register_callback(PCN_KMSG_TYPE_SCHED_PERIODIC,
 			   handle_sched_periodic);

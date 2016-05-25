@@ -27,5 +27,11 @@ extern int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *v
 				  spinlock_t *ptl, pte_t orig_pte);
 extern int access_error(unsigned long error_code, struct vm_area_struct *vma);
 
+//// internal declarations ////
+
+static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* fetching_page,
+                                              struct mm_struct* mm, unsigned long address, spinlock_t* ptl);
+
+
 
 #endif /* KERNEL_POPCORN_DEPEND_H_ */

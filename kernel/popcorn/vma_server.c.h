@@ -1590,4 +1590,4 @@ long vma_server_init(void)
  * The protocol is for N kernels
  * The performed operation is shown atomic to every thread of the same application
  */
- */
+ 

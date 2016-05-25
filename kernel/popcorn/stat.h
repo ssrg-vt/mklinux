@@ -12,7 +12,8 @@
 ktime_t migration_start, migration_end;
 #endif
 
-asmlinkage long sys_take_time(int start)
+//asmlinkage 
+long sys_take_time (int start)
 {
 	if (start == 1)
 		trace_printk("s\n");
