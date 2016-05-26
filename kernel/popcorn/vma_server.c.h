@@ -23,6 +23,9 @@ static unsigned long map_difference(struct file *file, unsigned long addr,
 
 	// go through ALL vma's, looking for interference with this space.
 	curr = current->mm->mmap;
+#if defined(CONFIG_ARM64)
+	pgoff = pgoff >> PAGE_SHIFT;
+#endif
 
 	while (1) {
 
@@ -263,8 +266,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						 * This is important both to not unmap pages that should not be unmapped
 						 * but also because otherwise the vma protocol will deadlock!
 						 */
-						err =
-							map_difference(f, fetching_page->vaddr_start,
+						err = map_difference(f, fetching_page->vaddr_start,
 								       fetching_page->vaddr_size, prot,
 								       MAP_FIXED
 								       | ((fetching_page->vm_flags
@@ -280,7 +282,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 								       | ((fetching_page->vm_flags
 									   & VM_HUGETLB) ?
 									  MAP_HUGETLB : 0),
-								       fetching_page->pgoff << PAGE_SHIFT);
+								       fetching_page->pgoff << PAGE_SHIFT); // ?!?!?!?!?! This is really weird ... in x86 is like this but in ARM then they are shifthing right ... how it is possible?!?!
 
 						current->mm->distribute_unmap = 1;
 

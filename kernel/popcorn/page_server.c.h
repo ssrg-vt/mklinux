@@ -301,7 +301,12 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 	lock = 1;
 
 	//case pte not yet installed
-	if (pte == NULL || pte_none(pte_clear_flags(*pte,_PAGE_UNUSED1)) ) {
+#if defined(CONFIG_ARM64)
+	if (pte == NULL || 
+		pte_none(*pte) ) {
+#else
+		pte_none(pte_clear_flags(*pte,_PAGE_UNUSED1)) ) {
+#endif	
 		PSPRINTK("pte not yet mapped\n");
 
 		//If I receive an invalid while it is not mapped, I must be fetching the page.
@@ -431,18 +436,21 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 		flush_cache_page(vma, address, pte_pfn(*pte));
 		entry = *pte;
 		//the page is invalid so as not present
+#if defined(CONFIG_ARM64)
+		entry = pte_clear_valid_entry_flag(entry);
+		entry = pte_mkyoung(entry);
+#else
 		entry = pte_clear_flags(entry, _PAGE_PRESENT);
 		entry = pte_set_flags(entry, _PAGE_ACCESSED);
+#endif
 
 		ptep_clear_flush(vma, address, pte);
 		set_pte_at_notify(mm, address, pte, entry);
 
 		update_mmu_cache(vma, address, pte);
-		//flush_tlb_page(vma, address);
-		//flush_tlb_fix_spurious_fault(vma, address);
-
-	    flush_tlb_page(vma, address);
-	    flush_tlb_fix_spurious_fault(vma, address);
+	    
+		flush_tlb_page(vma, address);
+		flush_tlb_fix_spurious_fault(vma, address);
 	}
 
 out: if (lock) {
@@ -644,7 +652,12 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 ///////////////////////////////////////////////////////////////////////////////
 // Got pte, now proceed with the rest
 
-	if (pte == NULL || pte_none(pte_clear_flags(entry, _PAGE_UNUSED1))) {
+	if (pte == NULL ||
+#if defined(CONFIG_ARM64)
+		pte_none(entry)) {
+#else
+		pte_none(pte_clear_flags(entry, _PAGE_UNUSED1))) {
+#endif
 		PSPRINTK("pte not mapped\n");
 
 		if ( !pte_none(entry) ) {
@@ -698,7 +711,12 @@ fetch:
 				if (_cpu==request->tgroup_home_cpu) {
 					PSPRINTK(KERN_ALERT"%s: marking a pte for address %lx\n",__func__,address);
 
+#if defined(CONFIG_ARM64)
+                                        //Ajith - Removing optimization used for local fetch - _PAGE_UNUSED1 case
+                                        //entry = pte_set_flags(entry, _PAGE_UNUSED1);
+#else
 					entry = pte_set_flags(entry, _PAGE_UNUSED1);
+#endif
 					ptep_clear_flush(vma, address, pte);
 
 					set_pte_at_notify(mm, address, pte, entry);
@@ -791,22 +809,36 @@ fetch:
 			if (request->is_write==0) {
 				//case fetch for read
 				page->status = REPLICATION_STATUS_VALID;
+#if defined(CONFIG_ARM64)
+				entry = pte_wrprotect(entry);
+				entry = pte_set_valid_entry_flag(entry);
+#else
 				entry = pte_clear_flags(entry, _PAGE_RW);
 				entry = pte_set_flags(entry, _PAGE_PRESENT);
+#endif
 				owner= 0;
 				page->owner= 1;
 			}
 			else {
 				//case fetch for write
 				page->status = REPLICATION_STATUS_INVALID;
+#if defined(CONFIG_ARM64)
+				entry = pte_clear_valid_entry_flag(entry);
+#else
 				entry = pte_clear_flags(entry, _PAGE_PRESENT);
+#endif
 				owner= 1;
 				page->owner= 0;
 			}
 			page->last_write= 1;
 
+#if defined(CONFIG_ARM64)
+			entry = pte_set_user_access_flag(entry);
+			entry = pte_mkyoung(entry);
+#else
 			entry = pte_set_flags(entry, _PAGE_USER);
 			entry = pte_set_flags(entry, _PAGE_ACCESSED);
+#endif
 
 			ptep_clear_flush(vma, address, pte);
 			set_pte_at_notify(mm, address, pte, entry);
@@ -899,8 +931,13 @@ fetch:
 					page->owner= 0;
 					owner= 1;
 					entry = *pte;
+#if defined(CONFIG_ARM64)
+					entry = pte_clear_valid_entry_flag(entry);
+					entry = pte_mkyoung(entry);
+#else
 					entry = pte_clear_flags(entry, _PAGE_PRESENT);
 					entry = pte_set_flags(entry, _PAGE_ACCESSED);
+#endif
 
 					ptep_clear_flush(vma, address, pte);
 					set_pte_at_notify(mm, address, pte, entry);
@@ -935,8 +972,13 @@ fetch:
 					page->owner= 0;
 					owner= 1;
 					entry = *pte;
+#if defined(CONFIG_ARM64)
+					entry = pte_clear_valid_entry_flag(entry);
+					entry = pte_mkyoung(entry);
+#else
 					entry = pte_clear_flags(entry, _PAGE_PRESENT);
 					entry = pte_set_flags(entry, _PAGE_ACCESSED);
+#endif
 
 					ptep_clear_flush(vma, address, pte);
 					set_pte_at_notify(mm, address, pte, entry);
@@ -954,13 +996,19 @@ fetch:
 					page->owner= 1;
 					owner= 0;
 					entry = *pte;
+#if defined(CONFIG_ARM64)
+					entry = pte_set_valid_entry_flag(entry);
+					entry = pte_mkyoung(entry);
+					entry = pte_wrprotect(entry);
+#else
 					entry = pte_set_flags(entry, _PAGE_PRESENT);
 					entry = pte_set_flags(entry, _PAGE_ACCESSED);
 					entry = pte_clear_flags(entry, _PAGE_RW);
-
+#endif
 					ptep_clear_flush(vma, address, pte);
 					set_pte_at_notify(mm, address, pte, entry);
 					update_mmu_cache(vma, address, pte);
+
 					flush_tlb_page(vma, address);
 					flush_tlb_fix_spurious_fault(vma, address);
 				}
@@ -1517,16 +1565,21 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		flush_cache_page(vma, address, pte_pfn(*pte));
 		//now the page can be written
 		value_pte = *pte;
+#if defined(CONFIG_ARM64)
+		value_pte = pte_wrprotect(value_pte);
+		value_pte = pte_set_valid_entry_flag(value_pte);
+		value_pte = pte_mkyoung(value_pte);
+#else
 		value_pte = pte_clear_flags(value_pte, _PAGE_RW);
 		value_pte = pte_set_flags(value_pte, _PAGE_PRESENT);
-
 		value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
+#endif
 		ptep_clear_flush(vma, address, pte);
 		set_pte_at_notify(mm, address, pte, value_pte);
 		update_mmu_cache(vma, address, pte);
 		flush_tlb_page(vma, address);
-
 		flush_tlb_fix_spurious_fault(vma, address);
+
 		PSPRINTK("%s: Out read %i address %lx\n ", __func__, 0, address);
 	}
 	else {
@@ -1866,13 +1919,20 @@ exit_write_message:
 
 	//now the page can be written
 	value_pte = *pte;
+#if defined(CONFIG_ARM64)
+	value_pte = pte_mkwrite(value_pte);
+	/* in kernel - page is made dirty as soon as it is made writable (?) */
+	value_pte = pte_mkdirty(value_pte);
+	value_pte = pte_set_valid_entry_flag(value_pte);
+	value_pte = pte_mkyoung(value_pte);
+#else
 	value_pte = pte_set_flags(value_pte, _PAGE_RW);
 	value_pte = pte_set_flags(value_pte, _PAGE_PRESENT);
 	//value_pte=pte_set_flags(value_pte,_PAGE_USER);
 	value_pte = pte_set_flags(value_pte, _PAGE_ACCESSED);
 	//value_pte=pte_set_flags(value_pte,_PAGE_DIRTY);
+#endif
 	ptep_clear_flush(vma, address, pte);
-
 	set_pte_at_notify(mm, address, pte, value_pte);
 	update_mmu_cache(vma, address, pte);
 
@@ -2167,11 +2227,19 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #endif
 				page->owner = fetching_page->owner;
 				page->status = status;
-
+#if defined(CONFIG_ARM64)
+                                if (status == REPLICATION_STATUS_VALID) {
+                                        entry =  pte_wrprotect(entry);
+                                } else {
+                                        entry =  pte_mkwrite(entry);
+                                        entry =  pte_mkdirty(entry);
+                                }
+#else
 				if (status == REPLICATION_STATUS_VALID)
 					entry = pte_clear_flags(entry, _PAGE_RW);
 				else
 					entry = pte_set_flags(entry, _PAGE_RW);
+#endif
 			}
 			else { /* !(vma->vm_flags & VM_WRITE) */
 				if (fetching_page->is_write)
@@ -2184,16 +2252,23 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 				page->owner= 0;
 				page->status= REPLICATION_STATUS_NOT_REPLICATED;
 			}
-
+#if defined(CONFIG_ARM64)
+			entry = pte_set_valid_entry_flag(entry);
+#else
 			entry = pte_set_flags(entry, _PAGE_PRESENT);
+#endif
 			page->other_owners[_cpu]=1;
 			page->other_owners[other_cpu]=1;
 			page->futex_owner = fetching_page->futex_owner;//akshay
 
 			flush_cache_page(vma, address, pte_pfn(*pte));
+#if defined(CONFIG_ARM64)
+			entry = pte_set_user_access_flag(entry);
+			entry = pte_mkyoung(entry);
+#else
 			entry = pte_set_flags(entry, _PAGE_USER);
 			entry = pte_set_flags(entry, _PAGE_ACCESSED);
-
+#endif
 			ptep_clear_flush(vma, address, pte);
 
 			page_add_new_anon_rmap(page, vma, address);
@@ -2336,7 +2411,12 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	 */
 start:
 	//printk("%s start\n", __func__);
-	if (pte == NULL || pte_none(pte_clear_flags(value_pte, _PAGE_UNUSED1))) {
+	if (pte == NULL || 
+#if defined(CONFIG_ARM64)
+			pte_none(value_pte)) {
+#else
+			pte_none(pte_clear_flags(value_pte, _PAGE_UNUSED1))) {
+#endif
 		if(pte==NULL)
 			printk("%s: WARN: pte NULL\n", __func__);
 
