@@ -21,6 +21,7 @@ static inline int vma_send_long_all( memory_t * entry, void * message, int size,
 		i = objPtr->_data._processor;
 
 		if (entry->kernel_set[i]==1) {
+			int error;
 			if ( task && (task->mm->distr_vma_op_counter > max_distr_vma_op)
 					&& (i == entry->message_push_operation->from_cpu))
 				continue;
