@@ -5,9 +5,11 @@
  *      Author: root
  */
 
+#define USE_NEW_VERSION_VMA
 #ifdef USE_NEW_VERSION_VMA
 // TODO this have to me moved somewhere else
-static inline int vma_send_long_all( memory_t * entry, void * message, int size, int max_distr_vma_op, struct task_struct * task)
+static inline int vma_send_long_all( memory_t * entry, void * message, int size,
+		struct task_struct * task, int max_distr_vma_op)
 {
 	int i, acks =0;
 	struct list_head *iter;
@@ -19,7 +21,7 @@ static inline int vma_send_long_all( memory_t * entry, void * message, int size,
 		i = objPtr->_data._processor;
 
 		if (entry->kernel_set[i]==1) {
-			if ((task->mm->distr_vma_op_counter > max_distr_vma_op)
+			if ( task && (task->mm->distr_vma_op_counter > max_distr_vma_op)
 					&& (i == entry->message_push_operation->from_cpu))
 				continue;
 			error = pcn_kmsg_send_long(i, (struct pcn_kmsg_long_message*) message,
@@ -902,7 +904,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				}
 			}
 #else
-			vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 1000);
+			vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 0, 0);
 #endif
 			down_write(&current->mm->mmap_sem);
 			if (current->main == 0) {
@@ -1237,7 +1239,7 @@ start:
 					}
 				}
 #else
-				acks->expected_responses = vma_send_long_all(entry, lock_message, sizeof(vma_lock_t), 2, current);
+				acks->expected_responses = vma_send_long_all(entry, lock_message, sizeof(vma_lock_t), current, 2);
 #endif
 			}
 
@@ -1291,7 +1293,7 @@ start:
 								   sizeof(vma_operation_t)- sizeof(struct pcn_kmsg_hdr));
 				}
 #else
-				vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 1000, current);
+				vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 0, 0);
 #endif
 				kfree(lock_message);
 				kfree(acks);
@@ -1405,7 +1407,7 @@ start:
 				}
 			}
 #else
-			acks->expected_responses = vma_send_long_all(entry, lock_message, sizeof(vma_lock_t), 1000, current);
+			acks->expected_responses = vma_send_long_all(entry, lock_message, sizeof(vma_lock_t), 0, 0);
 #endif
 			/*Second: wait that everybody acquire the lock, and acquire it locally too*/
 			while (acks->expected_responses != acks->responses) {
@@ -1479,7 +1481,7 @@ start:
 								   sizeof(vma_operation_t)	- sizeof(struct pcn_kmsg_hdr));
 				}
 #else
-				vma_send_long_all(entry, operation_to_send, sizeof(vma_operation_t), 1000, current);
+				vma_send_long_all(entry, operation_to_send, sizeof(vma_operation_t), 0, 0);
 #endif
 				kfree(lock_message);
 				kfree(operation_to_send);
