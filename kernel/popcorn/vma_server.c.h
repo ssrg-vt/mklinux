@@ -903,10 +903,10 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 								   (struct pcn_kmsg_long_message*) (entry->message_push_operation),
 								   sizeof(vma_operation_t)	- sizeof(struct pcn_kmsg_hdr));
 				}
-			}
 #else
-			vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 0, 0);
+				vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 0, 0);
 #endif
+			}
 			down_write(&current->mm->mmap_sem);
 			if (current->main == 0) {
 				kfree(entry->message_push_operation);
