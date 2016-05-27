@@ -874,9 +874,9 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 			up_write(&current->mm->mmap_sem);
 
 			if (operation == VMA_OP_MAP || operation == VMA_OP_BRK) {
-				err = pcn_kmsg_send_long(entry->message_push_operation->from_cpu,
+				int err = pcn_kmsg_send_long(entry->message_push_operation->from_cpu,
 										       (struct pcn_kmsg_long_message*) (entry->message_push_operation),
-										       sizeof(vma_operation_t) - sizeof(struct pcn_kmsg_hdr))
+										       sizeof(vma_operation_t) - sizeof(struct pcn_kmsg_hdr));
 				if (err == -1) {
 					printk("%s: ERROR: impossible to send operation to client in cpu %d\n", __func__,
 					       entry->message_push_operation->from_cpu);
@@ -888,7 +888,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 			}
 			else {
 				PSPRINTK("%s: INFO: sending operation %d to all\n",__func__,operation);
-#if 0
+#ifndef USE_NEW_VERSION_VMA
 				// the list does not include the current processor group descirptor (TODO)
 				struct list_head *iter;
 				_remote_cpu_info_list_t *objPtr;
