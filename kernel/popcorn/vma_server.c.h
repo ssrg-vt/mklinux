@@ -1063,11 +1063,20 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 							PSVMAPRINTK("%s, don't distribute again, return!\n",__func__);
 							return ret;
 						}
-						else
+						else {
+#define CONCURRENCY_BUG
+#ifdef CONCURRENCY_BUG
+							current->mm->distr_vma_op_counter++;
+#endif
 							goto start;
+						}
 					}
-					else
+					else {
+#ifdef CONCURRENCY_BUG
+						current->mm->distr_vma_op_counter++;
+#endif
 						goto start;
+					}
 				}
 			}
 			else { // not the main thread
@@ -1076,8 +1085,12 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 					PSVMAPRINTK("%s, don't distribute again, return!\n",__func__);
 					return ret;
 				}
-				else
+				else {
+#ifdef CONCURRENCY_BUG
+					current->mm->distr_vma_op_counter++;
+#endif
 					goto start;
+				}
 			}
 		}
 	} //Antonio: all the possibility are handled but I am not sure their handled correctly
@@ -1085,7 +1098,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 	/* I did not start an operation, but another thread maybe did...
 	 * => no concurrent operations of the same process on the same kernel*/
 	// The following is the original buggy code (concurrency error)
-#ifndef MIMMO
+#ifndef CONCURRENCY_BUG
 	while (current->mm->distr_vma_op_counter > 0) {
 		printk("%s: WARN: Somebody already started a distributed operation (current->mm->thread_op->pid is %d). I am pid %d and I am going to sleep (cpu %d id %d)\n",
 			    __func__,current->mm->thread_op->pid,current->pid, current->tgroup_home_cpu, current->tgroup_home_id);
@@ -1125,9 +1138,8 @@ start:
 
 		down_write(&current->mm->mmap_sem);
 	}
-	current->mm->thread_op = current;
-
 start:
+	current->mm->thread_op = current;
 #endif
 ///////////////////////////////////////////////////////////////////////////////
 // start distributed operation
