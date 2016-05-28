@@ -5,9 +5,7 @@
  *      Author: root
  */
 
-#define USE_NEW_VERSION_VMA
-#ifdef USE_NEW_VERSION_VMA
-// TODO this have to me moved somewhere else
+// TODO this have to me moved somewhere else but made more generic (!!!)
 static inline int vma_send_long_all( memory_t * entry, void * message, int size,
 		struct task_struct * task, int max_distr_vma_op)
 {
@@ -33,7 +31,6 @@ static inline int vma_send_long_all( memory_t * entry, void * message, int size,
 	}
 	return acks;
 }
-#endif
 
 // TODO before committing
 #if 0
@@ -978,6 +975,26 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 	PSPRINTK("%s: operation index is %d\n", __func__, current->mm->vma_operation_index);
 }
 
+/* Marina: nesting is handled manually (?)
+ *
+ * Operations can be nested-called.
+ * MMAP->UNMAP
+ * BR->UNMAP
+ * MPROT->/
+ * UNMAP->/
+ * MREMAP->UNMAP
+ * =>only UNMAP can be nested-called
+ *
+ * If this is an unmap nested-called by an operation pushed in the system,
+ * skip the distribution part.
+ *
+ * If this is an unmap nested-called by an operation not pushed in the system,
+ * and I am the server, push it in the system.
+ *
+ * If this is an unmap nested-called by an operation not pushed in the system,
+ * and I am NOT the server, it is an error. The server should have pushed that unmap
+ * before, if I am executing it again something is wrong.
+ */
 /*I assume that down_write(&mm->mmap_sem) is held
  *There are two different protocols:
  *mmap and brk need to only contact the server,
@@ -998,26 +1015,6 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 	else if (operation == VMA_OP_REMAP)
 		ret = new_addr;
 
-	/* Marina: nesting is handled manually (?)
-	 *
-	 * Operations can be nested-called.
-	 * MMAP->UNMAP
-	 * BR->UNMAP
-	 * MPROT->/
-	 * UNMAP->/
-	 * MREMAP->UNMAP
-	 * =>only UNMAP can be nested-called
-	 *
-	 * If this is an unmap nested-called by an operation pushed in the system,
-	 * skip the distribution part.
-	 *
-	 * If this is an unmap nested-called by an operation not pushed in the system,
-	 * and I am the server, push it in the system.
-	 *
-	 * If this is an unmap nested-called by an operation not pushed in the system,
-	 * and I am NOT the server, it is an error. The server should have pushed that unmap
-	 * before, if I am executing it again something is wrong.
-	 */
 // TODO review nesting
 	/*All the operation pushed by the server are executed as not distributed in clients*/
 	if (current->mm->distribute_unmap == 0) {
@@ -1025,9 +1022,9 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 				__func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
 		return ret;
 	}
-	PSPRINTK("%s, Starting vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lx len %lx end %lx\n",
-		    __func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
-    PSPRINTK("%s index %d\n", __func__, current->mm->vma_operation_index);
+	PSPRINTK("%s: INFO: pid %d tgroup_home_cpu %d tgroup_home_id %d main %d operation %i addr %lx len %lx end %lx index %d\n",
+		    __func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0,
+		    operation, addr, len, addr+len, current->mm->vma_operation_index);
 
 	/*only server can have legal distributed nested operations*/
 	if ((current->mm->distr_vma_op_counter > 0) && (current->mm->thread_op == current)) {
@@ -1067,17 +1064,12 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 							return ret;
 						}
 						else {
-#define CONCURRENCY_BUG
-#ifdef CONCURRENCY_BUG
 							current->mm->distr_vma_op_counter++;
-#endif
 							goto start;
 						}
 					}
 					else {
-#ifdef CONCURRENCY_BUG
 						current->mm->distr_vma_op_counter++;
-#endif
 						goto start;
 					}
 				}
@@ -1089,9 +1081,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 					return ret;
 				}
 				else {
-#ifdef CONCURRENCY_BUG
 					current->mm->distr_vma_op_counter++;
-#endif
 					goto start;
 				}
 			}
@@ -1101,31 +1091,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 	/* I did not start an operation, but another thread maybe did...
 	 * => no concurrent operations of the same process on the same kernel*/
 	// The following is the original buggy code (concurrency error)
-#ifndef CONCURRENCY_BUG
-	while (current->mm->distr_vma_op_counter > 0) {
-		printk("%s: WARN: Somebody already started a distributed operation (current->mm->thread_op->pid is %d). I am pid %d and I am going to sleep (cpu %d id %d)\n",
-			    __func__,current->mm->thread_op->pid,current->pid, current->tgroup_home_cpu, current->tgroup_home_id);
 
-		up_write(&current->mm->mmap_sem);
-		DEFINE_WAIT(wait);
-		prepare_to_wait(&request_distributed_vma_op, &wait,
-				TASK_UNINTERRUPTIBLE);
-		if (current->mm->distr_vma_op_counter > 0) {
-			schedule();
-		}
-		finish_wait(&request_distributed_vma_op, &wait);
-		down_write(&current->mm->mmap_sem);
-	}
-
-	if (current->mm->distr_vma_op_counter != 0) {
-		printk("%s: ERROR: a new vma operation can be started, but distr_vma_op_counter is %i\n",
-				__func__, current->mm->distr_vma_op_counter);
-		return -EPERM;
-	}
-start:
-	current->mm->distr_vma_op_counter++;
-	current->mm->thread_op = current;
-#else
 	// ONLY ONE CAN BE IN DISTRIBUTED OPERATION AT THE TIME ... WHAT ABOUT NESTED OPERATIONS?
 	while (	atomic_cmpxchg((atomic_t*)&(current->mm->distr_vma_op_counter), 0, 1) != 0) { //success is indicated by comparing RETURN with OLD (arch/x86/include/asm/cmpxchg.h)
 		up_write(&current->mm->mmap_sem);
@@ -1143,7 +1109,7 @@ start:
 	}
 start:
 	current->mm->thread_op = current;
-#endif
+
 ///////////////////////////////////////////////////////////////////////////////
 // start distributed operation
 ///////////////////////////////////////////////////////////////////////////////
@@ -1152,14 +1118,11 @@ start:
 		current->mm->was_not_pushed++;
 	}
 	if (server) {
-		//SERVER
+		//SERVER MAIN (counter <= 2 <<< recursive)
 		if (current->main == 1 && !(current->mm->distr_vma_op_counter>2)) {
-			/*I am the main thread=>
-			 * a client asked me to do an operation.
-			 */
+			/* I am the main thread=> a client asked me to do an operation. */
 			//(current->mm->vma_operation_index)++;
 			int index = current->mm->vma_operation_index;
-
 			PSPRINTK("SERVER MAIN: starting operation %d, current index is %d\n", operation, index);
 
 			up_write(&current->mm->mmap_sem);
@@ -1175,8 +1138,7 @@ start:
 /*****************************************************************************/
 /* Locking and Acking                                                        */
 /*****************************************************************************/
-
-			/*First: send a message to everybody to acquire the lock to block page faults*/
+			//First: send a message to everybody to acquire the lock to block page faults
 			vma_lock_t* lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t), GFP_ATOMIC);
 			if (lock_message == NULL) {
 				down_write(&current->mm->mmap_sem);
@@ -1220,28 +1182,7 @@ start:
 			}
 			else {
 				down_read(&entry->kernel_set_sem);
-#ifndef USE_NEW_VERSION_VMA
-				// the list does not include the current processor group descirptor (TODO)
-				struct list_head *iter;
-				_remote_cpu_info_list_t *objPtr;
-				list_for_each(iter, &rlist_head) {
-					objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-					i = objPtr->_data._processor;
-					if(entry->kernel_set[i]==1){
-						if (current->mm->distr_vma_op_counter == 3
-						    && i == entry->message_push_operation->from_cpu)
-							continue;
-
-						error = pcn_kmsg_send_long(i,
-									   (struct pcn_kmsg_long_message*) (lock_message),sizeof(vma_lock_t) - sizeof(struct pcn_kmsg_hdr));
-						if (error != -1) {
-							acks->expected_responses++;
-						}
-					}
-				}
-#else
 				acks->expected_responses = vma_send_long_all(entry, lock_message, sizeof(vma_lock_t), current, 2);
-#endif
 			}
 
 			while (acks->expected_responses != acks->responses) {
@@ -1278,31 +1219,18 @@ start:
 			 * */
 			if (operation == VMA_OP_UNMAP || operation == VMA_OP_PROTECT
 			    || ((operation == VMA_OP_REMAP) && (flags & MREMAP_FIXED))) {
+				PSPRINTK("%s: INFO: SERVER MAIN we can execute the operation in parallel! %d %lx %lx\n",
+						__func__, operation, flags, flags & MREMAP_FIXED);
 
-				PSPRINTK("SERVER MAIN: sending done for operation, we can execute the operation in parallel! %d\n",operation);
-				PSPRINTK("%d %lx %d\n", operation, flags, flags & MREMAP_FIXED);
-#ifndef USE_NEW_VERSION_VMA
-				// the list does not include the current processor group descirptor (TODO)
-				struct list_head *iter;
-				_remote_cpu_info_list_t *objPtr;
-				list_for_each(iter, &rlist_head) {
-					objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-					i = objPtr->_data._processor;
-					if(entry->kernel_set[i]==1)
-						pcn_kmsg_send_long(i,
-								   (struct pcn_kmsg_long_message*) (entry->message_push_operation),
-								   sizeof(vma_operation_t)- sizeof(struct pcn_kmsg_hdr));
-				}
-#else
 				vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 0, 0);
-#endif
 				kfree(lock_message);
 				kfree(acks);
 				down_write(&current->mm->mmap_sem);
 				return ret;
 			}
 			else {
-				PSPRINTK("SERVER MAIN: going to execute the operation locally %d\n",operation);
+				PSPRINTK("%s: INFO: SERVER MAIN going to execute the operation locally %d\n",
+						__func__, operation);
 
 				kfree(lock_message);
 				kfree(acks);
@@ -1310,9 +1238,10 @@ start:
 				return VMA_OP_SAVE;
 			}
 		}
-		else {
-			//SERVER not main
-			PSPRINTK("SERVER NOT MAIN: Starting operation %d for pid %d current index is %d\n", operation, current->pid, current->mm->vma_operation_index);
+		else { //SERVER not main
+			PSPRINTK("%s: SERVER NOT MAIN starting operation %d for pid %d current index is %d\n",
+					__func__, operation, current->pid, current->mm->vma_operation_index);
+
 			switch (operation) {
 			case VMA_OP_MAP:
 			case VMA_OP_BRK:
@@ -1390,26 +1319,8 @@ start:
 
 			add_vma_ack_entry(acks);
 			down_read(&entry->kernel_set_sem);
-
-#ifndef USE_NEW_VERSION_VMA
-			// the list does not include the current processor group descirptor (TODO)
-			struct list_head *iter;
-			_remote_cpu_info_list_t *objPtr;
-			list_for_each(iter, &rlist_head) {
-				objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-				i = objPtr->_data._processor;
-
-				if(entry->kernel_set[i]==1){
-					error = pcn_kmsg_send_long(i,
-								   (struct pcn_kmsg_long_message*) (lock_message),	sizeof(vma_lock_t) - sizeof(struct pcn_kmsg_hdr));
-					if (error != -1) {
-						acks->expected_responses++;
-					}
-				}
-			}
-#else
 			acks->expected_responses = vma_send_long_all(entry, lock_message, sizeof(vma_lock_t), 0, 0);
-#endif
+
 			/*Second: wait that everybody acquire the lock, and acquire it locally too*/
 			while (acks->expected_responses != acks->responses) {
 				set_task_state(current, TASK_UNINTERRUPTIBLE);
@@ -1418,7 +1329,6 @@ start:
 				}
 				set_task_state(current, TASK_RUNNING);
 			}
-
 			PSPRINTK("SERVER NOT MAIN: Received all ack to lock\n");
 
 			unsigned long flags;
@@ -1467,23 +1377,10 @@ start:
 			 * a fixed flag.
 			 * */
 			if (!(operation == VMA_OP_REMAP) || (flags & MREMAP_FIXED)) {
-				PSPRINTK("SERVER NOT MAIN: sending done for operation, we can execute the operation in parallel! %d\n",operation);
+				PSPRINTK("%s: INFO: SERVER NOT MAIN sending done for operation, we can execute the operation in parallel! %d\n",
+						__func__, operation);
 
-#ifndef USE_NEW_VERSION_VMA
-				// the list does not include the current processor group descirptor (TODO)
-				struct list_head *iter;
-				_remote_cpu_info_list_t * objPtr;
-				list_for_each(iter, &rlist_head) {
-					objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
-					i = objPtr->_data._processor;
-
-					if(entry->kernel_set[i]==1)
-						pcn_kmsg_send_long(i,(struct pcn_kmsg_long_message*) (operation_to_send),
-								   sizeof(vma_operation_t)	- sizeof(struct pcn_kmsg_hdr));
-				}
-#else
 				vma_send_long_all(entry, operation_to_send, sizeof(vma_operation_t), 0, 0);
-#endif
 				kfree(lock_message);
 				kfree(operation_to_send);
 				kfree(acks);
@@ -1491,7 +1388,8 @@ start:
 				return ret;
 			}
 			else {
-				PSPRINTK("SERVER NOT MAIN: going to execute the operation locally %d\n",operation);
+				PSPRINTK("%s: INFO: SERVER NOT MAIN going to execute the operation locally %d\n",
+						__func__, operation);
 				entry->message_push_operation = operation_to_send;
 
 				kfree(lock_message);
@@ -1505,8 +1403,8 @@ start:
 /* client                                                                    */
 /*****************************************************************************/
 	else {
-		PSPRINTK("CLIENT: starting operation %i for pid %d current index is%d\n",
-				operation, current->pid, current->mm->vma_operation_index);
+		PSPRINTK("%s: INFO: CLIENT starting operation %i for pid %d current index is%d\n",
+				__func__, operation, current->pid, current->mm->vma_operation_index);
 
 		/*First: send the operation to the server*/
 		vma_operation_t* operation_to_send = (vma_operation_t*) kmalloc(
@@ -1585,7 +1483,6 @@ start:
 			}
 			set_task_state(current, TASK_RUNNING);
 		}
-
 		PSPRINTK("My operation finally arrived pid %d vma operation %d\n",current->pid,current->mm->vma_operation_index);
 
 		/*Note, the distributed lock already has been acquired*/
@@ -1614,8 +1511,8 @@ start:
 
 out_dist_lock:
 	up_write(&current->mm->distribute_sem);
-	PSPRINTK("Released distributed lock from out_dist_lock\n");
-	PSPRINTK("current index is %d in out_dist_lock\n", current->mm->vma_operation_index);
+	PSPRINTK("%s: Released distributed lock from out_dist_lock, current index is %d in out_dist_lock\n",
+			__func__, current->mm->vma_operation_index);
 
 out:
 	current->mm->distr_vma_op_counter--;
