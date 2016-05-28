@@ -5,7 +5,7 @@
 # This conditional selects whether we are being included from the
 # kernel Makefile or not.
 
-DOLPHIN_HOME := /home/ssrg_lab/dolphin 
+DOLPHIN := /home/ssrg_lab/dolphin 
 
 EXTRA_CFLAGS := -I$(DOLPHIN)/DIS/src/IRM_GX/drv/src -I$(DOLPHIN)/DIS/src/IRM/drv/src/LINUX -I$(DOLPHIN)/DIS/src/COMMON/osif/kernel/include -I$(DOLPHIN)/DIS/src/COMMON/osif/kernel/include/LINUX -I$(DOLPHIN)/DIS/src/include/ -I$(DOLPHIN)/DIS/src/include/dis/
 EXTRA_CFLAGS += -I/opt/DIS/include/ 
