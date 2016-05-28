@@ -5,8 +5,11 @@
 # This conditional selects whether we are being included from the
 # kernel Makefile or not.
 
-EXTRA_CFLAGS := -I/home/ssrg_lab/dolphin/DIS/src/IRM_GX/drv/src -I/home/ssrg_lab/dolphin/DIS/src/IRM/drv/src/LINUX -D_KERNEL
-EXTRA_CFLAGS += -I/home/ssrg_lab/dolphin/DIS/src/COMMON/osif/kernel/include -I/home/ssrg_lab/dolphin/DIS/src/COMMON/osif/kernel/include/LINUX -I/home/ssrg_lab/dolphin/DIS/src/include/ -I/opt/DIS/include/ -I/home/ssrg_lab/dolphin/DIS/src/include/dis/ -DOS_IS_LINUX
+DOLPHIN := /home/ssrg_lab/dolphin 
+
+EXTRA_CFLAGS := -I$(DOLPHIN)/DIS/src/IRM_GX/drv/src -I$(DOLPHIN)/DIS/src/IRM/drv/src/LINUX -I$(DOLPHIN)/DIS/src/COMMON/osif/kernel/include -I$(DOLPHIN)/DIS/src/COMMON/osif/kernel/include/LINUX -I$(DOLPHIN)/DIS/src/include/ -I$(DOLPHIN)/DIS/src/include/dis/
+EXTRA_CFLAGS += -I/opt/DIS/include/ 
+EXTRA_CFLAGS += -D_KERNEL -DOS_IS_LINUX
 
 KBUILD_EXTRA_SYMBOLS := /home/ssrg_lab/dolphin/msg_layer/Module.symvers
 
