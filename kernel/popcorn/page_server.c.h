@@ -53,7 +53,7 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 			printk("%s: WARN: received more than one mapping %d r%dw%d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
 					__func__, fetched_data->vma_present, response->fetching_read, response->fetching_write,
 					fetched_data->is_fetch, fetched_data->is_write,
-					response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
+					response->tgroup_home_cpu, response->tgroup_home_id, response->address, (unsigned long)response);
 		}
 	}
 
@@ -61,7 +61,7 @@ static int handle_mapping_response_void(struct pcn_kmsg_message* inc_msg)
 		printk("%s: WARN: received more than one answer, arrived_response is %d r%dw%d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
 				__func__, fetched_data->arrived_response, response->fetching_read, response->fetching_write,
 				fetched_data->is_fetch, fetched_data->is_write,
-				response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
+				response->tgroup_home_cpu, response->tgroup_home_id, response->address, (unsigned long)response);
 
 	fetched_data->arrived_response++;
 	fetched_data->futex_owner = response->futex_owner;
@@ -122,14 +122,14 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 		} else {
 			printk("%s: WARN: received more than one mapping %d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
 					__func__, fetched_data->vma_present, fetched_data->is_fetch, fetched_data->is_write,
-					response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
+					response->tgroup_home_cpu, response->tgroup_home_id, response->address, (unsigned long)response);
 		}
 	}
 
 	if (fetched_data->address_present == 1) {
 		printk("%s: WARN: received more than one answer with a copy of the page from %d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
 						__func__, response->header.from_cpu, fetched_data->is_fetch, fetched_data->is_write,
-						response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
+						response->tgroup_home_cpu, response->tgroup_home_id, response->address, (unsigned long)response);
 	}
 	else  {
 		fetched_data->address_present= 1;
@@ -141,7 +141,7 @@ static int handle_mapping_response(struct pcn_kmsg_message* inc_msg)
 	if (fetched_data->arrived_response!=0)
 		printk("%s: WARN: received more than one answer, arrived_response is %d f%dw%d (cpu %d id %d address 0x%lx) 0x%lx\n",
 				__func__, fetched_data->arrived_response, fetched_data->is_fetch, fetched_data->is_write,
-				response->tgroup_home_cpu, response->tgroup_home_id, response->address, response);
+				response->tgroup_home_cpu, response->tgroup_home_id, response->address, (unsigned long)response);
 
 	fetched_data->owners[inc_msg->hdr.from_cpu] = 1;
 	fetched_data->arrived_response++;
@@ -2087,7 +2087,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	PSPRINTK("Out wait fetch %i address %lx\n", fetch, address);
 	//only the client has to update the vma
 	if (tgroup_home_cpu!=_cpu) {
-		ret = do_mapping_for_distributed_process(fetching_page, mm, address, ptl);
+		ret = do_mapping_for_distributed_process(fetching_page, mm, address, ptl); // defined in vma_server.c
 		if (ret != 0)
 			goto exit_fetch_message;
 		PSPRINTK("Mapping end\n");

@@ -623,6 +623,20 @@ static void create_new_threads(thread_pull_t * my_thread_pull, int *spare_thread
 ///////////////////////////////////////////////////////////////////////////////
 // main for distributed kernel thread (?)
 ///////////////////////////////////////////////////////////////////////////////
+#define GET_UNMAP_IF_HOME(task, mm_data) \
+({ if (task->tgroup_home_cpu != _cpu) {\
+	if (mm_data->mm->distribute_unmap == 0) \
+		printk(KERN_ALERT"%s: GET_UNMAP_IF_HOME: ERROR: value was already 0, check who is the older.\n", __func__); \
+	mm_data->mm->distribute_unmap = 0; \
+	} \
+})
+#define PUT_UNMAP_IF_HOME(task, mm_data) \
+({ if (task->tgroup_home_cpu != _cpu) {\
+	if (mm_data->mm->distribute_unmap == 1) \
+		printk(KERN_ALERT"%s: GET_UNMAP_IF_HOME: ERROR: value was already 1, check who is the older.\n", __func__); \
+	mm_data->mm->distribute_unmap = 1; \
+	} \
+})
 static void main_for_distributed_kernel_thread(memory_t* mm_data, thread_pull_t * my_thread_pull)
 {
 	struct file* f;
@@ -648,42 +662,33 @@ again:
 			switch (mm_data->operation) {
 			case VMA_OP_UNMAP:
 				down_write(&mm_data->mm->mmap_sem);
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 0;
+				GET_UNMAP_IF_HOME(current, mm_data);
 				ret = do_munmap(mm_data->mm, mm_data->addr, mm_data->len);
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 1;
+				PUT_UNMAP_IF_HOME(current, mm_data);
 				up_write(&mm_data->mm->mmap_sem);
 				break;
 
 			case VMA_OP_PROTECT:
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 0;
-				ret = kernel_mprotect(mm_data->addr, mm_data->len,
-						      mm_data->prot);
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 1;
+				GET_UNMAP_IF_HOME(current, mm_data);
+				ret = kernel_mprotect(mm_data->addr, mm_data->len, mm_data->prot);
+				PUT_UNMAP_IF_HOME(current, mm_data);
 				break;
 
 			case VMA_OP_REMAP:
 				// note that remap calls unmap --- thus is a nested operation ...
 				down_write(&mm_data->mm->mmap_sem);
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 0;
+				GET_UNMAP_IF_HOME(current, mm_data);
 				ret = kernel_mremap(mm_data->addr, mm_data->len, mm_data->new_len, 0, mm_data->new_addr);
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 1;
+				PUT_UNMAP_IF_HOME(current, mm_data);
 				up_write(&mm_data->mm->mmap_sem);
 				break;
 
 			case VMA_OP_BRK:
 				ret = -1;
 				down_write(&mm_data->mm->mmap_sem);
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 0;
+				GET_UNMAP_IF_HOME(current, mm_data);
 				ret = do_brk(mm_data->addr, mm_data->len);
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 1;
+				PUT_UNMAP_IF_HOME(current, mm_data);
 				up_write(&mm_data->mm->mmap_sem);
 				break;
 
@@ -698,12 +703,10 @@ again:
 					}
 				}
 				down_write(&mm_data->mm->mmap_sem);
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 0;
+				GET_UNMAP_IF_HOME(current, mm_data);
 				ret = do_mmap_pgoff(f, mm_data->addr, mm_data->len, mm_data->prot, 
 						    mm_data->flags, mm_data->pgoff, &populate);
-				if (current->tgroup_home_cpu != _cpu)
-					mm_data->mm->distribute_unmap = 1;
+				PUT_UNMAP_IF_HOME(current, mm_data);
 				up_write(&mm_data->mm->mmap_sem);
 	
 				if (mm_data->path[0] != '\0') {
@@ -1590,7 +1593,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 		//          created on a user context
 		/*return_value = kernel_thread(create_kernel_thread_for_distributed_process_from_user_one,
 		  entry, CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | SIGCHLD);*/
-		kthread_main = kernel_thread_popcorn(create_kernel_thread_for_distributed_process_from_user_one,
+		kthread_main = (struct task_struct *) kernel_thread_popcorn(create_kernel_thread_for_distributed_process_from_user_one,
 						     entry, CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | SIGCHLD);
 	}
 
@@ -2335,7 +2338,6 @@ out:
  */
 static int __init process_server_init(void)
 {
-	int i;
 	uint16_t copy_cpu;
 
 	printk(KERN_INFO"Popcorn with user data replication\n");
