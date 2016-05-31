@@ -130,6 +130,7 @@ while (memory->operation != VMA_OP_NOP) { 			\
 
 /*
  * This is to serialize multiple operation on the same server (one server per process option)
+ * BUT THERE IS ONLY ONE FOR THE ENTIRE SYSTEM!!!
  */
 #define WAIT_FOR_BUDDY() \
 		while (mm->distr_vma_op_counter > 0) {
@@ -144,6 +145,9 @@ while (memory->operation != VMA_OP_NOP) { 			\
 			finish_wait(&request_distributed_vma_op, &wait);
 			down_write(&mm->mmap_sem);
 		}
+
+#define WAKE_UP_BUDDY() \
+		wake_up(&request_distributed_vma_op)
 
 /*
  * Make sure main is set (I was assuming main is created before than the server is able to run)
@@ -268,6 +272,12 @@ done:
 	return ret;
 }
 
+/* which locks are held when entering here?!
+ * mm->mm_sem is taken in down_read
+ * ptl is locked (on the pte)
+ *
+ * ptl is from pte_offset_map_lock (this is a lock on the page table entry somewhere)
+ */
 static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* fetching_page,
 					      struct mm_struct* mm, unsigned long address, spinlock_t* ptl)
 {
@@ -281,14 +291,15 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 	prot |= (fetching_page->vm_flags & VM_EXEC) ? PROT_EXEC : 0;
 
 	if (fetching_page->vma_present == 1) {
-		if (fetching_page->path[0] == '\0') {
+		if (fetching_page->path[0] == '\0') { // anonymous page mapping
 
 			vma = find_vma(mm, address);
 			if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 				vma = NULL;
 			}
 
-			if (!vma || (vma->vm_start != fetching_page->vaddr_start)
+			if (!vma
+				|| (vma->vm_start != fetching_page->vaddr_start)
 			    || (vma->vm_end != (fetching_page->vaddr_start + fetching_page->vaddr_size))) {
 
 				spin_unlock(ptl);
@@ -313,19 +324,18 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 				/* All vma operations are distributed, except for mmap =>
 				 * When I receive a vma, the only difference can be on the size (start, end) of the vma.
 				 */
-				if (!vma || (vma->vm_start != fetching_page->vaddr_start)
-				    || (vma->vm_end
-					!= (fetching_page->vaddr_start
-					    + fetching_page->vaddr_size))) {
-					PSPRINTK(
-						"Mapping anonymous vma start %lx end %lx\n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
+				if ( !vma
+					|| (vma->vm_start != fetching_page->vaddr_start)
+				    || (vma->vm_end != (fetching_page->vaddr_start + fetching_page->vaddr_size)) ) {
+					PSPRINTK("Mapping anonymous vma start %lx end %lx\n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
 
 					/*Note:
 					 * This mapping is caused because when a thread migrates it does not have any vma
 					 * so during fetch vma can be pushed.
 					 * This mapping has the precedence over "normal" vma operations because is a page fault
 					 * */
-
+					if (current->mm->distribute_unmap == 0)
+						printk(KERN_ALERT"%s: ERROR: anon value was already 0, check who is the older.\n", __func__);
 					current->mm->distribute_unmap = 0;
 
 					/*map_difference should map in such a way that no unmap operations (the only nested operation that mmap can call) are nested called.
@@ -335,13 +345,12 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 					err = map_difference(NULL, fetching_page->vaddr_start,
 							     fetching_page->vaddr_size, prot,
 							     MAP_FIXED | MAP_ANONYMOUS
-							     | ((fetching_page->vm_flags & VM_SHARED) ?
-								MAP_SHARED : MAP_PRIVATE)
-							     | ((fetching_page->vm_flags & VM_HUGETLB) ?
-								MAP_HUGETLB : 0)
-							     | ((fetching_page->vm_flags & VM_GROWSDOWN) ?
-								MAP_GROWSDOWN : 0), 0);
+							     | ((fetching_page->vm_flags & VM_SHARED) ? MAP_SHARED : MAP_PRIVATE)
+							     | ((fetching_page->vm_flags & VM_HUGETLB) ? MAP_HUGETLB : 0)
+							     | ((fetching_page->vm_flags & VM_GROWSDOWN) ? MAP_GROWSDOWN : 0), 0);
 
+					if (current->mm->distribute_unmap == 1)
+						printk(KERN_ALERT"%s: ERROR: anon value was already 1, check who is the older.\n", __func__);
 					current->mm->distribute_unmap = 1;
 
 					if (err != fetching_page->vaddr_start) {
@@ -363,13 +372,14 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 				/*PTE LOCKED*/
 			}
 		}
-		else {
+		else { //not anonymous page
 			vma = find_vma(mm, address);
 			if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 				vma = NULL;
 			}
 
-			if (!vma || (vma->vm_start != fetching_page->vaddr_start)
+			if (!vma
+				|| (vma->vm_start != fetching_page->vaddr_start)
 			    || (vma->vm_end != (fetching_page->vaddr_start + fetching_page->vaddr_size))) {
 
 				spin_unlock(ptl);
@@ -379,27 +389,39 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 				struct file* f;
 				f = filp_open(fetching_page->path, O_RDONLY | O_LARGEFILE, 0);
+
+				if (IS_ERR(f)) {
+						down_read(&mm->mmap_sem);
+						spin_lock(ptl);
+						/*PTE LOCKED*/
+						printk("%s: ERROR: error while opening file %s\n",
+						       __func__, fetching_page->path);
+						ret = VM_FAULT_VMA;
+						return ret;
+				}
+
 				down_write(&mm->mmap_sem);
 
-				if (!IS_ERR(f)) {
 					//check if other threads already installed the vma
 					vma = find_vma(mm, address);
 					if (!vma || address >= vma->vm_end || address < vma->vm_start) {
 						vma = NULL;
 					}
 
-					if (!vma || (vma->vm_start != fetching_page->vaddr_start)
-					    || (vma->vm_end
-						!= (fetching_page->vaddr_start + fetching_page->vaddr_size))) {
+					if ( !vma
+						|| (vma->vm_start != fetching_page->vaddr_start)
+					    || (vma->vm_end != (fetching_page->vaddr_start + fetching_page->vaddr_size)) ) {
 
-						PSPRINTK(
-							"Mapping file vma start %lx end %lx\n", fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
+						PSPRINTK("%s: Mapping file vma start %lx end %lx\n",
+								__func__, fetching_page->vaddr_start, (fetching_page->vaddr_start + fetching_page->vaddr_size));
 
 						/*Note:
 						 * This mapping is caused because when a thread migrates it does not have any vma
 						 * so during fetch vma can be pushed.
 						 * This mapping has the precedence over "normal" vma operations because is a page fault
 						 * */
+						if (current->mm->distribute_unmap == 0)
+							printk(KERN_ALERT"%s: ERROR: file backed value was already 0, check who is the older.\n", __func__);
 						current->mm->distribute_unmap = 0;
 
 						PSPRINTK("%s:%d page offset = %d %lx\n", __func__, __LINE__, fetching_page->pgoff, mm->exe_file);
@@ -410,25 +432,18 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						 * This is important both to not unmap pages that should not be unmapped
 						 * but also because otherwise the vma protocol will deadlock!
 						 */
-						err =
-							map_difference(f, fetching_page->vaddr_start,
+						err = map_difference(f, fetching_page->vaddr_start,
 								       fetching_page->vaddr_size, prot,
 								       MAP_FIXED
-								       | ((fetching_page->vm_flags
-									   & VM_DENYWRITE) ?
-									  MAP_DENYWRITE : 0)
+								       | ((fetching_page->vm_flags & VM_DENYWRITE) ? MAP_DENYWRITE : 0)
 								       /* Ported to Linux 3.12
-									  | ((fetching_page->vm_flags
-									  & VM_EXECUTABLE) ?
-									  MAP_EXECUTABLE : 0) */
-								       | ((fetching_page->vm_flags
-									   & VM_SHARED) ?
-									  MAP_SHARED : MAP_PRIVATE)
-								       | ((fetching_page->vm_flags
-									   & VM_HUGETLB) ?
-									  MAP_HUGETLB : 0),
+									  | ((fetching_page->vm_flags & VM_EXECUTABLE) ? MAP_EXECUTABLE : 0) */
+								       | ((fetching_page->vm_flags & VM_SHARED) ? MAP_SHARED : MAP_PRIVATE)
+								       | ((fetching_page->vm_flags & VM_HUGETLB) ? MAP_HUGETLB : 0),
 								       fetching_page->pgoff << PAGE_SHIFT);
 
+						if (current->mm->distribute_unmap == 1)
+							printk(KERN_ALERT"%s: ERROR: file backed value was already 1, check who is the older.\n", __func__);
 						current->mm->distribute_unmap = 1;
 
 						PSPRINTK("Map difference ended\n");
@@ -437,24 +452,13 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 							down_read(&mm->mmap_sem);
 							spin_lock(ptl);
 							/*PTE LOCKED*/
-							printk(
-								"%s: ERROR: error mapping file vma while fetching address %lx\n",
+							printk("%s: ERROR: error mapping file vma while fetching address %lx\n",
 								__func__, address);
 							ret = VM_FAULT_VMA;
 							return ret;
 						}
 					}
-				}
-				else {
-					up_write(&mm->mmap_sem);
-					down_read(&mm->mmap_sem);
-					spin_lock(ptl);
-					/*PTE LOCKED*/
-					printk("%s: ERROR: error while opening file %s\n",
-					       __func__, fetching_page->path);
-					ret = VM_FAULT_VMA;
-					return ret;
-				}
+
 
 				up_write(&mm->mmap_sem);
 				PSPRINTK("releasing lock write\n");
@@ -465,9 +469,11 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 				spin_lock(ptl);
 				/*PTE LOCKED*/
 			}
-		}
+		} //end not anonymous case
 		return 0;
-	}
+	} //end vma_present == 1 (this means that if vma_present == 0 there is no valid data?!)
+
+//NOTE this case is not handled and returns 0! (vma_present == 0)
 	return 0;
 }
 
@@ -902,6 +908,13 @@ static int handle_vma_op(struct pcn_kmsg_message* inc_msg)
 	return 1;
 }
 
+/* which are the locks help on entering this function?
+ * we are holding the mm->mmap_sem in write --- we are exiting with mmap_sem in write (hold) WE ARE NOT CHANGING IT
+ * getting in we have also mm->distribute_sem getting out we are releasing it if there are no operations anymore
+ * we are in down_read on the &entry->kernel_set_sem
+ *
+ * (check better but we are basically releasing both
+ */
 void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 {
 	int i;
@@ -931,6 +944,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 		return;
 	}
 	if (start_ret == VMA_OP_SAVE) {
+		int err;
 		/*if(operation!=VMA_OP_MAP ||operation!=VMA_OP_REMAP ||operation!=VMA_OP_BRK )
 		  printk("ERROR: asking for saving address from operation %i",operation);
 		*/
@@ -939,53 +953,62 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 
 		//now I have the new address I can send the message
 		if (entry->message_push_operation != NULL) {
-			if (operation == VMA_OP_MAP || operation == VMA_OP_BRK) {
+			switch (operation) {
+			case VMA_OP_MAP:
+			case VMA_OP_BRK:
 				if (current->main == 0)
 					printk("%s: ERROR: server not main asked to save operation\n", __func__);
 				entry->message_push_operation->addr = addr;
-			}
-			else {
-				if (operation == VMA_OP_REMAP) {
-					entry->message_push_operation->new_addr = addr;
-				} else
-					printk("%s: ERROR: asking for saving address from a wrong operation\n", __func__);
+				break;
+			case VMA_OP_REMAP:
+				entry->message_push_operation->new_addr = addr;
+				break;
+			default:
+				printk("%s: ERROR: asking for saving address from a wrong operation\n", __func__);
+				break;
 			}
 			up_write(&current->mm->mmap_sem);
 
-			if (operation == VMA_OP_MAP || operation == VMA_OP_BRK) {
-				int err = pcn_kmsg_send_long(entry->message_push_operation->from_cpu,
+			switch (operation) {
+			case VMA_OP_MAP:
+			case VMA_OP_BRK:
+				err = pcn_kmsg_send_long(entry->message_push_operation->from_cpu,
 										       (struct pcn_kmsg_long_message*) (entry->message_push_operation),
 										       sizeof(vma_operation_t) - sizeof(struct pcn_kmsg_hdr));
-				if (err == -1) {
-					printk("%s: ERROR: impossible to send operation to client in cpu %d\n", __func__,
-					       entry->message_push_operation->from_cpu);
-				}
+				if (err == -1)
+					printk("%s: ERROR: impossible to send operation %d to client in cpu %d\n",
+							__func__, operation, entry->message_push_operation->from_cpu);
 				else {
 					PSPRINTK("%s: INFO: operation %d sent to cpu %d\n",
-							__func__,operation, entry->message_push_operation->from_cpu);
-				}
-			}
-			else {
+							__func__, operation, entry->message_push_operation->from_cpu); }
+				break;
+			case VMA_OP_REMAP:
 				PSPRINTK("%s: INFO: sending operation %d to all\n",__func__,operation);
 				vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 0, 0);
+				break;
+			default:
+				//no action taken here (before refactoring wasn't like this
 			}
+
 			down_write(&current->mm->mmap_sem);
 			if (current->main == 0) {
 				kfree(entry->message_push_operation);
 				entry->message_push_operation = NULL;
 			}
 		}
-		else {
+		else { //here entry->message_push_operation == NULL
 			printk("%s: ERROR: Cannot find message to send in exit operation (cpu %d id %d)\n",
 					__func__, current->tgroup_home_cpu, current->tgroup_home_id);
 		}
 	}
 
-	if (current->mm->distr_vma_op_counter == 0) {
+/*****************************************************************************/
+/* Here the message has been sent already in case of VMA_OP_SAVE             */
+	if (current->mm->distr_vma_op_counter == 0) { // there are no nested operations (how I can be sure no one else it changing this here?
 		current->mm->thread_op = NULL;
 		entry->my_lock = 0;
 
-		if (!(operation == VMA_OP_MAP || operation == VMA_OP_BRK)) {
+		if (!(operation == VMA_OP_MAP || operation == VMA_OP_BRK)) { // operation is neither MAP nor BRK
 			PSVMAPRINTK("%s incrementing vma_operation_index\n",__func__);
 			current->mm->vma_operation_index++;
 			if (current->mm->vma_operation_index < 0)
@@ -996,14 +1019,12 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 		PSPRINTK("Releasing distributed lock\n");
 		up_write(&current->mm->distribute_sem);
 
-		if ( _cpu == current->tgroup_home_cpu &&
-				!(operation == VMA_OP_MAP || operation == VMA_OP_BRK) ) {
+		if ( _cpu == current->tgroup_home_cpu && !(operation == VMA_OP_MAP || operation == VMA_OP_BRK) ) {
 			up_read(&entry->kernel_set_sem);
 		}
-
 		wake_up(&request_distributed_vma_op);
 	}
-	else
+	else { // there are nested operations --- not all situations are handled
 		if (current->mm->distr_vma_op_counter == 1
 		    && _cpu == current->tgroup_home_cpu && current->main == 1) {
 
@@ -1037,6 +1058,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 							__func__, current->mm->vma_operation_index, current->tgroup_home_cpu, current->tgroup_home_id);
 			}
 		}
+	}
 	PSPRINTK("%s: operation index is %d\n", __func__, current->mm->vma_operation_index);
 }
 

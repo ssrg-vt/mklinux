@@ -2027,7 +2027,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	PSPRINTK("Out wait fetch %i address %lx\n", fetch, address);
 	//only the client has to update the vma
 	if (tgroup_home_cpu!=_cpu) {
-		ret = do_mapping_for_distributed_process(fetching_page, mm, address, ptl);
+		ret = do_mapping_for_distributed_process(fetching_page, mm, address, ptl); // defined in vma_server.c
 		if (ret != 0)
 			goto exit_fetch_message;
 		PSPRINTK("Mapping end\n");
