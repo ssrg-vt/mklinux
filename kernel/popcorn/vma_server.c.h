@@ -481,6 +481,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 }
 
 // THIS IS THE SERVER CODE (not about server/client as Marina wrote that is home/not home kernel)
+// currently a workqueue
 void process_vma_op(struct work_struct* work)
 {
 	vma_op_work_t* vma_work = (vma_op_work_t*) work;
@@ -546,22 +547,22 @@ void process_vma_op(struct work_struct* work)
 		//the main kernel thread will execute the local operation
 #else
 		//original code has concurrency errors -- this is similar to the client code (client code not in Marina's terms)
-		if (current->mm->distr_vma_op_counter < 0)
-			printk(KERN_ALERT"%s: ERROR: distr_vma_op_counter is %d", __func__, current->mm->distr_vma_op_counter);
+		if (mm->distr_vma_op_counter < 0)
+			printk(KERN_ALERT"%s: ERROR: distr_vma_op_counter is %d", __func__, mm->distr_vma_op_counter);
 		// ONLY ONE CAN BE IN DISTRIBUTED OPERATION AT THE TIME ... WHAT ABOUT NESTED OPERATIONS?
-		while (	atomic_cmpxchg((atomic_t*)&(current->mm->distr_vma_op_counter), 0, 1) != 0) { //success is indicated by comparing RETURN with OLD (arch/x86/include/asm/cmpxchg.h)
-			up_write(&current->mm->mmap_sem);
+		while (	atomic_cmpxchg((atomic_t*)&(mm->distr_vma_op_counter), 0, 1) != 0) { //success is indicated by comparing RETURN with OLD (arch/x86/include/asm/cmpxchg.h)
+			up_write(&mm->mmap_sem);
 
 			DEFINE_WAIT(wait);
 			prepare_to_wait(&request_distributed_vma_op, &wait, TASK_UNINTERRUPTIBLE);
-			if (current->mm->distr_vma_op_counter > 0) {
-				printk("%s: LOCK: Somebody already started a distributed operation (current->mm->thread_op->pid is %d). I am pid %d and I am going to sleep (cpu %d id %d)\n",
-						__func__,current->mm->thread_op->pid,current->pid, current->tgroup_home_cpu, current->tgroup_home_id);
+			if (mm->distr_vma_op_counter > 0) {
+				printk("%s: LOCK: Somebody already started a distributed operation (mm->thread_op->pid %d). I am pid worker %d and I am going to sleep.\n",
+						__func__, mm->thread_op->pid, current->pid);
 				schedule();
 			}
 			finish_wait(&request_distributed_vma_op, &wait);
 
-			down_write(&current->mm->mmap_sem);
+			down_write(&mm->mmap_sem);
 		}
 		// here the distr_vma_op_counter is ours so let's check only the was_not_pushed
 		if (mm->was_not_pushed != 0) {
