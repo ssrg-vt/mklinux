@@ -92,7 +92,7 @@ vma_operation_t * vma_operation_alloc(struct task_struct * task, int op_id,
 /* Marina's data store handling                                              */
 /*****************************************************************************/
 
-vma_op_answer_t * vma_op_answer_alloc(struct task_struct * task, index)
+vma_op_answers_t * vma_op_answer_alloc(struct task_struct * task, int index)
 {
 	vma_op_answers_t* acks = (vma_op_answers_t*) kmalloc(sizeof(vma_op_answers_t), GFP_ATOMIC);
 	if (!acks)
@@ -133,17 +133,17 @@ while (memory->operation != VMA_OP_NOP) { 			\
  * BUT THERE IS ONLY ONE FOR THE ENTIRE SYSTEM!!!
  */
 #define WAIT_FOR_BUDDY() \
-		while (mm->distr_vma_op_counter > 0) {
-			printk("%s, A distributed operation already started, going to sleep\n",__func__);
-			up_write(&mm->mmap_sem);
-			DEFINE_WAIT(wait);
-			prepare_to_wait(&request_distributed_vma_op, &wait,
-					TASK_UNINTERRUPTIBLE);
-			if (mm->distr_vma_op_counter > 0) {
-				schedule();
-			}
-			finish_wait(&request_distributed_vma_op, &wait);
-			down_write(&mm->mmap_sem);
+		while (mm->distr_vma_op_counter > 0) { \
+			printk("%s, A distributed operation already started, going to sleep\n",__func__); \
+			up_write(&mm->mmap_sem); \
+			DEFINE_WAIT(wait); \
+			prepare_to_wait(&request_distributed_vma_op, &wait, \
+					TASK_UNINTERRUPTIBLE); \
+			if (mm->distr_vma_op_counter > 0) { \
+				schedule(); \
+			} \
+			finish_wait(&request_distributed_vma_op, &wait); \
+			down_write(&mm->mmap_sem); \
 		}
 
 #define WAKE_UP_BUDDY() \
@@ -918,8 +918,6 @@ static int handle_vma_op(struct pcn_kmsg_message* inc_msg)
  */
 void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 {
-	int i;
-
 	if (current->mm->distribute_unmap == 0)
 		return;
 
@@ -988,7 +986,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 				vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 0, 0);
 				break;
 			default:
-				//no action taken here (before refactoring wasn't like this
+				{} //no action taken here (before refactoring wasn't like this
 			}
 
 			down_write(&current->mm->mmap_sem);
@@ -1209,7 +1207,7 @@ start:
 		//SERVER MAIN (counter <= 2 <<< recursive)
 		if (current->main == 1 && !(current->mm->distr_vma_op_counter>2)) {
 			/* I am the main thread=> a client asked me to do an operation. */
-			int i, error;
+			int error;
 			int index = current->mm->vma_operation_index; //(current->mm->vma_operation_index)++;
 			PSPRINTK("SERVER MAIN: starting operation %d, current index is %d\n", operation, index);
 
@@ -1310,9 +1308,9 @@ start:
 			}
 		}
 		else { //SERVER not main
-			int i, error;
-
-			if () ///ERROR IF I AM NOT MAIN - do this check because there can be a possibility of >2 counter
+			if (current->main != 0) ///ERROR IF I AM NOT MAIN - do this check because there can be a possibility of >2 counter
+				printk(KERN_ALERT"%s: WARN?ERROR: Server not main operation but curr->main is %d\n",
+					__func__, current->main);
 
 			PSPRINTK("%s: SERVER NOT MAIN starting operation %d for pid %d current index is %d\n",
 					__func__, operation, current->pid, current->mm->vma_operation_index);

@@ -1568,7 +1568,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 		//          created on a user context
 		/*return_value = kernel_thread(create_kernel_thread_for_distributed_process_from_user_one,
 		  entry, CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | SIGCHLD);*/
-		kthread_main = kernel_thread_popcorn(create_kernel_thread_for_distributed_process_from_user_one,
+		kthread_main = (struct task_struct *) kernel_thread_popcorn(create_kernel_thread_for_distributed_process_from_user_one,
 						     entry, CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | SIGCHLD);
 	}
 
@@ -2227,7 +2227,6 @@ out:
  */
 static int __init process_server_init(void)
 {
-	int i;
 	uint16_t copy_cpu;
 
 	printk(KERN_INFO"Popcorn with user data replication\n");
