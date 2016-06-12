@@ -116,6 +116,35 @@ vma_op_answers_t * vma_op_answer_alloc(struct task_struct * task, int index)
 			remove_vma_ack_entry(acks); /// who is disposing this?!
  */
 
+// TODO
+#ifdef 0
+//wake up the main thread to execute the operation locally
+memory->message_push_operation = operation;
+memory->addr = operation->addr;
+memory->len = operation->len;
+memory->prot = operation->prot;
+memory->new_addr = operation->new_addr;
+memory->new_len = operation->new_len;
+memory->flags = operation->flags;
+memory->pgoff = operation->pgoff;
+strcpy(memory->path, operation->path);
+memory->waiting_for_main = current;
+//This is the field check by the main thread
+//so it is the last one to be populated
+memory->operation = operation->operation;
+wake_up_process(memory->main);
+PSPRINTK("%s,SERVER: woke up the main\n",__func__);
+
+while (memory->operation != VMA_OP_NOP) {
+	set_task_state(current, TASK_UNINTERRUPTIBLE);
+	if (memory->operation != VMA_OP_NOP) {
+		schedule();
+	}
+	set_task_state(current, TASK_RUNNING);
+}
+PSPRINTK("%s,SERVER: woke up the main1\n",__func__);
+#endif
+
 /*****************************************************************************/
 /* wait functions                                                            */
 /*****************************************************************************/
@@ -1104,7 +1133,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 // TODO review nesting
 	/*All the operation pushed by the server are executed as not distributed in clients*/
 	if (current->mm->distribute_unmap == 0) {
-		printk(KERN_ALERT"%s: INFO: vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lx len %lx end %lx RETURNING\n",
+		PSPRINTK(KERN_ALERT"%s: INFO: vma operation for pid %i tgroup_home_cpu %i tgroup_home_id %i main %d operation %i addr %lx len %lx end %lx RETURNING\n",
 				__func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
 		return ret;
 	}
@@ -1367,14 +1396,15 @@ start:
 			if (entry==NULL) {
 				printk("%s: ERROR: Mapping disappeared, cannot save message to update by exit_distribute_operation (cpu %d id %d)\n",
 						__func__, current->tgroup_home_cpu, current->tgroup_home_id);
-				kfree(lock_message);
+
+				remove_vma_ack_entry(acks);
 				kfree(acks);
+				kfree(lock_message);
 				down_write(&current->mm->mmap_sem);
 				ret = -EPERM;
 				goto out;
 			}
 
-			add_vma_ack_entry(acks);
 			down_read(&entry->kernel_set_sem);
 			acks->expected_responses = vma_send_long_all(entry, lock_message, sizeof(vma_lock_t), 0, 0);
 
@@ -1393,7 +1423,7 @@ start:
 			raw_spin_unlock_irqrestore(&(acks->lock), flags);
 			remove_vma_ack_entry(acks);
 /*****************************************************************************/
-/* Locking and Acking                                                        */
+/* Locking and Acking --- END---                                             */
 /*****************************************************************************/
 
 			vma_operation_t* operation_to_send = vma_operation_alloc(current, operation,
