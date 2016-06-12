@@ -254,16 +254,16 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 	unsigned long vm_flags = VM_READ | VM_WRITE | VM_EXEC;
 	unsigned int mm_flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
 
-	//tsk = current;
 	//Ajith - Multikernel changes taken from X86
 	tsk = (current->surrogate == -1) ? current : 
 		pid_task(find_get_pid(current->surrogate), PIDTYPE_PID);
-
-	if(tsk->tgroup_distributed==1 && tsk->main==1){
-		printk("ERROR: main is having a page fault\n");
-	}
-
 	mm  = tsk->mm;
+
+	if (tsk->tgroup_distributed==1 && tsk->main==1) {
+		printk("%s: ERROR: main page fault @ 0x%lx esr 0x%x\n",
+				__func__, addr, esr);
+		dump_stack();
+	}
 
 	/* Enable interrupts if they were enabled in the parent context. */
 	if (interrupts_enabled(regs))
