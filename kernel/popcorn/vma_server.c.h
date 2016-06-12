@@ -97,6 +97,7 @@ vma_op_answers_t * vma_op_answer_alloc(struct task_struct * task, int index)
 	vma_op_answers_t* acks = (vma_op_answers_t*) kmalloc(sizeof(vma_op_answers_t), GFP_ATOMIC);
 	if (!acks)
 		return NULL;
+	memset(acks, 0, sizeof(vma_op_answer_t));
 
 	acks->tgroup_home_cpu = task->tgroup_home_cpu;
 	acks->tgroup_home_id = task->tgroup_home_id;
@@ -113,7 +114,7 @@ vma_op_answers_t * vma_op_answer_alloc(struct task_struct * task, int index)
  unsigned long flags;
 			raw_spin_lock_irqsave(&(acks->lock), flags);
 			raw_spin_unlock_irqrestore(&(acks->lock), flags);
-			remove_vma_ack_entry(acks); /// who is disposing this?!
+			remove_vma_ack_entry(acks);
  */
 
 // TODO
@@ -1232,8 +1233,9 @@ start:
 	if (operation == VMA_OP_MAP || operation == VMA_OP_BRK) {
 		current->mm->was_not_pushed++;
 	}
+
+//SERVER MAIN (counter <= 2 <<< recursive) ////////////////////////////////////
 	if (server) {
-		//SERVER MAIN (counter <= 2 <<< recursive)
 		if (current->main == 1 && !(current->mm->distr_vma_op_counter>2)) {
 			/* I am the main thread=> a client asked me to do an operation. */
 			int error;
@@ -1253,6 +1255,7 @@ start:
 /*****************************************************************************/
 /* Locking and Acking                                                        */
 /*****************************************************************************/
+			{
 			//First: send a message to everybody to acquire the lock to block page faults
 			vma_lock_t* lock_message = vma_lock_alloc(current, entry->message_push_operation->from_cpu, index);
 			if (lock_message == NULL) {
@@ -1295,12 +1298,11 @@ start:
 			unsigned long flags;
 			raw_spin_lock_irqsave(&(acks->lock), flags);
 			raw_spin_unlock_irqrestore(&(acks->lock), flags);
-			remove_vma_ack_entry(acks); /// who is disposing this?!
-/*****************************************************************************/
-/* Locking and Acking                                                        */
-/*****************************************************************************/
+			remove_vma_ack_entry(acks);
+			kfree(acks);
+			kfree(lock_message);
+			}
 
-			entry->message_push_operation->vma_operation_index = index;
 
 			/*I acquire the lock to block page faults too
 			 *Important: this should happen before sending the push message or executing the operation*/
@@ -1308,6 +1310,11 @@ start:
 				down_write(&current->mm->distribute_sem);
 				PSVMAPRINTK("local distributed lock acquired\n");
 			}
+/*****************************************************************************/
+/* Locking and Acking --- END ---                                            */
+/*****************************************************************************/
+
+			entry->message_push_operation->vma_operation_index = index;
 
 			/* Third: push the operation to everybody
 			 * If the operation was a mmap,brk or remap without fixed parameters, I cannot let other kernels
@@ -1321,8 +1328,6 @@ start:
 						__func__, operation, flags, flags & MREMAP_FIXED);
 
 				vma_send_long_all(entry, (entry->message_push_operation), sizeof(vma_operation_t), 0, 0);
-				kfree(lock_message);
-				kfree(acks);
 				down_write(&current->mm->mmap_sem);
 				return ret;
 			}
@@ -1330,13 +1335,12 @@ start:
 				PSPRINTK("%s: INFO: SERVER MAIN going to execute the operation locally %d\n",
 						__func__, operation);
 
-				kfree(lock_message);
-				kfree(acks);
 				down_write(&current->mm->mmap_sem);
 				return VMA_OP_SAVE;
 			}
 		}
-		else { //SERVER not main
+//SERVER not main//////////////////////////////////////////////////////////////
+		else {
 			if (current->main != 0) ///ERROR IF I AM NOT MAIN - do this check because there can be a possibility of >2 counter
 				printk(KERN_ALERT"%s: WARN?ERROR: Server not main operation but curr->main is %d\n",
 					__func__, current->main);
@@ -1375,6 +1379,7 @@ start:
 /*****************************************************************************/
 /* Locking and Acking                                                        */
 /*****************************************************************************/
+			{
 			/*First: send a message to everybody to acquire the lock to block page faults*/
 			vma_lock_t* lock_message = vma_lock_alloc(current, _cpu, index);
 			if (lock_message == NULL) {
@@ -1422,19 +1427,8 @@ start:
 			raw_spin_lock_irqsave(&(acks->lock), flags);
 			raw_spin_unlock_irqrestore(&(acks->lock), flags);
 			remove_vma_ack_entry(acks);
-/*****************************************************************************/
-/* Locking and Acking --- END---                                             */
-/*****************************************************************************/
-
-			vma_operation_t* operation_to_send = vma_operation_alloc(current, operation,
-					addr, new_addr, len, new_len, prot, flags, index);
-			if (operation_to_send == NULL) {
-				down_write(&current->mm->mmap_sem);
-				up_read(&entry->kernel_set_sem);
-				kfree(lock_message);
-				kfree(acks);
-				ret = -ENOMEM;
-				goto out;
+			kfree(acks);
+			kfree(lock_message);
 			}
 
 			/*I acquire the lock to block page faults too
@@ -1443,6 +1437,21 @@ start:
 				down_write(&current->mm->distribute_sem);
 				PSVMAPRINTK("Distributed lock acquired locally\n");
 			}
+/*****************************************************************************/
+/* Locking and Acking --- END---                                             */
+/*****************************************************************************/
+
+			vma_operation_t* operation_to_send = vma_operation_alloc(current, operation,
+					addr, new_addr, len, new_len, prot, flags, index);
+			if (operation_to_send == NULL) {
+				if (current->mm->distr_vma_op_counter == 1)
+					up_write(&current->mm->distribute_sem);
+				down_write(&current->mm->mmap_sem);
+				up_read(&entry->kernel_set_sem);
+				ret = -ENOMEM;
+				goto out;
+			}
+
 			/* Third: push the operation to everybody
 			 * If the operation was a remap without fixed parameters, I cannot let other kernels
 			 * locally choose where to remap it =>
@@ -1454,9 +1463,7 @@ start:
 						__func__, operation);
 
 				vma_send_long_all(entry, operation_to_send, sizeof(vma_operation_t), 0, 0);
-				kfree(lock_message);
 				kfree(operation_to_send);
-				kfree(acks);
 				down_write(&current->mm->mmap_sem);
 				return ret;
 			}
@@ -1465,8 +1472,6 @@ start:
 						__func__, operation);
 				entry->message_push_operation = operation_to_send;
 
-				kfree(lock_message);
-				kfree(acks);
 				down_write(&current->mm->mmap_sem);
 				return VMA_OP_SAVE;
 			}
