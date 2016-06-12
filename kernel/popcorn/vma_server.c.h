@@ -97,7 +97,7 @@ vma_op_answers_t * vma_op_answer_alloc(struct task_struct * task, int index)
 	vma_op_answers_t* acks = (vma_op_answers_t*) kmalloc(sizeof(vma_op_answers_t), GFP_ATOMIC);
 	if (!acks)
 		return NULL;
-	memset(acks, 0, sizeof(vma_op_answer_t));
+	memset(acks, 0, sizeof(vma_op_answers_t));
 
 	acks->tgroup_home_cpu = task->tgroup_home_cpu;
 	acks->tgroup_home_id = task->tgroup_home_id;
@@ -118,7 +118,7 @@ vma_op_answers_t * vma_op_answer_alloc(struct task_struct * task, int index)
  */
 
 // TODO
-#ifdef 0
+#if 0
 //wake up the main thread to execute the operation locally
 memory->message_push_operation = operation;
 memory->addr = operation->addr;
@@ -1379,6 +1379,7 @@ start:
 /*****************************************************************************/
 /* Locking and Acking                                                        */
 /*****************************************************************************/
+			memory_t* entry = NULL;
 			{
 			/*First: send a message to everybody to acquire the lock to block page faults*/
 			vma_lock_t* lock_message = vma_lock_alloc(current, _cpu, index);
@@ -1396,7 +1397,8 @@ start:
 				goto out;
 			}
 
-			memory_t* entry = find_memory_entry(current->tgroup_home_cpu,
+			//memory_t* //TODO see if you can take this out from here
+			entry = find_memory_entry(current->tgroup_home_cpu,
 							    current->tgroup_home_id);
 			if (entry==NULL) {
 				printk("%s: ERROR: Mapping disappeared, cannot save message to update by exit_distribute_operation (cpu %d id %d)\n",
