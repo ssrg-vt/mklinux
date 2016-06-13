@@ -887,8 +887,13 @@ fetch:
 
 		//invalid page case
 		if (page->status == REPLICATION_STATUS_INVALID) {
-			printk("%s: ERROR: received a request in invalid status without reading or writing (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+			printk("%s: ERROR: received a request in invalid status without reading or writing (cpu %d id %d address 0x%lx) w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+					page->writing, page->reading,
+					(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+						((page->status == REPLICATION_STATUS_VALID) ? "V" :
+						((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+						((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
 			goto out;
 		}
 
@@ -897,8 +902,13 @@ fetch:
 			PSPRINTK("Page requested valid\n");
 
 			if (page->owner!=1) {
-				printk("%s: ERROR: request in a not owner valid page (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+				printk("%s: ERROR: request in a not owner valid page (cpu %d id %d address 0x%lx)w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+					page->writing, page->reading,
+					(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+							((page->status == REPLICATION_STATUS_VALID) ? "V" :
+							((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+							((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
 			}
 			else {
 				if (request->is_write) {
@@ -921,8 +931,13 @@ fetch:
 					flush_tlb_fix_spurious_fault(vma, address);
 				}
 				else {
-					printk("%s: ERROR: received a read request in valid status (cpu %d id %d address 0x%lx)\n",
-							__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+					printk("%s: ERROR: received a read request in valid status (cpu %d id %d address 0x%lx)w:%dr:%ds:%s\n",
+							__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+							page->writing, page->reading,
+							(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+									((page->status == REPLICATION_STATUS_VALID) ? "V" :
+											((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+													((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
 				}
 			}
 			goto out;
@@ -932,8 +947,13 @@ fetch:
 			PSPRINTK("Page requested in written status\n");
 
 			if (page->owner!=1) {
-				printk("%s: ERROR: page in written status without ownership (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+				printk("%s: ERROR: page in written status without ownership (cpu %d id %d address 0x%lx) w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+					page->writing, page->reading,
+					(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+							((page->status == REPLICATION_STATUS_VALID) ? "V" :
+							((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+							((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
 			}
 			else {
 				if (request->is_write==1) {
