@@ -1181,7 +1181,7 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 	}
 	printk("%s: INFO: pid %d tgroup_home_cpu %d tgroup_home_id %d main %d operation %s addr %lx len %lx end %lx index %d\n",
 		    __func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0,
-		    (operation == VMA_OP_NOP) ? "NOP" : ((operation == VMA_OP_UMAP) ? "UNMAP" : ((operation == VMA_OP_PROTECT) ? "PROTECT" : (
+		    (operation == VMA_OP_NOP) ? "NOP" : ((operation == VMA_OP_UNMAP) ? "UNMAP" : ((operation == VMA_OP_PROTECT) ? "PROTECT" : (
 		    						(operation == VMA_OP_REMAP) ? "REMAP" : ((operation == VMA_OP_MAP) ? "MAP" : ((operation == VMA_OP_BRK) ? "BRK" : "?"))))),
 		    addr, len, addr+len, current->mm->vma_operation_index);
 
