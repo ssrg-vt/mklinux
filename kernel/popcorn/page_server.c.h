@@ -512,8 +512,9 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 #if STATISTICS
 	request_data++;
 #endif
-	printk("%s: INFO: Request address %lx is fetch %i is write %i\n",
-			__func__, request->address, ((request->is_fetch==1)?1:0), ((request->is_write==1)?1:0));
+	PSPRINTK("%s: INFO: Request address 0x%lx is_fetch:%i is_write:%i idx:%i\n",
+			__func__, request->address,
+			((request->is_fetch==1)?1:0), ((request->is_write==1)?1:0), request->vma_operation_index);
 
 	memory = find_memory_entry(request->tgroup_home_cpu, request->tgroup_home_id);
 	if (memory != NULL) {
@@ -530,6 +531,10 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 		owner=1;
 		goto out;
 	}
+	printk("%s: INFO: Request address 0x%lx is_fetch:%d is_write:%d idx:%d mm_idx:%d\n",
+			__func__, request->address,
+			((request->is_fetch==1)?1:0), ((request->is_write==1)?1:0),
+			request->vma_operation_index, mm->vma_operation_index);
 
 	down_read(&mm->mmap_sem);
 	/*
