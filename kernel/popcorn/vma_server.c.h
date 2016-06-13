@@ -1243,10 +1243,10 @@ start:
 			PSPRINTK("SERVER MAIN: starting operation %d, current index is %d\n", operation, index);
 
 			up_write(&current->mm->mmap_sem);
-			memory_t* entry = find_memory_entry(current->tgroup_home_cpu,
-							    current->tgroup_home_id);
+			memory_t* entry = find_memory_entry(current->tgroup_home_cpu, current->tgroup_home_id);
 			if (entry == NULL || entry->message_push_operation == NULL) {
-				printk("%s: ERROR: Mapping disappeared or cannot find message to update\n", __func__);
+				printk("%s: ERROR: Mapping disappeared or cannot find message to update(cpu %d id %d)\n",
+						__func__, current->tgroup_home_cpu, current->tgroup_home_id);
 				down_write(&current->mm->mmap_sem);
 				ret = -ENOMEM;
 				goto out;
@@ -1302,7 +1302,6 @@ start:
 			kfree(acks);
 			kfree(lock_message);
 			}
-
 
 			/*I acquire the lock to block page faults too
 			 *Important: this should happen before sending the push message or executing the operation*/
@@ -1375,11 +1374,18 @@ start:
 			/*Important: while I am waiting for the acks to the LOCK message
 			 * mmap_sem have to be unlocked*/
 			up_write(&current->mm->mmap_sem);
+			memory_t* entry = find_memory_entry(current->tgroup_home_cpu, current->tgroup_home_id);
+			if (entry==NULL) {
+				printk("%s: ERROR: Mapping disappeared, cannot save message to update by exit_distribute_operation (cpu %d id %d)\n",
+						__func__, current->tgroup_home_cpu, current->tgroup_home_id);
+				down_write(&current->mm->mmap_sem);
+				ret = -EPERM;
+				goto out;
+			}
 
 /*****************************************************************************/
 /* Locking and Acking                                                        */
 /*****************************************************************************/
-			memory_t* entry = NULL;
 			{
 			/*First: send a message to everybody to acquire the lock to block page faults*/
 			vma_lock_t* lock_message = vma_lock_alloc(current, _cpu, index);
@@ -1397,21 +1403,7 @@ start:
 				goto out;
 			}
 
-			//memory_t* //TODO see if you can take this out from here
-			entry = find_memory_entry(current->tgroup_home_cpu,
-							    current->tgroup_home_id);
-			if (entry==NULL) {
-				printk("%s: ERROR: Mapping disappeared, cannot save message to update by exit_distribute_operation (cpu %d id %d)\n",
-						__func__, current->tgroup_home_cpu, current->tgroup_home_id);
-
-				remove_vma_ack_entry(acks);
-				kfree(acks);
-				kfree(lock_message);
-				down_write(&current->mm->mmap_sem);
-				ret = -EPERM;
-				goto out;
-			}
-
+//ANTONIOB: why here we are not distinguish between different type of operations?
 			down_read(&entry->kernel_set_sem);
 			acks->expected_responses = vma_send_long_all(entry, lock_message, sizeof(vma_lock_t), 0, 0);
 
@@ -1480,7 +1472,7 @@ start:
 		}
 	}
 /*****************************************************************************/
-/* client                                                                    */
+/* client (only one case)                                                    */
 /*****************************************************************************/
 	else {
 		PSPRINTK("%s: INFO: CLIENT starting operation %i for pid %d current index is%d\n",
