@@ -88,6 +88,47 @@ vma_operation_t * vma_operation_alloc(struct task_struct * task, int op_id,
 	return operation;
 }
 
+#if 0
+//TODO --- questo stesso codice ce due volte in process_vma_operation
+vma_operation_copy
+mm->thread_op = memory->main;
+
+if (operation->operation == VMA_OP_MAP
+    || operation->operation == VMA_OP_BRK) {
+	mm->was_not_pushed++;
+}
+up_write(&mm->mmap_sem);
+
+//wake up the main thread to execute the operation locally
+memory->message_push_operation = operation;
+memory->addr = operation->addr;
+memory->len = operation->len;
+memory->prot = operation->prot;
+memory->new_addr = operation->new_addr;
+memory->new_len = operation->new_len;
+memory->flags = operation->flags;
+memory->pgoff = operation->pgoff;
+strcpy(memory->path, operation->path);
+memory->waiting_for_main = current;
+//This is the field check by the main thread
+//so it is the last one to be populated
+memory->operation = operation->operation;
+wake_up_process(memory->main);
+PSPRINTK("%s,SERVER: woke up the main\n",__func__);
+
+while (memory->operation != VMA_OP_NOP) {
+	set_task_state(current, TASK_UNINTERRUPTIBLE);
+	if (memory->operation != VMA_OP_NOP) {
+		schedule();
+	}
+	set_task_state(current, TASK_RUNNING);
+}
+PSPRINTK("%s,SERVER: woke up the main1\n",__func__);
+
+down_write(&mm->mmap_sem);
+PSPRINTK("%s,SERVER: woke up the main2\n",__func__);
+#endif
+
 /*****************************************************************************/
 /* Marina's data store handling                                              */
 /*****************************************************************************/
@@ -951,7 +992,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 	if (current->mm->distribute_unmap == 0)
 		return;
 
-	PSPRINTK("%s: Ending distributed vma operation %i pid %d\n", __func__, operation,current->pid);
+	printk("%s: INFO: Ending distributed vma operation %i pid %d counter %d\n", __func__, operation,current->pid, current->mm->distr_vma_op_counter);
 	if (current->mm->distr_vma_op_counter <= 0
 	    || (current->main == 0 && current->mm->distr_vma_op_counter > 2)
 	    || (current->main == 1 && current->mm->distr_vma_op_counter > 3))
@@ -1138,9 +1179,11 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 				__func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
 		return ret;
 	}
-	PSPRINTK("%s: INFO: pid %d tgroup_home_cpu %d tgroup_home_id %d main %d operation %i addr %lx len %lx end %lx index %d\n",
+	printk("%s: INFO: pid %d tgroup_home_cpu %d tgroup_home_id %d main %d operation %s addr %lx len %lx end %lx index %d\n",
 		    __func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0,
-		    operation, addr, len, addr+len, current->mm->vma_operation_index);
+		    (operation == VMA_OP_NOP) ? "NOP" : ((operation == VMA_OP_UMAP) ? "UNMAP" : ((operation == VMA_OP_PROTECT) ? "PROTECT" : (
+		    						(operation == VMA_OP_REMAP) ? "REMAP" : ((operation == VMA_OP_MAP) ? "MAP" : ((operation == VMA_OP_BRK) ? "BRK" : "?"))))),
+		    addr, len, addr+len, current->mm->vma_operation_index);
 
 	/*only server can have legal distributed nested operations*/
 	if ((current->mm->distr_vma_op_counter > 0) && (current->mm->thread_op == current)) {

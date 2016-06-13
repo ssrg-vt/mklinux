@@ -843,9 +843,14 @@ fetch:
 		PSPRINTK("Page replicated...\n");
 
 		if (request->is_fetch==1) {
-			printk("%s: ERROR: received a fetch request in a replicated status (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
-					//BUG(); // TODO removed for debugging but really needed here
+			printk("%s: ERROR: received a fetch request in a replicated status (cpu %d id %d address 0x%lx) w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address
+					page->writing, page->reading,
+					(page->status == REPLCIATION_STATUS_INVALID) ? "I" :
+							((page->status == REPLCIATION_STATUS_VALID) ? "V" :
+							((page->status == REPLCIATION_STATUS_WRITTEN) ? "W" :
+							((page->status == REPLCIATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
+			//BUG(); // TODO removed for debugging but really needed here
 		}
 		if (page->writing==1) {
 			PSPRINTK("Page currently in writing\n");
@@ -869,8 +874,14 @@ fetch:
 			return;
 		}
 		if (page->reading==1) {
-			printk("%s: ERROR: page in reading but received a request (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+			printk("%s: ERROR: page in reading but received a request (cpu %d id %d address 0x%lx) w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address
+					page->writing, page->reading,
+					(page->status == REPLCIATION_STATUS_INVALID) ? "I" :
+							((page->status == REPLCIATION_STATUS_VALID) ? "V" :
+							((page->status == REPLCIATION_STATUS_WRITTEN) ? "W" :
+							((page->status == REPLCIATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
+			//BUG(); // TODO removed for debugging but really needed here
 			goto out;
 		}
 
