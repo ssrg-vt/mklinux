@@ -1481,7 +1481,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		}
 	}
 	else {
-		printk("%s: ERROR: impossible to send read message, no destination kernel (cpu %d id %d)n",
+		printk("%s: ERROR: impossible to send read message, no destination kernel (cpu %d id %d)\n",
 				__func__, tgroup_home_cpu, tgroup_home_id);
 		ret= VM_FAULT_REPLICATION_PROTOCOL;
 		down_read(&mm->mmap_sem);
@@ -1495,16 +1495,16 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 	vma = find_vma(mm, address);
 	if (unlikely(!vma || address >= vma->vm_end || address < vma->vm_start)) {
-		printk("%s: ERROR: vma not valid during read for write (cpu %d id %d address 0x%lx)\n",
-				__func__, tgroup_home_cpu, tgroup_home_id, address);
+		printk("%s: ERROR: vma not valid during read for write (cpu %d id %d address 0x%lx) fault_flag:0x%lx\n",
+				__func__, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags);
 		ret = VM_FAULT_VMA;
 		goto exit_reading_page;
 	}
 
 	if (reading_page->address_present==1) {
 		if (reading_page->data->address != address) {
-			printk("%s: ERROR: trying to copy wrong address! (cpu %d id %d address 0x%lx)\n",
-				__func__, tgroup_home_cpu, tgroup_home_id, address);
+			printk("%s: ERROR: trying to copy wrong address! (cpu %d id %d address 0x%lx) fault_flag:0x%lx\n",
+				__func__, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags);
 			pcn_kmsg_free_msg(reading_page->data);
 			ret = VM_FAULT_REPLICATION_PROTOCOL;
 			goto exit_reading_page;
