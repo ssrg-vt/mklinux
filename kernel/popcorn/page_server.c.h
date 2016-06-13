@@ -512,7 +512,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 #if STATISTICS
 	request_data++;
 #endif
-	PSPRINTK("%s: Request address %lx is fetch %i is write %i\n",
+	printk("%s: INFO: Request address %lx is fetch %i is write %i\n",
 			__func__, request->address, ((request->is_fetch==1)?1:0), ((request->is_write==1)?1:0));
 
 	memory = find_memory_entry(request->tgroup_home_cpu, request->tgroup_home_id);
