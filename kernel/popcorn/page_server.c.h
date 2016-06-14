@@ -520,8 +520,9 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 #if STATISTICS
 	request_data++;
 #endif
-	PSPRINTK("%s: Request address %lx is fetch %i is write %i\n",
-			__func__, request->address, ((request->is_fetch==1)?1:0), ((request->is_write==1)?1:0));
+	PSPRINTK("%s: INFO: Request address 0x%lx is_fetch:%i is_write:%i idx:%i\n",
+			__func__, request->address,
+			((request->is_fetch==1)?1:0), ((request->is_write==1)?1:0), request->vma_operation_index);
 
 	memory = find_memory_entry(request->tgroup_home_cpu, request->tgroup_home_id);
 	if (memory != NULL) {
@@ -538,6 +539,10 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 		owner=1;
 		goto out;
 	}
+	printk("%s: INFO: Request address 0x%lx is_fetch:%d is_write:%d idx:%d mm_idx:%d\n",
+			__func__, request->address,
+			((request->is_fetch==1)?1:0), ((request->is_write==1)?1:0),
+			request->vma_operation_index, mm->vma_operation_index);
 
 	down_read(&mm->mmap_sem);
 	/*
@@ -764,7 +769,7 @@ fetch:
 			//if the page is writable but the pte has not the write flag set, it is a cow page
 			if (!pte_write(entry)) {
 
-			retry_cow:
+retry_cow:
 				PSPRINTK("COW page at %lx\n", address);
 
 				int ret= do_wp_page_for_popcorn(mm, vma,address, pte,pmd,ptl, entry);
@@ -831,6 +836,7 @@ fetch:
 				page->owner= 0;
 			}
 			page->last_write= 1;
+			printk("%s: INFO putting page 0x%lx last_write to 1 @0x%lx VM_WRITE\n", __func__, (unsigned long)page, request->address);
 
 #if defined(CONFIG_ARM64)
 			entry = pte_set_user_access_flag(entry);
@@ -875,9 +881,14 @@ fetch:
 		PSPRINTK("Page replicated...\n");
 
 		if (request->is_fetch==1) {
-			printk("%s: ERROR: received a fetch request in a replicated status (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
-					//BUG(); // TODO removed for debugging but really needed here
+			printk("%s: ERROR: received a fetch request in a replicated status (cpu %d id %d address 0x%lx) w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+					page->writing, page->reading,
+					(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+							((page->status == REPLICATION_STATUS_VALID) ? "V" :
+							((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+							((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
+			//BUG(); // TODO removed for debugging but really needed here
 		}
 		if (page->writing==1) {
 			PSPRINTK("Page currently in writing\n");
@@ -901,15 +912,26 @@ fetch:
 			return;
 		}
 		if (page->reading==1) {
-			printk("%s: ERROR: page in reading but received a request (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+			printk("%s: ERROR: page in reading but received a request (cpu %d id %d address 0x%lx) w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+					page->writing, page->reading,
+					(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+							((page->status == REPLICATION_STATUS_VALID) ? "V" :
+							((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+							((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
+			//BUG(); // TODO removed for debugging but really needed here
 			goto out;
 		}
 
 		//invalid page case
 		if (page->status == REPLICATION_STATUS_INVALID) {
-			printk("%s: ERROR: received a request in invalid status without reading or writing (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+			printk("%s: ERROR: received a request in invalid status without reading or writing (cpu %d id %d address 0x%lx) w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+					page->writing, page->reading,
+					(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+						((page->status == REPLICATION_STATUS_VALID) ? "V" :
+						((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+						((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
 			goto out;
 		}
 
@@ -918,8 +940,13 @@ fetch:
 			PSPRINTK("Page requested valid\n");
 
 			if (page->owner!=1) {
-				printk("%s: ERROR: request in a not owner valid page (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+				printk("%s: ERROR: request in a not owner valid page (cpu %d id %d address 0x%lx)w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+					page->writing, page->reading,
+					(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+							((page->status == REPLICATION_STATUS_VALID) ? "V" :
+							((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+							((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
 			}
 			else {
 				if (request->is_write) {
@@ -947,8 +974,13 @@ fetch:
 					flush_tlb_fix_spurious_fault(vma, address);
 				}
 				else {
-					printk("%s: ERROR: received a read request in valid status (cpu %d id %d address 0x%lx)\n",
-							__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+					printk("%s: ERROR: received a read request in valid status (cpu %d id %d address 0x%lx)w:%dr:%ds:%s\n",
+							__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+							page->writing, page->reading,
+							(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+									((page->status == REPLICATION_STATUS_VALID) ? "V" :
+											((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+													((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
 				}
 			}
 			goto out;
@@ -958,8 +990,13 @@ fetch:
 			PSPRINTK("Page requested in written status\n");
 
 			if (page->owner!=1) {
-				printk("%s: ERROR: page in written status without ownership (cpu %d id %d address 0x%lx)\n",
-					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address);
+				printk("%s: ERROR: page in written status without ownership (cpu %d id %d address 0x%lx) w:%dr:%ds:%s\n",
+					__func__, request->tgroup_home_cpu, request->tgroup_home_id, request->address,
+					page->writing, page->reading,
+					(page->status == REPLICATION_STATUS_INVALID) ? "I" :
+							((page->status == REPLICATION_STATUS_VALID) ? "V" :
+							((page->status == REPLICATION_STATUS_WRITTEN) ? "W" :
+							((page->status == REPLICATION_STATUS_NOT_REPLICATED) ? "N" : "?"))) );
 			}
 			else {
 				if (request->is_write==1) {
@@ -1493,13 +1530,15 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		}
 	}
 	else {
-		printk("%s: ERROR: impossible to send read message, no destination kernel (cpu %d id %d)n",
+		printk("%s: ERROR: impossible to send read message, no destination kernel (cpu %d id %d)\n",
 				__func__, tgroup_home_cpu, tgroup_home_id);
 		ret= VM_FAULT_REPLICATION_PROTOCOL;
 		down_read(&mm->mmap_sem);
 		spin_lock(ptl);
 		goto exit_reading_page;
 	}
+///////////////////////////////////////////////////////////////////////////////
+// request sent response received
 
 	down_read(&mm->mmap_sem);
 	spin_lock(ptl);
@@ -1507,24 +1546,24 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 	vma = find_vma(mm, address);
 	if (unlikely(!vma || address >= vma->vm_end || address < vma->vm_start)) {
-		printk("%s: ERROR: vma not valid during read for write (cpu %d id %d address 0x%lx)\n",
-				__func__, tgroup_home_cpu, tgroup_home_id, address);
+		printk("%s: ERROR: vma not valid during read for write (cpu %d id %d address 0x%lx) fault_flag:0x%lx\n",
+				__func__, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags);
 		ret = VM_FAULT_VMA;
 		goto exit_reading_page;
 	}
 
 	if (reading_page->address_present==1) {
 		if (reading_page->data->address != address) {
-			printk("%s: ERROR: trying to copy wrong address! (cpu %d id %d address 0x%lx)\n",
-				__func__, tgroup_home_cpu, tgroup_home_id, address);
+			printk("%s: ERROR: trying to copy wrong address! (cpu %d id %d address 0x%lx) fault_flag:0x%lx\n",
+				__func__, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags);
 			pcn_kmsg_free_msg(reading_page->data);
 			ret = VM_FAULT_REPLICATION_PROTOCOL;
 			goto exit_reading_page;
 		}
 
 		if (reading_page->last_write != (page->last_write+1)) {
-			printk("%s: ERROR: new copy received during a read but my last write is %lx and received last write is %lx\n",
-			       __func__, page->last_write,reading_page->last_write);
+			printk("%s: ERROR: new copy received during a read but my last write is %lx and received last write is %lx (cpu %d id %d address 0x%lx) fault_flag:0x%lx\n",
+			       __func__, page->last_write,reading_page->last_write, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags);
 			ret = VM_FAULT_REPLICATION_PROTOCOL;
 			goto exit_reading_page;
 		}
@@ -1533,8 +1572,8 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		}
 
 		if (reading_page->owner==1) {
-			printk("%s: ERROR: owneship sent with read request (cpu %d id %d address 0x%lx)\n",
-				__func__, tgroup_home_cpu, tgroup_home_id, address);
+			printk("%s: ERROR: ownership sent with read request (cpu %d id %d address 0x%lx) fault_flag:0x%lx\n",
+				__func__, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags);
 			ret = VM_FAULT_REPLICATION_PROTOCOL;
 			goto exit_reading_page;
 		}
@@ -2338,34 +2377,27 @@ exit:
  * 0, remotely fetched;
  */
 int process_server_try_handle_mm_fault(struct task_struct *tsk,
-				       struct mm_struct *mm,
-				       struct vm_area_struct *vma,
-				       unsigned long page_faul_address,
-				       unsigned long page_fault_flags,
+				       struct mm_struct *mm, struct vm_area_struct *vma,
+				       unsigned long page_fault_address, unsigned long page_fault_flags,
 				       unsigned long error_code)
 {
-	pgd_t* pgd;
-	pud_t* pud;
-	pmd_t* pmd;
-	pte_t* pte;
-	pte_t value_pte;
-	spinlock_t *ptl;
+	pgd_t* pgd; pud_t* pud; pmd_t* pmd; pte_t* pte;
+	pte_t value_pte; spinlock_t *ptl;
 
 	struct page* page;
-
 	unsigned long address;
 
 	int tgroup_home_cpu = tsk->tgroup_home_cpu;
 	int tgroup_home_id = tsk->tgroup_home_id;
 	int ret;
 
-	address = page_faul_address & PAGE_MASK;
+	address = page_fault_address & PAGE_MASK;
 
 #if STATISTICS
 	page_fault_mio++;
 #endif
 	PSPRINTK("%s: page fault for address %lx in page %lx task pid %d t_group_cpu %d t_group_id %d %s\n",
-                 __func__, page_faul_address, address, tsk->pid,
+                 __func__, page_fault_address, address, tsk->pid,
                  tgroup_home_cpu, tgroup_home_id,
                  page_fault_flags & FAULT_FLAG_WRITE ? "WRITE" : "READ");
 
@@ -2375,7 +2407,6 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 		dump_processor_regs(task_pt_regs(tsk));
 		return VM_FAULT_ACCESS_ERROR | VM_FAULT_VMA;
 	}
-
 	if (vma && (address < vma->vm_end && address >= vma->vm_start)
 	    && (unlikely(is_vm_hugetlb_page(vma))
 		|| transparent_hugepage_enabled(vma))) {
@@ -2384,6 +2415,8 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 		return VM_CONTINUE;
 	}
 
+///////////////////////////////////////////////////////////////////////////////
+// find or allocate pte -- this is mm/memory.c: __handle_mm_fault() without pmd handling
 	pgd = pgd_offset(mm, address);
 	pud = pud_alloc(mm, pgd, address);
 	if (!pud)
@@ -2392,9 +2425,16 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	if (!pmd)
 		return VM_FAULT_OOM;
 
-	if (pmd_none(*pmd) && __pte_alloc(mm, vma, pmd, address))
-		return VM_FAULT_OOM;
+// handling of pmd pages was here
 
+	if (pmd_numa(*pmd)) {
+		printk("%s: ERROR: page fault for numa page (cpu %d id %d)\n",
+				__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id);
+		return VM_CONTINUE;
+	}
+	if (unlikely(pmd_none(*pmd)) &&
+		unlikely(__pte_alloc(mm, vma, pmd, address)))
+		return VM_FAULT_OOM;
 	if (unlikely(pmd_trans_huge(*pmd))) {
 		printk("%s: ERROR: page fault for huge page (cpu %d id %d)\n",
 				__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id);
@@ -2402,23 +2442,18 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	}
 
 	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
-	/*PTE LOCKED*/
+// end of the __handle_mm_fault() code here
 
-	value_pte = *pte;
-
-	/*case pte UNMAPPED
-	 * --Remote fetch--
-	 */
+///////////////////////////////////////////////////////////////////////////////
+//  pte null or NONE handling
 start:
 	//printk("%s start\n", __func__);
 	if (pte == NULL || 
 #if defined(CONFIG_ARM64)
-			pte_none(value_pte)) {
+			pte_none(*pte)) {
 #else
-			pte_none(pte_clear_flags(value_pte, _PAGE_UNUSED1))) {
+			pte_none(pte_clear_flags(*pte, _PAGE_UNUSED1))) {
 #endif
-		if(pte==NULL)
-			printk("%s: WARN: pte NULL\n", __func__);
 
 		/* Check if other threads of my process are already
 		 * fetching the same address on this kernel.
@@ -2428,42 +2463,36 @@ start:
 			spin_unlock(ptl);
 			up_read(&mm->mmap_sem);
 
-			while (find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address)
-			       != NULL) {
-
+			while ( find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address) != NULL ) {
 				DEFINE_WAIT(wait);
 				prepare_to_wait(&read_write_wait, &wait, TASK_UNINTERRUPTIBLE);
-
-				if (find_mapping_entry(tgroup_home_cpu, tgroup_home_id,
-						       address)!=NULL) {
+				if (find_mapping_entry(tgroup_home_cpu, tgroup_home_id, address)!=NULL) {
 					schedule();
 				}
-
 				finish_wait(&read_write_wait, &wait);
 			}
 
 			down_read(&mm->mmap_sem);
 			spin_lock(ptl);
-			value_pte = *pte;
 
 			vma = find_vma(mm, address);
-			if (unlikely(
-				    !vma || address >= vma->vm_end
-				    || address < vma->vm_start)) {
-
+			if (unlikely( !vma || address >= vma->vm_end || address < vma->vm_start)) {
 				printk("%s: ERROR: vma not valid after waiting for another thread to fetch (cpu %d id %d)\n",
 						__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id);
 				spin_unlock(ptl);
 				return VM_FAULT_VMA;
 			}
-
 			goto start;
 		}
-		if (!vma || address >= vma->vm_end || address < vma->vm_start) {
+
+		if (pte) 	
+			value_pte = *pte;
+
+		if (!vma || address >= vma->vm_end || address < vma->vm_start)
 			vma = NULL;
-		}
-		ret = do_remote_fetch_for_2_kernels(tsk->tgroup_home_cpu, tsk->tgroup_home_id, mm,
-						    vma, address, page_fault_flags, pmd, pte, value_pte, ptl);
+
+		ret = do_remote_fetch_for_2_kernels(tsk->tgroup_home_cpu, tsk->tgroup_home_id,
+											mm, vma, address, page_fault_flags, pmd, pte, value_pte, ptl);
 
 		spin_unlock(ptl);
 		wake_up(&read_write_wait);
@@ -2498,15 +2527,10 @@ start:
 
 			down_read(&mm->mmap_sem);
 			spin_lock(ptl);
-			value_pte = *pte;
 
 			vma = find_vma(mm, address);
-			if (unlikely(
-				    !vma || address >= vma->vm_end
-				    || address < vma->vm_start)) {
-
-				printk(
-					"%s: ERROR: vma not valid after waiting for another thread to fetch (cpu %d id %d)\n",
+			if (unlikely(!vma || address >= vma->vm_end || address < vma->vm_start)) {
+				printk("%s: ERROR: vma not valid after waiting for another thread to fetch (cpu %d id %d)\n",
 					__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id);
 				spin_unlock(ptl);
 				return VM_FAULT_VMA;
@@ -2514,11 +2538,11 @@ start:
 			goto start;
 		}
 
+		value_pte = *pte;
 		/* The pte is mapped so the vma should be valid.
 		 * Check if the access is within the limit.
 		 */
-		if (unlikely(
-			    !vma || address >= vma->vm_end || address < vma->vm_start)) {
+		if (unlikely(!vma || address >= vma->vm_end || address < vma->vm_start)) {
 			printk("%s: ERROR: no vma for address %lx in the system\n",
 					__func__, address);
 			spin_unlock(ptl);
@@ -2538,15 +2562,14 @@ start:
 			PSPRINTK("page different from vm_normal_page\n");
 		}
 		PSPRINTK("%s page status %d\n", __func__, page->status);
-		/* case page NOT REPLICATED
-		 */
+
+		/* case page NOT REPLICATED */
 		if (page->replicated == 0) {
 			PSPRINTK("Page not replicated address %lx\n", address);
 
 			//check if it a cow page...
 			if ((vma->vm_flags & VM_WRITE) && !pte_write(value_pte)) {
-
-			retry_cow:
+retry_cow:
 				PSPRINTK("COW page at %lx\n", address);
 
 				int cow_ret= do_wp_page_for_popcorn(mm, vma,address, pte,pmd,ptl, value_pte);
@@ -2573,25 +2596,25 @@ start:
 
 				value_pte = *pte;
 
-				if(!pte_write(value_pte)){
+				if (!pte_write(value_pte)) {
 					printk("%s: WARN: page not writable after cow (cpu %d id %d page 0x%lx)\n",
 							__func__, tsk->tgroup_home_cpu, tsk->tgroup_home_id, (unsigned long)page);
 					goto retry_cow;
 				}
 
 				page = pte_page(value_pte);
-
 				page->replicated = 0;
 				page->status= REPLICATION_STATUS_NOT_REPLICATED;
 				page->owner= 1;
 				page->other_owners[_cpu] = 1;
-			}
+			} /* if cow page */
 
 			spin_unlock(ptl);
 			return 0;
-		}
+		} /* if page->replicated == 0 */
 
-	check:
+check:
+////////////////////////////////////////////////////// antoniob arrived here
 		/* case REPLICATION_STATUS_VALID:
 		 * the data of the page is up to date.
 		 * reads can be performed locally.
@@ -2626,8 +2649,7 @@ start:
 					while (page->writing == 1 || page->reading == 1) {
 						DEFINE_WAIT(wait);
 
-						prepare_to_wait(&read_write_wait, &wait,
-								TASK_UNINTERRUPTIBLE);
+						prepare_to_wait(&read_write_wait, &wait, TASK_UNINTERRUPTIBLE);
 						if (page->writing == 1 || page->reading == 1)
 							schedule();
 						finish_wait(&read_write_wait, &wait);
@@ -2637,9 +2659,7 @@ start:
 					value_pte = *pte;
 
 					vma = find_vma(mm, address);
-					if (unlikely(
-						    !vma || address >= vma->vm_end
-						    || address < vma->vm_start)) {
+					if (unlikely( !vma || address >= vma->vm_end || address < vma->vm_start)) {
 
 						printk("%s: ERROR: vma not valid after waiting for another thread to fetch\n",
 								__func__);

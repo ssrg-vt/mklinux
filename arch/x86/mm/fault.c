@@ -1063,9 +1063,9 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		PSPRINTK("%s: pid %d addr %lx\n", __func__, tsk->pid, address);
 	}*/
 
-	if(tsk->tgroup_distributed==1 && tsk->main==1){
-
-		printk("main is having a page fault\n");
+	if (tsk->tgroup_distributed==1 && tsk->main==1) {
+		printk("%s: ERROR: main page fault @ 0x%lx code 0x%lx\n",
+				__func__, address, error_code);
 		dump_stack();
 	}
 	/*

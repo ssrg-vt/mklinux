@@ -1440,7 +1440,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 		 struct pt_regs * regs, int* is_first,
                  void __user *uregs)
 {
-	struct task_struct *kthread_main = NULL;
+	pid_t kthread_main = 0;
 	clone_request_t* request;
 	int tx_ret = -1;
 	struct task_struct* tgroup_iterator = NULL;
@@ -1593,7 +1593,7 @@ int do_migration(struct task_struct* task, int dst_cpu,
 		//          created on a user context
 		/*return_value = kernel_thread(create_kernel_thread_for_distributed_process_from_user_one,
 		  entry, CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | SIGCHLD);*/
-		kthread_main = (struct task_struct *) kernel_thread_popcorn(create_kernel_thread_for_distributed_process_from_user_one,
+		kthread_main = kernel_thread_popcorn(create_kernel_thread_for_distributed_process_from_user_one,
 						     entry, CLONE_THREAD | CLONE_SIGHAND | CLONE_VM | SIGCHLD);
 	}
 
