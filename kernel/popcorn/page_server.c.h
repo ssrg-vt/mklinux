@@ -809,7 +809,7 @@ retry_cow:
 				page->owner= 0;
 			}
 			page->last_write= 1;
-			printk("%s: INFO putting page 0x%lx last_write to 1 @0x%lx VM_WRITE\n", __func__, page, request->address);
+			printk("%s: INFO putting page 0x%lx last_write to 1 @0x%lx VM_WRITE\n", __func__, (unsigned long)page, request->address);
 
 			entry = pte_set_flags(entry, _PAGE_USER);
 			entry = pte_set_flags(entry, _PAGE_ACCESSED);
@@ -2405,7 +2405,8 @@ start:
 			goto start;
 		}
 
-		value_pte = pte ? *pte : 0;
+		if (pte) 	
+			value_pte = *pte;
 
 		if (!vma || address >= vma->vm_end || address < vma->vm_start)
 			vma = NULL;
