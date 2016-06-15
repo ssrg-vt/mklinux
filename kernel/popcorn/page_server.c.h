@@ -1554,16 +1554,18 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 	if (reading_page->address_present==1) {
 		if (reading_page->data->address != address) {
-			printk("%s: ERROR: trying to copy wrong address! (cpu %d id %d address 0x%lx) fault_flag:0x%lx\n",
-				__func__, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags);
+			printk("%s: ERROR: trying to copy wrong address! (cpu %d id %d address 0x%lx) fault:0x%lx r:%xs:%xo:%xw:%xr:%x\n",
+				__func__, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags,
+				page->replicated, page->status, page->owner, page->writing, page->reading);
 			pcn_kmsg_free_msg(reading_page->data);
 			ret = VM_FAULT_REPLICATION_PROTOCOL;
 			goto exit_reading_page;
 		}
 
 		if (reading_page->last_write != (page->last_write+1)) {
-			printk("%s: ERROR: new copy received during a read but my last write is %lx and received last write is %lx (cpu %d id %d address 0x%lx) fault_flag:0x%lx\n",
-			       __func__, page->last_write,reading_page->last_write, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags);
+			printk("%s: ERROR: new copy received during a read but my last write is %lx and received last write is %lx (cpu %d id %d address 0x%lx) fault:0x%lx r:%xs:%xo:%xw:%xr:%x\n",
+			       __func__, page->last_write,reading_page->last_write, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags,
+					page->replicated, page->status, page->owner, page->writing, page->reading);
 			ret = VM_FAULT_REPLICATION_PROTOCOL;
 			goto exit_reading_page;
 		}
@@ -1572,8 +1574,9 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		}
 
 		if (reading_page->owner==1) {
-			printk("%s: ERROR: ownership sent with read request (cpu %d id %d address 0x%lx) fault_flag:0x%lx\n",
-				__func__, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags);
+			printk("%s: ERROR: ownership sent with read request (cpu %d id %d address 0x%lx) fault:0x%lx r:%xs:%xo:%xw:%xr:%x\n",
+				__func__, tgroup_home_cpu, tgroup_home_id, address, page_fault_flags,
+				page->replicated, page->status, page->owner, page->writing, page->reading);
 			ret = VM_FAULT_REPLICATION_PROTOCOL;
 			goto exit_reading_page;
 		}
