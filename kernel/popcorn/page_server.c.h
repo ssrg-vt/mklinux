@@ -1257,8 +1257,9 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg)
 ///////////////////////////////////////////////////////////////////////////////
 
 /* No other kernels had the page during the remote fetch => a local fetch has been performed.
- * If during the local fetch a thread in another kernel asks for this page, I would not set the page as replicated.
- * This function check if the page sould be set as replicated.
+ * If during the local fetch a thread in another kernel asks for this page,
+ * I would not set the page as replicated. This function check if the page
+ * should be set as replicated.
  *
  * the mm->mmap_sem semaphore is already held in read
  * return types:
@@ -1385,6 +1386,8 @@ retry_cow:
 			page->other_owners[_cpu] = 1;
 			page->owner= 1;
 		}
+		printk("%s: INFO current %p page %p r:0 o:1 (cpu %d id %d address 0x%lx)\n",
+				__func__, current, page, tsk->tgroup_home_cpu, tsk->tgroup_home_id, address);
 	}
 	else {
 		printk("%s: ERROR: impossible to find data to update (cpu %d id %d address 0x%lx)\n",
