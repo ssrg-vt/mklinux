@@ -386,26 +386,26 @@ madvise_vma(struct vm_area_struct *vma, struct vm_area_struct **prev,
 	case MADV_REMOVE:
 		if (current->tgroup_distributed==1 && current->distributed_exit==EXIT_ALIVE) {
 			distributed =1;
-			_ret = process_server_do_unmap_start(mm, start, (end-start));
-			if (ret<0 && ret!=VMA_OP_SAVE && ret!=VMA_OP_NOT_SAVE)
+			_ret = process_server_do_unmap_start(vma->vm_mm, start, (end-start));
+			if (_ret<0 && _ret!=VMA_OP_SAVE && _ret!=VMA_OP_NOT_SAVE)
 				return _ret;
 		}
 		ret = madvise_remove(vma, prev, start, end);
 		if (current->tgroup_distributed==1 && distributed==1)
-			process_server_do_unmap_end(mm, start, (end-start), _ret);
+			process_server_do_unmap_end(vma->vm_mm, start, (end-start), _ret);
 		return ret;
 	case MADV_WILLNEED:
 		return madvise_willneed(vma, prev, start, end);
 	case MADV_DONTNEED:
 		if (current->tgroup_distributed==1 && current->distributed_exit==EXIT_ALIVE) {
 			distributed =1;
-			_ret = process_server_do_unmap_start(mm, start, (end-start));
-			if (ret<0 && ret!=VMA_OP_SAVE && ret!=VMA_OP_NOT_SAVE)
+			_ret = process_server_do_unmap_start(vma->vm_mm, start, (end-start));
+			if (_ret<0 && _ret!=VMA_OP_SAVE && _ret!=VMA_OP_NOT_SAVE)
 				return _ret;
 		}
 		ret = madvise_dontneed(vma, prev, start, end);
 		if (current->tgroup_distributed==1 && distributed==1)
-			process_server_do_unmap_end(mm, start, (end-start), _ret);
+			process_server_do_unmap_end(vma->vm_mm, start, (end-start), _ret);
 		return ret;
 	default:
 		return madvise_behavior(vma, prev, start, end, behavior);
