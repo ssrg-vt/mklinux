@@ -135,6 +135,7 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 	int err = -EINVAL;
 	int has_write_lock = 0;
 	vm_flags_t vm_flags = 0;
+	int distributed = 0; long distr_ret;
 
 	if (prot)
 		return err;
@@ -208,9 +209,26 @@ get_write_lock:
 		if (mapping_cap_account_dirty(mapping)) {
 			unsigned long addr;
 			struct file *file = get_file(vma->vm_file);
+			unsigned long vma_flags = vma->vm_flags;
 
-			addr = mmap_region(file, start, size,
-					vma->vm_flags, pgoff);
+			if (current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE) {
+				distributed = 1;
+				distr_ret =  process_server_do_mmap_pgoff_start(file, start, size, prot, vma_flags, pgoff);
+				if ( (distr_ret < 0) &&  (distr_ret!=VMA_OP_SAVE) && (distr_ret!=VMA_OP_NOT_SAVE) )
+					return distr_ret;
+
+				if ( (distr_ret!=VMA_OP_SAVE) && (distr_ret!= VMA_OP_NOT_SAVE)) {
+					start = distr_ret;
+					vma_flags|=MAP_FIXED;
+				}
+			}
+
+			addr = mmap_region(file, start, size, vma_flags, pgoff);
+
+			if (current->tgroup_distributed==1 && distributed==1) {
+				process_server_do_mmap_pgoff_end(file, start, size, prot, vma_flags, pgoff, distr_ret);
+			}
+
 			fput(file);
 			if (IS_ERR_VALUE(addr)) {
 				err = addr;
