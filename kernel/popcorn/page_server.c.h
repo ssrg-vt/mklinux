@@ -531,7 +531,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 		owner=1;
 		goto out;
 	}
-	printk("%s: INFO: Request address 0x%lx is_fetch:%d is_write:%d idx:%d mm_idx:%d\n",
+	PSPRINTK("%s: INFO: Request address 0x%lx is_fetch:%d is_write:%d idx:%d mm_idx:%d\n",
 			__func__, request->address,
 			((request->is_fetch==1)?1:0), ((request->is_write==1)?1:0),
 			request->vma_operation_index, mm->vma_operation_index);
@@ -809,7 +809,7 @@ retry_cow:
 				page->owner= 0;
 			}
 			page->last_write= 1;
-			printk("%s: INFO putting page 0x%lx last_write to 1 @0x%lx VM_WRITE\n", __func__, (unsigned long)page, request->address);
+			//printk("%s: INFO putting page 0x%lx last_write to 1 @0x%lx VM_WRITE\n", __func__, (unsigned long)page, request->address);
 
 			entry = pte_set_flags(entry, _PAGE_USER);
 			entry = pte_set_flags(entry, _PAGE_ACCESSED);
@@ -1338,7 +1338,7 @@ retry_cow:
 			page->other_owners[_cpu] = 1;
 			page->owner= 1;
 		}
-		printk("%s: INFO current %p page %p r:0 o:1 (cpu %d id %d address 0x%lx)\n",
+		PSPRINTK("%s: INFO current %p page %p r:0 o:1 (cpu %d id %d address 0x%lx)\n",
 				__func__, current, page, tsk->tgroup_home_cpu, tsk->tgroup_home_id, address);
 	}
 	else {
