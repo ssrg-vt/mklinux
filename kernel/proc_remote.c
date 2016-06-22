@@ -103,7 +103,7 @@ int remote_proc_cpu_info(struct seq_file *m) {
 	struct list_head *iter;
 	_remote_cpu_info_list_t *objPtr;
 
-	printk(" In remote cpuinfo\n");
+	//printk(" In remote cpuinfo\n");
 	list_for_each(iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		seq_printf(m, "\n*********Remote CPU*****\n");
@@ -130,5 +130,5 @@ int remote_proc_cpu_info(struct seq_file *m) {
 		}
 		seq_printf(m, "\n\n");
 	}
-	printk(" leaving remote cpuinfo\n");
+	//printk(" leaving remote cpuinfo\n");
 }
