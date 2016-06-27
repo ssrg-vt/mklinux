@@ -667,6 +667,27 @@ again:
 				up_write(&mm_data->mm->mmap_sem);
 				break;
 
+			case VMA_OP_MADVISE: //this is only for MADV_REMOVE (thus write is 0)
+				struct vm_area_struct *pvma;
+				struct vm_area_struct *vma = find_vma(mm_data->mm, mm_data->addr);
+				if (!vma || (vma->vm_start > mm_data->addr || vma->vm_end < mm_data->addr))
+					printk("%s: ERROR VMA_OP_MADVISE cannot find VMA addr %lx start %lx end %lx\n",
+							__func__, mm_data->addr, (vma ? vma->vm_start : 0), (vma ? vma->vm_end : 0));
+				//write = madvise_need_mmap_write(behavior);
+				//if (write)
+				//	down_write(mm_data->mm->mmap_sem);
+				//else
+					down_read(mm_data->mm->mmap_sem);
+				GET_UNMAP_IF_HOME(current, mm_data);
+				ret = madvise_remove(vma, &pvma,
+						mm_data->addr, (mm_data->addr + mm_data->len) );
+				PUT_UNMAP_IF_HOME(current, mm_data);
+				//if (write)
+				//	up_write(&current->mm->mmap_sem);
+				//else
+					up_read(&current->mm->mmap_sem);
+				break;
+
 			case VMA_OP_PROTECT:
 				GET_UNMAP_IF_HOME(current, mm_data);
 				ret = kernel_mprotect(mm_data->addr, mm_data->len, mm_data->prot);

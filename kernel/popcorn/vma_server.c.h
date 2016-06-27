@@ -1631,6 +1631,20 @@ out:
 // TODO the following must become inline after we are done with debugging
 //
 
+long process_server_madvise_remove_start(struct mm_struct *mm, unsigned long start,
+				   size_t len)
+{
+	return start_distribute_operation(VMA_OP_MADVISE, start, len, 0, 0, 0, 0,
+					  NULL, 0);
+}
+
+long process_server_madvise_remove_end(struct mm_struct *mm, unsigned long start,
+				 size_t len, int start_ret)
+{
+	end_distribute_operation(VMA_OP_MADVISE, start_ret, start);
+	return 0;
+}
+
 long process_server_do_unmap_start(struct mm_struct *mm, unsigned long start,
 				   size_t len)
 {

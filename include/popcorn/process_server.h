@@ -27,6 +27,7 @@
 #define VMA_OP_REMAP 3
 #define VMA_OP_MAP 4
 #define VMA_OP_BRK 5
+#define VMA_OP_MADVISE 6
 
 #define VMA_OP_SAVE -70
 #define VMA_OP_NOT_SAVE -71
