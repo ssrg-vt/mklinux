@@ -636,6 +636,9 @@ static void create_new_threads(thread_pull_t * my_thread_pull, int *spare_thread
 	mm_data->mm->distribute_unmap = 1; \
 	} \
 })
+
+extern long madvise_dontneed(struct vm_area_struct *vma, struct vm_area_struct **prev, unsigned long start, unsigned long end);
+
 static void main_for_distributed_kernel_thread(memory_t* mm_data, thread_pull_t * my_thread_pull)
 {
 	struct file* f;
