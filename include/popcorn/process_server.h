@@ -61,6 +61,9 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code);
 void sleep_shadow(void);
 void create_thread_pull(void);
 
+long process_server_madvise_remove_start(struct mm_struct *mm, unsigned long start, size_t len);
+long process_server_madvise_remove_end(struct mm_struct *mm, unsigned long start, size_t len, int start_ret);
+
 long process_server_do_mmap_pgoff_start(struct file *file,
                                         unsigned long addr,
 		                        unsigned long len,
