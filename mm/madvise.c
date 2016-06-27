@@ -296,7 +296,7 @@ long madvise_dontneed(struct vm_area_struct *vma,
  * NOTE: Currently, only shmfs/tmpfs is supported for this operation.
  * Other filesystems return -ENOSYS.
  */
-static long madvise_remove(struct vm_area_struct *vma,
+long madvise_remove(struct vm_area_struct *vma,
 				struct vm_area_struct **prev,
 				unsigned long start, unsigned long end)
 {
