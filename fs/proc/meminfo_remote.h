@@ -63,6 +63,12 @@ struct _remote_mem_info_response {
 
 typedef struct _remote_mem_info_response _remote_mem_info_response_t;
 
+#ifdef CONFIG_PROC_REMOTE_MEMINFO
 extern int remote_proc_meminfo_info(_remote_mem_info_response_t *total);
+#else
+static int remote_proc_meminfo_info(_remote_mem_info_response_t *total) {
+	return 0;
+}
+#endif
 
 #endif

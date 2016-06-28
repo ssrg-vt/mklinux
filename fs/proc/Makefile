@@ -7,8 +7,7 @@ obj-y   += proc.o
 proc-y			:= nommu.o task_nommu.o
 proc-$(CONFIG_MMU)	:= task_mmu.o
 
-proc-y       += inode.o root.o base.o generic.o array.o \
-		fd.o
+proc-y       += inode.o root.o base.o generic.o array.o fd.o
 proc-$(CONFIG_TTY)      += proc_tty.o
 proc-y	+= cmdline.o
 proc-y	+= consoles.o
@@ -30,7 +29,7 @@ proc-$(CONFIG_PROC_VMCORE)	+= vmcore.o
 proc-$(CONFIG_PROC_DEVICETREE)	+= proc_devtree.o
 proc-$(CONFIG_PRINTK)	+= kmsg.o
 proc-$(CONFIG_PROC_PAGE_MONITOR)	+= page.o
-proc-y  += meminfo_remote.o
+proc-$(CONFIG_PROC_REMOTE_MEMINFO)  += meminfo_remote.o
 proc-y  += remote_proc_pid.o
 proc-y  += remote_proc_pid_files.o
 proc-y  += krninfo.o
