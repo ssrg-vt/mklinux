@@ -2060,6 +2060,8 @@ retry:
 				entry->mm->end_data = clone->end_data;
 				entry->mm->def_flags = clone->def_flags;
 
+#undef INITIAL_VDSO_MODEL
+#ifdef INITIAL_VDSO_MODEL
 				// if popcorn_vdso is zero it should be initialized with the address provided by the home kernel
                 if (entry->mm->context.popcorn_vdso == 0) {
                 	unsigned long popcorn_addr = clone->popcorn_vdso;
@@ -2085,6 +2087,10 @@ retry:
                 		free_page((unsigned long)popcorn_pagelist[0]);
                 	}
                 }
+#else
+				entry->mm->context.popcorn_vdso = clone->popcorn_vdso;
+#endif
+
 up_fail:
 				// popcorn_vdso cannot be different
 				if ( ((unsigned long)entry->mm->context.popcorn_vdso) != clone->popcorn_vdso) {

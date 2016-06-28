@@ -905,6 +905,8 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			if ( (unsigned long)mm->context.popcorn_vdso >= vma->vm_end)
 				return -ESRCH;
 
+#define INITIAL_VDSO_MODEL
+#ifdef INITIAL_VDSO_MODEL
 			popcorn_pagelist = (struct page**)vma->vm_private_data;
 			if ( popcorn_pagelist == NULL )
 				return -ESRCH;
@@ -918,6 +920,16 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			}
 			else
 				pval = page_address(popcorn_pagelist[0]);
+#else
+			// this is now for debugging -- the goal is to synch the page
+			popcorn_page = follow_page(vma, (unsigned long)mm->context.popcorn_vdso, 0);
+			if (popcorn_page) {
+				pval = page_address(popcorn_page);
+			}
+			else // the following is only for debug on the first kernel (that has fixed allocation)
+				pval = page_address(popcorn_pagelist[0]);
+#endif
+
 /* TODO the above is a temporary solution, it must be fixed for in-kernel scheduling
  * Even if in the process_server.c code at the first migration I am allocating VDSO this is not enough,
  * in fact the paging protocol kicks in and thinks he must keep the page consistent (but we don't want that)
@@ -928,6 +940,11 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
             printk(KERN_INFO"%s: INFO: mm present, vdso @ 0x%lx, %s -- 0x%lx(%s) was 0x%lx @ 0x%lx vma 0x%lx(0x%lx)\n",
             		__func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
 					(long)itype, buffer, tmpval, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);
+// the following is for debugging
+            printk(KERN_INFO"%s: INFO: page replicated %d status %d  owner %d writing %d reading %d\n",
+            		__func__, (popcorn_page ? popcorn_page->replicated : -1),
+					(popcorn_page ? popcorn_page->status : -1), (popcorn_page ? popcorn_page->owner : -1),
+					(popcorn_page ? popcorn_page->writing : -1), (popcorn_page ? popcorn_page->reading : -1));
 		} else {
 			printk(KERN_ALERT"%s: ERROR: mm present, no popcorn_vdso, %s\n",
 				__func__, task->comm);
