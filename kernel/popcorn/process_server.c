@@ -1659,7 +1659,7 @@ void sleep_shadow()
 		} while (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE);
 	}
 
-	printk("%s: WARN woken up pid %d\n", __func__, current->pid);
+	PSPRINTK("%s: WARN woken up pid %d\n", __func__, current->pid);
 	if(current->distributed_exit!= EXIT_NOT_ACTIVE){
 		current->represents_remote = 0;
 		do_exit(0);
