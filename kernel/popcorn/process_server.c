@@ -1653,7 +1653,7 @@ void sleep_shadow()
 			set_task_state(current, TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ*20); // we take
 			if (current->state != TASK_RUNNING) {
-				printk("%s: ERROR, linux documentation sucks (current state is %d)\n", __func__, current->state);
+				printk("%s: ERROR, linux documentation sucks (current state is 0x%lx)\n", __func__, current->state);
 				set_task_state(current, TASK_RUNNING);
 			}
 		} while (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE);
@@ -1892,10 +1892,10 @@ static int create_kernel_thread_for_distributed_process(void *data)
 			set_task_state(current, TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ*20); // we take
 			if (current->state != TASK_RUNNING) {
-				printk("%s: ERROR, linux documentation sucks (current state is %d)\n", __func__, current->state);
+				printk("%s: ERROR, linux documentation sucks (current state is 0x%lx)\n", __func__, current->state);
 				set_task_state(current, TASK_RUNNING);
 			}
-		} while (my_thread_pull->memory == NULL)
+		} while (my_thread_pull->memory == NULL);
 	}
     PSPRINTK("%s: after memory current pid %d\n", __func__, current->pid);
 
