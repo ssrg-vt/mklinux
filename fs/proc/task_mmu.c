@@ -901,9 +901,9 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 
 			vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
 
-			if ( tsk->tgroup_distributed==1 && tsk->main==0 ) {
+			if ( task->tgroup_distributed==1 && task->main==0 ) {
 				process_server_try_handle_mm_fault(tsk, mm, vma, (unsigned long)mm->context.popcorn_vdso,
-												FAULT_FLAG_WRITE, PF_WRITE);
+												FAULT_FLAG_WRITE,0);
 				vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
 			}
 
