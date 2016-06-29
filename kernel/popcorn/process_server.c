@@ -1652,13 +1652,14 @@ void sleep_shadow()
 		do {
 			set_task_state(current, TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ*20); // we take
-			if (current->state != TASK_RUNNING)
+			if (current->state != TASK_RUNNING) {
 				printk("%s: ERROR, linux documentation sucks (current state is %d)\n", __func__, current->state);
-			set_task_state(current, TASK_RUNNING);
+				set_task_state(current, TASK_RUNNING);
+			}
 		} while (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE);
 	}
 
-	PSPRINTK("%s woken up pid %d\n", __func__, current->pid);
+	printk("%s: WARN woken up pid %d\n", __func__, current->pid);
 	if(current->distributed_exit!= EXIT_NOT_ACTIVE){
 		current->represents_remote = 0;
 		do_exit(0);
@@ -1886,11 +1887,15 @@ static int create_kernel_thread_for_distributed_process(void *data)
 		}
 	}
 
-	while (my_thread_pull->memory == NULL) {
-		__set_task_state(current, TASK_UNINTERRUPTIBLE);
-		if (my_thread_pull->memory == NULL)
-			schedule();
-		__set_task_state(current, TASK_RUNNING);
+	if (my_thread_pull->memory == NULL) {
+		do {
+			set_task_state(current, TASK_INTERRUPTIBLE);
+			schedule_timeout(HZ*20); // we take
+			if (current->state != TASK_RUNNING) {
+				printk("%s: ERROR, linux documentation sucks (current state is %d)\n", __func__, current->state);
+				set_task_state(current, TASK_RUNNING);
+			}
+		} while (my_thread_pull->memory == NULL)
 	}
     PSPRINTK("%s: after memory current pid %d\n", __func__, current->pid);
 
