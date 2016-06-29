@@ -68,11 +68,3 @@ config PROC_PAGE_MONITOR
 	  /proc/kpagecount, and /proc/kpageflags. Disabling these
           interfaces will reduce the size of the kernel by approximately 4kb.
           
-config PROC_REMOTE_MEMINFO
-	default y
-	depends on PROC_FS
-	bool "Enables aggregation of all the memory available in a Popcorn Linux deployment"
-	help
-	/proc/meminfo will collect all the information available in a Popcorn
-	Linux replicated-kernel OS from multiple kernels.
-	   

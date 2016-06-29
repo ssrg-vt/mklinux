@@ -1,4 +1,35 @@
-
+/*
+ * THE FOLLOWINGS ARE THE MESSAGE WAITERS/RECEIVERS: (rendevouz marina style)
+ * handle_mapping_response_void <<< called by the messaging layer, registered from the page_server_init function
+ * handle_mapping_response <<< called by the messaging layer, registered from the page_server_init function
+ * handle_ack <<< called by the messaging layer, registered from the page_server_init function ??? there is probably one also for the vma_server
+ * END OF MESSAGE RECEIVERS
+ *
+ * REMOTE WORKERS == SERVERS
+ * handle_invalid_request <<< called by the messaging layer, registered from the page_server_init
+ * handle_mapping_request << called by the messaging layer, registered from the page_server_init
+ *
+ * process_invalid_request_for_2_kernels <<< called by handle_invalid_request
+ *                                                     called by itself as a delayed work
+ * process_mapping_request_for_2_kernels <<< called by handle_mapping_request
+ * 														called by itself as a delayed work
+ * END OF REMOTE WORKERS
+ *
+ * process_server_update_page <<< called by __do_page_fault, and do_page_fault
+ * process_server_clean_page <<< called by get_page_from_freelist, and zap_pte_page
+ *
+ * LOCAL WORKERS == CLIENTS
+ * do_remote_read_for_2_kernels <<< called by process_server_try_handle_mm_fault
+ * do_remote_write_for_2_kernels <<< called by process_server_try_handle_mm_fault
+ * do_remote_fetch_for_2_kernels <<< called by process_server_try_handle_mm_fault
+ *
+ * process_server_try_handle_mm_fault <<< called by __do_page_fault
+ *                                                  __get_user_pages
+ *                                                  fixup_user_fault
+ * END LOCAL WORKERS
+ *
+ * page_server_init <<< called by process_server initialization function
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Mappings handling
