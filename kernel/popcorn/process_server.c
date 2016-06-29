@@ -2066,7 +2066,7 @@ retry:
 				entry->mm->end_data = clone->end_data;
 				entry->mm->def_flags = clone->def_flags;
 
-#define INITIAL_VDSO_MODEL
+#undef INITIAL_VDSO_MODEL
 #ifdef INITIAL_VDSO_MODEL
 				// if popcorn_vdso is zero it should be initialized with the address provided by the home kernel
                 if (entry->mm->context.popcorn_vdso == 0) {
@@ -2094,7 +2094,8 @@ retry:
                 	}
                 }
 #else
-				entry->mm->context.popcorn_vdso = clone->popcorn_vdso;
+                if (entry->mm->context.popcorn_vdso == 0)
+                	entry->mm->context.popcorn_vdso = clone->popcorn_vdso;
 #endif
 
 up_fail:
