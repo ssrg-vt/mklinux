@@ -900,7 +900,14 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			long * pval, tmpval;
 
 			vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
-			if ( vma == NULL )	
+
+			if ( tsk->tgroup_distributed==1 && tsk->main==0 ) {
+				process_server_try_handle_mm_fault(tsk, mm, vma, (unsigned long)mm->context.popcorn_vdso,
+												FAULT_FLAG_WRITE, PF_WRITE);
+				vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
+			}
+
+			if ( vma == NULL )
 				return -ESRCH;
 			if ( (unsigned long)mm->context.popcorn_vdso >= vma->vm_end)
 				return -ESRCH;
