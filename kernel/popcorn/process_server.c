@@ -1648,12 +1648,14 @@ void sleep_shadow()
 	memory_t* memory = NULL;
     PSPRINTK("%s pid %d\n", __func__, current->pid);
 
-	while (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE) {
-		set_task_state(current, TASK_UNINTERRUPTIBLE);
-		if (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE) {
-			schedule();
-		}
-		set_task_state(current, TASK_RUNNING);
+	if (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE) {
+		do {
+			set_task_state(current, TASK_INTERRUPTIBLE);
+			schedule_timeout(HZ*20); // we take
+			if (current->state != TASK_RUNNING)
+				printk("%s: ERROR, linux documentation sucks (current state is %d)\n", __func__, current->state);
+			set_task_state(current, TASK_RUNNING);
+		} while (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE);
 	}
 
 	PSPRINTK("%s woken up pid %d\n", __func__, current->pid);
@@ -1666,8 +1668,7 @@ void sleep_shadow()
 	current->represents_remote = 0;
 
 	// Notify of PID/PID pairing.
-	process_server_notify_delegated_subprocess_starting(current->pid,
-							    current->prev_pid, current->prev_cpu);
+	process_server_notify_delegated_subprocess_starting(current->pid, current->prev_pid, current->prev_cpu);
 
 	//this force the task to wait that the main correctly set up the memory
 	while (current->tgroup_distributed != 1) {
