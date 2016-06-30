@@ -904,8 +904,7 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
 			printk("%s: WARN: find_vma returned %lx\n", __func__, (unsigned long)vma);
 			if ( task->tgroup_distributed==1 && task->main==0 ) {
-				process_server_try_handle_mm_fault(tsk, mm,
-												vma, (unsigned long)mm->context.popcorn_vdso,
+				process_server_try_handle_mm_fault(task, mm, vma, (unsigned long)mm->context.popcorn_vdso,
 												FAULT_FLAG_WRITE,0);
 				vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
 				printk("%s: WARN: find_vma after process_server returned %lx\n", __func__, (unsigned long)vma);
