@@ -920,8 +920,8 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 #define INITIAL_VDSO_MODEL
 #ifdef INITIAL_VDSO_MODEL
 			popcorn_pagelist = (struct page**)vma->vm_private_data;
-			if ( popcorn_pagelist == NULL )
-				return -ESRCH;
+		//	if ( popcorn_pagelist == NULL )
+		//		return -ESRCH;
 
 			popcorn_page = follow_page(vma, (unsigned long)mm->context.popcorn_vdso, 0);
 			if (popcorn_page) {
