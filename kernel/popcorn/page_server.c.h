@@ -2234,7 +2234,9 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			pte_t entry = mk_pte(page, vma->vm_page_prot);
 
 			//if the page is read only no need to keep replicas coherent
-			if (vma->vm_flags & VM_WRITE) {
+			// but this is not true for the VDSO (that can be read only)
+			if (vma->vm_flags & VM_WRITE ||
+					(vma->vm_start <= mm->context.popcorn_vdso && mm->context.popcorn_vdso < vma->vm_end) ) {
 				page->replicated = 1;
 				page->last_write = fetching_page->last_write + ((fetching_page->is_write) ? 1 : 0);
 #if STATISTICS
