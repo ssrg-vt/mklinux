@@ -2407,8 +2407,9 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 // end of the __handle_mm_fault() code here
 
 	if (address == mm->context.popcorn_vdso)
-		printk("%s: WARN: VDSO pte 0x%lx value 0x%lx PAGE_UNUSED1 %lx\n",
-				__func__, pte, (pte ? (unsigned long)*(unsigned long*)pte : -1lu), (unsigned long)_PAGE_UNUSED1);
+		printk("%s: WARN: VDSO pte 0x%lx value 0x%lx PAGE_UNUSED1 %lx VM_WRITE %u\n",
+				__func__, pte, (pte ? (unsigned long)*(unsigned long*)pte : -1lu), (unsigned long)_PAGE_UNUSED1,
+				(unsigned int)(vma->vm_flags & VM_WRITE) );
 
 ///////////////////////////////////////////////////////////////////////////////
 //  pte null or NONE handling
