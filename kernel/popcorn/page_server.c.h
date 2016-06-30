@@ -2406,6 +2406,10 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 // end of the __handle_mm_fault() code here
 
+	if (address == mm->context.popcorn_vdso)
+		printk("%s: WARN: VDSO pte 0x%lx value 0x%lx PAGE_UNUSED1 %lx\n",
+				__func__, pte, (unsigned long)(pte ? *pte, -1), _PAGE_UNUSED1);
+
 ///////////////////////////////////////////////////////////////////////////////
 //  pte null or NONE handling
 start:
@@ -2511,6 +2515,8 @@ start:
 		 */
 		if (unlikely(access_error(error_code, vma))) {
 			spin_unlock(ptl);
+			printk("%s: WARN: access_error @ 0x%lx (cpu %d tgid %d)\n",
+					__func__, page_fault_address, tgroup_home_cpu, tgroup_home_id);
 			return VM_FAULT_ACCESS_ERROR;
 		}
 
@@ -2522,9 +2528,9 @@ start:
 
 		/* case page NOT REPLICATED */
 		if (page->replicated == 0) {
-			PSPRINTK("Page not replicated address %lx\n", address);
+			printk("Page not replicated address %lx page %lx\n", address, (unsigned long)page);
 
-			//check if it a cow page...
+			//check if it is a cow page...
 			if ((vma->vm_flags & VM_WRITE) && !pte_write(value_pte)) {
 retry_cow:
 				PSPRINTK("COW page at %lx\n", address);
@@ -2640,7 +2646,7 @@ check:
 			 * both read and write can be performed on this page.
 			 * */
 			if (page->status == REPLICATION_STATUS_WRITTEN) {
-				PSPRINTK("%s: Page status written address %lx\n", __func__, address);
+				printk("%s: WARN: Page status written address %lx\n", __func__, address);
 				spin_unlock(ptl);
 				return 0;
 			}

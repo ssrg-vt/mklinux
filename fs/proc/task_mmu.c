@@ -911,7 +911,8 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 												FAULT_FLAG_WRITE, 0);
 
 				vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
-				printk("%s: WARN: find_vma after process_server returned %lx marina %x\n", __func__, (unsigned long)vma, ret);
+				printk("%s: WARN: find_vma after process_server returned %lx marina %x\n",
+						__func__, (unsigned long)vma, ret);
 			}
 			if ( vma == NULL ) {
 	            if ( task->tgroup_distributed==1 && task->main==0 )
@@ -957,8 +958,8 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
             		__func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
 					(long)itype, buffer, tmpval, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);
 // the following is for debugging
-            printk(KERN_INFO"%s: INFO: page replicated %d status %d  owner %d writing %d reading %d\n",
-            		__func__, (popcorn_page ? popcorn_page->replicated : -1),
+            printk(KERN_INFO"%s: INFO: page 0x%lx replicated %d status %d  owner %d writing %d reading %d\n",
+            		__func__, popcorn_page, (popcorn_page ? popcorn_page->replicated : -1),
 					(popcorn_page ? popcorn_page->status : -1), (popcorn_page ? popcorn_page->owner : -1),
 					(popcorn_page ? popcorn_page->writing : -1), (popcorn_page ? popcorn_page->reading : -1));
 		} else {
