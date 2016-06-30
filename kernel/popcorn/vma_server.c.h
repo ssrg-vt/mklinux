@@ -994,7 +994,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 	if (current->mm->distribute_unmap == 0)
 		return;
 
-	printk("%s: INFO: Ending distributed vma operation %i pid %d counter %d\n", __func__, operation,current->pid, current->mm->distr_vma_op_counter);
+	//printk("%s: INFO: Ending distributed vma operation %i pid %d counter %d\n", __func__, operation,current->pid, current->mm->distr_vma_op_counter);
 	if (current->mm->distr_vma_op_counter <= 0
 	    || (current->main == 0 && current->mm->distr_vma_op_counter > 2)
 	    || (current->main == 1 && current->mm->distr_vma_op_counter > 3))

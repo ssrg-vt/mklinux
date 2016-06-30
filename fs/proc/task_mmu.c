@@ -906,16 +906,22 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 					__func__, (unsigned long)vma, 
 					(unsigned long)mm->context.popcorn_vdso, (vma ? vma->vm_end : 0));
 			if ( task->tgroup_distributed==1 && task->main==0 ) {
+				down_read(&mm->mmap_sem);
 				process_server_try_handle_mm_fault(task, mm, vma, (unsigned long)mm->context.popcorn_vdso,
 												FAULT_FLAG_WRITE, 0);
 				vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
 				printk("%s: WARN: find_vma after process_server returned %lx\n", __func__, (unsigned long)vma);
 			}
-
-			if ( vma == NULL )
+			if ( vma == NULL ) {
+	            if ( task->tgroup_distributed==1 && task->main==0 )
+	            	up_read(&mm->mmap_sem);
 				return -ESRCH;
-			if ( (unsigned long)mm->context.popcorn_vdso >= vma->vm_end)
+			}
+			if ( (unsigned long)mm->context.popcorn_vdso >= vma->vm_end) {
+	            if ( task->tgroup_distributed==1 && task->main==0 )
+	            	up_read(&mm->mmap_sem);
 				return -ESRCH;
+			}
 
 			popcorn_pagelist = (struct page**)vma->vm_private_data;
 		//	if ( popcorn_pagelist == NULL )
@@ -930,18 +936,22 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			}
 			else {
 				printk("%s: WARN: follow_page returned zero (%lx)\n", __func__, popcorn_pagelist);
-				if (popcorn_pagelist == NULL)
+				if (popcorn_pagelist == NULL) {
+		            if ( task->tgroup_distributed==1 && task->main==0 )
+		            	up_read(&mm->mmap_sem);
 					return -ESRCH;
+				}
 				pval = page_address(popcorn_pagelist[0]);
 			}
-
 /* TODO the above is a temporary solution, it must be fixed for in-kernel scheduling
  * Even if in the process_server.c code at the first migration I am allocating VDSO this is not enough,
  * in fact the paging protocol kicks in and thinks he must keep the page consistent (but we don't want that)
  */
-
 			tmpval = *pval;
 			*pval = (long)itype;
+            if ( task->tgroup_distributed==1 && task->main==0 )
+            	up_read(&mm->mmap_sem);
+
             printk(KERN_INFO"%s: INFO: mm present, vdso @ 0x%lx, %s -- 0x%lx(%s) was 0x%lx @ 0x%lx vma 0x%lx(0x%lx)\n",
             		__func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
 					(long)itype, buffer, tmpval, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);

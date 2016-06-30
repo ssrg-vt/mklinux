@@ -2327,7 +2327,7 @@ exit:
 
 
 /**
- * down_read(&mm->mmap_sem) already held
+ * down_read(&mm->mmap_sem) already held getting in
  *
  * return types:
  * VM_FAULT_OOM, problem allocating memory.
