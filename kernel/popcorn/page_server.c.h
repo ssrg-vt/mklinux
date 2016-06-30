@@ -624,7 +624,8 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	PSPRINTK("In %s:%d vma_flags = %lx\n", __func__, __LINE__, vma->vm_flags);
 
 	if (vma && vma->vm_flags & VM_FETCH_LOCAL) {
-		PSPRINTK("%s:%d - VM_FETCH_LOCAL flag set - Going to void response\n", __func__, __LINE__);
+		printk("%s: WARN: VM_FETCH_LOCAL flag set - Going to void response address %lx\n",
+				__func__, address);
 		up_read(&mm->mmap_sem);
 		goto out;
 	}
@@ -778,7 +779,8 @@ fetch:
 			printk("%s: WARN: received a request not fetch for a not replicated page (cpu %d id %d address 0x%lx)\n",
 					__func__, request->tgroup_home_cpu, request->tgroup_home_id, address);
 
-		if (vma->vm_flags & VM_WRITE) {
+		if ((vma->vm_flags & VM_WRITE) ||
+				(vma->vm_start <= mm->context.popcorn_vdso && mm->context.popcorn_vdso < vma->vm_end) ) {
 			//if the page is writable but the pte has not the write flag set, it is a cow page
 			if (!pte_write(entry)) {
 
