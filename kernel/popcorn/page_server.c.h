@@ -624,7 +624,7 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	PSPRINTK("In %s:%d vma_flags = %lx\n", __func__, __LINE__, vma->vm_flags);
 
 	if (vma && vma->vm_flags & VM_FETCH_LOCAL) {
-		printk("%s: WARN: VM_FETCH_LOCAL flag set - Going to void response address %lx\n",
+		PSPRINTK("%s: WARN: VM_FETCH_LOCAL flag set - Going to void response address %lx\n",
 				__func__, address);
 		up_read(&mm->mmap_sem);
 		goto out;
@@ -2410,10 +2410,11 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 // end of the __handle_mm_fault() code here
 
-	if (address == mm->context.popcorn_vdso)
+	/*if (address == mm->context.popcorn_vdso)
 		printk("%s: WARN: VDSO pte 0x%lx value 0x%lx PAGE_UNUSED1 %lx VM_WRITE %u\n",
 				__func__, pte, (pte ? (unsigned long)*(unsigned long*)pte : -1lu), (unsigned long)_PAGE_UNUSED1,
 				(unsigned int)(vma->vm_flags & VM_WRITE) );
+	*/
 
 ///////////////////////////////////////////////////////////////////////////////
 //  pte null or NONE handling
