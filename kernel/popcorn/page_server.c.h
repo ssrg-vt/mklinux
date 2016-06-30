@@ -782,8 +782,8 @@ fetch:
 		if ((vma->vm_flags & VM_WRITE) ||
 				(vma->vm_start <= mm->context.popcorn_vdso && mm->context.popcorn_vdso < vma->vm_end) ) {
 			//if the page is writable but the pte has not the write flag set, it is a cow page
-			if (!pte_write(entry)) {
-
+			if (!pte_write(entry) &&
+					!(vma->vm_start <= mm->context.popcorn_vdso && mm->context.popcorn_vdso < vma->vm_end) ) {
 retry_cow:
 				PSPRINTK("COW page at %lx\n", address);
 
