@@ -890,8 +890,10 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
                 return rv;
 
 	task = get_proc_task(file_inode(file));
-        if (!task)
+        if (!task) {
+        		printk("%s: ERROR get_proc_task no task\n", __func__);
                 return -ESRCH;
+        }
         mm = get_task_mm(task);
         if (mm) {
 		if (mm->context.popcorn_vdso) {
@@ -900,11 +902,13 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			long * pval, tmpval;
 
 			vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
-
+			printk("%s: WARN: find_vma returned %lx\n", __func__, (unsigned long)vma);
 			if ( task->tgroup_distributed==1 && task->main==0 ) {
-				process_server_try_handle_mm_fault(tsk, mm, vma, (unsigned long)mm->context.popcorn_vdso,
+				process_server_try_handle_mm_fault(tsk, mm,
+												vma, (unsigned long)mm->context.popcorn_vdso,
 												FAULT_FLAG_WRITE,0);
 				vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
+				printk("%s: WARN: find_vma after process_server returned %lx\n", __func__, (unsigned long)vma);
 			}
 
 			if ( vma == NULL )
