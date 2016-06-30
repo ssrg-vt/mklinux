@@ -907,7 +907,7 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 					(unsigned long)mm->context.popcorn_vdso, (vma ? vma->vm_end : 0));
 			if ( task->tgroup_distributed==1 && task->main==0 ) {
 				process_server_try_handle_mm_fault(task, mm, vma, (unsigned long)mm->context.popcorn_vdso,
-												FAULT_FLAG_WRITE,0);
+												FAULT_FLAG_WRITE, 0);
 				vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
 				printk("%s: WARN: find_vma after process_server returned %lx\n", __func__, (unsigned long)vma);
 			}
@@ -917,30 +917,23 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			if ( (unsigned long)mm->context.popcorn_vdso >= vma->vm_end)
 				return -ESRCH;
 
-#define INITIAL_VDSO_MODEL
-#ifdef INITIAL_VDSO_MODEL
 			popcorn_pagelist = (struct page**)vma->vm_private_data;
 		//	if ( popcorn_pagelist == NULL )
 		//		return -ESRCH;
 
 			popcorn_page = follow_page(vma, (unsigned long)mm->context.popcorn_vdso, 0);
 			if (popcorn_page) {
-				if (popcorn_page != popcorn_pagelist[0])
+				if (popcorn_pagelist && popcorn_page != popcorn_pagelist[0])
 					printk(KERN_ALERT"%s: ERROR: vdso page is %ld was %ld\n",
 							__func__, page_to_pfn(popcorn_page), page_to_pfn(popcorn_pagelist[0]));
 				pval = page_address(popcorn_page);
 			}
-			else
+			else {
+				printk("%s: WARN: follow_page returned zero (%lx)\n", __func__, popcorn_pagelist);
+				if (popcorn_pagelist == NULL)
+					return -ESRCH;
 				pval = page_address(popcorn_pagelist[0]);
-#else
-			// this is now for debugging -- the goal is to synch the page
-			popcorn_page = follow_page(vma, (unsigned long)mm->context.popcorn_vdso, 0);
-			if (popcorn_page) {
-				pval = page_address(popcorn_page);
 			}
-			else // the following is only for debug on the first kernel (that has fixed allocation)
-				pval = page_address(popcorn_pagelist[0]);
-#endif
 
 /* TODO the above is a temporary solution, it must be fixed for in-kernel scheduling
  * Even if in the process_server.c code at the first migration I am allocating VDSO this is not enough,
