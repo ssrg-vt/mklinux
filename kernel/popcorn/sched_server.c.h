@@ -204,9 +204,28 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
     					}
     					else {
     					// TODO print only the one that are currently running (not migrated!)
+
+    					// CPU load per thread
+    					unsigned long delta, now;
+    					delta = now = get_jiffies_64();
+    					if (!t->llasttimestamp)
+    						delta -= timespec_to_jiffies( &(t->starttime) );
+    					else
+    						delta -= t->llasttime;
+    					t->llasttimestamp = now;
+
+    					unsigned long utime = cputime_to_jiffies(t->utime);
+    					unsigned long stime = cputime_to_jiffies(t->stime);
+    					unsigned int uload = (utime - t->lutime)/utime;
+    					unsigned int sload = (stime - t->lstime)/stime;
+
+    					t->lutime = utime;
+    					t->lstime = stime;
+
     					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-    							" %d:%d:%d:%d:%d;",
-								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit);
+    							" %d:%d:%d:%d:%d %d:%d;",
+								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit,
+								uload, sload); //the ones that we are printing must be in %
     					}
     				}
     			} while_each_thread(ppp, t);

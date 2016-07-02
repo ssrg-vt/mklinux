@@ -437,7 +437,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 		}
 
 		num_threads = get_nr_threads(task);
-		collect_sigign_sigcatch(task, &sigign, &sigcatch);
+		collect_sigign_sigcatch(task, &sigign, &sigcatch); // akshay
 
 		cmin_flt = sig->cmin_flt;
 		cmaj_flt = sig->cmaj_flt;

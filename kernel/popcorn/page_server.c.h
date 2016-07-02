@@ -2534,7 +2534,7 @@ start:
 
 		/* case page NOT REPLICATED */
 		if (page->replicated == 0) {
-			printk("Page not replicated address %lx page %lx\n", address, (unsigned long)page);
+			PSPRINTK("Page not replicated address %lx page %lx\n", address, (unsigned long)page);
 
 			//check if it is a cow page...
 			if ((vma->vm_flags & VM_WRITE) && !pte_write(value_pte)) {
