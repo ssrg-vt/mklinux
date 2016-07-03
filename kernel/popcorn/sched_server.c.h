@@ -209,9 +209,9 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
     					unsigned long delta, now;
     					delta = now = get_jiffies_64();
     					if (!t->llasttimestamp)
-    						delta -= timespec_to_jiffies( &(t->starttime) );
+    						delta -= timespec_to_jiffies( &(t->start_time) );
     					else
-    						delta -= t->llasttime;
+    						delta -= t->llasttimestamp;
     					t->llasttimestamp = now;
 
     					unsigned long utime = cputime_to_jiffies(t->utime);
