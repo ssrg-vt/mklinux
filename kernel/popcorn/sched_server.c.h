@@ -181,8 +181,8 @@ static void popcorn_ps_load (struct task_struct * t, unsigned int *puload, unsig
 		sload = 100;
 	}
 	else {
-		uload = (utime - t->lutime)/delta;
-		sload = (stime - t->lstime)/delta;
+		uload = ((utime - t->lutime) * 100) / delta;
+		sload = ((stime - t->lstime) * 100) /delta;
 	}
 
 	t->llasttimestamp = now;
