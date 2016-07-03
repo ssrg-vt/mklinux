@@ -172,7 +172,7 @@ static void popcorn_ps_load (struct task_struct * t, unsigned int *puload, unsig
 	unsigned int uload, sload;
 
 	if (!t->llasttimestamp)
-		delta -= timespec_to_jiffies( &(t->start_time) );
+		delta -= timespec_to_jiffies( &(t->real_start_time) );
 	else
 		delta -= t->llasttimestamp;
 
@@ -182,7 +182,7 @@ static void popcorn_ps_load (struct task_struct * t, unsigned int *puload, unsig
 	}
 	else {
 		uload = ((utime - t->lutime) * 100) / delta;
-		sload = ((stime - t->lstime) * 100) /delta;
+		sload = ((stime - t->lstime) * 100) / delta;
 	}
 
 	t->llasttimestamp = now;
