@@ -1161,7 +1161,6 @@ struct task_struct {
 	int __user *clear_child_tid;		/* CLONE_CHILD_CLEARTID */
 
 	cputime_t utime, stime, utimescaled, stimescaled;
-	unsigned long lutime, lstime, llasttimestamp; /* in jiffies for load accounting */
 	cputime_t gtime;
 #ifndef CONFIG_VIRT_CPU_ACCOUNTING_NATIVE
 	struct cputime prev_cputime;
@@ -1451,7 +1450,11 @@ struct task_struct {
 	unsigned long saved_old_rsp;
 	unsigned long return_addr;
 
-	remote_file_info_t *fake_file_table[64];
+	// scheduling -- antoniob
+	unsigned long lutime, lstime, llasttimestamp; /* in jiffies for load accounting */
+
+	//let's remove this?!
+	remote_file_info_t *fake_file_table[16];
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
