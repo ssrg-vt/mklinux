@@ -167,17 +167,25 @@ static void popcorn_ps_load (struct task_struct * t, unsigned int *puload, unsig
 {
 	unsigned long delta, now;
 	delta = now = get_jiffies_64();
+	unsigned long utime = cputime_to_jiffies(t->utime);
+	unsigned long stime = cputime_to_jiffies(t->stime);
+	unsigned int uload, sload;
+
 	if (!t->llasttimestamp)
 		delta -= timespec_to_jiffies( &(t->start_time) );
 	else
 		delta -= t->llasttimestamp;
+
+	if (delta == 0) { // TODO fix the following
+		uload = 100;
+		sload = 100;
+	}
+	else {
+		uload = (utime - t->lutime)/delta;
+		sload = (stime - t->lstime)/delta;
+	}
+
 	t->llasttimestamp = now;
-
-	unsigned long utime = cputime_to_jiffies(t->utime);
-	unsigned long stime = cputime_to_jiffies(t->stime);
-	unsigned int uload = (utime - t->lutime)/utime;
-	unsigned int sload = (stime - t->lstime)/stime;
-
 	t->lutime = utime;
 	t->lstime = stime;
 
