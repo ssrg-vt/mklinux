@@ -1,4 +1,35 @@
-
+/*
+ * THE FOLLOWINGS ARE THE MESSAGE WAITERS/RECEIVERS: (rendevouz marina style)
+ * handle_mapping_response_void <<< called by the messaging layer, registered from the page_server_init function
+ * handle_mapping_response <<< called by the messaging layer, registered from the page_server_init function
+ * handle_ack <<< called by the messaging layer, registered from the page_server_init function ??? there is probably one also for the vma_server
+ * END OF MESSAGE RECEIVERS
+ *
+ * REMOTE WORKERS == SERVERS
+ * handle_invalid_request <<< called by the messaging layer, registered from the page_server_init
+ * handle_mapping_request << called by the messaging layer, registered from the page_server_init
+ *
+ * process_invalid_request_for_2_kernels <<< called by handle_invalid_request
+ *                                                     called by itself as a delayed work
+ * process_mapping_request_for_2_kernels <<< called by handle_mapping_request
+ * 														called by itself as a delayed work
+ * END OF REMOTE WORKERS
+ *
+ * process_server_update_page <<< called by __do_page_fault, and do_page_fault
+ * process_server_clean_page <<< called by get_page_from_freelist, and zap_pte_page
+ *
+ * LOCAL WORKERS == CLIENTS
+ * do_remote_read_for_2_kernels <<< called by process_server_try_handle_mm_fault
+ * do_remote_write_for_2_kernels <<< called by process_server_try_handle_mm_fault
+ * do_remote_fetch_for_2_kernels <<< called by process_server_try_handle_mm_fault
+ *
+ * process_server_try_handle_mm_fault <<< called by __do_page_fault
+ *                                                  __get_user_pages
+ *                                                  fixup_user_fault
+ * END LOCAL WORKERS
+ *
+ * page_server_init <<< called by process_server initialization function
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Mappings handling
@@ -601,7 +632,8 @@ void process_mapping_request_for_2_kernels(struct work_struct* work)
 	PSPRINTK("In %s:%d vma_flags = %lx\n", __func__, __LINE__, vma->vm_flags);
 
 	if (vma && vma->vm_flags & VM_FETCH_LOCAL) {
-		PSPRINTK("%s:%d - VM_FETCH_LOCAL flag set - Going to void response\n", __func__, __LINE__);
+		PSPRINTK("%s: WARN: VM_FETCH_LOCAL flag set - Going to void response address %lx\n",
+				__func__, address);
 		up_read(&mm->mmap_sem);
 		goto out;
 	}
@@ -765,10 +797,11 @@ fetch:
 			printk("%s: WARN: received a request not fetch for a not replicated page (cpu %d id %d address 0x%lx)\n",
 					__func__, request->tgroup_home_cpu, request->tgroup_home_id, address);
 
-		if (vma->vm_flags & VM_WRITE) {
+		if ((vma->vm_flags & VM_WRITE) ||
+				(vma->vm_start <= mm->context.popcorn_vdso && mm->context.popcorn_vdso < vma->vm_end) ) {
 			//if the page is writable but the pte has not the write flag set, it is a cow page
-			if (!pte_write(entry)) {
-
+			if (!pte_write(entry) &&
+					!(vma->vm_start <= mm->context.popcorn_vdso && mm->context.popcorn_vdso < vma->vm_end) ) {
 retry_cow:
 				PSPRINTK("COW page at %lx\n", address);
 
@@ -2263,7 +2296,9 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 			pte_t entry = mk_pte(page, vma->vm_page_prot);
 
 			//if the page is read only no need to keep replicas coherent
-			if (vma->vm_flags & VM_WRITE) {
+			// but this is not true for the VDSO (that can be read only)
+			if (vma->vm_flags & VM_WRITE ||
+					(vma->vm_start <= mm->context.popcorn_vdso && mm->context.popcorn_vdso < vma->vm_end) ) {
 				page->replicated = 1;
 				page->last_write = fetching_page->last_write + ((fetching_page->is_write) ? 1 : 0);
 #if STATISTICS
@@ -2371,7 +2406,7 @@ exit:
 
 
 /**
- * down_read(&mm->mmap_sem) already held
+ * down_read(&mm->mmap_sem) already held getting in
  *
  * return types:
  * VM_FAULT_OOM, problem allocating memory.
@@ -2449,6 +2484,12 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 
 	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 // end of the __handle_mm_fault() code here
+
+	/*if (address == mm->context.popcorn_vdso)
+		printk("%s: WARN: VDSO pte 0x%lx value 0x%lx PAGE_UNUSED1 %lx VM_WRITE %u\n",
+				__func__, pte, (pte ? (unsigned long)*(unsigned long*)pte : -1lu), (unsigned long)_PAGE_UNUSED1,
+				(unsigned int)(vma->vm_flags & VM_WRITE) );
+	*/
 
 ///////////////////////////////////////////////////////////////////////////////
 //  pte null or NONE handling
@@ -2560,6 +2601,8 @@ start:
 		 */
 		if (unlikely(access_error(error_code, vma))) {
 			spin_unlock(ptl);
+			printk("%s: WARN: access_error @ 0x%lx (cpu %d tgid %d)\n",
+					__func__, page_fault_address, tgroup_home_cpu, tgroup_home_id);
 			return VM_FAULT_ACCESS_ERROR;
 		}
 
@@ -2571,9 +2614,9 @@ start:
 
 		/* case page NOT REPLICATED */
 		if (page->replicated == 0) {
-			PSPRINTK("Page not replicated address %lx\n", address);
+			PSPRINTK("Page not replicated address %lx page %lx\n", address, (unsigned long)page);
 
-			//check if it a cow page...
+			//check if it is a cow page...
 			if ((vma->vm_flags & VM_WRITE) && !pte_write(value_pte)) {
 retry_cow:
 				PSPRINTK("COW page at %lx\n", address);
@@ -2689,7 +2732,7 @@ check:
 			 * both read and write can be performed on this page.
 			 * */
 			if (page->status == REPLICATION_STATUS_WRITTEN) {
-				PSPRINTK("%s: Page status written address %lx\n", __func__, address);
+				printk("%s: WARN: Page status written address %lx\n", __func__, address);
 				spin_unlock(ptl);
 				return 0;
 			}

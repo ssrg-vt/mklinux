@@ -1040,7 +1040,7 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
  * and the problem, and then passes it off to one of the appropriate
  * routines.
  */
-	static void __kprobes
+static void __kprobes
 __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 {
 	struct vm_area_struct *vma;

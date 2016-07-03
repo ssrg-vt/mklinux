@@ -227,6 +227,8 @@ while (memory->operation != VMA_OP_NOP) { 			\
 		while(memory->main==NULL) \
 			schedule();
 
+// real code starts here //////////////////////////////////////////////////////////////////////////
+
 ///////////////////////////////////////////////////////////////////////////////
 // vma operations
 ///////////////////////////////////////////////////////////////////////////////
@@ -995,7 +997,7 @@ void end_distribute_operation(int operation, long start_ret, unsigned long addr)
 	if (current->mm->distribute_unmap == 0)
 		return;
 
-	printk("%s: INFO: Ending distributed vma operation %i pid %d counter %d\n", __func__, operation,current->pid, current->mm->distr_vma_op_counter);
+	//printk("%s: INFO: Ending distributed vma operation %i pid %d counter %d\n", __func__, operation,current->pid, current->mm->distr_vma_op_counter);
 	if (current->mm->distr_vma_op_counter <= 0
 	    || (current->main == 0 && current->mm->distr_vma_op_counter > 2)
 	    || (current->main == 1 && current->mm->distr_vma_op_counter > 3))
@@ -1182,11 +1184,11 @@ long start_distribute_operation(int operation, unsigned long addr, size_t len,
 				__func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0, operation, addr, len, addr+len);
 		return ret;
 	}
-	printk("%s: INFO: pid %d tgroup_home_cpu %d tgroup_home_id %d main %d operation %s addr %lx len %lx end %lx index %d\n",
+	/*printk("%s: INFO: pid %d tgroup_home_cpu %d tgroup_home_id %d main %d operation %s addr %lx len %lx end %lx index %d\n",
 		    __func__, current->pid, current->tgroup_home_cpu, current->tgroup_home_id, current->main?1:0,
 		    (operation == VMA_OP_NOP) ? "NOP" : ((operation == VMA_OP_UNMAP) ? "UNMAP" : ((operation == VMA_OP_PROTECT) ? "PROTECT" : (
 		    						(operation == VMA_OP_REMAP) ? "REMAP" : ((operation == VMA_OP_MAP) ? "MAP" : ((operation == VMA_OP_BRK) ? "BRK" : "?"))))),
-		    addr, len, addr+len, current->mm->vma_operation_index);
+		    addr, len, addr+len, current->mm->vma_operation_index);*/
 
 	/*only server can have legal distributed nested operations*/
 	if ((current->mm->distr_vma_op_counter > 0) && (current->mm->thread_op == current)) {
@@ -1633,6 +1635,20 @@ out:
 //
 // TODO the following must become inline after we are done with debugging
 //
+
+long process_server_madvise_remove_start(struct mm_struct *mm, unsigned long start,
+				   size_t len)
+{
+	return start_distribute_operation(VMA_OP_MADVISE, start, len, 0, 0, 0, 0,
+					  NULL, 0);
+}
+
+long process_server_madvise_remove_end(struct mm_struct *mm, unsigned long start,
+				 size_t len, int start_ret)
+{
+	end_distribute_operation(VMA_OP_MADVISE, start_ret, start);
+	return 0;
+}
 
 long process_server_do_unmap_start(struct mm_struct *mm, unsigned long start,
 				   size_t len)

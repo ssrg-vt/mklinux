@@ -1450,7 +1450,11 @@ struct task_struct {
 	unsigned long saved_old_rsp;
 	unsigned long return_addr;
 
-	remote_file_info_t *fake_file_table[64];
+	// scheduling -- antoniob
+	unsigned long lutime, lstime, llasttimestamp; /* in jiffies for load accounting */
+
+	//let's remove this?!
+	remote_file_info_t *fake_file_table[16];
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

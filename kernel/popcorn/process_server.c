@@ -637,6 +637,10 @@ static void create_new_threads(thread_pull_t * my_thread_pull, int *spare_thread
 	mm_data->mm->distribute_unmap = 1; \
 	} \
 })
+
+extern long madvise_dontneed(struct vm_area_struct *vma, struct vm_area_struct **prev, unsigned long start, unsigned long end);
+extern long madvise_remove(struct vm_area_struct *vma, struct vm_area_struct **prev, unsigned long start, unsigned long end);
+
 static void main_for_distributed_kernel_thread(memory_t* mm_data, thread_pull_t * my_thread_pull)
 {
 	struct file* f;
@@ -667,6 +671,27 @@ again:
 				PUT_UNMAP_IF_HOME(current, mm_data);
 				up_write(&mm_data->mm->mmap_sem);
 				break;
+
+			case VMA_OP_MADVISE: { //this is only for MADV_REMOVE (thus write is 0)
+				struct vm_area_struct *pvma;
+				struct vm_area_struct *vma = find_vma(mm_data->mm, mm_data->addr);
+				if (!vma || (vma->vm_start > mm_data->addr || vma->vm_end < mm_data->addr))
+					printk("%s: ERROR VMA_OP_MADVISE cannot find VMA addr %lx start %lx end %lx\n",
+							__func__, mm_data->addr, (vma ? vma->vm_start : 0), (vma ? vma->vm_end : 0));
+				//write = madvise_need_mmap_write(behavior);
+				//if (write)
+				//	down_write(&(mm_data->mm->mmap_sem));
+				//else
+					down_read(&(mm_data->mm->mmap_sem));
+				GET_UNMAP_IF_HOME(current, mm_data);
+				ret = madvise_remove(vma, &pvma,
+						mm_data->addr, (mm_data->addr + mm_data->len) );
+				PUT_UNMAP_IF_HOME(current, mm_data);
+				//if (write)
+				//	up_write(&(mm_data->mm->mmap_sem));
+				//else
+					up_read(&(mm_data->mm->mmap_sem));
+				break; }
 
 			case VMA_OP_PROTECT:
 				GET_UNMAP_IF_HOME(current, mm_data);
@@ -1329,7 +1354,7 @@ int process_server_dup_task(struct task_struct* orig, struct task_struct* task)
 	task->tgroup_home_id = -1;
 	task->main = 0;
 	task->group_exit = -1;
-	task->surrogate = -1;
+	task->surrogate = -1; // this is for futex
 	task->group_exit= -1;
 	task->uaddr = 0;
 	task->origin_pid = -1;
@@ -1648,17 +1673,18 @@ void sleep_shadow()
 	memory_t* memory = NULL;
     PSPRINTK("%s pid %d\n", __func__, current->pid);
 
-	/* printk("%s\n", __func__); */
-
-	while (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE) {
-		set_task_state(current, TASK_UNINTERRUPTIBLE);
-		if (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE) {
-			schedule();
-		}
-		set_task_state(current, TASK_RUNNING);
+	if (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE) {
+		do {
+			set_task_state(current, TASK_INTERRUPTIBLE);
+			schedule_timeout(HZ*20); // we take
+			if (current->state != TASK_RUNNING) {
+				printk("%s: ERROR, linux documentation sucks (current state is 0x%lx)\n", __func__, current->state);
+				set_task_state(current, TASK_RUNNING);
+			}
+		} while (current->executing_for_remote == 0 && current->distributed_exit== EXIT_NOT_ACTIVE);
 	}
 
-	PSPRINTK("%s woken up pid %d\n", __func__, current->pid);
+	PSPRINTK("%s: WARN woken up pid %d\n", __func__, current->pid);
 	if(current->distributed_exit!= EXIT_NOT_ACTIVE){
 		current->represents_remote = 0;
 		do_exit(0);
@@ -1668,8 +1694,7 @@ void sleep_shadow()
 	current->represents_remote = 0;
 
 	// Notify of PID/PID pairing.
-	process_server_notify_delegated_subprocess_starting(current->pid,
-							    current->prev_pid, current->prev_cpu);
+	process_server_notify_delegated_subprocess_starting(current->pid, current->prev_pid, current->prev_cpu);
 
 	//this force the task to wait that the main correctly set up the memory
 	while (current->tgroup_distributed != 1) {
@@ -1892,11 +1917,15 @@ static int create_kernel_thread_for_distributed_process(void *data)
 		}
 	}
 
-	while (my_thread_pull->memory == NULL) {
-		__set_task_state(current, TASK_UNINTERRUPTIBLE);
-		if (my_thread_pull->memory == NULL)
-			schedule();
-		__set_task_state(current, TASK_RUNNING);
+	if (my_thread_pull->memory == NULL) {
+		do {
+			set_task_state(current, TASK_INTERRUPTIBLE);
+			schedule_timeout(HZ*20); // we take
+			if (current->state != TASK_RUNNING) {
+				printk("%s: ERROR, linux documentation sucks (current state is 0x%lx)\n", __func__, current->state);
+				set_task_state(current, TASK_RUNNING);
+			}
+		} while (my_thread_pull->memory == NULL);
 	}
     PSPRINTK("%s: after memory current pid %d\n", __func__, current->pid);
 
@@ -2140,7 +2169,10 @@ retry:
 				entry->mm->start_data = clone->start_data;
 				entry->mm->end_data = clone->end_data;
 				entry->mm->def_flags = clone->def_flags;
-                                // if popcorn_vdso is zero it should be initialized with the address provided by the home kernel
+
+#undef INITIAL_VDSO_MODEL
+#ifdef INITIAL_VDSO_MODEL
+				// if popcorn_vdso is zero it should be initialized with the address provided by the home kernel
                 if (entry->mm->context.popcorn_vdso == 0) {
                 	unsigned long popcorn_addr = clone->popcorn_vdso;
                 	struct page ** popcorn_pagelist = kzalloc(sizeof(struct page *) * (1 + 1), GFP_KERNEL);
@@ -2165,6 +2197,11 @@ retry:
                 		free_page((unsigned long)popcorn_pagelist[0]);
                 	}
                 }
+#else
+                if (entry->mm->context.popcorn_vdso == 0)
+                	entry->mm->context.popcorn_vdso = clone->popcorn_vdso;
+#endif
+
 up_fail:
 				// popcorn_vdso cannot be different
 				if ( ((unsigned long)entry->mm->context.popcorn_vdso) != clone->popcorn_vdso) {

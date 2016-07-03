@@ -161,6 +161,43 @@ static const struct file_operations mtrig_fops = {
 ///////////////////////////////////////////////////////////////////////////////
 // List of Popcorn processes
 ///////////////////////////////////////////////////////////////////////////////
+
+// CPU load per thread
+static void popcorn_ps_load (struct task_struct * t, unsigned int *puload, unsigned int *psload)
+{
+	unsigned long delta, now;
+	delta = now = get_jiffies_64();
+	unsigned long utime = cputime_to_jiffies(t->utime);
+	unsigned long stime = cputime_to_jiffies(t->stime);
+	unsigned int uload, sload;
+
+	if (!t->llasttimestamp)
+		delta -= timespec_to_jiffies( &(t->real_start_time) );
+	else
+		delta -= t->llasttimestamp;
+
+	if (delta == 0) { // TODO fix the following
+		uload = 100;
+		sload = 100;
+	}
+	else {
+		uload = ((utime - t->lutime) * 100) / delta;
+		sload = ((stime - t->lstime) * 100) / delta;
+	}
+
+	t->llasttimestamp = now;
+	t->lutime = utime;
+	t->lstime = stime;
+
+	if (puload)
+		*puload = uload;
+	if (psload)
+		*psload = sload;
+
+	return;
+}
+
+
 #define PROC_BUFFER_PS 4096
 static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
@@ -204,9 +241,15 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
     					}
     					else {
     					// TODO print only the one that are currently running (not migrated!)
+
+    					// CPU load per thread
+    					unsigned int uload, sload;
+    					popcorn_ps_load(t, &uload, &sload);
+
     					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-    							" %d:%d:%d:%d:%d;",
-								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit);
+    							" %d:%d:%d:%d:%d %d:%d;",
+								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit,
+								uload, sload); //the ones that we are printing must be in %
     					}
     				}
     			} while_each_thread(ppp, t);
@@ -280,10 +323,15 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         				}
         				else {
         					// TODO print only the one that are currently running (not migrated!)
+        					// CPU load per thread
+        					unsigned int uload, sload;
+        					popcorn_ps_load(t, &uload, &sload);
+
         					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        							" %d:%d:%d:%d:%d;",
-									(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit);
-        				}
+        							" %d:%d:%d:%d:%d %d:%d;",
+    								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit,
+    								uload, sload); //the ones that we are printing must be in %
+        					}
         			}
         		} while_each_thread(ppp, t);
 

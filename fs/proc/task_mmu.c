@@ -890,8 +890,10 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
                 return rv;
 
 	task = get_proc_task(file_inode(file));
-        if (!task)
+        if (!task) {
+        		printk("%s: ERROR get_proc_task no task\n", __func__);
                 return -ESRCH;
+        }
         mm = get_task_mm(task);
         if (mm) {
 		if (mm->context.popcorn_vdso) {
@@ -900,34 +902,66 @@ static ssize_t mtrig_write (struct file *file, const char __user *buf,
 			long * pval, tmpval;
 
 			vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
-			if ( vma == NULL )	
+			printk("%s: WARN: find_vma returned %lx vdso %lx end %lx\n",
+					__func__, (unsigned long)vma, 
+					(unsigned long)mm->context.popcorn_vdso, (vma ? vma->vm_end : 0));
+			if ( task->tgroup_distributed==1 && task->main==0 ) {
+				down_read(&mm->mmap_sem);
+				int ret = process_server_try_handle_mm_fault(task, mm, vma, (unsigned long)mm->context.popcorn_vdso,
+												FAULT_FLAG_WRITE, 0);
+
+				vma = find_vma(mm, (unsigned long)mm->context.popcorn_vdso);
+				printk("%s: WARN: find_vma after process_server returned %lx marina %x\n",
+						__func__, (unsigned long)vma, ret);
+			}
+			if ( vma == NULL ) {
+	            if ( task->tgroup_distributed==1 && task->main==0 )
+	            	up_read(&mm->mmap_sem);
 				return -ESRCH;
-			if ( (unsigned long)mm->context.popcorn_vdso >= vma->vm_end)
+			}
+			if ( (unsigned long)mm->context.popcorn_vdso >= vma->vm_end) {
+	            if ( task->tgroup_distributed==1 && task->main==0 )
+	            	up_read(&mm->mmap_sem);
 				return -ESRCH;
+			}
 
 			popcorn_pagelist = (struct page**)vma->vm_private_data;
-			if ( popcorn_pagelist == NULL )
-				return -ESRCH;
+		//	if ( popcorn_pagelist == NULL )
+		//		return -ESRCH;
 
 			popcorn_page = follow_page(vma, (unsigned long)mm->context.popcorn_vdso, 0);
 			if (popcorn_page) {
-				if (popcorn_page != popcorn_pagelist[0])
+				if (popcorn_pagelist && popcorn_page != popcorn_pagelist[0])
 					printk(KERN_ALERT"%s: ERROR: vdso page is %ld was %ld\n",
 							__func__, page_to_pfn(popcorn_page), page_to_pfn(popcorn_pagelist[0]));
 				pval = page_address(popcorn_page);
 			}
-			else
+			else {
+				printk("%s: WARN: follow_page returned zero (%lx)\n", __func__, popcorn_pagelist);
+				if (popcorn_pagelist == NULL) {
+		            if ( task->tgroup_distributed==1 && task->main==0 )
+		            	up_read(&mm->mmap_sem);
+					return -ESRCH;
+				}
 				pval = page_address(popcorn_pagelist[0]);
+			}
 /* TODO the above is a temporary solution, it must be fixed for in-kernel scheduling
  * Even if in the process_server.c code at the first migration I am allocating VDSO this is not enough,
  * in fact the paging protocol kicks in and thinks he must keep the page consistent (but we don't want that)
  */
-
 			tmpval = *pval;
 			*pval = (long)itype;
+            if ( task->tgroup_distributed==1 && task->main==0 )
+            	up_read(&mm->mmap_sem);
+
             printk(KERN_INFO"%s: INFO: mm present, vdso @ 0x%lx, %s -- 0x%lx(%s) was 0x%lx @ 0x%lx vma 0x%lx(0x%lx)\n",
             		__func__, (unsigned long)mm->context.popcorn_vdso, task->comm,
 					(long)itype, buffer, tmpval, (unsigned long)pval, (unsigned long) vma, (unsigned long) vma->vm_end);
+// the following is for debugging
+            printk(KERN_INFO"%s: INFO: page 0x%lx replicated %d status %d  owner %d writing %d reading %d\n",
+            		__func__, popcorn_page, (popcorn_page ? popcorn_page->replicated : -1),
+					(popcorn_page ? popcorn_page->status : -1), (popcorn_page ? popcorn_page->owner : -1),
+					(popcorn_page ? popcorn_page->writing : -1), (popcorn_page ? popcorn_page->reading : -1));
 		} else {
 			printk(KERN_ALERT"%s: ERROR: mm present, no popcorn_vdso, %s\n",
 				__func__, task->comm);

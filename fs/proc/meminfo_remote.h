@@ -63,6 +63,22 @@ struct _remote_mem_info_response {
 
 typedef struct _remote_mem_info_response _remote_mem_info_response_t;
 
+#ifdef CONFIG_PROC_REMOTE_MEMINFO
 extern int remote_proc_meminfo_info(_remote_mem_info_response_t *total);
+#else
+static int remote_proc_meminfo_info(_remote_mem_info_response_t *total) {
+	return 0;
+}
+#endif
 
 #endif
+
+/*
+ * config PROC_REMOTE_MEMINFO
+	default y
+	depends on PROC_FS
+	bool "Enables aggregation of all the memory available in a Popcorn Linux deployment"
+	help
+	/proc/meminfo will collect all the information available in a Popcorn
+	Linux replicated-kernel OS from multiple kernels.
+ */

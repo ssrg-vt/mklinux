@@ -29,6 +29,8 @@
 #include "internal.h"
 #include "meminfo_remote.h"
 
+//antoniob -- I think that here concurrency is not handled -- to be checked better
+
 #define PRINT_MESSAGES 0
 #if PRINT_MESSAGES
 #define PRINTK(...) printk(__VA_ARGS__)
@@ -243,7 +245,7 @@ int remote_proc_meminfo_info(_remote_mem_info_response_t *total)
 			ret = wait_event_interruptible(wq, wait != -1);
 			wait = -1;
 
-			if(!ret) {
+			if (!ret && meminfo_result) {
 				/* Accumulate the meminfo */
 				total->_MemTotal += meminfo_result->_MemTotal;
 				total->_MemFree += meminfo_result->_MemFree;
