@@ -226,8 +226,9 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
         	struct task_struct * ppp = lista[i]->main;
 
         	len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        		"%s %d:%d:%d", ppp->comm,
-				ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed);
+        		"%s %d:%d:%d-%d", ppp->comm,
+				ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed,
+				ppp->mm->total_vm); // this is in number of pages
 
     			t = ppp;
     			do {
@@ -247,10 +248,9 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
     					popcorn_ps_load(t, &uload, &sload);
 
     					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-    							" %d:%d:%d:%d:%d %d:%d:%d;",
+    							" %d:%d:%d:%d:%d %d:%d;",
 								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit,
-								uload, sload, //these are in percentage
-    							mm->total_vm); // this is in number of pages
+								uload, sload); //these are in percentage
     					}
     				}
     			} while_each_thread(ppp, t);
@@ -303,8 +303,9 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         		struct task_struct * t;
 
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        				"%s %d:%d:%d", ppp->comm,
-						ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed);
+        				"%s %d:%d:%d-%d", ppp->comm,
+						ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed,
+						ppp->mm->total_vm); // this is in number of pages
 
         		/* NOTEs
         		 * A Popcorn process is a mix of different threads and Popcorn uses different tricks
@@ -329,10 +330,9 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         					popcorn_ps_load(t, &uload, &sload);
 
         					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        							" %d:%d:%d:%d:%d %d:%d:%d;",
+        							" %d:%d:%d:%d:%d %d:%d;",
     								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit,
-									uload, sload, //these are in percentage
-	    							mm->total_vm); // this is in number of pages
+									uload, sload);, //these are in percentage
         					}
         			}
         		} while_each_thread(ppp, t);
