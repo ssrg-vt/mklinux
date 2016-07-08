@@ -247,9 +247,10 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
     					popcorn_ps_load(t, &uload, &sload);
 
     					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-    							" %d:%d:%d:%d:%d %d:%d;",
+    							" %d:%d:%d:%d:%d %d:%d:%d;",
 								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit,
-								uload, sload); //the ones that we are printing must be in %
+								uload, sload, //these are in percentage
+    							mm->total_vm); // this is in number of pages
     					}
     				}
     			} while_each_thread(ppp, t);
@@ -328,9 +329,10 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         					popcorn_ps_load(t, &uload, &sload);
 
         					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        							" %d:%d:%d:%d:%d %d:%d;",
+        							" %d:%d:%d:%d:%d %d:%d:%d;",
     								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit,
-    								uload, sload); //the ones that we are printing must be in %
+									uload, sload, //these are in percentage
+	    							mm->total_vm); // this is in number of pages
         					}
         			}
         		} while_each_thread(ppp, t);
