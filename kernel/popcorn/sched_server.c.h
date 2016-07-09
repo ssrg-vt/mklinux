@@ -332,7 +332,7 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         					len += snprintf((buffer +len), PROC_BUFFER_PS -len,
         							" %d:%d:%d:%d:%d %d:%d;",
     								(int)t->pid, t->represents_remote, t->executing_for_remote, t->main, t->distributed_exit,
-									uload, sload);, //these are in percentage
+									uload, sload); //these are in percentage
         					}
         			}
         		} while_each_thread(ppp, t);
