@@ -226,7 +226,7 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
         	struct task_struct * ppp = lista[i]->main;
 
         	len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        		"%s %d:%d:%d-%d", ppp->comm,
+        		"%s %d:%d:%d:%d", ppp->comm,
 				ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed,
 				ppp->mm->total_vm); // this is in number of pages
 
@@ -303,7 +303,7 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         		struct task_struct * t;
 
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
-        				"%s %d:%d:%d-%d", ppp->comm,
+        				"%s %d:%d:%d:%d", ppp->comm,
 						ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed,
 						ppp->mm->total_vm); // this is in number of pages
 
