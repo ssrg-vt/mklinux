@@ -1465,7 +1465,7 @@ void process_server_clean_page(struct page* page)
  *VM_FAULT_REPLICATION_PROTOCOL, general error.
  *0, write succeeded;
  * */
-int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
+int do_remote_read_for_2_kernels(struct task_struct * tsk, int tgroup_home_cpu, int tgroup_home_id,
 				 struct mm_struct *mm, struct vm_area_struct *vma,
 				 unsigned long address, unsigned long page_fault_flags,
 				 pmd_t* pmd, pte_t* pte,
@@ -1478,7 +1478,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #if STATISTICS
 	read++;
 #endif
-	PSPRINTK("%s Read for address %lx pid %d\n", __func__, address,current->pid);
+	PSPRINTK("%s Read for address %lx pid %d\n", __func__, address, tsk->pid);
 
 	//message to ask for a copy
 	data_request_for_2_kernels_t* read_message = (data_request_for_2_kernels_t*) kmalloc(sizeof(data_request_for_2_kernels_t),
@@ -1496,7 +1496,7 @@ int do_remote_read_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	read_message->is_fetch= 0;
 	read_message->is_write= 0;
 	read_message->last_write= page->last_write;
-	read_message->vma_operation_index= current->mm->vma_operation_index;
+	read_message->vma_operation_index= mm->vma_operation_index;
 	PSPRINTK("%s vma_operation_index %d\n", __func__, read_message->vma_operation_index);
 
 	//object to held responses
@@ -1694,12 +1694,11 @@ exit:
  *VM_FAULT_REPLICATION_PROTOCOL, general error.
  *0, write succeeded;
  * */
-int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
+int do_remote_write_for_2_kernels(struct tast_struct * tsk, int tgroup_home_cpu, int tgroup_home_id,
 				  struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
 				  unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, spinlock_t* ptl,
 				  struct page* page,int invalid)
 {
-
 	int i, ret= 0;
 	pte_t value_pte;
 	page->writing = 1;
@@ -1707,8 +1706,8 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 #if STATISTICS
 	write++;
 #endif
-	PSPRINTK("%s: Write %i address %lx pid %d\n", __func__, 0, address,current->pid);
-	PSMINPRINTK("Write for address %lx owner %d pid %d\n", address,page->owner==1?1:0,current->pid);
+	PSPRINTK("%s: Write %i address %lx pid %d\n", __func__, 0, address, tsk->pid);
+	PSMINPRINTK("Write for address %lx owner %d pid %d\n", address, page->owner==1?1:0, tsk->pid);
 
 	if (page->owner==1) {
 		int sent= 0;
@@ -1743,7 +1742,7 @@ int do_remote_write_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		invalid_message->tgroup_home_cpu = tgroup_home_cpu;
 		invalid_message->tgroup_home_id = tgroup_home_id;
 		invalid_message->address = address;
-		invalid_message->vma_operation_index= current->mm->vma_operation_index;
+		invalid_message->vma_operation_index= tsk->mm->vma_operation_index;
 
 		// Insert the object in the appropriate list.
 		add_ack_entry(answers);
@@ -1832,7 +1831,7 @@ exit_answers:
 		write_message->is_fetch= 0;
 		write_message->is_write= 1;
 		write_message->last_write= page->last_write;
-		write_message->vma_operation_index= current->mm->vma_operation_index;
+		write_message->vma_operation_index=tsk->mm->vma_operation_index;
 		PSPRINTK("%s vma_operation_index %d\n", __func__, write_message->vma_operation_index);
 
 		//object to held responses
@@ -2039,7 +2038,7 @@ exit:
  *0, remotely fetched;
  *-1, invalidated while fetching;
  * */
-int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
+int do_remote_fetch_for_2_kernels(struct task_struct *tsk, int tgroup_home_cpu, int tgroup_home_id,
 				  struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
 				  unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, pte_t value_pte,
 				  spinlock_t* ptl)
@@ -2049,7 +2048,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	data_request_for_2_kernels_t* fetch_message;
 	int ret= 0,i,reachable,other_cpu=-1;
 
-	PSPRINTK("%s: Fetch for address %lx write %i pid %d is local?%d\n", __func__, address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),current->pid,pte_none(value_pte));
+	PSPRINTK("%s: Fetch for address %lx write %i pid %d is local?%d\n", __func__, address,((page_fault_flags & FAULT_FLAG_WRITE)?1:0),tsk->pid,pte_none(value_pte));
 #if STATISTICS
 	fetch++;
 #endif
@@ -2068,7 +2067,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	fetching_page->is_write = (page_fault_flags & FAULT_FLAG_WRITE) ? 1 : 0;
 	fetching_page->is_fetch= 1;
 	fetching_page->futex_owner = -1;//akshay
-	fetching_page->waiting = current;
+	fetching_page->waiting = current; // we are the waiters even if the message can be not for this process WARNING!
 
 	add_mapping_entry(fetching_page);
 
@@ -2099,7 +2098,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	fetch_message->tgroup_home_id = tgroup_home_id;
 	fetch_message->is_write = fetching_page->is_write;
 	fetch_message->is_fetch = 1;
-	fetch_message->vma_operation_index= current->mm->vma_operation_index;
+	fetch_message->vma_operation_index= tsk->mm->vma_operation_index;
 
 	PSPRINTK("%s vma_operation_index %d\n", __func__, fetch_message->vma_operation_index);
 	PSPRINTK("%s: Fetch %i address %lx\n", __func__, 0, address);
@@ -2113,11 +2112,10 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	fetching_page->arrived_response= 0;
 	reachable= 0;
 
-	memory_t* memory= find_memory_entry(current->tgroup_home_cpu,
-					    current->tgroup_home_id);
+	memory_t* memory= find_memory_entry(tgroup_home_cpu, tgroup_home_id);
 	if (!memory) {
 		printk(KERN_ERR"%s: ERROR cannot find memory_t mapping (cpu %d id %d)\n",
-				__func__, current->tgroup_home_cpu, current->tgroup_home_id);
+				__func__, tgroup_home_cpu, tgroup_home_id);
 		BUG();
 		goto exit_fetch_message;
 	}
@@ -2145,7 +2143,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 	if (reachable>0) {
 		long counter = 0;
 		while (fetching_page->arrived_response==0) {
-			set_task_state(current, TASK_UNINTERRUPTIBLE);
+			set_task_state(current, TASK_UNINTERRUPTIBLE); // as above,
 			if (fetching_page->arrived_response==0) {
 				schedule();
 			}
@@ -2183,7 +2181,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		if (vma == NULL) {
 			dump_stack();
 			printk(KERN_ALERT"%s: ERROR: no vma for address %lx in the system {%d} (cpu %d id %d)\n",
-					__func__, address, current->pid, tgroup_home_cpu, tgroup_home_id);
+					__func__, address, tsk->pid, tgroup_home_cpu, tgroup_home_id);
 			ret = VM_FAULT_VMA;
 			goto exit_fetch_message;
 		}
@@ -2198,7 +2196,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 
 		if (unlikely(anon_vma_prepare(vma))) {
 			printk("%s: ALERT: not implemented -- not anon_vma_prepare pid %d (cpu %d id %d address 0x%lx)\n",
-					__func__, current->pid, tgroup_home_cpu, tgroup_home_id, address);
+					__func__, tsk->pid, tgroup_home_cpu, tgroup_home_id, address);
 
 			spin_lock(ptl);
 			/*PTE LOCKED*/
@@ -2211,7 +2209,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
 		if (!page) {
 			printk("%s: ALERT: not implemented -- no page pid %d (cpu %d id %d address 0x%lx)\n",
-					__func__, current->pid, tgroup_home_cpu, tgroup_home_id, address);
+					__func__, tsk->pid, tgroup_home_cpu, tgroup_home_id, address);
 
 			spin_lock(ptl);
 			/*PTE LOCKED*/
@@ -2224,7 +2222,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		__SetPageUptodate(page);
 		if (mem_cgroup_newpage_charge(page, mm, GFP_ATOMIC)) {
 			printk("%s: ALERT: not implemented -- not mem_cgroup_newpage_charge %d (cpu %d id %d address 0x%lx)\n",
-					__func__, current->pid, tgroup_home_cpu, tgroup_home_id, address);
+					__func__, tsk->pid, tgroup_home_cpu, tgroup_home_id, address);
 
 			page_cache_release(page);
 			spin_lock(ptl);
@@ -2361,7 +2359,7 @@ int do_remote_fetch_for_2_kernels(int tgroup_home_cpu, int tgroup_home_id,
 		}
 		else {
 			printk("%s: WARN: pte changed while fetching pid %d (cpu %d id %d address 0x%lx)\n",
-					__func__, (int)current->pid, tgroup_home_cpu, tgroup_home_id, address);
+					__func__, (int)tsk->pid, tgroup_home_cpu, tgroup_home_id, address);
 			status = REPLICATION_STATUS_INVALID;
 			mem_cgroup_uncharge_page(page);
 			page_cache_release(page);
@@ -2403,7 +2401,6 @@ exit_fetching_page:
 exit:
 	return ret;
 }
-
 
 /**
  * down_read(&mm->mmap_sem) already held getting in
@@ -2538,7 +2535,7 @@ start:
 		if (!vma || address >= vma->vm_end || address < vma->vm_start)
 			vma = NULL;
 
-		ret = do_remote_fetch_for_2_kernels(tsk->tgroup_home_cpu, tsk->tgroup_home_id,
+		ret = do_remote_fetch_for_2_kernels(tsk, tsk->tgroup_home_cpu, tsk->tgroup_home_id,
 											mm, vma, address, page_fault_flags, pmd, pte, value_pte, ptl);
 
 		spin_unlock(ptl);
@@ -2719,7 +2716,7 @@ check:
 					goto check;
 				}
 
-				ret = do_remote_write_for_2_kernels(tgroup_home_cpu, tgroup_home_id, mm, vma,
+				ret = do_remote_write_for_2_kernels(tsk, tgroup_home_cpu, tgroup_home_id, mm, vma,
 								    address, page_fault_flags, pmd, pte, ptl, page,0);
 
 				spin_unlock(ptl);
@@ -2780,10 +2777,10 @@ check:
 					goto check;
 				}
 				if (page_fault_flags & FAULT_FLAG_WRITE)
-					ret = do_remote_write_for_2_kernels(tgroup_home_cpu, tgroup_home_id, mm, vma,
+					ret = do_remote_write_for_2_kernels(tsk, tgroup_home_cpu, tgroup_home_id, mm, vma,
 									    address, page_fault_flags, pmd, pte, ptl, page,1);
 				else
-					ret = do_remote_read_for_2_kernels(tgroup_home_cpu, tgroup_home_id, mm, vma,
+					ret = do_remote_read_for_2_kernels(tsk, tgroup_home_cpu, tgroup_home_id, mm, vma,
 									   address, page_fault_flags, pmd, pte, ptl, page);
 				spin_unlock(ptl);
 				wake_up(&read_write_wait);
