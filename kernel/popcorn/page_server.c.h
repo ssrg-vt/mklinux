@@ -1689,7 +1689,7 @@ int do_remote_write_for_2_kernels(struct tast_struct * tsk, int tgroup_home_cpu,
 		invalid_message->tgroup_home_cpu = tgroup_home_cpu;
 		invalid_message->tgroup_home_id = tgroup_home_id;
 		invalid_message->address = address;
-		invalid_message->vma_operation_index= tsk->mm->vma_operation_index;
+		invalid_message->vma_operation_index= mm->vma_operation_index;
 
 		// Insert the object in the appropriate list.
 		add_ack_entry(answers);
@@ -1778,7 +1778,7 @@ exit_answers:
 		write_message->is_fetch= 0;
 		write_message->is_write= 1;
 		write_message->last_write= page->last_write;
-		write_message->vma_operation_index=tsk->mm->vma_operation_index;
+		write_message->vma_operation_index= mm->vma_operation_index;
 		PSPRINTK("%s vma_operation_index %d\n", __func__, write_message->vma_operation_index);
 
 		//object to held responses
