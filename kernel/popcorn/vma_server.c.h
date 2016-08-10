@@ -352,7 +352,7 @@ done:
  * ptl is from pte_offset_map_lock (this is a lock on the page table entry somewhere)
  */
 static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* fetching_page,
-					      struct mm_struct* mm, unsigned long address, spinlock_t* ptl)
+							struct task_struct *tsk, struct mm_struct* mm, unsigned long address, spinlock_t* ptl)
 {
 
 	struct vm_area_struct* vma;
@@ -407,9 +407,9 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 					 * so during fetch vma can be pushed.
 					 * This mapping has the precedence over "normal" vma operations because is a page fault
 					 * */
-					if (current->mm->distribute_unmap == 0)
+					if (tsk->mm->distribute_unmap == 0)
 						printk(KERN_ALERT"%s: ERROR: anon value was already 0, check who is the older.\n", __func__);
-					current->mm->distribute_unmap = 0;
+					tsk->mm->distribute_unmap = 0;
 
 					/*map_difference should map in such a way that no unmap operations (the only nested operation that mmap can call) are nested called.
 					 * This is important both to not unmap pages that should not be unmapped
@@ -422,9 +422,9 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 							     | ((fetching_page->vm_flags & VM_HUGETLB) ? MAP_HUGETLB : 0)
 							     | ((fetching_page->vm_flags & VM_GROWSDOWN) ? MAP_GROWSDOWN : 0), 0);
 
-					if (current->mm->distribute_unmap == 1)
+					if (tsk->mm->distribute_unmap == 1)
 						printk(KERN_ALERT"%s: ERROR: anon value was already 1, check who is the older.\n", __func__);
-					current->mm->distribute_unmap = 1;
+					tsk->mm->distribute_unmap = 1;
 
 					if (err != fetching_page->vaddr_start) {
 						up_write(&mm->mmap_sem);
@@ -493,9 +493,9 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 						 * so during fetch vma can be pushed.
 						 * This mapping has the precedence over "normal" vma operations because is a page fault
 						 * */
-						if (current->mm->distribute_unmap == 0)
+						if (tsk->mm->distribute_unmap == 0)
 							printk(KERN_ALERT"%s: ERROR: file backed value was already 0, check who is the older.\n", __func__);
-						current->mm->distribute_unmap = 0;
+						tsk->mm->distribute_unmap = 0;
 
 						PSPRINTK("%s:%d page offset = %d %lx\n", __func__, __LINE__, fetching_page->pgoff, mm->exe_file);
 						fetching_page->pgoff = get_file_offset(mm->exe_file, fetching_page->vaddr_start);
@@ -515,9 +515,9 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 								       | ((fetching_page->vm_flags & VM_HUGETLB) ? MAP_HUGETLB : 0),
 								       fetching_page->pgoff << PAGE_SHIFT);
 
-						if (current->mm->distribute_unmap == 1)
+						if (tsk->mm->distribute_unmap == 1)
 							printk(KERN_ALERT"%s: ERROR: file backed value was already 1, check who is the older.\n", __func__);
-						current->mm->distribute_unmap = 1;
+						tsk->mm->distribute_unmap = 1;
 
 						PSPRINTK("Map difference ended\n");
 						if (err != fetching_page->vaddr_start) {

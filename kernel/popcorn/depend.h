@@ -30,7 +30,7 @@ extern int access_error(unsigned long error_code, struct vm_area_struct *vma);
 //// internal declarations ////
 
 static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* fetching_page,
-                                              struct mm_struct* mm, unsigned long address, spinlock_t* ptl);
+                                              struct task_struct *tsk, struct mm_struct* mm, unsigned long address, spinlock_t* ptl);
 
 
 
