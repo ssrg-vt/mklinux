@@ -305,7 +305,7 @@ static ssize_t popcorn_ps_read1 (struct file *file, char __user *buf, size_t cou
         		len += snprintf((buffer +len), PROC_BUFFER_PS -len,
         				"%s %d:%d:%d:%d", ppp->comm,
 						ppp->tgroup_home_cpu, ppp->tgroup_home_id, ppp->tgroup_distributed,
-						ppp->mm->total_vm); // this is in number of pages
+						ppp->mm ? ppp->mm->total_vm : -1); // this is in number of pages
 
         		/* NOTEs
         		 * A Popcorn process is a mix of different threads and Popcorn uses different tricks
