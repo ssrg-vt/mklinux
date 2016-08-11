@@ -198,7 +198,7 @@ static void popcorn_ps_load (struct task_struct * t, unsigned int *puload, unsig
 }
 
 
-#define PROC_BUFFER_PS 4096
+#define PROC_BUFFER_PS 8192
 static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
         int ret, len = 0, written = 0, i;
