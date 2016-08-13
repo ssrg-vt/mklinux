@@ -605,11 +605,12 @@ static void create_new_threads(thread_pull_t * my_thread_pull, int *spare_thread
 				if (!IS_ERR(shadow->thread)) {
 					printk("%s: WARN: push thread %d\n",
 							__func__, shadow->thread->pid);
+
 					push_data((data_header_t**)&(my_thread_pull->threads),
 						  &(my_thread_pull->spinlock), (data_header_t*) shadow);
 				} else {
-					printk("%s: ERROR: not able to create shadow\n",
-							__func__);
+					printk("%s: ERROR: not able to create shadow error %d\n",
+							__func__, PTR_ERR_OR_ZERO(shadow->thread));
 					kfree(shadow);
 				}
 			} else
