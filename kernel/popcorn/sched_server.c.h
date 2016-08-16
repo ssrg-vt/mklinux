@@ -210,8 +210,8 @@ static ssize_t popcorn_ps_read (struct file *file, char __user *buf, size_t coun
         	return 0; // error
         memset(lista, 0, (sizeof(memory_t*) * 1024));
         ret = dump_memory_entries(lista, 1024, &written);
-        if (!ret)
-        	printk("%s: WARN: there are more memory_t entries than %d\n", __func__, written);
+        //if (!ret)
+        	//printk("%s: WARN: there are more memory_t entries than %d\n", __func__, written);
 
         buffer = kmalloc(PROC_BUFFER_PS, GFP_KERNEL);
         if (!buffer)

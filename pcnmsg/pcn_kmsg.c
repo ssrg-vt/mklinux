@@ -89,7 +89,7 @@ int pcn_kmsg_send_long(unsigned int dest_cpu, struct pcn_kmsg_long_message *lmsg
 
 	if (send_callback == NULL) {
 		msleep(100);
-		printk("Waiting for call back function to be registered\n");
+		//printk("Waiting for call back function to be registered\n");
 		return 0;
 	}
 
