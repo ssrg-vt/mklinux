@@ -337,8 +337,15 @@ extern int clocksource_mmio_init(void __iomem *, const char *,
 
 extern int clocksource_i8253_init(void);
 
+#ifdef CONFIG_CLKSRC_ACPI
+extern void clocksource_acpi_init(void);
+#else
+static inline void clocksource_acpi_init(void) { }
+#endif
 struct device_node;
 typedef void(*clocksource_of_init_fn)(struct device_node *);
+typedef void(*clocksource_acpi_init_fn)(void);
+
 #ifdef CONFIG_CLKSRC_OF
 extern void clocksource_of_init(void);
 
@@ -354,6 +361,16 @@ static inline void clocksource_of_init(void) {}
 		__attribute__((unused))					\
 		 = { .compatible = compat,				\
 		     .data = (fn == (clocksource_of_init_fn)NULL) ? fn : fn }
+#endif
+
+#ifdef CONFIG_ACPI
+#define CLOCKSOURCE_ACPI_DECLARE(name, compat, fn)			\
+	static const struct acpi_device_id __clksrc_acpi_table_##name	\
+		__used __section(__clksrc_acpi_table)			\
+		 = { .id = compat,				\
+		     .driver_data = (kernel_ulong_t)fn }
+#else
+#define CLOCKSOURCE_ACPI_DECLARE(name, compat, fn)
 #endif
 
 #endif /* _LINUX_CLOCKSOURCE_H */

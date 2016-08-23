@@ -74,6 +74,8 @@ static inline void gic_init(unsigned int nr, int start,
 	gic_init_bases(nr, start, dist, cpu, 0, NULL);
 }
 
+void gic_enable_routing(void);
+
 #endif /* __ASSEMBLY */
 
 #endif

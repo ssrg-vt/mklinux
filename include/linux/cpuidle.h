@@ -81,6 +81,10 @@ struct cpuidle_device {
 	cpumask_t		coupled_cpus;
 	struct cpuidle_coupled	*coupled;
 #endif
+#ifdef CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE
+	cpumask_t		coupled_state_cpus[CPUIDLE_STATE_MAX];
+	struct cpuidle_coupled	*coupled_state[CPUIDLE_STATE_MAX];
+#endif
 };
 
 DECLARE_PER_CPU(struct cpuidle_device *, cpuidle_devices);
@@ -167,10 +171,37 @@ static inline int cpuidle_play_dead(void) {return -ENODEV; }
 
 #ifdef CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED
 void cpuidle_coupled_parallel_barrier(struct cpuidle_device *dev, atomic_t *a);
+int cpuidle_coupled_wakeup(struct cpuidle_device *dev);
+void cpuidle_coupled_wakeup_barrier(struct cpuidle_device *dev);
+void cpuidle_coupled_set_cpumask(struct cpuidle_device *dev, int state_index,
+ 				 const struct cpumask *coupled_cpus);
+const cpumask_t *const cpuidle_coupled_get_cpumask(struct cpuidle_device *dev,
+				int state_index);
 #else
 static inline void cpuidle_coupled_parallel_barrier(struct cpuidle_device *dev, atomic_t *a)
 {
 }
+
+static inline int cpuidle_coupled_wakeup(struct cpuidle_device *dev)
+{
+	return 0;
+}
+
+static inline void cpuidle_coupled_wakeup_barrier(struct cpuidle_device *dev)
+{
+}
+
+static inline void cpuidle_coupled_set_cpumask(struct cpuidle_device *dev,
+			int state_index, const struct cpumask *coupled_cpus)
+{
+}
+
+static inline const cpumask_t *const cpuidle_coupled_get_cpumask(
+			struct cpuidle_device *dev, int state_index)
+{
+	return NULL;
+}
+
 #endif
 
 /******************************

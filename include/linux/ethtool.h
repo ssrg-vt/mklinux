@@ -214,6 +214,14 @@ struct ethtool_ops {
 				  struct ethtool_pauseparam*);
 	int	(*set_pauseparam)(struct net_device *,
 				  struct ethtool_pauseparam*);
+	u32	(*get_rx_csum)(struct net_device *);
+	int	(*set_rx_csum)(struct net_device *, u32);
+	u32	(*get_tx_csum)(struct net_device *);
+	int	(*set_tx_csum)(struct net_device *, u32);
+	u32	(*get_sg)(struct net_device *);
+	int	(*set_sg)(struct net_device *, u32);
+	u32	(*get_tso)(struct net_device *);
+	int	(*set_tso)(struct net_device *, u32);
 	void	(*self_test)(struct net_device *, struct ethtool_test *, u64 *);
 	void	(*get_strings)(struct net_device *, u32 stringset, u8 *);
 	int	(*set_phys_id)(struct net_device *, enum ethtool_phys_id_state);

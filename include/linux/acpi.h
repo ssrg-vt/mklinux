@@ -44,11 +44,22 @@
 #include <acpi/acpi_numa.h>
 #include <asm/acpi.h>
 
+static inline acpi_handle acpi_device_handle(struct acpi_device *adev)
+{
+	return adev ? adev->handle : NULL;
+}
+
+static inline const char *acpi_dev_name(struct acpi_device *adev)
+{
+	return dev_name(&adev->dev);
+}
+
 enum acpi_irq_model_id {
 	ACPI_IRQ_MODEL_PIC = 0,
 	ACPI_IRQ_MODEL_IOAPIC,
 	ACPI_IRQ_MODEL_IOSAPIC,
 	ACPI_IRQ_MODEL_PLATFORM,
+	ACPI_IRQ_MODEL_GIC,
 	ACPI_IRQ_MODEL_COUNT
 };
 
@@ -87,10 +98,15 @@ static inline void acpi_initrd_override(void *data, size_t size)
 }
 #endif
 
-char * __acpi_map_table (unsigned long phys_addr, unsigned long size);
+#define BAD_MADT_ENTRY(entry, end) (					    \
+		(!entry) || (unsigned long)entry + sizeof(*entry) > end ||  \
+		((struct acpi_subtable_header *)entry)->length < sizeof(*entry))
+
+char *__acpi_map_table(phys_addr_t phys_addr, unsigned long size);
 void __acpi_unmap_table(char *map, unsigned long size);
 int early_acpi_boot_init(void);
 int acpi_boot_init (void);
+int acpi_gic_init(void);
 void acpi_boot_table_init (void);
 int acpi_mps_check (void);
 int acpi_numa_init (void);
@@ -116,10 +132,12 @@ void acpi_numa_arch_fixup(void);
 
 #ifdef CONFIG_ACPI_HOTPLUG_CPU
 /* Arch dependent functions for cpu hotplug support */
-int acpi_map_lsapic(acpi_handle handle, int *pcpu);
+int acpi_map_lsapic(acpi_handle handle, int *pcpu); 
 int acpi_unmap_lsapic(int cpu);
 #endif /* CONFIG_ACPI_HOTPLUG_CPU */
 
+unsigned int irq_create_acpi_mapping(irq_hw_number_t hwirq,
+					unsigned int type);
 int acpi_register_ioapic(acpi_handle handle, u64 phys_addr, u32 gsi_base);
 int acpi_unregister_ioapic(acpi_handle handle, u32 gsi_base);
 void acpi_irq_stats_init(void);
@@ -132,6 +150,26 @@ extern unsigned long acpi_realmode_flags;
 int acpi_register_gsi (struct device *dev, u32 gsi, int triggering, int polarity);
 int acpi_gsi_to_irq (u32 gsi, unsigned int *irq);
 int acpi_isa_irq_to_gsi (unsigned isa_irq, u32 *gsi);
+
+#ifdef CONFIG_ARM64
+#define ACPI_IRQ_PPI 1000000
+static inline u32 acpi_irq_to_ppi(u32 irq)
+{
+	return (irq + ACPI_IRQ_PPI);
+}
+
+static inline int acpi_irq_is_ppi(u32 irq)
+{
+	return (irq >= ACPI_IRQ_PPI);
+}
+
+static inline u32 acpi_ppi_to_irq(u32 irq)
+{
+	return (acpi_irq_is_ppi(irq))? (irq - ACPI_IRQ_PPI) : irq;
+}
+
+int acpi_register_gic(struct device *dev, u32 gic, long flags);
+#endif
 
 #ifdef CONFIG_X86_IO_APIC
 extern int acpi_get_override_irq(u32 gsi, int *trigger, int *polarity);
@@ -401,6 +439,15 @@ static inline bool acpi_driver_match_device(struct device *dev,
 	return !!acpi_match_device(drv->acpi_match_table, dev);
 }
 
+struct acpi_dsm_entry {
+	char *key;
+	char *value;
+};
+
+int acpi_dsm_lookup_value(acpi_handle handle,
+		const char *tag, int index,
+		struct acpi_dsm_entry *entry);
+
 #define ACPI_PTR(_ptr)	(_ptr)
 
 #else	/* !CONFIG_ACPI */
@@ -416,6 +463,11 @@ static inline int early_acpi_boot_init(void)
 static inline int acpi_boot_init(void)
 {
 	return 0;
+}
+
+static inline int acpi_gic_init(void)
+{
+	return -ENODEV;
 }
 
 static inline void acpi_boot_table_init(void)

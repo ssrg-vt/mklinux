@@ -7,6 +7,12 @@
 static inline void __iomem *acpi_os_ioremap(acpi_physical_address phys,
 					    acpi_size size)
 {
+       return ioremap_nocache(phys, size);
+}
+
+static inline void __iomem *acpi_os_memremap(acpi_physical_address phys,
+					    acpi_size size)
+{
        return ioremap_cache(phys, size);
 }
 

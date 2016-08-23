@@ -399,6 +399,8 @@ struct pci_host_bridge_window {
 struct pci_host_bridge {
 	struct device dev;
 	struct pci_bus *bus;		/* root bus */
+	int domain_nr;
+	resource_size_t io_base;	/* physical address for the start of I/O area */
 	struct list_head windows;	/* pci_host_bridge_windows */
 	void (*release_fn)(struct pci_host_bridge *);
 	void *release_data;
@@ -530,15 +532,6 @@ struct pci_ops {
 	int (*read)(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 *val);
 	int (*write)(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 val);
 };
-
-/*
- * ACPI needs to be able to access PCI config space before we've done a
- * PCI bus scan and created pci_bus structures.
- */
-int raw_pci_read(unsigned int domain, unsigned int bus, unsigned int devfn,
-		 int reg, int len, u32 *val);
-int raw_pci_write(unsigned int domain, unsigned int bus, unsigned int devfn,
-		  int reg, int len, u32 val);
 
 struct pci_bus_region {
 	resource_size_t start;
@@ -727,9 +720,9 @@ void pci_fixup_cardbus(struct pci_bus *);
 
 /* Generic PCI functions used internally */
 
-void pcibios_resource_to_bus(struct pci_dev *dev, struct pci_bus_region *region,
+void pcibios_resource_to_bus(struct pci_bus *bus, struct pci_bus_region *region,
 			     struct resource *res);
-void pcibios_bus_to_resource(struct pci_dev *dev, struct resource *res,
+void pcibios_bus_to_resource(struct pci_bus *bus, struct resource *res,
 			     struct pci_bus_region *region);
 void pcibios_scan_specific_bus(int busn);
 struct pci_bus *pci_find_bus(int domain, int busnr);
@@ -737,9 +730,9 @@ void pci_bus_add_devices(const struct pci_bus *bus);
 struct pci_bus *pci_scan_bus_parented(struct device *parent, int bus,
 				      struct pci_ops *ops, void *sysdata);
 struct pci_bus *pci_scan_bus(int bus, struct pci_ops *ops, void *sysdata);
-struct pci_bus *pci_create_root_bus(struct device *parent, int bus,
-				    struct pci_ops *ops, void *sysdata,
-				    struct list_head *resources);
+struct pci_bus *pci_create_root_bus_in_domain(struct device *parent,
+			int domain, int bus, struct pci_ops *ops,
+			void *sysdata, struct list_head *resources);
 int pci_bus_insert_busn_res(struct pci_bus *b, int bus, int busmax);
 int pci_bus_update_busn_res_end(struct pci_bus *b, int busmax);
 void pci_bus_release_busn_res(struct pci_bus *b);
@@ -1144,6 +1137,11 @@ struct msix_entry {
 
 
 #ifndef CONFIG_PCI_MSI
+static inline int pci_msi_vec_count(struct pci_dev *dev)
+{
+	return -ENOSYS;
+}
+
 static inline int pci_enable_msi_block(struct pci_dev *dev, unsigned int nvec)
 {
 	return -1;
@@ -1185,6 +1183,7 @@ static inline int pci_msi_enabled(void)
 	return 0;
 }
 #else
+int pci_msi_vec_count(struct pci_dev *dev);
 int pci_enable_msi_block(struct pci_dev *dev, unsigned int nvec);
 int pci_enable_msi_block_auto(struct pci_dev *dev, unsigned int *maxvec);
 void pci_msi_shutdown(struct pci_dev *dev);
@@ -1269,6 +1268,15 @@ static inline int pci_proc_domain(struct pci_bus *bus)
 typedef int (*arch_set_vga_state_t)(struct pci_dev *pdev, bool decode,
 		      unsigned int command_bits, u32 flags);
 void pci_register_set_vga_state(arch_set_vga_state_t func);
+
+/*
+ * ACPI needs to be able to access PCI config space before we've done a
+ * PCI bus scan and created pci_bus structures.
+ */
+int raw_pci_read(unsigned int domain, unsigned int bus, unsigned int devfn,
+		 int reg, int len, u32 *val);
+int raw_pci_write(unsigned int domain, unsigned int bus, unsigned int devfn,
+		  int reg, int len, u32 val);
 
 #else /* CONFIG_PCI is not enabled */
 
@@ -1465,6 +1473,21 @@ static inline int pci_domain_nr(struct pci_bus *bus)
 
 static inline struct pci_dev *pci_dev_get(struct pci_dev *dev)
 { return NULL; }
+
+static inline struct pci_bus *pci_find_bus(int domain, int busnr)
+{ return NULL; }
+
+static inline int pci_bus_write_config_byte(struct pci_bus *bus,
+			unsigned int devfn, int where, u8 val)
+{ return -ENODEV; }
+
+static inline int raw_pci_read(unsigned int domain, unsigned int bus,
+		unsigned int devfn, int reg, int len, u32 *val)
+{ return -EINVAL; }
+
+static inline int raw_pci_write(unsigned int domain, unsigned int bus,
+		unsigned int devfn, int reg, int len, u32 val)
+{return -EINVAL; }
 
 #define dev_is_pci(d) (false)
 #define dev_is_pf(d) (false)
@@ -1888,12 +1911,24 @@ static inline struct device_node *pci_bus_to_OF_node(struct pci_bus *bus)
 {
 	return bus ? bus->dev.of_node : NULL;
 }
+struct pci_host_bridge *
+of_create_pci_host_bridge(struct device *parent, struct pci_ops *ops,
+			void *host_data);
+
+int pcibios_fixup_bridge_ranges(struct list_head *resources);
 
 #else /* CONFIG_OF */
 static inline void pci_set_of_node(struct pci_dev *dev) { }
 static inline void pci_release_of_node(struct pci_dev *dev) { }
 static inline void pci_set_bus_of_node(struct pci_bus *bus) { }
 static inline void pci_release_bus_of_node(struct pci_bus *bus) { }
+
+static inline struct pci_host_bridge *
+of_create_pci_host_bridge(struct device *parent, struct pci_ops *ops,
+			void *host_data)
+{
+	return NULL;
+}
 #endif  /* CONFIG_OF */
 
 #ifdef CONFIG_EEH

@@ -148,6 +148,15 @@
 #define CLKSRC_OF_TABLES()
 #endif
 
+#ifdef CONFIG_ACPI
+#define CLKSRC_ACPI_TABLES() . = ALIGN(8);				\
+			   VMLINUX_SYMBOL(__clksrc_acpi_table) = .;	\
+			   *(__clksrc_acpi_table)			\
+			   *(__clksrc_acpi_table_end)
+#else
+#define CLKSRC_ACPI_TABLES()
+#endif
+
 #ifdef CONFIG_IRQCHIP
 #define IRQCHIP_OF_MATCH_TABLE()					\
 	. = ALIGN(8);							\
@@ -490,6 +499,7 @@
 	MEM_DISCARD(init.rodata)					\
 	CLK_OF_TABLES()							\
 	CLKSRC_OF_TABLES()						\
+	CLKSRC_ACPI_TABLES()						\
 	KERNEL_DTB()							\
 	IRQCHIP_OF_MATCH_TABLE()
 

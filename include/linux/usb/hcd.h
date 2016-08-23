@@ -275,6 +275,10 @@ struct hc_driver {
 				   gfp_t mem_flags);
 	void    (*unmap_urb_for_dma)(struct usb_hcd *hcd, struct urb *urb);
 
+	int	(*usb_hc_map_urb_for_dma)(struct usb_hcd *hcd, struct urb *urb,
+					  gfp_t mem_flags);
+	void	(*usb_hc_unmap_urb_for_dma)(struct usb_hcd *hcd, struct urb *urb);
+
 	/* hw synch, freeing endpoint resources that urb_dequeue can't */
 	void	(*endpoint_disable)(struct usb_hcd *hcd,
 			struct usb_host_endpoint *ep);

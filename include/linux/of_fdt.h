@@ -96,6 +96,10 @@ extern int of_scan_flat_dt_by_path(const char *path,
 
 extern int early_init_dt_scan_chosen(unsigned long node, const char *uname,
 				     int depth, void *data);
+#if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
+extern int early_init_dt_scan_acpi(unsigned long node, const char *uname,
+				   int depth, void *data);
+#endif
 extern void early_init_dt_check_for_initrd(unsigned long node);
 extern int early_init_dt_scan_memory(unsigned long node, const char *uname,
 				     int depth, void *data);
@@ -115,6 +119,11 @@ extern void early_init_dt_setup_initrd_arch(u64 start, u64 end);
 /* Early flat tree scan hooks */
 extern int early_init_dt_scan_root(unsigned long node, const char *uname,
 				   int depth, void *data);
+
+extern bool early_init_dt_scan(void *params);
+extern const char *of_flat_dt_get_machine_name(void);
+extern const void *of_flat_dt_match_machine(const void *default_match,
+                const void * (*get_next_compat)(const char * const**));
 
 /* Other Prototypes */
 extern void unflatten_device_tree(void);
