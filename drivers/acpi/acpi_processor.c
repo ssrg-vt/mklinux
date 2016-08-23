@@ -140,14 +140,10 @@ static int acpi_processor_errata_piix4(struct pci_dev *dev)
 	return 0;
 }
 
-static int acpi_processor_errata(struct acpi_processor *pr)
+static int acpi_processor_errata(void)
 {
 	int result = 0;
 	struct pci_dev *dev = NULL;
-
-
-	if (!pr)
-		return -EINVAL;
 
 	/*
 	 * PIIX4
@@ -220,10 +216,7 @@ static int acpi_processor_get_info(struct acpi_device *device)
 	acpi_status status = AE_OK;
 	static int cpu0_initialized;
 
-	if (num_online_cpus() > 1)
-		errata.smp = TRUE;
-
-	acpi_processor_errata(pr);
+	acpi_processor_errata();
 
 	/*
 	 * Check to see if we have bus mastering arbitration control.  This
@@ -247,12 +240,8 @@ static int acpi_processor_get_info(struct acpi_device *device)
 			return -ENODEV;
 		}
 
-		/*
-		 * TBD: Synch processor ID (via LAPIC/LSAPIC structures) on SMP.
-		 *      >>> 'acpi_get_processor_id(acpi_id, &id)' in
-		 *      arch/xxx/acpi.c
-		 */
 		pr->acpi_id = object.processor.proc_id;
+		device_declaration = 1;
 	} else {
 		/*
 		 * Declared with "Device" statement; match _UID.
@@ -270,6 +259,8 @@ static int acpi_processor_get_info(struct acpi_device *device)
 		device_declaration = 1;
 		pr->acpi_id = value;
 	}
+	pr->apic_id = acpi_get_apicid(pr->handle, device_declaration,
+					pr->acpi_id);
 	cpu_index = acpi_get_cpuid(pr->handle, device_declaration, pr->acpi_id);
 
 	/* Handle UP system running SMP kernel, with no LAPIC in MADT */
@@ -326,7 +317,6 @@ static int acpi_processor_get_info(struct acpi_device *device)
 		 */
 		request_region(pr->throttling.address, 6, "ACPI CPU throttle");
 	}
-
 	/*
 	 * If ACPI describes a slot number for this CPU, we can use it to
 	 * ensure we get the right value in the "physical id" field
@@ -369,9 +359,9 @@ static int acpi_processor_add(struct acpi_device *device,
 	device->driver_data = pr;
 
 	result = acpi_processor_get_info(device);
-	if (result) /* Processor is not physically present or unavailable */
+	if (result) /* Processor is not physically present or unavailable */ {
 		return 0;
-
+	}
 #ifdef CONFIG_SMP
 	if (pr->id >= setup_max_cpus && pr->id != 0)
 		return 0;

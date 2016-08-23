@@ -718,6 +718,39 @@ acpi_show_profile(struct device *dev, struct device_attribute *attr,
 static const struct device_attribute pm_profile_attr =
 	__ATTR(pm_profile, S_IRUGO, acpi_show_profile, NULL);
 
+extern void acpi_set_standby(int acpi_state);
+extern int acpi_get_standby(void);
+
+static ssize_t acpi_store_standby(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t size)
+{
+	char *p;
+	int len;
+
+	p = memchr(buf, '\n', size);
+	len = p ? p - buf : size;
+
+	if (strncmp(buf, "S1", len) == 0) {
+		acpi_set_standby(ACPI_STATE_S1);
+		return size;
+	} else if (strncmp(buf, "S2", len) == 0) {
+		acpi_set_standby(ACPI_STATE_S2);
+		return size;
+	}
+
+	return -EINVAL;
+}
+
+static ssize_t acpi_show_standby(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%s\n", (acpi_get_standby() == ACPI_STATE_S1)? "S1" : "S2");
+}
+
+static const struct device_attribute standby_attr =
+	__ATTR(standby, S_IRUGO | S_IWUSR, acpi_show_standby, acpi_store_standby);
+
 static ssize_t hotplug_enabled_show(struct kobject *kobj,
 				    struct kobj_attribute *attr, char *buf)
 {
@@ -820,5 +853,6 @@ int __init acpi_sysfs_init(void)
 		return result;
 
 	result = sysfs_create_file(acpi_kobj, &pm_profile_attr.attr);
+	result = sysfs_create_file(acpi_kobj, &standby_attr.attr);
 	return result;
 }

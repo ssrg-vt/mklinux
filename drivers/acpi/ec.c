@@ -747,6 +747,9 @@ ec_parse_device(acpi_handle handle, u32 Level, void *context, void **retval)
 	ec->gpe = tmp;
 	/* Use the global lock for all EC transactions? */
 	tmp = 0;
+#ifdef CONFIG_ARM64
+	if (!acpi_gbl_reduced_hardware)
+#endif
 	acpi_evaluate_integer(handle, "_GLK", NULL, &tmp);
 	ec->global_lock = tmp;
 	ec->handle = handle;

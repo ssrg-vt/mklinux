@@ -126,9 +126,9 @@ EXPORT_SYMBOL_GPL(apei_hest_parse);
  * Check if firmware advertises firmware first mode. We need FF bit to be set
  * along with a set of MC banks which work in FF mode.
  */
+#ifdef CONFIG_X86_MCE
 static int __init hest_parse_cmc(struct acpi_hest_header *hest_hdr, void *data)
 {
-#ifdef CONFIG_X86_MCE
 	int i;
 	struct acpi_hest_ia_corrected *cmc;
 	struct acpi_hest_ia_error_bank *mc_bank;
@@ -153,9 +153,9 @@ static int __init hest_parse_cmc(struct acpi_hest_header *hest_hdr, void *data)
 	mc_bank = (struct acpi_hest_ia_error_bank *)(cmc + 1);
 	for (i = 0; i < cmc->num_hardware_banks; i++, mc_bank++)
 		mce_disable_bank(mc_bank->bank_number);
-#endif
 	return 1;
 }
+#endif
 
 struct ghes_arr {
 	struct platform_device **ghes_devs;
@@ -263,8 +263,10 @@ void __init acpi_hest_init(void)
 		goto err;
 	}
 
+#ifdef CONFIG_X86_MCE
 	if (!acpi_disable_cmcff)
 		apei_hest_parse(hest_parse_cmc, NULL);
+#endif
 
 	if (!ghes_disable) {
 		rc = apei_hest_parse(hest_parse_ghes_count, &ghes_count);

@@ -15,6 +15,7 @@ obj-$(CONFIG_X86)		+= blacklist.o
 # ACPI Core Subsystem (Interpreter)
 #
 obj-y				+= acpi.o \
+					acpi_keyvalue.o \
 					acpica/
 
 # All the builtin files are in the "acpi." module_param namespace.
@@ -32,13 +33,14 @@ acpi-$(CONFIG_ACPI_SLEEP)	+= proc.o
 # ACPI Bus and Device Drivers
 #
 acpi-y				+= bus.o glue.o
+acpi-$(CONFIG_ACPI_SCI_EMULATE) += sci_emu.o
 acpi-y				+= scan.o
 acpi-y				+= resource.o
 acpi-y				+= acpi_processor.o
 acpi-y				+= processor_core.o
 acpi-y				+= ec.o
 acpi-$(CONFIG_ACPI_DOCK)	+= dock.o
-acpi-y				+= pci_root.o pci_link.o pci_irq.o
+acpi-$(CONFIG_PCI)		+= pci_root.o pci_link.o pci_irq.o
 acpi-$(CONFIG_X86_INTEL_LPSS)	+= acpi_lpss.o
 acpi-y				+= acpi_platform.o
 acpi-y				+= power.o
@@ -77,8 +79,10 @@ obj-$(CONFIG_ACPI_BGRT)		+= bgrt.o
 # processor has its own "processor." module_param namespace
 processor-y			:= processor_driver.o processor_throttling.o
 processor-y			+= processor_idle.o processor_thermal.o
-processor-$(CONFIG_CPU_FREQ)	+= processor_perflib.o
+obj-$(CONFIG_CPU_FREQ)	+= processor_perflib.o
 
 obj-$(CONFIG_ACPI_PROCESSOR_AGGREGATOR) += acpi_pad.o
 
 obj-$(CONFIG_ACPI_APEI)		+= apei/
+
+obj-$(CONFIG_ACPI_ARM)          += plat/

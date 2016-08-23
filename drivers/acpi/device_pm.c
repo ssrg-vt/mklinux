@@ -518,7 +518,15 @@ static int acpi_dev_pm_get_state(struct device *dev, struct acpi_device *adev,
 			if (!adev->power.states[ret].flags.valid)
 				ret = ACPI_STATE_D3_COLD;
 
+			/*
+			 * Set d_max to lowest D-state supported between
+			 * _SxD and _SxW for wakeup
+			 */
+#ifdef CONFIG_ARM64
+			d_max = ret < d_min ? ret : d_min;
+#else
 			d_max = ret > d_min ? ret : d_min;
+#endif
 		} else {
 			return -ENODATA;
 		}

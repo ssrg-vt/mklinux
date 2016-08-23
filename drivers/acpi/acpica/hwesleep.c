@@ -49,6 +49,11 @@
 #define _COMPONENT          ACPI_HARDWARE
 ACPI_MODULE_NAME("hwesleep")
 
+void __attribute__ ((weak)) arch_wait_for_wake(void)
+{
+
+}
+
 /*******************************************************************************
  *
  * FUNCTION:    acpi_hw_execute_sleep_method
@@ -159,6 +164,7 @@ acpi_status acpi_hw_extended_sleep(u8 sleep_state)
 	/* Wait for transition back to Working State */
 
 	do {
+		arch_wait_for_wake();
 		status = acpi_read(&sleep_status, &acpi_gbl_FADT.sleep_status);
 		if (ACPI_FAILURE(status)) {
 			return_ACPI_STATUS(status);

@@ -35,6 +35,9 @@
 #include <linux/clockchips.h>
 #include <linux/cpuidle.h>
 #include <linux/syscore_ops.h>
+#ifdef CONFIG_ARCH_XGENE
+#include <misc/xgene/pm/xgene_cpuidle.h>
+#endif
 
 /*
  * Include the apic definitions for x86 to have the APIC timer related defines
@@ -45,7 +48,6 @@
 #ifdef CONFIG_X86
 #include <asm/apic.h>
 #endif
-
 #include <acpi/acpi_bus.h>
 #include <acpi/processor.h>
 
@@ -210,6 +212,8 @@ static void lapic_timer_state_broadcast(struct acpi_processor *pr,
 #endif
 
 #ifdef CONFIG_PM_SLEEP
+#ifndef CONFIG_ACPI_REDUCED_HARDWARE
+/* Bus Master Reload is not supported in the reduced hardware profile */
 static u32 saved_bm_rld;
 
 static int acpi_processor_suspend(void)
@@ -220,7 +224,7 @@ static int acpi_processor_suspend(void)
 
 static void acpi_processor_resume(void)
 {
-	u32 resumed_bm_rld;
+	u32 resumed_bm_rld = 0;
 
 	acpi_read_bit_register(ACPI_BITREG_BUS_MASTER_RLD, &resumed_bm_rld);
 	if (resumed_bm_rld == saved_bm_rld)
@@ -228,6 +232,16 @@ static void acpi_processor_resume(void)
 
 	acpi_write_bit_register(ACPI_BITREG_BUS_MASTER_RLD, saved_bm_rld);
 }
+#else
+/* Bus Master Reload is not supported in the reduced hardware profile */
+static int acpi_processor_suspend(void)
+{
+	return 0;
+}
+
+/* Bus Master Reload is not supported in the reduced hardware profile */
+static void acpi_processor_resume(void) { }
+#endif
 
 static struct syscore_ops acpi_processor_syscore_ops = {
 	.suspend = acpi_processor_suspend,
@@ -236,13 +250,21 @@ static struct syscore_ops acpi_processor_syscore_ops = {
 
 void acpi_processor_syscore_init(void)
 {
-	register_syscore_ops(&acpi_processor_syscore_ops);
+	if (!acpi_gbl_reduced_hardware)
+		register_syscore_ops(&acpi_processor_syscore_ops);
 }
 
 void acpi_processor_syscore_exit(void)
 {
-	unregister_syscore_ops(&acpi_processor_syscore_ops);
+	if (!acpi_gbl_reduced_hardware)
+		unregister_syscore_ops(&acpi_processor_syscore_ops);
 }
+
+#else
+
+void acpi_processor_syscore_init(void){}
+void acpi_processor_syscore_exit(void){}
+
 #endif /* CONFIG_PM_SLEEP */
 
 #if defined(CONFIG_X86)
@@ -278,6 +300,9 @@ static int acpi_processor_get_power_info_fadt(struct acpi_processor *pr)
 	if (!pr->pblk)
 		return -ENODEV;
 
+	if (acpi_gbl_reduced_hardware)
+		return -ENODEV;
+
 	/* if info is obtained from pblk/fadt, type equals state */
 	pr->power.states[ACPI_STATE_C2].type = ACPI_STATE_C2;
 	pr->power.states[ACPI_STATE_C3].type = ACPI_STATE_C3;
@@ -287,7 +312,8 @@ static int acpi_processor_get_power_info_fadt(struct acpi_processor *pr)
 	 * Check for P_LVL2_UP flag before entering C2 and above on
 	 * an SMP system.
 	 */
-	if ((num_online_cpus() > 1) &&
+	if (!acpi_gbl_reduced_hardware &&
+	    (num_online_cpus() > 1) &&
 	    !(acpi_gbl_FADT.flags & ACPI_FADT_C2_MP_SUPPORTED))
 		return -ENODEV;
 #endif
@@ -409,7 +435,8 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 		reg = (struct acpi_power_register *)obj->buffer.pointer;
 
 		if (reg->space_id != ACPI_ADR_SPACE_SYSTEM_IO &&
-		    (reg->space_id != ACPI_ADR_SPACE_FIXED_HARDWARE))
+		    (reg->space_id != ACPI_ADR_SPACE_FIXED_HARDWARE) &&
+		    (reg->space_id != ACPI_ADR_SPACE_SYSTEM_MEMORY))
 			continue;
 
 		/* There should be an easy way to extract an integer... */
@@ -427,6 +454,9 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 
 		cx.address = reg->address;
 		cx.index = current_count + 1;
+#ifdef CONFIG_ARCH_NEEDS_ACPI_CSD
+		cx.cst_index = i - 1;
+#endif
 
 		cx.entry_method = ACPI_CSTATE_SYSTEMIO;
 		if (reg->space_id == ACPI_ADR_SPACE_FIXED_HARDWARE) {
@@ -460,6 +490,9 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 				cx.entry_method = ACPI_CSTATE_HALT;
 				snprintf(cx.desc, ACPI_CX_DESC_LEN, "ACPI HLT");
 			}
+		} else if (reg->space_id == ACPI_ADR_SPACE_SYSTEM_MEMORY) {
+			snprintf(cx.desc, ACPI_CX_DESC_LEN, "ACPI SYSIO 0x%x",
+				 cx.address);
 		} else {
 			snprintf(cx.desc, ACPI_CX_DESC_LEN, "ACPI IOPORT 0x%x",
 				 cx.address);
@@ -500,7 +533,7 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 			  current_count));
 
 	/* Validate number of power states discovered */
-	if (current_count < 2)
+	if (current_count < (acpi_gbl_reduced_hardware? 1 : 2))
 		status = -EFAULT;
 
       end:
@@ -508,6 +541,186 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 
 	return status;
 }
+
+#ifdef CONFIG_ARCH_NEEDS_ACPI_CSD
+static int acpi_processor_power_get_csd_pkg(struct acpi_csd_package *csd_pkg,
+					    union acpi_object *pkg_obj)
+{
+	struct acpi_buffer fmt = {sizeof("NNNNNN"), "NNNNNN"};
+	struct acpi_buffer pkg = {sizeof(struct acpi_csd_package), csd_pkg};
+
+	if (ACPI_FAILURE(acpi_extract_package(pkg_obj, &fmt, &pkg))) {
+		printk(KERN_ERR PREFIX "Invalid _CSD data\n");
+		return -EFAULT;
+	}
+
+	if (csd_pkg->num_entries != ACPI_CSD_REV0_ENTRIES) {
+		printk(KERN_ERR PREFIX "Unknown _CSD:num_entries\n");
+		return -EFAULT;
+	}
+
+	if (csd_pkg->revision != ACPI_CSD_REV0_REVISION) {
+		printk(KERN_ERR PREFIX "Unknown _CSD:revision\n");
+		return -EFAULT;
+	}
+
+	if (csd_pkg->coord_type != DOMAIN_COORD_TYPE_SW_ALL &&
+	    csd_pkg->coord_type != DOMAIN_COORD_TYPE_SW_ANY &&
+	    csd_pkg->coord_type != DOMAIN_COORD_TYPE_HW_ALL) {
+		printk(KERN_ERR PREFIX "Invalid _CSD:coord_type\n");
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
+static int acpi_processor_get_power_info_csd(struct acpi_processor *pr)
+{
+	unsigned int i, s;
+	int result = 0;
+	acpi_status status = AE_OK;
+	struct acpi_buffer buffer = {ACPI_ALLOCATE_BUFFER, NULL};
+	union acpi_object *csd_obj = NULL;
+	struct acpi_csd_package *csd_pkg = NULL;
+	int count;
+
+	if (!pr->flags.has_cst)
+		return 0;
+
+	/* First get the all CSD packages for specific CPU */
+	status = acpi_evaluate_object(pr->handle, "_CSD", NULL, &buffer);
+	if (ACPI_FAILURE(status))
+		return 0;
+
+	csd_obj = buffer.pointer;
+	if (!csd_obj || (csd_obj->type != ACPI_TYPE_PACKAGE)) {
+		printk(KERN_ERR PREFIX "Invalid _CSD data\n");
+		result = -EFAULT;
+		goto end;
+	}
+
+	count = csd_obj->package.count;
+        csd_pkg = kzalloc(sizeof(struct acpi_csd_package) * count, GFP_KERNEL);
+	if (!csd_pkg) {
+		result = -ENOMEM;
+		goto end;
+	}
+
+	for (i = 0; i < count; i++) {
+		union acpi_object *pkg_obj = &(csd_obj->package.elements[i]);
+		result = acpi_processor_power_get_csd_pkg(&csd_pkg[i], pkg_obj);
+		if (result) {
+			goto end;
+		}
+	}
+
+	pr->flags.has_csd = 1;
+
+	/* Now coorelate what CSD goes with what state.
+	 * We will coordinate with the other CPUs later.
+	 */
+	for (s = 1; s < ACPI_PROCESSOR_MAX_POWER; s++) {
+		struct acpi_processor_cx *cx = &pr->power.states[s];
+
+		for(i = 0; i < count; i++) {
+			if (cx->cst_index != csd_pkg[i].index)
+				continue;
+
+			if (csd_pkg[i].num_processors < 2)
+				continue;
+
+			cx->csd.domain = csd_pkg[i].domain;
+			cx->csd.coord_type = csd_pkg[i].coord_type;
+			cx->csd.nr_cpus = csd_pkg[i].num_processors;
+			cx->csd.valid = 1;
+			break;
+		}
+	}
+end:
+	kfree(buffer.pointer);
+	kfree(csd_pkg);
+	return result;
+}
+
+static void acpi_processor_power_csd_coord(void)
+{
+	struct acpi_processor *pr, *match_pr;
+	struct acpi_processor_cx *cx, *mx;
+	unsigned int p, m, s;
+
+	/* Let's coordinate all CPU based on state and domain */
+	for_each_possible_cpu(p) {
+		pr = per_cpu(processors, p);
+		if (!pr || !pr->flags.has_csd)
+			continue;
+
+		for_each_possible_cpu(m) {
+			if (p == m)
+				continue;
+
+			match_pr = per_cpu(processors, m);
+			if (!match_pr || !match_pr->flags.has_csd)
+				continue;
+
+			for (s = 1; s < ACPI_PROCESSOR_MAX_POWER; s++) {
+				cx = &pr->power.states[s];
+				mx = &match_pr->power.states[s];
+
+				if (!cx->valid || !mx->valid)
+					continue;
+
+				if (!cx->csd.valid || !mx->csd.valid)
+					continue;
+
+				if (cx->csd.domain != mx->csd.domain)
+					continue;
+
+				/* If two CSD packages have the same domain,
+				 * they should have the same number of CPUs
+				 * and coordination type.
+				 */
+
+				if (cx->csd.nr_cpus != mx->csd.nr_cpus ||
+				    cx->csd.coord_type != mx->csd.coord_type) {
+					/* This state is broken */
+					cx->valid = 0;
+					mx->valid = 0;
+					continue;
+				}
+
+				cpumask_set_cpu(p, &cx->csd.shared_cpus);
+				cpumask_set_cpu(p, &mx->csd.shared_cpus);
+			}
+		}
+	}
+
+	/* Now verify that coordinate is valid for each CPU state */
+	for_each_possible_cpu(p) {
+		pr = per_cpu(processors, p);
+		if (!pr)
+			continue;
+
+		if (!pr->flags.has_csd)
+			continue;
+
+		for (s = 1; s < ACPI_PROCESSOR_MAX_POWER; s++) {
+			unsigned int weight;
+			cx = &pr->power.states[s];
+			if (!cx->valid || !cx->csd.valid)
+				continue;
+
+			weight = cpumask_weight(&cx->csd.shared_cpus);
+			if (cx->csd.nr_cpus != weight) {
+				/* This state is broken */
+				cpumask_clear(&cx->csd.shared_cpus);
+				cx->valid = 0;
+			}
+		}
+	}
+}
+#else
+static inline void acpi_processor_power_csd_coord(void) { }
+#endif
 
 static void acpi_processor_power_verify_c3(struct acpi_processor *pr,
 					   struct acpi_processor_cx *cx)
@@ -614,6 +827,13 @@ static int acpi_processor_power_verify(struct acpi_processor *pr)
 		case ACPI_STATE_C3:
 			acpi_processor_power_verify_c3(pr, cx);
 			break;
+
+		case ACPI_STATE_C4:
+		case ACPI_STATE_C6:
+			if (!cx->address)
+				break;
+			cx->valid = 1; 
+			break;
 		}
 		if (!cx->valid)
 			continue;
@@ -641,8 +861,13 @@ static int acpi_processor_get_power_info(struct acpi_processor *pr)
 	memset(pr->power.states, 0, sizeof(pr->power.states));
 
 	result = acpi_processor_get_power_info_cst(pr);
-	if (result == -ENODEV)
+	if (!acpi_gbl_reduced_hardware && (result == -ENODEV))
 		result = acpi_processor_get_power_info_fadt(pr);
+
+#ifdef CONFIG_ARCH_NEEDS_ACPI_CSD
+	if (!result)
+		result = acpi_processor_get_power_info_csd(pr);
+#endif
 
 	if (result)
 		return result;
@@ -658,7 +883,8 @@ static int acpi_processor_get_power_info(struct acpi_processor *pr)
 	for (i = 1; i < ACPI_PROCESSOR_MAX_POWER; i++) {
 		if (pr->power.states[i].valid) {
 			pr->power.count = i;
-			if (pr->power.states[i].type >= ACPI_STATE_C2)
+			if ((pr->power.states[i].type >= ACPI_STATE_C2) ||
+			    acpi_gbl_reduced_hardware)
 				pr->flags.power = 1;
 		}
 	}
@@ -751,6 +977,8 @@ static int acpi_idle_enter_c1(struct cpuidle_device *dev,
  * @dev: the target CPU
  * @index: the index of suggested state
  */
+ 
+#ifdef CONFIG_X86
 static int acpi_idle_play_dead(struct cpuidle_device *dev, int index)
 {
 	struct acpi_processor_cx *cx = per_cpu(acpi_cstate[index], dev->cpu);
@@ -758,7 +986,6 @@ static int acpi_idle_play_dead(struct cpuidle_device *dev, int index)
 	ACPI_FLUSH_CPU_CACHE();
 
 	while (1) {
-
 		if (cx->entry_method == ACPI_CSTATE_HALT)
 			safe_halt();
 		else if (cx->entry_method == ACPI_CSTATE_SYSTEMIO) {
@@ -772,6 +999,13 @@ static int acpi_idle_play_dead(struct cpuidle_device *dev, int index)
 	/* Never reached */
 	return 0;
 }
+#else
+static int acpi_idle_play_dead(struct cpuidle_device *dev, int index)
+{
+	return 0;
+}
+#endif
+
 
 /**
  * acpi_idle_enter_simple - enters an ACPI state without BM handling
@@ -871,9 +1105,9 @@ static int acpi_idle_enter_bm(struct cpuidle_device *dev,
 			return -EINVAL;
 		}
 	}
-
+#ifdef CONFIG_X86
 	acpi_unlazy_tlb(smp_processor_id());
-
+#endif
 	/* Tell the scheduler that we are going deep-idle: */
 	sched_clock_idle_sleep_event();
 	/*
@@ -962,19 +1196,22 @@ static int acpi_processor_setup_cpuidle_cx(struct acpi_processor *pr,
 			continue;
 
 #ifdef CONFIG_HOTPLUG_CPU
-		if ((cx->type != ACPI_STATE_C1) && (num_online_cpus() > 1) &&
+		if (!acpi_gbl_reduced_hardware &&
+		    (cx->type != ACPI_STATE_C1) && (num_online_cpus() > 1) &&
 		    !pr->flags.has_cst &&
 		    !(acpi_gbl_FADT.flags & ACPI_FADT_C2_MP_SUPPORTED))
 			continue;
 #endif
+#if defined(CONFIG_ARCH_NEEDS_ACPI_CSD) && \
+    defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED)
+		if (cx->csd.valid)
+			cpuidle_coupled_set_cpumask(dev, count, &cx->csd.shared_cpus);
+#endif
 		per_cpu(acpi_cstate[count], dev->cpu) = cx;
-
 		count++;
 		if (count == CPUIDLE_STATE_MAX)
 			break;
 	}
-
-	dev->state_count = count;
 
 	if (!count)
 		return -EINVAL;
@@ -1017,7 +1254,8 @@ static int acpi_processor_setup_cpuidle_states(struct acpi_processor *pr)
 			continue;
 
 #ifdef CONFIG_HOTPLUG_CPU
-		if ((cx->type != ACPI_STATE_C1) && (num_online_cpus() > 1) &&
+		if (!acpi_gbl_reduced_hardware &&
+		    (cx->type != ACPI_STATE_C1) && (num_online_cpus() > 1) &&
 		    !pr->flags.has_cst &&
 		    !(acpi_gbl_FADT.flags & ACPI_FADT_C2_MP_SUPPORTED))
 			continue;
@@ -1035,7 +1273,11 @@ static int acpi_processor_setup_cpuidle_states(struct acpi_processor *pr)
 			if (cx->entry_method == ACPI_CSTATE_FFH)
 				state->flags |= CPUIDLE_FLAG_TIME_VALID;
 
+#ifdef CONFIG_ARCH_XGENE	
+			state->enter = xgene_enter_idle_simple;
+#else
 			state->enter = acpi_idle_enter_c1;
+#endif
 			state->enter_dead = acpi_idle_play_dead;
 			drv->safe_state_index = count;
 			break;
@@ -1048,11 +1290,27 @@ static int acpi_processor_setup_cpuidle_states(struct acpi_processor *pr)
 			break;
 
 			case ACPI_STATE_C3:
+			case ACPI_STATE_C4:
+			case ACPI_STATE_C6:
 			state->flags |= CPUIDLE_FLAG_TIME_VALID;
+#if defined(CONFIG_ARCH_NEEDS_ACPI_CSD) && \
+    defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED)
+			if (cx->csd.valid)
+				state->flags |= CPUIDLE_FLAG_COUPLED;
+#endif
+#ifdef CONFIG_ARCH_XGENE
+			state->enter = xgene_enter_idle_coupled;
+#else
 			state->enter = pr->flags.bm_check ?
 					acpi_idle_enter_bm :
 					acpi_idle_enter_simple;
+#endif
 			break;
+			default:
+			state->enter = acpi_idle_enter_c1;
+                        state->enter = pr->flags.bm_check ?
+                                        acpi_idle_enter_bm :
+                                        acpi_idle_enter_simple;
 		}
 
 		count++;
@@ -1163,11 +1421,56 @@ int acpi_processor_cst_has_changed(struct acpi_processor *pr)
 
 static int acpi_processor_registered;
 
+static int acpi_processor_power_register(struct acpi_processor *pr)
+{
+	int retval;
+	struct cpuidle_device *dev;
+
+	pr->flags.power_setup_done = 1;
+	/*
+	 * Install the idle handler if processor power management is supported.
+	 * Note that we use previously set idle handler will be used on
+	 * platforms that only support C1.
+	 */
+	if (pr->flags.power) {
+		/* Register acpi_idle_driver if not already registered */
+		if (!acpi_processor_registered) {
+			acpi_processor_setup_cpuidle_states(pr);
+#ifdef CONFIG_ARCH_XGENE
+			xgene_cpuidle_update_states_desc(&acpi_idle_driver);
+#endif
+			retval = cpuidle_register_driver(&acpi_idle_driver);
+			if (retval)
+				return retval;
+		}
+
+		dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+		if (!dev)
+			return -ENOMEM;
+		per_cpu(acpi_cpuidle_device, pr->id) = dev;
+
+		acpi_processor_setup_cpuidle_cx(pr, dev);
+
+		/* Register per-cpu cpuidle_device. Cpuidle driver
+		 * must already be registered before registering device
+		 */
+		retval = cpuidle_register_device(dev);
+		if (retval) {
+			if (acpi_processor_registered == 0)
+				cpuidle_unregister_driver(&acpi_idle_driver);
+			return retval;
+		}
+#ifdef CONFIG_ARCH_XGENE
+			xgene_cpuidle_update_states_status(dev);
+#endif
+		acpi_processor_registered++;
+	}
+	return 0;
+}
+
 int acpi_processor_power_init(struct acpi_processor *pr)
 {
 	acpi_status status = 0;
-	int retval;
-	struct cpuidle_device *dev;
 	static int first_run;
 
 	if (disabled_by_idle_boot_param())
@@ -1175,7 +1478,9 @@ int acpi_processor_power_init(struct acpi_processor *pr)
 
 	if (!first_run) {
 		dmi_check_system(processor_power_dmi_table);
+#ifdef CONFIG_X86
 		max_cstate = acpi_processor_cstate_check(max_cstate);
+#endif
 		if (max_cstate < ACPI_C_STATES_MAX)
 			printk(KERN_NOTICE
 			       "ACPI: processor limited to max C-state %d\n",
@@ -1196,42 +1501,31 @@ int acpi_processor_power_init(struct acpi_processor *pr)
 	}
 
 	acpi_processor_get_power_info(pr);
-	pr->flags.power_setup_done = 1;
 
-	/*
-	 * Install the idle handler if processor power management is supported.
-	 * Note that we use previously set idle handler will be used on
-	 * platforms that only support C1.
-	 */
-	if (pr->flags.power) {
-		/* Register acpi_idle_driver if not already registered */
-		if (!acpi_processor_registered) {
-			acpi_processor_setup_cpuidle_states(pr);
-			retval = cpuidle_register_driver(&acpi_idle_driver);
-			if (retval)
-				return retval;
-			printk(KERN_DEBUG "ACPI: %s registered with cpuidle\n",
-					acpi_idle_driver.name);
-		}
+	if (pr->flags.has_csd)
+		return 0; /* CSD detected. Register with CPUIDLE later. */
+		
+	return acpi_processor_power_register(pr);
+}
 
-		dev = kzalloc(sizeof(*dev), GFP_KERNEL);
-		if (!dev)
-			return -ENOMEM;
-		per_cpu(acpi_cpuidle_device, pr->id) = dev;
+int acpi_processor_power_post_init(void)
+{
+	struct acpi_processor *pr;
+	unsigned int i;
 
-		acpi_processor_setup_cpuidle_cx(pr, dev);
+	acpi_processor_power_csd_coord();
 
-		/* Register per-cpu cpuidle_device. Cpuidle driver
-		 * must already be registered before registering device
-		 */
-		retval = cpuidle_register_device(dev);
-		if (retval) {
-			if (acpi_processor_registered == 0)
-				cpuidle_unregister_driver(&acpi_idle_driver);
-			return retval;
-		}
-		acpi_processor_registered++;
+	for_each_possible_cpu(i) {
+		pr = per_cpu(processors, i);
+		if (!pr)
+			continue;
+
+		if (pr->flags.power_setup_done)
+			continue;
+
+		acpi_processor_power_register(pr);
 	}
+
 	return 0;
 }
 

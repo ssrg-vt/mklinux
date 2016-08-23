@@ -31,9 +31,15 @@ void acpi_pci_slot_init(void);
 #else
 static inline void acpi_pci_slot_init(void) { }
 #endif
+#ifdef CONFIG_PCI
 void acpi_pci_root_init(void);
 void acpi_pci_link_init(void);
 void acpi_pci_root_hp_init(void);
+#else
+void acpi_pci_root_init(void){}
+void acpi_pci_link_init(void){}
+void acpi_pci_root_hp_init(void){}
+#endif
 void acpi_processor_init(void);
 void acpi_platform_init(void);
 int acpi_sysfs_init(void);

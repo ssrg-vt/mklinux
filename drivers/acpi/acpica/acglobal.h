@@ -103,7 +103,12 @@ u8 ACPI_INIT_GLOBAL(acpi_gbl_create_osi_method, TRUE);
  * Optionally use default values for the ACPI register widths. Set this to
  * TRUE to use the defaults, if an FADT contains incorrect widths/lengths.
  */
+/* FIX ME:*/
+#ifdef CONFIG_ARM64
+u8 ACPI_INIT_GLOBAL(acpi_gbl_use_default_register_widths, FALSE);
+#else
 u8 ACPI_INIT_GLOBAL(acpi_gbl_use_default_register_widths, TRUE);
+#endif
 
 /*
  * Optionally enable output from the AML Debug Object.

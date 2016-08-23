@@ -277,6 +277,7 @@ static int __init acpi_processor_driver_init(void)
 	if (result < 0)
 		return result;
 
+	acpi_processor_power_post_init();
 	acpi_processor_syscore_init();
 	register_hotcpu_notifier(&acpi_cpu_notifier);
 	acpi_thermal_cpufreq_init();

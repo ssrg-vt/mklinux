@@ -13,6 +13,7 @@
 #include <linux/nls.h>
 
 #include <acpi/acpi_drivers.h>
+#include <acpi/apei.h>
 
 #include "internal.h"
 
@@ -2059,16 +2060,18 @@ int __init acpi_scan_init(void)
 		printk(KERN_ERR PREFIX "Could not register bus type\n");
 	}
 
-	acpi_pci_root_init();
-	acpi_pci_link_init();
-	acpi_processor_init();
-	acpi_platform_init();
-	acpi_lpss_init();
-	acpi_cmos_rtc_init();
-	acpi_container_init();
-	acpi_memory_hotplug_init();
+	acpi_hest_init();	
+#if defined(CONFIG_PCI)
+	acpi_pci_root_init();	
+	acpi_pci_link_init();	
+#endif
+	acpi_processor_init();	
+	acpi_platform_init();	
+	acpi_lpss_init();	
+	acpi_cmos_rtc_init();	
+	acpi_container_init();	
+	acpi_memory_hotplug_init();	
 	acpi_dock_init();
-
 	mutex_lock(&acpi_scan_lock);
 	/*
 	 * Enumerate devices in the ACPI namespace.
@@ -2089,7 +2092,9 @@ int __init acpi_scan_init(void)
 
 	acpi_update_all_gpes();
 
+#if defined(CONFIG_PCI)
 	acpi_pci_root_hp_init();
+#endif
 
  out:
 	mutex_unlock(&acpi_scan_lock);

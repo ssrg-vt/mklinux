@@ -33,7 +33,7 @@
 #include <linux/proc_fs.h>
 #include <linux/acpi.h>
 #include <linux/slab.h>
-#ifdef CONFIG_X86
+#if !defined(CONFIG_ARM) && !defined(CONFIG_ARM64)
 #include <asm/mpspec.h>
 #endif
 #include <linux/pci.h>
@@ -55,7 +55,7 @@ EXPORT_SYMBOL(acpi_root_dir);
 #define STRUCT_TO_INT(s)	(*((int*)&s))
 
 
-#ifdef CONFIG_X86
+#if !defined(CONFIG_ARM) && !defined(CONFIG_ARM64)
 static int set_copy_dsdt(const struct dmi_system_id *id)
 {
 	printk(KERN_NOTICE "%s detected - "
@@ -77,10 +77,6 @@ static struct dmi_system_id dsdt_dmi_table[] __initdata = {
 		DMI_MATCH(DMI_PRODUCT_NAME, "Satellite"),
 		},
 	},
-	{}
-};
-#else
-static struct dmi_system_id dsdt_dmi_table[] __initdata = {
 	{}
 };
 #endif
@@ -479,6 +475,9 @@ static int __init acpi_bus_init_irq(void)
 	case ACPI_IRQ_MODEL_PLATFORM:
 		message = "platform specific model";
 		break;
+        case ACPI_IRQ_MODEL_GIC:
+                message = "GIC";
+                break;
 	default:
 		printk(KERN_WARNING PREFIX "Unknown interrupt routing model\n");
 		return -ENODEV;
@@ -513,11 +512,15 @@ void __init acpi_early_init(void)
 
 	acpi_gbl_permanent_mmap = 1;
 
+#if !(defined(CONFIG_ARM) || defined(CONFIG_ARM64))
 	/*
+	 * NB: ARM does not use DMI at present.
+	 *
 	 * If the machine falls into the DMI check table,
 	 * DSDT will be copied to memory
 	 */
 	dmi_check_system(dsdt_dmi_table);
+#endif
 
 	status = acpi_reallocate_root_table();
 	if (ACPI_FAILURE(status)) {
@@ -540,23 +543,27 @@ void __init acpi_early_init(void)
 		goto error0;
 	}
 
-#ifdef CONFIG_X86
-	if (!acpi_ioapic) {
-		/* compatible (0) means level (3) */
-		if (!(acpi_sci_flags & ACPI_MADT_TRIGGER_MASK)) {
-			acpi_sci_flags &= ~ACPI_MADT_TRIGGER_MASK;
-			acpi_sci_flags |= ACPI_MADT_TRIGGER_LEVEL;
+#if !(defined(CONFIG_ARM) || defined(CONFIG_ARM64)) && (!ACPI_REDUCED_HARDWARE)
+	/* NB: in HW reduced mode, FADT sci_interrupt has no meaning */
+	if (!acpi_gbl_reduced_hardware) {
+		if (!acpi_ioapic) {
+			/* compatible (0) means level (3) */
+			if (!(acpi_sci_flags & ACPI_MADT_TRIGGER_MASK)) {
+				acpi_sci_flags &= ~ACPI_MADT_TRIGGER_MASK;
+				acpi_sci_flags |= ACPI_MADT_TRIGGER_LEVEL;
+			}
+			/* Set PIC-mode SCI trigger type */
+			acpi_pic_sci_set_trigger(acpi_gbl_FADT.sci_interrupt,
+						 (acpi_sci_flags & ACPI_MADT_TRIGGER_MASK) >> 2);
+		} else {
+			/*
+			 * now that acpi_gbl_FADT is initialized,
+			 * update it with result from INT_SRC_OVR parsing
+			 */
+			acpi_gbl_FADT.sci_interrupt = acpi_sci_override_gsi;
 		}
-		/* Set PIC-mode SCI trigger type */
-		acpi_pic_sci_set_trigger(acpi_gbl_FADT.sci_interrupt,
-					 (acpi_sci_flags & ACPI_MADT_TRIGGER_MASK) >> 2);
-	} else {
-		/*
-		 * now that acpi_gbl_FADT is initialized,
-		 * update it with result from INT_SRC_OVR parsing
-		 */
-		acpi_gbl_FADT.sci_interrupt = acpi_sci_override_gsi;
 	}
+
 #endif
 
 	status = acpi_enable_subsystem(~ACPI_NO_ACPI_ENABLE);

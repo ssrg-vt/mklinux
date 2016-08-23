@@ -50,9 +50,13 @@
 #include <linux/aer.h>
 
 #include <acpi/ghes.h>
+#ifdef CONFIG_X86
 #include <asm/mce.h>
+#endif
 #include <asm/tlbflush.h>
+#ifdef CONFIG_X86
 #include <asm/nmi.h>
+#endif
 
 #include "apei-internal.h"
 
@@ -87,7 +91,9 @@
 bool ghes_disable;
 module_param_named(disable, ghes_disable, bool, 0);
 
+#ifdef CONFIG_X86
 static int ghes_panic_timeout	__read_mostly = 30;
+#endif
 
 /*
  * All error sources notified with SCI shares one notifier function,
@@ -101,11 +107,13 @@ static LIST_HEAD(ghes_sci);
 static LIST_HEAD(ghes_nmi);
 static DEFINE_MUTEX(ghes_list_mutex);
 
+#ifdef CONFIG_X86
 /*
  * NMI may be triggered on any CPU, so ghes_nmi_lock is used for
  * mutual exclusion.
  */
 static DEFINE_RAW_SPINLOCK(ghes_nmi_lock);
+#endif
 
 /*
  * Because the memory area used to transfer hardware error information
@@ -193,7 +201,7 @@ static void ghes_iounmap_nmi(void __iomem *vaddr_ptr)
 
 	BUG_ON(vaddr != (unsigned long)GHES_IOREMAP_NMI_PAGE(base));
 	unmap_kernel_range_noflush(vaddr, PAGE_SIZE);
-	__flush_tlb_one(vaddr);
+	flush_tlb_kernel_range(vaddr, vaddr + PAGE_SIZE);
 }
 
 static void ghes_iounmap_irq(void __iomem *vaddr_ptr)
@@ -203,7 +211,7 @@ static void ghes_iounmap_irq(void __iomem *vaddr_ptr)
 
 	BUG_ON(vaddr != (unsigned long)GHES_IOREMAP_IRQ_PAGE(base));
 	unmap_kernel_range_noflush(vaddr, PAGE_SIZE);
-	__flush_tlb_one(vaddr);
+	flush_tlb_kernel_range(vaddr, vaddr + PAGE_SIZE);
 }
 
 static int ghes_estatus_pool_init(void)
@@ -250,10 +258,12 @@ static int ghes_estatus_pool_expand(unsigned long len)
 	return 0;
 }
 
+#ifdef CONFIG_X86
 static void ghes_estatus_pool_shrink(unsigned long len)
 {
 	ghes_estatus_pool_size_request -= PAGE_ALIGN(len);
 }
+#endif
 
 static struct ghes *ghes_new(struct acpi_hest_generic *generic)
 {
@@ -779,6 +789,7 @@ static void ghes_proc_in_irq(struct irq_work *irq_work)
 	}
 }
 
+#ifdef CONFIG_X86
 static void ghes_print_queued_estatus(void)
 {
 	struct llist_node *llnode;
@@ -874,11 +885,13 @@ out:
 	raw_spin_unlock(&ghes_nmi_lock);
 	return ret;
 }
+#endif
 
 static struct notifier_block ghes_notifier_sci = {
 	.notifier_call = ghes_notify_sci,
 };
 
+#ifdef CONFIG_X86
 static unsigned long ghes_esource_prealloc_size(
 	const struct acpi_hest_generic *generic)
 {
@@ -893,12 +906,15 @@ static unsigned long ghes_esource_prealloc_size(
 
 	return prealloc_size;
 }
+#endif
 
 static int ghes_probe(struct platform_device *ghes_dev)
 {
 	struct acpi_hest_generic *generic;
 	struct ghes *ghes = NULL;
+#ifdef CONFIG_X86
 	unsigned long len;
+#endif
 	int rc = -EINVAL;
 
 	generic = *(struct acpi_hest_generic **)ghes_dev->dev.platform_data;
@@ -970,6 +986,7 @@ static int ghes_probe(struct platform_device *ghes_dev)
 		mutex_unlock(&ghes_list_mutex);
 		break;
 	case ACPI_HEST_NOTIFY_NMI:
+#ifdef CONFIG_X86
 		len = ghes_esource_prealloc_size(generic);
 		ghes_estatus_pool_expand(len);
 		mutex_lock(&ghes_list_mutex);
@@ -978,6 +995,7 @@ static int ghes_probe(struct platform_device *ghes_dev)
 						"ghes");
 		list_add_rcu(&ghes->list, &ghes_nmi);
 		mutex_unlock(&ghes_list_mutex);
+#endif
 		break;
 	default:
 		BUG();
@@ -999,7 +1017,9 @@ static int ghes_remove(struct platform_device *ghes_dev)
 {
 	struct ghes *ghes;
 	struct acpi_hest_generic *generic;
+#ifdef CONFIG_X86
 	unsigned long len;
+#endif
 
 	ghes = platform_get_drvdata(ghes_dev);
 	generic = ghes->generic;
@@ -1020,6 +1040,7 @@ static int ghes_remove(struct platform_device *ghes_dev)
 		mutex_unlock(&ghes_list_mutex);
 		break;
 	case ACPI_HEST_NOTIFY_NMI:
+#ifdef CONFIG_X86
 		mutex_lock(&ghes_list_mutex);
 		list_del_rcu(&ghes->list);
 		if (list_empty(&ghes_nmi))
@@ -1032,6 +1053,7 @@ static int ghes_remove(struct platform_device *ghes_dev)
 		synchronize_rcu();
 		len = ghes_esource_prealloc_size(generic);
 		ghes_estatus_pool_shrink(len);
+#endif
 		break;
 	default:
 		BUG();

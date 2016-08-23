@@ -2,13 +2,18 @@
 # ACPI Configuration
 #
 
+config ACPI_ARM
+        bool
+        select EARLY_IOREMAP
+	select ACPI_REDUCED_HARDWARE_ONLY
+
 menuconfig ACPI
 	bool "ACPI (Advanced Configuration and Power Interface) Support"
-	depends on !IA64_HP_SIM
-	depends on IA64 || X86
-	depends on PCI
-	select PNP
-	default y
+        depends on !IA64_HP_SIM
+        depends on ((IA64 || X86) && PCI) || (ARM || ARM64)
+        select PNP
+        select ACPI_ARM if (ARM || ARM64)
+        default y if !(ARM || ARM64)
 	help
 	  Advanced Configuration and Power Interface (ACPI) support for 
 	  Linux requires an ACPI-compliant platform (hardware/firmware),
@@ -167,6 +172,7 @@ config ACPI_PROCESSOR
 	select THERMAL
 	select CPU_IDLE
 	default y
+	depends on X86||ARM64
 	help
 	  This driver installs ACPI as the idle handler for Linux and uses
 	  ACPI C2 and C3 processor states to save power on systems that
@@ -189,7 +195,7 @@ config ACPI_IPMI
 
 config ACPI_HOTPLUG_CPU
 	bool
-	depends on ACPI_PROCESSOR && HOTPLUG_CPU
+	depends on ACPI_PROCESSOR && HOTPLUG_CPU && X86
 	select ACPI_CONTAINER
 	default y
 
@@ -206,7 +212,7 @@ config ACPI_PROCESSOR_AGGREGATOR
 
 config ACPI_THERMAL
 	tristate "Thermal Zone"
-	depends on ACPI_PROCESSOR
+	depends on ACPI_PROCESSOR||ARM||ARM64
 	select THERMAL
 	default y
 	help
@@ -242,8 +248,7 @@ config ACPI_CUSTOM_DSDT
 	default ACPI_CUSTOM_DSDT_FILE != ""
 
 config ACPI_INITRD_TABLE_OVERRIDE
-	bool "ACPI tables override via initrd"
-	depends on BLK_DEV_INITRD && X86
+	bool "ACPI tables can be passed via uncompressed cpio in initrd"
 	default n
 	help
 	  This option provides functionality to override arbitrary ACPI tables
@@ -262,6 +267,16 @@ config ACPI_BLACKLIST_YEAR
 	  Enter 0 to disable this mechanism and allow ACPI to
 	  run by default no matter what the year.  (default)
 
+config ACPI_SCI_EMULATE
+	bool "ACPI SCI Event Emulation"
+	depends on DEBUG_FS
+	default n
+        help
+          This will enable your system to emulate sci hotplug event
+          notification through proc file system. For example user needs to
+          echo "XXX 0" > /sys/kernel/debug/acpi/sci_notify (where, XXX is
+          a target ACPI device object name present under \_SB scope).
+
 config ACPI_DEBUG
 	bool "Debug Statements"
 	default n
@@ -277,6 +292,7 @@ config ACPI_DEBUG
 config ACPI_PCI_SLOT
 	bool "PCI slot detection driver"
 	depends on SYSFS
+	depends on PCI
 	default n
 	help
 	  This driver creates entries in /sys/bus/pci/slots/ for all PCI
@@ -370,6 +386,22 @@ config ACPI_BGRT
 	  data from the firmware boot splash. It will appear under
 	  /sys/firmware/acpi/bgrt/ .
 
+config ACPI_REDUCED_HARDWARE_ONLY
+	bool "Hardware-reduced ACPI support only" if EXPERT
+	def_bool n
+	depends on ACPI
+	help
+	This config item changes the way the ACPI code is built.  When this
+	option is selected, the kernel will use a specialized version of
+	ACPICA that ONLY supports the ACPI "reduced hardware" mode.  The
+	resulting kernel will be smaller but it will also be restricted to
+	running in ACPI reduced hardware mode ONLY.
+
+	If you are unsure what to do, do not enable this option.
+
 source "drivers/acpi/apei/Kconfig"
+
+config ARCH_NEEDS_ACPI_CSD
+        def_bool y if ARCH_NEEDS_CPU_IDLE_COUPLED
 
 endif	# ACPI

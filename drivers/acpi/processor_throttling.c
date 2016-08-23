@@ -942,6 +942,10 @@ static int acpi_processor_get_fadt_info(struct acpi_processor *pr)
 		return -EINVAL;
 	}
 
+	/*
+	 * NB: in HW reduced mode, duty_width is always zero
+	 * so this count may not be what is wanted.
+	 */
 	pr->throttling.state_count = 1 << acpi_gbl_FADT.duty_width;
 
 	/*
@@ -991,6 +995,10 @@ static int acpi_processor_set_throttling_fadt(struct acpi_processor *pr,
 		/* Used to clear all duty_value bits */
 		duty_mask = pr->throttling.state_count - 1;
 
+		/*
+		 * NB: in HW reduced mode, duty_offset is always zero
+		 * so this mask may not be what is wanted.
+		 */
 		duty_mask <<= acpi_gbl_FADT.duty_offset;
 		duty_mask = ~duty_mask;
 	}

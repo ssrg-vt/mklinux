@@ -29,7 +29,30 @@ ACPI_MODULE_NAME("platform");
 static const struct acpi_device_id acpi_platform_device_ids[] = {
 
 	{ "PNP0D40" },
-
+	/* APM X-Gene devices */
+	{ "APMC0D01", 0 }, /* APM X-Gene SlimPRO device */
+	{ "APMC0D00", 0 }, /* APM X-Gene SATA (mux'ed SGMII) device */
+	{ "APMC0D02", 0 }, /* APM X-Gene PCP bus device */
+	{ "APMC0D03", 0 }, /* APM X-Gene USB device */
+	{ "APMC0D04", 0 }, /* APM X-Gene QM device */
+	{ "APMC0D05", 0 }, /* APM X-Gene Ethernet device */
+	{ "APMC0D06", 0 }, /* APM X-Gene AHBC device */
+	{ "APMC0D07", 0 }, /* APM X-Gene GPIO device */
+	{ "APMC0D08", 0 }, /* APM X-Gene UART device */
+	{ "APMC0D09", 0 }, /* APM X-Gene SATA device */
+	{ "APMC0D0A", 0 }, /* APM X-Gene PHY device */
+	{ "APMC0D0B", 0 }, /* APM X-Gene PHY (ext Ref CMU) device */
+	{ "APMC0D0C", 0 }, /* APM X-Gene SDHCI device */
+	{ "APMC0D0D", 0 }, /* APM X-Gene SATA (mux'ed SGMII) device */
+	{ "LNRO0007", 0 }, /* APM X-Gene PMU device */
+	{ "APMC0D0E", 0 }, /* APM X-Gene MSI device */
+	{ "APMC0D0F", 0 }, /* DesignWare I2C device */
+	{ "APMC0D10", 0 }, /* APM X-Gene EDAC MC  device */
+	{ "APMC0D11", 0 }, /* APM X-Gene EDAC L3  device */
+	{ "APMC0D12", 0 }, /* APM X-Gene EDAC PMD device */
+	{ "APMC0D13", 0 }, /* APM X-Gene EDAC SOC device */
+	{ "APMC0D14", 0 }, /* APM X-Gene Flash Controller GPIO device */
+	{ "APMC0D15", 0 }, /* APM X-Gene GPIO Standby device */
 	{ }
 };
 

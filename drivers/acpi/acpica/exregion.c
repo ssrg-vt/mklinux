@@ -229,7 +229,6 @@ acpi_ex_system_memory_space_handler(u32 function,
 			break;
 
 		case 32:
-
 			*value = (u64)ACPI_GET32(logical_addr_ptr);
 			break;
 

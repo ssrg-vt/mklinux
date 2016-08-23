@@ -34,6 +34,31 @@
 #define valid_IRQ(i) (true)
 #endif
 
+#ifdef CONFIG_ARM64
+static inline u32 acpi_irq_to_gic(struct acpi_resource *ares)
+{
+        /*
+	 * interrupts[0] is IRQ
+         * interrupts[1] is SPI=0 or PPI=1, default is SPI if not passed in.
+         */
+	if (ares->type == ACPI_RESOURCE_TYPE_IRQ) {
+		struct acpi_resource_irq *irq;
+		irq = &ares->data.irq;
+        	if ((irq->interrupt_count == 2) && irq->interrupts[1] == 1)
+			return acpi_irq_to_ppi(irq->interrupts[0]);
+		else
+			return irq->interrupts[0];
+	} else {
+		struct acpi_resource_extended_irq *irq;
+		irq = &ares->data.extended_irq;
+        	if ((irq->interrupt_count == 2) && irq->interrupts[1] == 1)
+			return acpi_irq_to_ppi(irq->interrupts[0]);
+		else
+			return irq->interrupts[0];
+	}
+}
+#endif
+
 static unsigned long acpi_dev_memresource_flags(u64 len, u8 write_protect,
 						bool window)
 {
@@ -373,6 +398,15 @@ bool acpi_dev_resource_interrupt(struct acpi_resource *ares, int index,
 		 * _CRS, but some firmware violates this, so parse them all.
 		 */
 		irq = &ares->data.irq;
+#ifdef CONFIG_ARM64
+		if (index > 0) {
+			acpi_dev_irqresource_disabled(res, 0);
+			return false;
+		}
+		acpi_dev_get_irqresource(res, acpi_irq_to_gic(ares),
+					 irq->triggering, irq->polarity,
+					 irq->sharable, true);
+#else
 		if (index >= irq->interrupt_count) {
 			acpi_dev_irqresource_disabled(res, 0);
 			return false;
@@ -380,9 +414,19 @@ bool acpi_dev_resource_interrupt(struct acpi_resource *ares, int index,
 		acpi_dev_get_irqresource(res, irq->interrupts[index],
 					 irq->triggering, irq->polarity,
 					 irq->sharable, true);
+#endif
 		break;
 	case ACPI_RESOURCE_TYPE_EXTENDED_IRQ:
 		ext_irq = &ares->data.extended_irq;
+#ifdef CONFIG_ARM64
+		if (index > 0) {
+			acpi_dev_irqresource_disabled(res, 0);
+			return false;
+		}
+		acpi_dev_get_irqresource(res, acpi_irq_to_gic(ares),
+					 ext_irq->triggering, ext_irq->polarity,
+					 ext_irq->sharable, false);
+#else
 		if (index >= ext_irq->interrupt_count) {
 			acpi_dev_irqresource_disabled(res, 0);
 			return false;
@@ -390,6 +434,7 @@ bool acpi_dev_resource_interrupt(struct acpi_resource *ares, int index,
 		acpi_dev_get_irqresource(res, ext_irq->interrupts[index],
 					 ext_irq->triggering, ext_irq->polarity,
 					 ext_irq->sharable, false);
+#endif
 		break;
 	default:
 		return false;

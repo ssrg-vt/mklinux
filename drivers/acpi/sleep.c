@@ -455,6 +455,16 @@ static u32 acpi_suspend_states[] = {
 	[PM_SUSPEND_MAX] = ACPI_STATE_S5
 };
 
+void acpi_set_standby(int acpi_state)
+{
+	acpi_suspend_states[PM_SUSPEND_STANDBY] = acpi_state;
+}
+
+int acpi_get_standby(void)
+{
+	return acpi_suspend_states[PM_SUSPEND_STANDBY];
+}
+
 /**
  *	acpi_suspend_begin - Set the target system sleep state to the state
  *		associated with given @pm_state, if supported.
@@ -495,13 +505,12 @@ static int acpi_suspend_enter(suspend_state_t pm_state)
 
 	switch (acpi_state) {
 	case ACPI_STATE_S1:
+	case ACPI_STATE_S2:
 		barrier();
 		status = acpi_enter_sleep_state(acpi_state);
 		break;
 
 	case ACPI_STATE_S3:
-		if (!acpi_suspend_lowlevel)
-			return -ENOSYS;
 		error = acpi_suspend_lowlevel();
 		if (error)
 			return error;
@@ -525,7 +534,7 @@ static int acpi_suspend_enter(suspend_state_t pm_state)
 	 * generate wakeup events.
 	 */
 	if (ACPI_SUCCESS(status) && (acpi_state == ACPI_STATE_S3)) {
-		acpi_event_status pwr_btn_status;
+		acpi_event_status pwr_btn_status = ACPI_EVENT_FLAG_DISABLED;
 
 		acpi_get_event_status(ACPI_EVENT_POWER_BUTTON, &pwr_btn_status);
 
