@@ -618,6 +618,66 @@ int __init of_scan_flat_dt_by_path(const char *path,
 		return ret;
 }
 
+const char * __init of_flat_dt_get_machine_name(void)
+{
+	const char *name;
+	unsigned long dt_root = of_get_flat_dt_root();
+
+	name = of_get_flat_dt_prop(dt_root, "model", NULL);
+	if (!name)
+		name = of_get_flat_dt_prop(dt_root, "compatible", NULL);
+	return name;
+}
+
+/**
+ * of_flat_dt_match_machine - Iterate match tables to find matching machine.
+ *
+ * @default_match: A machine specific ptr to return in case of no match.
+ * @get_next_compat: callback function to return next compatible match table.
+ *
+ * Iterate through machine match tables to find the best match for the machine
+ * compatible string in the FDT.
+ */
+const void * __init of_flat_dt_match_machine(const void *default_match,
+		const void * (*get_next_compat)(const char * const**))
+{
+	const void *data = NULL;
+	const void *best_data = default_match;
+	const char *const *compat;
+	unsigned long dt_root;
+	unsigned int best_score = ~1, score = 0;
+
+	dt_root = of_get_flat_dt_root();
+	while ((data = get_next_compat(&compat))) {
+		score = of_flat_dt_match(dt_root, compat);
+		if (score > 0 && score < best_score) {
+			best_data = data;
+			best_score = score;
+		}
+	}
+	if (!best_data) {
+		const char *prop;
+		long size;
+
+		pr_err("\n unrecognized device tree list:\n[ ");
+
+		prop = of_get_flat_dt_prop(dt_root, "compatible", &size);
+		if (prop) {
+			while (size > 0) {
+				printk("'%s' ", prop);
+				size -= strlen(prop) + 1;
+				prop += strlen(prop) + 1;
+			}
+		}
+		printk("]\n\n");
+		return NULL;
+	}
+
+	pr_info("Machine model: %s\n", of_flat_dt_get_machine_name());
+
+	return best_data;
+}
+
 #ifdef CONFIG_BLK_DEV_INITRD
 /**
  * early_init_dt_check_for_initrd - Decode initrd location from flat tree
@@ -774,6 +834,25 @@ int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
 }
 
 #ifdef CONFIG_HAVE_MEMBLOCK
+void __init __weak early_init_dt_add_memory_arch(u64 base, u64 size)
+{
+	const u64 phys_offset = __pa(PAGE_OFFSET);
+	base &= PAGE_MASK;
+	size &= PAGE_MASK;
+	if (base + size < phys_offset) {
+		pr_warning("Ignoring memory block 0x%llx - 0x%llx\n",
+			   base, base + size);
+		return;
+	}
+	if (base < phys_offset) {
+		pr_warning("Ignoring memory range 0x%llx - 0x%llx\n",
+			   base, phys_offset);
+		size -= phys_offset - base;
+		base = phys_offset;
+	}
+	memblock_add(base, size);
+}
+
 /*
  * called from unflatten_device_tree() to bootstrap devicetree itself
  * Architectures can override this definition if memblock isn't used
@@ -783,6 +862,69 @@ void * __init __weak early_init_dt_alloc_memory_arch(u64 size, u64 align)
 	return __va(memblock_alloc(size, align));
 }
 #endif
+
+#if (defined(CONFIG_ARM64) || defined (CONFIG_ARM)) && defined(CONFIG_ACPI)
+#include <linux/memblock.h>
+#include <linux/acpi.h>
+#include <asm/acpi.h>
+#include <acpi/actbl.h>
+
+int __init early_init_dt_scan_acpi(unsigned long node, const char *uname,
+		int depth, void *data)
+{
+	unsigned long l;
+	unsigned int *p;
+	struct acpi_arm_root *pinfo;
+
+	pr_debug("search \"chosen\" for acpi info, depth: %d, uname: %s\n",
+			depth, uname);
+
+	if (depth != 1 || !data ||
+			(strcmp(uname, "chosen") != 0 && strcmp(uname, "chosen@0") != 0))
+		return 0;
+
+	/* Retrieve acpi,address line */
+	pinfo = (struct acpi_arm_root *)data;
+	p = of_get_flat_dt_prop(node, "linux,acpi-start", &l);
+	if (p)
+		pinfo->phys_address = of_read_ulong(p, l/4);
+
+	/* Retrieve acpi,size line */
+	p = of_get_flat_dt_prop(node, "linux,acpi-len", &l);
+	if (p)
+		pinfo->size = of_read_ulong(p, l/4);
+
+	return 1;
+}
+#endif
+
+bool __init early_init_dt_scan(void *params)
+{
+	if(!params)
+		return false;
+	
+	/* Setup flat device-tree pointer */
+	initial_boot_params = params;
+
+	/* Check device tree validity */
+	if (be32_to_cpu(initial_boot_params->magic) != OF_DT_HEADER) {
+		initial_boot_params = NULL;
+		return false;
+	}
+
+	/* Retrieve various information from the /chosen node */
+	of_scan_flat_dt(early_init_dt_scan_chosen, boot_command_line);
+#ifdef CONFIG_ACPI
+	/* Retrieve ACPI pointers from /chosen node */
+	of_scan_flat_dt(early_init_dt_scan_acpi, &acpi_arm_rsdp_info);
+#endif
+	/* Initialize {size,address}-cells info */
+	of_scan_flat_dt(early_init_dt_scan_root, NULL);
+	/* Setup memory, calling early_init_dt_add_memory_arch */
+	of_scan_flat_dt(early_init_dt_scan_memory, NULL);
+
+	return true;
+}
 
 /**
  * unflatten_device_tree - create tree of device_nodes from flat blob
@@ -799,6 +941,38 @@ void __init unflatten_device_tree(void)
 
 	/* Get pointer to "/chosen" and "/aliases" nodes for use everywhere */
 	of_alias_scan(early_init_dt_alloc_memory_arch);
+}
+
+/**
+ * unflatten_and_copy_device_tree - copy and create tree of device_nodes from flat blob
+ *
+ * Copies and unflattens the device-tree passed by the firmware, creating the
+ * tree of struct device_node. It also fills the "name" and "type"
+ * pointers of the nodes so the normal device-tree walking functions
+ * can be used. This should only be used when the FDT memory has not been
+ * reserved such is the case when the FDT is built-in to the kernel init
+ * section. If the FDT memory is reserved already then unflatten_device_tree
+ * should be used instead.
+ */
+void __init unflatten_and_copy_device_tree(void)
+{
+	int size;
+	void *dt;
+
+	if (!initial_boot_params) {
+		pr_warn("No valid device tree found, continuing without\n");
+		return;
+	}
+
+	size = __be32_to_cpu(initial_boot_params->totalsize);
+	dt = early_init_dt_alloc_memory_arch(size,
+		__alignof__(struct boot_param_header));
+
+	if (dt) {
+		memcpy(dt, initial_boot_params, size);
+		initial_boot_params = dt;
+	}
+	unflatten_device_tree();
 }
 
 #endif /* CONFIG_OF_EARLY_FLATTREE */

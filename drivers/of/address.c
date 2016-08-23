@@ -626,6 +626,15 @@ const __be32 *of_get_address(struct device_node *dev, int index, u64 *size,
 }
 EXPORT_SYMBOL(of_get_address);
 
+int __weak pci_register_io_range(phys_addr_t addr, resource_size_t size)
+{
+#ifndef PCI_IOBASE
+	return -EINVAL;
+#else
+	return 0;
+#endif
+}
+
 static int __of_address_to_resource(struct device_node *dev,
 		const __be32 *addrp, u64 size, unsigned int flags,
 		const char *name, struct resource *r)
@@ -652,6 +661,47 @@ static int __of_address_to_resource(struct device_node *dev,
 	r->flags = flags;
 	r->name = name ? name : dev->full_name;
 
+	return 0;
+}
+
+
+/**
+ * of_pci_range_to_resource - Create a resource from an of_pci_range
+ * @range:	the PCI range that describes the resource
+ * @np:		device node where the range belongs to
+ * @res:	pointer to a valid resource that will be updated to
+ *              reflect the values contained in the range.
+ *
+ * Returns EINVAL if the range cannot be converted to resource.
+ *
+ * Note that if the range is an IO range, the resource will be converted
+ * using pci_address_to_pio() which can fail if it is called too early or
+ * if the range cannot be matched to any host bridge IO space (our case here).
+ * To guard against that we try to register the IO range first.
+ * If that fails we know that pci_address_to_pio() will do too.
+ */
+int of_pci_range_to_resource(struct of_pci_range *range,
+	struct device_node *np, struct resource *res)
+{
+	res->flags = range->flags;
+	if (res->flags & IORESOURCE_IO) {
+		unsigned long port = -1;
+		int err = pci_register_io_range(range->cpu_addr, range->size);
+		if (err)
+			return err;
+		port = pci_address_to_pio(range->cpu_addr);
+		if (port == (unsigned long)-1) {
+			res->start = (resource_size_t)OF_BAD_ADDR;
+			res->end = (resource_size_t)OF_BAD_ADDR;
+			return -EINVAL;
+		}
+		res->start = port;
+	} else {
+		res->start = range->cpu_addr;
+	}
+	res->end = res->start + range->size - 1;
+	res->parent = res->child = res->sibling = NULL;
+	res->name = np->full_name;
 	return 0;
 }
 

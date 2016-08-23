@@ -40,6 +40,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/io.h>
 #include <linux/slab.h>
+#include <linux/efi.h>
 #include <linux/acpi.h>
 #include "i2c-designware-core.h"
 
@@ -47,9 +48,23 @@ static struct i2c_algorithm i2c_dw_algo = {
 	.master_xfer	= i2c_dw_xfer,
 	.functionality	= i2c_dw_func,
 };
+
 static u32 i2c_dw_get_clk_rate_khz(struct dw_i2c_dev *dev)
 {
+#ifdef CONFIG_ACPI
+	struct platform_device *pdev = to_platform_device(dev->dev);
+	struct acpi_buffer buf = {ACPI_ALLOCATE_BUFFER, NULL};
+	struct acpi_object_list input;
+
+	input.count = 0;
+	input.pointer = NULL;
+	
+	acpi_evaluate_object(ACPI_HANDLE(&pdev->dev), "SPD", &input, &buf);
+
+	return 0;
+#else
 	return clk_get_rate(dev->clk)/1000;
+#endif
 }
 
 #ifdef CONFIG_ACPI
@@ -104,6 +119,7 @@ static const struct acpi_device_id dw_i2c_acpi_match[] = {
 	{ "INT33C2", 0 },
 	{ "INT33C3", 0 },
 	{ "80860F41", 0 },
+	{ "APMC0D0F", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, dw_i2c_acpi_match);
@@ -143,8 +159,14 @@ static int dw_i2c_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, dev);
 
 	dev->clk = devm_clk_get(&pdev->dev, NULL);
+#ifdef CONFIG_ACPI
+        if (IS_ERR(dev->clk) && efi_enabled(EFI_BOOT))
+                dev->clk = NULL;
+#endif
+
 	dev->get_clk_rate_khz = i2c_dw_get_clk_rate_khz;
 
+#ifndef CONFIG_ACPI
 	if (IS_ERR(dev->clk))
 		return PTR_ERR(dev->clk);
 	clk_prepare_enable(dev->clk);
@@ -158,7 +180,7 @@ static int dw_i2c_probe(struct platform_device *pdev)
 		dev->sda_hold_time = div_u64((u64)ic_clk * ht + 500000,
 					     1000000);
 	}
-
+#endif
 	dev->functionality =
 		I2C_FUNC_I2C |
 		I2C_FUNC_10BIT_ADDR |

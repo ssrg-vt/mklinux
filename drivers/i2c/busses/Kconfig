@@ -305,6 +305,7 @@ config I2C_POWERMAC
 
 comment "I2C system bus drivers (mostly embedded / system-on-chip)"
 
+
 config I2C_AT91
 	tristate "Atmel AT91 I2C Two-Wire interface (TWI)"
 	depends on ARCH_AT91
@@ -962,5 +963,16 @@ config SCx200_ACB
 
 	  This support is also available as a module.  If so, the module
 	  will be called scx200_acb.
+
+config I2C_XGENE_SLIMPRO
+	tristate "APM X-Gene SoC I2C SlimPRO devices support"
+	depends on ARM64
+	select XGENE_SLIMPRO
+	help
+	  Enable I2C devices that is accessed via APM X-Genet SoC SlimPRO
+	  co-processor.
+
+	  This support is also available as a module.  If so, the module
+	  will be called i2x_xgene_slimpro.
 
 endmenu

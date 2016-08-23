@@ -95,6 +95,7 @@ struct m25p {
 	u8			program_opcode;
 	u8			*command;
 	bool			fast_read;
+        u32                     jedec_id;
 };
 
 static inline struct m25p *mtd_to_m25p(struct mtd_info *mtd)
@@ -305,6 +306,9 @@ static int m25p80_erase(struct mtd_info *mtd, struct erase_info *instr)
 			__func__, (long long)instr->addr,
 			(long long)instr->len);
 
+        if (flash->addr_width == 4)
+                set_4byte(flash, flash->jedec_id, 1);
+
 	div_u64_rem(instr->len, mtd->erasesize, &rem);
 	if (rem)
 		return -EINVAL;
@@ -343,6 +347,9 @@ static int m25p80_erase(struct mtd_info *mtd, struct erase_info *instr)
 
 	mutex_unlock(&flash->lock);
 
+	if (flash->addr_width == 4)
+                set_4byte(flash, flash->jedec_id, 0);
+
 	instr->state = MTD_ERASE_DONE;
 	mtd_erase_callback(instr);
 
@@ -357,12 +364,16 @@ static int m25p80_read(struct mtd_info *mtd, loff_t from, size_t len,
 	size_t *retlen, u_char *buf)
 {
 	struct m25p *flash = mtd_to_m25p(mtd);
+	u32 page_offset, page_size;
 	struct spi_transfer t[2];
 	struct spi_message m;
 	uint8_t opcode;
 
 	pr_debug("%s: %s from 0x%08x, len %zd\n", dev_name(&flash->spi->dev),
 			__func__, (u32)from, len);
+
+        if (flash->addr_width == 4)
+                set_4byte(flash, flash->jedec_id, 1);
 
 	spi_message_init(&m);
 	memset(t, 0, (sizeof t));
@@ -376,7 +387,6 @@ static int m25p80_read(struct mtd_info *mtd, loff_t from, size_t len,
 	spi_message_add_tail(&t[0], &m);
 
 	t[1].rx_buf = buf;
-	t[1].len = len;
 	spi_message_add_tail(&t[1], &m);
 
 	mutex_lock(&flash->lock);
@@ -398,13 +408,52 @@ static int m25p80_read(struct mtd_info *mtd, loff_t from, size_t len,
 	flash->command[0] = opcode;
 	m25p_addr2cmd(flash, from, flash->command);
 
-	spi_sync(flash->spi, &m);
+	page_offset = from & (flash->page_size - 1);
 
-	*retlen = m.actual_length - m25p_cmdsz(flash) -
-			(flash->fast_read ? 1 : 0);
+        /* do all the bytes fit onto one page? */
+        if (page_offset + len <= flash->page_size) {
+                t[1].len = len;
+
+                spi_sync(flash->spi, &m);
+
+                *retlen = m.actual_length - m25p_cmdsz(flash)
+                                        - (flash->fast_read ? 1 : 0);
+        } else {
+                u32 i;
+
+                /* the size of data remaining on the first page */
+                page_size = flash->page_size - page_offset;
+
+                t[1].len = page_size;
+                spi_sync(flash->spi, &m);
+
+                *retlen = m.actual_length - m25p_cmdsz(flash)
+                                        - (flash->fast_read ? 1 : 0);
+
+                /* write everything in flash->page_size chunks */
+                for (i = page_size; i < len; i += page_size) {
+                        page_size = len - i;
+                        if (page_size > flash->page_size)
+                                page_size = flash->page_size;
+
+                        /* write the next page to flash */
+                        m25p_addr2cmd(flash, from + i, flash->command);
+
+                        t[1].rx_buf = buf + i;
+                        t[1].len = page_size;
+
+                        spi_sync(flash->spi, &m);
+
+                        *retlen += m.actual_length - m25p_cmdsz(flash)
+                                                - (flash->fast_read ? 1 : 0);
+                }
+        }	
 
 	mutex_unlock(&flash->lock);
-
+	
+	if (flash->addr_width == 4)
+                set_4byte(flash, flash->jedec_id, 0);
+	
 	return 0;
 }
 
@@ -423,6 +472,9 @@ static int m25p80_write(struct mtd_info *mtd, loff_t to, size_t len,
 
 	pr_debug("%s: %s to 0x%08x, len %zd\n", dev_name(&flash->spi->dev),
 			__func__, (u32)to, len);
+
+        if (flash->addr_width == 4)
+                set_4byte(flash, flash->jedec_id, 1);
 
 	spi_message_init(&m);
 	memset(t, 0, (sizeof t));
@@ -491,6 +543,9 @@ static int m25p80_write(struct mtd_info *mtd, loff_t to, size_t len,
 	}
 
 	mutex_unlock(&flash->lock);
+
+	if (flash->addr_width == 4)
+                set_4byte(flash, flash->jedec_id, 0);
 
 	return 0;
 }
@@ -786,7 +841,7 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "n25q064",  INFO(0x20ba17, 0, 64 * 1024, 128, 0) },
 	{ "n25q128a11",  INFO(0x20bb18, 0, 64 * 1024, 256, 0) },
 	{ "n25q128a13",  INFO(0x20ba18, 0, 64 * 1024, 256, 0) },
-	{ "n25q256a", INFO(0x20ba19, 0, 64 * 1024, 512, SECT_4K) },
+	{ "n25q256a", INFO(0x20ba19, 0, 64 * 1024, 512, 0) },
 
 	/* PMC */
 	{ "pm25lv512", INFO(0, 0, 32 * 1024, 2, SECT_4K_PMC) },
@@ -1061,6 +1116,7 @@ static int m25p_probe(struct spi_device *spi)
 	flash->mtd.dev.parent = &spi->dev;
 	flash->page_size = info->page_size;
 	flash->mtd.writebufsize = flash->page_size;
+        flash->jedec_id = info->jedec_id;
 
 	flash->fast_read = false;
 	if (np && of_property_read_bool(np, "m25p,fast-read"))
@@ -1094,8 +1150,8 @@ static int m25p_probe(struct spi_device *spi)
 			/* No small sector erase for 4-byte command set */
 			flash->erase_opcode = OPCODE_SE_4B;
 			flash->mtd.erasesize = info->sector_size;
-		} else
-			set_4byte(flash, info->jedec_id, 1);
+		} //else
+		 //	set_4byte(flash, info->jedec_id, 1);
 	} else {
 		flash->addr_width = 3;
 	}

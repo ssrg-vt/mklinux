@@ -39,4 +39,8 @@ endif
 
 config ARCH_NEEDS_CPU_IDLE_COUPLED
 	def_bool n
+
+config ARCH_NEEDS_CPU_IDLE_COUPLED_STATE
+	def_bool y if ARCH_XGENE
+	select ARCH_NEEDS_CPU_IDLE_COUPLED
 endmenu

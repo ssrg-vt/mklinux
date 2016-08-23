@@ -101,6 +101,8 @@
  * @online_count: count of cpus that are online
  * @refcnt: reference count of cpuidle devices that are using this struct
  * @prevent: flag to prevent coupled idle while a cpu is hotplugging
+ * @wakeup_barrier: atomic variable to hold the wakeup barrier count
+ * @notify_state: The state that should update the coupled group on notify
  */
 struct cpuidle_coupled {
 	cpumask_t coupled_cpus;
@@ -110,6 +112,10 @@ struct cpuidle_coupled {
 	int online_count;
 	int refcnt;
 	int prevent;
+	atomic_t wakeup_barrier;
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+	int notify_state;
+#endif
 };
 
 #define WAITING_BITS 16
@@ -161,6 +167,54 @@ void cpuidle_coupled_parallel_barrier(struct cpuidle_device *dev, atomic_t *a)
 
 	smp_mb__before_atomic_inc();
 	atomic_inc(a);
+
+	while (atomic_read(a) < n)
+		cpu_relax();
+
+	if (atomic_inc_return(a) == n * 2) {
+		atomic_set(a, 0);
+		return;
+	}
+
+	while (atomic_read(a) > n)
+		cpu_relax();
+}
+
+/**
+ * cpuidle_coupled_wakeup - Detect the first wakeup cpu.
+ * @dev: struct cpuidle_device for this cpu
+ *
+ * This works in conjunction with cpuidle_coupled_wakeup_barrier.
+ * You must call this function first.
+ *
+ * Must only be called from within a coupled idle state handler
+ */
+int cpuidle_coupled_wakeup(struct cpuidle_device *dev)
+{
+	struct cpuidle_coupled *coupled = dev->coupled;
+	atomic_t *a = &coupled->wakeup_barrier;
+	return atomic_inc_return(a);
+}
+
+/**
+ * cpuidle_coupled_wakeup_barrier - synchronize all online coupled cpus
+ * @dev: cpuidle_device of the calling cpu
+ *
+ * This works in conjunction with cpuidle_coupled_wakeup.
+ * You must call this function second.
+ *
+ * No caller to this function will return from this function until all online
+ * cpus in the same coupled group have called this function.  Once any caller
+ * has returned from this function, the barrier is immediately available for
+ * reuse.
+ *
+ * Must only be called from within a coupled idle state handler
+ */
+void cpuidle_coupled_wakeup_barrier(struct cpuidle_device *dev)
+{
+	struct cpuidle_coupled *coupled = dev->coupled;
+	int n = coupled->online_count;
+	atomic_t *a = &coupled->wakeup_barrier;
 
 	while (atomic_read(a) < n)
 		cpu_relax();
@@ -463,6 +517,10 @@ int cpuidle_enter_state_coupled(struct cpuidle_device *dev,
 	struct cpuidle_coupled *coupled = dev->coupled;
 	int w;
 
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+	dev->coupled = dev->coupled_state[next_state];
+	coupled = dev->coupled;
+#endif
 	if (!coupled)
 		return -EINVAL;
 
@@ -621,6 +679,40 @@ static void cpuidle_coupled_update_online_cpus(struct cpuidle_coupled *coupled)
 }
 
 /**
+ * cpuidle_coupled_cpus_mask - get coupled cpus for the requested state
+ * @dev: struct cpuidle_device for the current cpu
+ * @state_index: index of the requested state
+ *
+ * Returns the coupled cpus mask.
+ */
+const cpumask_t *const cpuidle_coupled_get_cpumask(struct cpuidle_device *dev,
+				int state_index)
+{
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+	return &dev->coupled_state_cpus[state_index];
+#else
+	return &dev->coupled_cpus;
+#endif
+}
+
+/**
+ * cpuidle_coupled_state_set - store a copy coupled cpus for the requested state
+ * @dev: struct cpuidle_device for the current cpu
+ * @state_index: index of the requested state
+ * @coupled_cpus: mask of cpus that are part of the coupled set
+ *
+ */
+void cpuidle_coupled_set_cpumask(struct cpuidle_device *dev, int state_index,
+		const struct cpumask *coupled_cpus)
+{
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+	cpumask_copy(&dev->coupled_state_cpus[state_index], coupled_cpus);
+#else
+	cpumask_copy(&dev->coupled_cpus, coupled_cpus);
+#endif
+}
+
+/**
  * cpuidle_coupled_register_device - register a coupled cpuidle device
  * @dev: struct cpuidle_device for the current cpu
  *
@@ -635,6 +727,57 @@ int cpuidle_coupled_register_device(struct cpuidle_device *dev)
 	struct call_single_data *csd;
 	struct cpuidle_coupled *coupled;
 
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+	int i, j;
+	struct cpuidle_driver *drv = cpuidle_get_cpu_driver(dev);
+
+	for (i = 1; i < drv->state_count; i++) {
+		if (cpumask_empty(&dev->coupled_state_cpus[i]))
+			continue;
+
+		for_each_cpu_mask(cpu, dev->coupled_state_cpus[i]) {
+			other_dev = per_cpu(cpuidle_devices, cpu);
+			if (other_dev && other_dev->coupled_state[i]) {
+				coupled = other_dev->coupled_state[i];
+				goto have_coupled;
+			}
+		}
+
+		/* No existing coupled info found on other CPUs.
+		 * Check own states to see if the request coupled
+		 * group already exist.  */
+		for (j = 1; j < drv->state_count; j++) {
+			if (j == i)
+				continue;
+
+			if (!dev->coupled_state[j])
+				continue;
+
+			if (cpumask_equal(&dev->coupled_state[j]->coupled_cpus,
+					  &dev->coupled_state_cpus[i])) {
+				coupled = dev->coupled_state[j];
+				goto have_coupled;
+			}
+		}
+
+		/* No existing coupled info found, create a new one */
+		coupled = kzalloc(sizeof(struct cpuidle_coupled), GFP_KERNEL);
+		if (!coupled)
+			return -ENOMEM;
+
+		coupled->coupled_cpus = dev->coupled_state_cpus[i];
+		coupled->notify_state = i;
+
+have_coupled:
+		dev->coupled_state[i] = coupled;
+		if (WARN_ON(!cpumask_equal(&dev->coupled_state_cpus[i], &coupled->coupled_cpus)))
+			coupled->prevent++;
+
+		cpuidle_coupled_update_online_cpus(coupled);
+
+		coupled->refcnt++;
+	}
+#else
 	if (cpumask_empty(&dev->coupled_cpus))
 		return 0;
 
@@ -661,7 +804,7 @@ have_coupled:
 	cpuidle_coupled_update_online_cpus(coupled);
 
 	coupled->refcnt++;
-
+#endif
 	csd = &per_cpu(cpuidle_coupled_poke_cb, dev->cpu);
 	csd->func = cpuidle_coupled_handle_poke;
 	csd->info = (void *)(unsigned long)dev->cpu;
@@ -679,13 +822,30 @@ have_coupled:
  */
 void cpuidle_coupled_unregister_device(struct cpuidle_device *dev)
 {
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+	int i;
+	struct cpuidle_coupled *coupled;
+	struct cpuidle_driver *drv = cpuidle_get_cpu_driver(dev);
+
+	for (i = 1; i < drv->state_count; i++) {
+		if (!dev->coupled_state[i])
+			continue;
+
+		coupled = dev->coupled_state[i];
+
+		if (--coupled->refcnt == 0)
+			kfree(coupled);
+		dev->coupled_state[i] = NULL;
+	}
+#else
 	struct cpuidle_coupled *coupled = dev->coupled;
 
 	if (cpumask_empty(&dev->coupled_cpus))
 		return;
 
-	if (--coupled->refcnt)
+	if (--coupled->refcnt == 0)
 		kfree(coupled);
+#endif
 	dev->coupled = NULL;
 }
 
@@ -744,6 +904,10 @@ static int cpuidle_coupled_cpu_notify(struct notifier_block *nb,
 {
 	int cpu = (unsigned long)hcpu;
 	struct cpuidle_device *dev;
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+	int i;
+	struct cpuidle_driver *drv;
+#endif
 
 	switch (action & ~CPU_TASKS_FROZEN) {
 	case CPU_UP_PREPARE:
@@ -760,21 +924,65 @@ static int cpuidle_coupled_cpu_notify(struct notifier_block *nb,
 	mutex_lock(&cpuidle_lock);
 
 	dev = per_cpu(cpuidle_devices, cpu);
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+	if (!dev)
+		goto out;
+
+	drv = cpuidle_get_cpu_driver(dev);
+	for (i = 1; i < drv->state_count; i++) {
+		if (dev->coupled_state[i])
+			goto update;
+	}
+
+	goto out;
+update:
+#else
 	if (!dev || !dev->coupled)
 		goto out;
+#endif
 
 	switch (action & ~CPU_TASKS_FROZEN) {
 	case CPU_UP_PREPARE:
 	case CPU_DOWN_PREPARE:
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+		for (i = 1; i < drv->state_count; i++) {
+			if (!dev->coupled_state[i])
+				continue;
+			if (i != dev->coupled_state[i]->notify_state)
+				continue;
+			cpuidle_coupled_prevent_idle(dev->coupled_state[i]);
+		}
+#else
 		cpuidle_coupled_prevent_idle(dev->coupled);
+#endif
 		break;
 	case CPU_ONLINE:
 	case CPU_DEAD:
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+		for (i = 1; i < drv->state_count; i++) {
+			if (!dev->coupled_state[i])
+				continue;
+			if (i != dev->coupled_state[i]->notify_state)
+				continue;
+			cpuidle_coupled_update_online_cpus(dev->coupled_state[i]);
+		}
+#else
 		cpuidle_coupled_update_online_cpus(dev->coupled);
+#endif
 		/* Fall through */
 	case CPU_UP_CANCELED:
 	case CPU_DOWN_FAILED:
+#if defined(CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED_STATE)
+		for (i = 1; i < drv->state_count; i++) {
+			if (!dev->coupled_state[i])
+				continue;
+			if (i != dev->coupled_state[i]->notify_state)
+				continue;
+			cpuidle_coupled_allow_idle(dev->coupled_state[i]);
+		}
+#else
 		cpuidle_coupled_allow_idle(dev->coupled);
+#endif
 		break;
 	}
 

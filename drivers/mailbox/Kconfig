@@ -6,6 +6,15 @@ menuconfig MAILBOX
 	  signals. Say Y if your platform supports hardware mailboxes.
 
 if MAILBOX
+config XGENE_SLIMPRO_MBOX
+	tristate "APM SoC X-Gene SlimPRO Mailbox Controller"
+	help
+	  An implementation of the APM X-Gene Interprocessor Communication
+	  Mailbox (IPCM) between the ARM 64-bit cores and SlimPRO controller.
+	  It is used to send short messages between ARM64-bit cores and
+	  the SlimPRO Management Engine, primarily for PM. Say Y here if you
+	  want to use the APM X-Gene SlimPRO IPCM support.
+
 config PL320_MBOX
 	bool "ARM PL320 Mailbox"
 	depends on ARM_AMBA

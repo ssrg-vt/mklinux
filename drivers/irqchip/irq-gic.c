@@ -80,6 +80,7 @@ static DEFINE_RAW_SPINLOCK(irq_controller_lock);
 #define NR_GIC_CPU_IF 8
 static u8 gic_cpu_map[NR_GIC_CPU_IF] __read_mostly;
 
+int set_wake(struct irq_data *data, unsigned int on);
 /*
  * Supported arch specific GIC irq extension.
  * Default make them NULL.
@@ -90,7 +91,7 @@ struct irq_chip gic_arch_extn = {
 	.irq_unmask	= NULL,
 	.irq_retrigger	= NULL,
 	.irq_set_type	= NULL,
-	.irq_set_wake	= NULL,
+	.irq_set_wake	= set_wake,
 };
 
 #ifndef MAX_GIC_NR
@@ -173,6 +174,21 @@ static void gic_unmask_irq(struct irq_data *d)
 	raw_spin_unlock(&irq_controller_lock);
 }
 
+int set_wake(struct irq_data *data, unsigned int on)
+{
+	struct irq_desc* desc = irq_to_desc(data->irq);
+
+	if (on) {
+		if (desc->action)
+			desc->action->flags |= IRQF_NO_SUSPEND;
+	}
+	else {
+		if (desc->action)
+			desc->action->flags &= ~IRQF_NO_SUSPEND;
+	}
+	return 0;
+}
+
 static void gic_eoi_irq(struct irq_data *d)
 {
 	if (gic_arch_extn.irq_eoi) {
@@ -199,6 +215,7 @@ static int gic_set_type(struct irq_data *d, unsigned int type)
 	if (gicirq < 16)
 		return -EINVAL;
 
+	type &= IRQ_TYPE_LEVEL_HIGH | IRQ_TYPE_EDGE_RISING;
 	if (type != IRQ_TYPE_LEVEL_HIGH && type != IRQ_TYPE_EDGE_RISING)
 		return -EINVAL;
 
@@ -237,31 +254,34 @@ static int gic_retrigger(struct irq_data *d)
 	if (gic_arch_extn.irq_retrigger)
 		return gic_arch_extn.irq_retrigger(d);
 
-	/* the genirq layer expects 0 if we can't retrigger in hardware */
-	return 0;
+	return -ENXIO;
 }
 
 #ifdef CONFIG_SMP
 static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 			    bool force)
 {
-	void __iomem *reg = gic_dist_base(d) + GIC_DIST_TARGET + (gic_irq(d) & ~3);
-	unsigned int shift = (gic_irq(d) % 4) * 8;
-	unsigned int cpu = cpumask_any_and(mask_val, cpu_online_mask);
-	u32 val, mask, bit;
+        void __iomem *reg = gic_dist_base(d) + GIC_DIST_TARGET + (gic_irq(d) & ~3);
+        unsigned int cpu, shift = (gic_irq(d) % 4) * 8;
+        u32 val, mask, bit;
 
-	if (cpu >= NR_GIC_CPU_IF || cpu >= nr_cpu_ids)
-		return -EINVAL;
+        if (!force)
+                cpu = cpumask_any_and(mask_val, cpu_online_mask);
+        else
+                cpu = cpumask_first(mask_val);
 
-	mask = 0xff << shift;
-	bit = gic_cpu_map[cpu] << shift;
+        if (cpu >= NR_GIC_CPU_IF || cpu >= nr_cpu_ids)
+                return -EINVAL;
 
-	raw_spin_lock(&irq_controller_lock);
-	val = readl_relaxed(reg) & ~mask;
-	writel_relaxed(val | bit, reg);
-	raw_spin_unlock(&irq_controller_lock);
+        raw_spin_lock(&irq_controller_lock);
+        mask = 0xff << shift;
+        bit = gic_cpu_map[cpu] << shift;
+        val = readl_relaxed(reg) & ~mask;
+        writel_relaxed(val | bit, reg);
+        raw_spin_unlock(&irq_controller_lock);
 
-	return IRQ_SET_MASK_OK;
+        return IRQ_SET_MASK_OK;
+
 }
 #endif
 
@@ -293,6 +313,10 @@ static asmlinkage void __exception_irq_entry gic_handle_irq(struct pt_regs *regs
 		if (likely(irqnr > 15 && irqnr < 1021)) {
 			irqnr = irq_find_mapping(gic->domain, irqnr);
 			handle_IRQ(irqnr, regs);
+			continue;
+		}
+		if (irqnr == 15) {
+			writel_relaxed(irqstat, cpu_base + GIC_CPU_EOI);
 			continue;
 		}
 		if (irqnr < 16) {
@@ -337,6 +361,7 @@ static struct irq_chip gic_chip = {
 	.name			= "GIC",
 	.irq_mask		= gic_mask_irq,
 	.irq_unmask		= gic_unmask_irq,
+	.irq_disable		= gic_mask_irq,
 	.irq_eoi		= gic_eoi_irq,
 	.irq_set_type		= gic_set_type,
 	.irq_retrigger		= gic_retrigger,
@@ -414,11 +439,12 @@ static void __init gic_dist_init(struct gic_chip_data *gic)
 	writel_relaxed(1, base + GIC_DIST_CTRL);
 }
 
-static void gic_cpu_init(struct gic_chip_data *gic)
+static void __cpuinit gic_cpu_init(struct gic_chip_data *gic)
 {
 	void __iomem *dist_base = gic_data_dist_base(gic);
 	void __iomem *base = gic_data_cpu_base(gic);
 	unsigned int cpu_mask, cpu = smp_processor_id();
+	unsigned int cpu_ctrl;
 	int i;
 
 	/*
@@ -450,13 +476,35 @@ static void gic_cpu_init(struct gic_chip_data *gic)
 		writel_relaxed(0xa0a0a0a0, dist_base + GIC_DIST_PRI + i * 4 / 4);
 
 	writel_relaxed(0xf0, base + GIC_CPU_PRIMASK);
-	writel_relaxed(1, base + GIC_CPU_CTRL);
+
+	/* Mask out the gic v2 bypass bits */
+	cpu_ctrl = readl(base + GIC_CPU_CTRL);
+	cpu_ctrl &= 0x1e0;
+
+	writel_relaxed(cpu_ctrl | 0x1, base + GIC_CPU_CTRL);
 }
 
 void gic_cpu_if_down(void)
 {
 	void __iomem *cpu_base = gic_data_cpu_base(&gic_data[0]);
-	writel_relaxed(0, cpu_base + GIC_CPU_CTRL);
+	unsigned int cpu_ctrl;
+
+	cpu_ctrl = readl(cpu_base + GIC_CPU_CTRL);
+	cpu_ctrl &= 0x1e0;
+
+	writel_relaxed(cpu_ctrl, cpu_base + GIC_CPU_CTRL);
+}
+
+void gic_enable_routing()
+{
+	void __iomem *cpu_base = gic_data_cpu_base(&gic_data[0]);
+	unsigned int cpu_ctrl;
+
+	cpu_ctrl = readl(cpu_base + GIC_CPU_CTRL);
+	cpu_ctrl &= 0x1e0;
+
+	writel_relaxed(cpu_ctrl | 0x1, cpu_base + GIC_CPU_CTRL);
+	readl_relaxed(cpu_base + GIC_CPU_CTRL);
 }
 
 #ifdef CONFIG_CPU_PM
@@ -569,6 +617,7 @@ static void gic_cpu_restore(unsigned int gic_nr)
 	u32 *ptr;
 	void __iomem *dist_base;
 	void __iomem *cpu_base;
+	unsigned int cpu_ctrl;
 
 	if (gic_nr >= MAX_GIC_NR)
 		BUG();
@@ -591,7 +640,10 @@ static void gic_cpu_restore(unsigned int gic_nr)
 		writel_relaxed(0xa0a0a0a0, dist_base + GIC_DIST_PRI + i * 4);
 
 	writel_relaxed(0xf0, cpu_base + GIC_CPU_PRIMASK);
-	writel_relaxed(1, cpu_base + GIC_CPU_CTRL);
+
+	cpu_ctrl = readl(cpu_base + GIC_CPU_CTRL);
+	cpu_ctrl &= 0x1e0;
+	writel_relaxed(cpu_ctrl | 0x1, cpu_base + GIC_CPU_CTRL);
 }
 
 static int gic_notifier(struct notifier_block *self, unsigned long cmd,	void *v)
@@ -708,10 +760,10 @@ static int gic_irq_domain_xlate(struct irq_domain *d,
 }
 
 #ifdef CONFIG_SMP
-static int gic_secondary_init(struct notifier_block *nfb, unsigned long action,
-			      void *hcpu)
+static int __cpuinit gic_secondary_init(struct notifier_block *nfb,
+					unsigned long action, void *hcpu)
 {
-	if (action == CPU_STARTING || action == CPU_STARTING_FROZEN)
+	if (action == CPU_STARTING)
 		gic_cpu_init(&gic_data[0]);
 	return NOTIFY_OK;
 }
@@ -720,7 +772,7 @@ static int gic_secondary_init(struct notifier_block *nfb, unsigned long action,
  * Notifier for enabling the GIC CPU interface. Set an arbitrarily high
  * priority because the GIC needs to be up before the ARM generic timers.
  */
-static struct notifier_block gic_cpu_notifier = {
+static struct notifier_block __cpuinitdata gic_cpu_notifier = {
 	.notifier_call = gic_secondary_init,
 	.priority = 100,
 };
@@ -814,12 +866,26 @@ void __init gic_init_bases(unsigned int gic_nr, int irq_start,
 	if (WARN_ON(!gic->domain))
 		return;
 
+#ifdef CONFIG_ACPI
+       /* do not set default host for GIC domain multi-times.
+        * TODO: we should consider more when multi GICs supported */
+       if (!gic_nr)
+               irq_set_default_host(gic->domain);
+#endif
+
 #ifdef CONFIG_SMP
 	set_smp_cross_call(gic_raise_softirq);
 	register_cpu_notifier(&gic_cpu_notifier);
 #endif
-
+	
 	set_handle_irq(gic_handle_irq);
+
+	/*
+	 * do not set default host for GIC domain multi-times.
+	 * FIXME: This probably needs revisited when multi GICs
+	 * supported
+	 */
+	irq_set_default_host(gic->domain);
 
 	gic_chip.flags |= gic_arch_extn.flags;
 	gic_dist_init(gic);
@@ -828,7 +894,7 @@ void __init gic_init_bases(unsigned int gic_nr, int irq_start,
 }
 
 #ifdef CONFIG_OF
-static int gic_cnt __initdata;
+static int gic_cnt __initdata = 0;
 
 int __init gic_of_init(struct device_node *node, struct device_node *parent)
 {
@@ -864,3 +930,4 @@ IRQCHIP_DECLARE(msm_8660_qgic, "qcom,msm-8660-qgic", gic_of_init);
 IRQCHIP_DECLARE(msm_qgic2, "qcom,msm-qgic2", gic_of_init);
 
 #endif
+
