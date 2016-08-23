@@ -53,6 +53,12 @@
 
 #ifdef __KERNEL__
 
+/* Compile for reduced hardware mode only with this kernel config */
+
+#ifdef CONFIG_ACPI_REDUCED_HARDWARE_ONLY
+#define ACPI_REDUCED_HARDWARE 1
+#endif
+
 #include <linux/string.h>
 #include <linux/kernel.h>
 #include <linux/ctype.h>
@@ -173,6 +179,15 @@ static inline void *acpi_os_acquire_object(acpi_cache_t * cache)
 	}							\
 	lock ? AE_OK : AE_NO_MEMORY;				\
 })
+
+extern void arch_wait_for_wake(void);
+
+#ifdef CONFIG_ACPI_REDUCED_HARDWARE_ONLY
+#define FLAG_ACPI_HW_REDUCED TRUE
+#else
+#define FLAG_ACPI_HW_REDUCED FALSE
+#endif /* CONFIG_ACPI_REDUCED_HARDWARE */
+
 
 #endif /* __KERNEL__ */
 

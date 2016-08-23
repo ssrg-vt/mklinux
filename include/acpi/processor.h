@@ -22,6 +22,9 @@
 
 #define ACPI_PDC_REVISION_ID		0x1
 
+#define ACPI_CSD_REV0_REVISION		0	/* Support for _CSD as in ACPI 5.0 */
+#define ACPI_CSD_REV0_ENTRIES		6
+
 #define ACPI_PSD_REV0_REVISION		0	/* Support for _PSD as in ACPI 3.0 */
 #define ACPI_PSD_REV0_ENTRIES		5
 
@@ -55,6 +58,25 @@ struct acpi_power_register {
 	u64 address;
 } __attribute__ ((packed));
 
+#ifdef CONFIG_ARCH_NEEDS_ACPI_CSD
+struct acpi_csd_package {
+	u64 num_entries;
+	u64 revision;
+	u64 domain;
+	u64 coord_type;
+	u64 num_processors;
+	u64 index;
+} __attribute__ ((packed));
+
+struct acpi_csd_info {
+	u8 valid;
+	u64 domain;
+	u64 coord_type;
+	u64 nr_cpus;
+	cpumask_t shared_cpus;
+};
+#endif
+
 struct acpi_processor_cx {
 	u8 valid;
 	u8 type;
@@ -64,6 +86,10 @@ struct acpi_processor_cx {
 	u32 latency;
 	u8 bm_sts_skip;
 	char desc[ACPI_CX_DESC_LEN];
+#ifdef CONFIG_ARCH_NEEDS_ACPI_CSD
+	u8 cst_index;
+	struct acpi_csd_info csd;
+#endif
 };
 
 struct acpi_processor_power {
@@ -194,11 +220,13 @@ struct acpi_processor_flags {
 	u8 power_setup_done:1;
 	u8 bm_rld_set:1;
 	u8 need_hotplug_init:1;
+	u8 has_csd:1;
 };
 
 struct acpi_processor {
 	acpi_handle handle;
 	u32 acpi_id;
+	u32 apic_id;
 	u32 id;
 	u32 pblk;
 	int performance_platform_limit;
@@ -314,6 +342,8 @@ static inline int acpi_processor_get_bios_limit(int cpu, unsigned int *limit)
 
 /* in processor_core.c */
 void acpi_processor_set_pdc(acpi_handle handle);
+int acpi_get_apicid(acpi_handle, int type, u32 acpi_id);
+int acpi_map_cpuid(int apic_id, u32 acpi_id);
 int acpi_get_cpuid(acpi_handle, int type, u32 acpi_id);
 
 /* in processor_throttling.c */
@@ -331,6 +361,7 @@ extern const struct file_operations acpi_processor_throttling_fops;
 extern void acpi_processor_throttling_init(void);
 /* in processor_idle.c */
 int acpi_processor_power_init(struct acpi_processor *pr);
+int acpi_processor_power_post_init(void);
 int acpi_processor_power_exit(struct acpi_processor *pr);
 int acpi_processor_cst_has_changed(struct acpi_processor *pr);
 int acpi_processor_hotplug(struct acpi_processor *pr);

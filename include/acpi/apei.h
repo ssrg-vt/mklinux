@@ -23,6 +23,7 @@ extern bool ghes_disable;
 #else
 #define ghes_disable 1
 #endif
+extern int bert_disable;
 
 #ifdef CONFIG_ACPI_APEI
 void __init acpi_hest_init(void);

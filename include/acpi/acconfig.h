@@ -100,7 +100,6 @@
  *      ACPI PM timer
  *      FACS table (Waking vectors and Global Lock)
  */
-#define ACPI_REDUCED_HARDWARE           FALSE
 
 /******************************************************************************
  *
