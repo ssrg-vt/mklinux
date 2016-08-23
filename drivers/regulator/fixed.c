@@ -28,6 +28,7 @@
 #include <linux/slab.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
+#include <linux/acpi.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/machine.h>
 
@@ -128,6 +129,97 @@ static int fixed_voltage_list_voltage(struct regulator_dev *dev,
 
 	return data->microvolts;
 }
+
+#if defined(CONFIG_ACPI)
+static struct fixed_voltage_config *
+acpi_get_fixed_voltage_config(struct device *dev)
+{
+	struct fixed_voltage_config *config;
+	struct regulator_init_data *init_data;
+	struct acpi_dsm_entry entry;
+	int len, always_on;
+
+	config = devm_kzalloc(dev, sizeof(struct fixed_voltage_config),
+								 GFP_KERNEL);
+	if (!config)
+		return ERR_PTR(-ENOMEM);
+
+	config->init_data = devm_kzalloc(dev,
+					 sizeof(struct regulator_init_data),
+					 GFP_KERNEL);
+	if (!config->init_data)
+		return ERR_PTR(-ENOMEM);
+
+	init_data = config->init_data;
+	init_data->constraints.apply_uV = 0;
+
+	if (acpi_dsm_lookup_value(ACPI_HANDLE(dev),
+				"regulator-name", 0, &entry) == 0) {
+		if (!entry.value) {
+			dev_err(dev, "invalid 'name' in ACPI definition\n");
+			return ERR_PTR(-EINVAL);
+		}
+
+		len = strlen(entry.value) + 1;
+		init_data->constraints.name = devm_kzalloc(dev, len,
+							   GFP_KERNEL);
+		strncpy((char *)init_data->constraints.name, entry.value, len);
+		kfree(entry.key);
+		kfree(entry.value);
+	}
+
+	if (acpi_dsm_lookup_value(ACPI_HANDLE(dev), "regulator-min-microvolts",
+					0, &entry) == 0) {
+		if (kstrtoint(entry.value, 0, &init_data->constraints.min_uV)
+			!= 0) {
+			dev_err(dev, "invalid 'min_uV' in ACPI definition\n");
+			return ERR_PTR(-EINVAL);
+		}
+		kfree(entry.key);
+		kfree(entry.value);
+	}
+
+	if (acpi_dsm_lookup_value(ACPI_HANDLE(dev), "regulator-max-microvolts",
+					0, &entry) == 0) {
+		if (kstrtoint(entry.value, 0, &init_data->constraints.max_uV)
+			!= 0) {
+			dev_err(dev, "invalid 'max_uV' in ACPI definition\n");
+			return ERR_PTR(-EINVAL);
+		}
+		kfree(entry.key);
+		kfree(entry.value);
+	}
+
+	if (acpi_dsm_lookup_value(ACPI_HANDLE(dev), "regulator-always-on",
+					0, &entry) == 0) {
+		if (kstrtoint(entry.value, 0, &always_on) != 0) {
+			dev_err(dev, "invalid 'max_uV' in ACPI definition\n");
+			return ERR_PTR(-EINVAL);
+		} else {
+			init_data->constraints.always_on = always_on;
+		}
+		kfree(entry.key);
+		kfree(entry.value);
+	}
+
+	config->supply_name = init_data->constraints.name;
+	if (init_data->constraints.min_uV == init_data->constraints.max_uV) {
+		config->microvolts = init_data->constraints.min_uV;
+	} else {
+		dev_err(dev,
+			 "Fixed regulator specified with variable voltages\n");
+		return ERR_PTR(-EINVAL);
+	}
+
+	return config;
+}
+#else
+static struct fixed_voltage_config *
+acpi_get_fixed_voltage_config(struct device *dev)
+{
+	return ERR_PTR(-EINVAL);
+}
+#endif
 
 static struct regulator_ops fixed_voltage_ops = {
 	.get_voltage = fixed_voltage_get_voltage,
@@ -253,6 +345,13 @@ static const struct of_device_id fixed_of_match[] = {
 MODULE_DEVICE_TABLE(of, fixed_of_match);
 #endif
 
+#if defined(CONFIG_ACPI)
+static const struct acpi_device_id fixed_acpi_match[] = {
+	{ .id = "LNRO0019", },
+	{},
+};
+#endif
+
 static struct platform_driver regulator_fixed_voltage_driver = {
 	.probe		= reg_fixed_voltage_probe,
 	.remove		= reg_fixed_voltage_remove,
@@ -260,6 +359,7 @@ static struct platform_driver regulator_fixed_voltage_driver = {
 		.name		= "reg-fixed-voltage",
 		.owner		= THIS_MODULE,
 		.of_match_table = of_match_ptr(fixed_of_match),
+		.acpi_match_table = ACPI_PTR(fixed_acpi_match),
 	},
 };
 

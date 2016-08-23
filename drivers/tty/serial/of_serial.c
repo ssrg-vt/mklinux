@@ -240,6 +240,40 @@ static int of_platform_serial_remove(struct platform_device *ofdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM
+static int of_serial_suspend(struct platform_device *dev, pm_message_t state)
+{
+	struct of_serial_info *info = dev_get_drvdata(&dev->dev);
+	switch (info->type) {
+#ifdef CONFIG_SERIAL_8250
+	case PORT_8250 ... PORT_MAX_8250:
+		serial8250_suspend_port(info->line);
+		break;
+#endif
+	default:
+		/* need to add code for these */
+		break;
+	}
+	return 0;
+}
+
+static int of_serial_resume(struct platform_device *dev)
+{
+	struct of_serial_info *info = dev_get_drvdata(&dev->dev);
+	switch (info->type) {
+#ifdef CONFIG_SERIAL_8250
+	case PORT_8250 ... PORT_MAX_8250:
+		serial8250_resume_port(info->line);
+		break;
+#endif
+	default:
+		/* need to add code for these */
+		break;
+	}
+	return 0;
+}
+#endif
+
 /*
  * A few common types, add more as needed.
  */
@@ -274,6 +308,10 @@ static struct platform_driver of_platform_serial_driver = {
 	},
 	.probe = of_platform_serial_probe,
 	.remove = of_platform_serial_remove,
+#ifdef CONFIG_PM
+	.suspend = of_serial_suspend,		/* Suspend */
+	.resume  = of_serial_resume,		/* Resume after a suspend */
+#endif
 };
 
 module_platform_driver(of_platform_serial_driver);
