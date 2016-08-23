@@ -19,6 +19,7 @@
 #include <linux/of_address.h>
 #include <linux/io.h>
 #include <linux/slab.h>
+#include <linux/acpi.h>
 
 #include <asm/arch_timer.h>
 #include <asm/virt.h>
@@ -579,20 +580,8 @@ static void __init arch_timer_common_init(void)
 	arch_timer_arch_init();
 }
 
-static void __init arch_timer_init(struct device_node *np)
+static void __init arch_timer_init(void)
 {
-	int i;
-
-	if (arch_timers_present & ARCH_CP15_TIMER) {
-		pr_warn("arch_timer: multiple nodes in dt, skipping\n");
-		return;
-	}
-
-	arch_timers_present |= ARCH_CP15_TIMER;
-	for (i = PHYS_SECURE_PPI; i < MAX_TIMER_PPI; i++)
-		arch_timer_ppi[i] = irq_of_parse_and_map(np, i);
-	arch_timer_detect_rate(NULL, np);
-
 	/*
 	 * If HYP mode is available, we know that the physical timer
 	 * has been configured to be accessible from PL1. Use it, so
@@ -614,8 +603,119 @@ static void __init arch_timer_init(struct device_node *np)
 	arch_timer_register();
 	arch_timer_common_init();
 }
-CLOCKSOURCE_OF_DECLARE(armv7_arch_timer, "arm,armv7-timer", arch_timer_init);
-CLOCKSOURCE_OF_DECLARE(armv8_arch_timer, "arm,armv8-timer", arch_timer_init);
+
+static void __init arch_timer_of_init(struct device_node *np)
+{
+	int i;
+
+	if (arch_timers_present & ARCH_CP15_TIMER) {
+		pr_warn("arch_timer: multiple nodes in dt, skipping\n");
+		return;
+	}
+
+	arch_timers_present |= ARCH_CP15_TIMER;
+	for (i = PHYS_SECURE_PPI; i < MAX_TIMER_PPI; i++)
+		arch_timer_ppi[i] = irq_of_parse_and_map(np, i);
+	arch_timer_detect_rate(NULL, np);
+
+	arch_timer_init();
+}
+CLOCKSOURCE_OF_DECLARE(armv7_arch_timer, "arm,armv7-timer", arch_timer_of_init);
+CLOCKSOURCE_OF_DECLARE(armv8_arch_timer, "arm,armv8-timer", arch_timer_of_init);
+
+#ifdef CONFIG_ACPI
+void __init arch_timer_acpi_init(void)
+{
+	struct acpi_table_gtdt *gtdt;
+	acpi_size tbl_size;
+	int trigger, polarity;
+	void __iomem *base = NULL;
+
+	if (acpi_disabled)
+		return;
+
+	if (arch_timers_present & ARCH_CP15_TIMER) {
+		pr_warn("arch_timer: already initialized, skipping\n");
+		return;
+	}
+
+	if (ACPI_FAILURE(acpi_get_table_with_size(ACPI_SIG_GTDT, 0,
+			(struct acpi_table_header **)&gtdt, &tbl_size))) {
+		pr_err("arch_timer: GTDT table not defined\n");
+		return;
+	}
+
+	arch_timers_present |= ARCH_CP15_TIMER;
+
+	/*
+	 * Get the timer frequency. Since there is no frequency info
+	 * in the GTDT table, so we should read it from CNTFREG register
+	 * or hard code here to wait for the new ACPI spec available.
+	 */
+	if (!gtdt->address) {	
+		arch_timer_rate = arch_timer_get_cntfrq();
+	} else {	
+		base = ioremap(gtdt->address, CNTFRQ);
+		if (!base) {
+			pr_warn("arch_timer: unable to map arch timer base address\n");
+			return;
+		}
+
+		arch_timer_rate = readl_relaxed(base + CNTFRQ);
+		iounmap(base);
+	}
+
+	if (!arch_timer_rate) {
+		/* Hard code here to set frequence ? */
+		pr_warn("arch_timer: Could not get frequency from GTDT table or CNTFREG\n");
+	}
+
+	if (gtdt->secure_pl1_interrupt) {	
+		trigger = (gtdt->secure_pl1_flags & ACPI_GTDT_INTERRUPT_MODE) ?
+			ACPI_EDGE_SENSITIVE : ACPI_LEVEL_SENSITIVE;
+		polarity =
+			(gtdt->secure_pl1_flags & ACPI_GTDT_INTERRUPT_POLARITY)
+			? ACPI_ACTIVE_LOW : ACPI_ACTIVE_HIGH;
+		arch_timer_ppi[0] = acpi_register_gsi(NULL,
+				gtdt->secure_pl1_interrupt, trigger, polarity);
+	}
+	if (gtdt->non_secure_pl1_interrupt) {	
+		trigger =
+			(gtdt->non_secure_pl1_flags & ACPI_GTDT_INTERRUPT_MODE)
+			? ACPI_EDGE_SENSITIVE : ACPI_LEVEL_SENSITIVE;
+		polarity =
+		(gtdt->non_secure_pl1_flags & ACPI_GTDT_INTERRUPT_POLARITY)
+			? ACPI_ACTIVE_LOW : ACPI_ACTIVE_HIGH;
+		arch_timer_ppi[1] = acpi_register_gsi(NULL,
+			gtdt->non_secure_pl1_interrupt, trigger, polarity);
+	}
+	if (gtdt->virtual_timer_interrupt) {	
+		trigger = (gtdt->virtual_timer_flags & ACPI_GTDT_INTERRUPT_MODE)
+			? ACPI_EDGE_SENSITIVE : ACPI_LEVEL_SENSITIVE;
+		polarity =
+		(gtdt->virtual_timer_flags & ACPI_GTDT_INTERRUPT_POLARITY)
+			? ACPI_ACTIVE_LOW : ACPI_ACTIVE_HIGH;
+		arch_timer_ppi[2] = acpi_register_gsi(NULL,
+			gtdt->virtual_timer_interrupt, trigger, polarity);
+	}
+	if (gtdt->non_secure_pl2_interrupt) {	
+		trigger =
+			(gtdt->non_secure_pl2_flags & ACPI_GTDT_INTERRUPT_MODE)
+			? ACPI_EDGE_SENSITIVE : ACPI_LEVEL_SENSITIVE;
+		polarity =
+		(gtdt->non_secure_pl2_flags & ACPI_GTDT_INTERRUPT_POLARITY)
+			? ACPI_ACTIVE_LOW : ACPI_ACTIVE_HIGH;
+		arch_timer_ppi[3] = acpi_register_gsi(NULL,
+			gtdt->non_secure_pl2_interrupt, trigger, polarity);
+	}
+
+	early_acpi_os_unmap_memory(gtdt, tbl_size);
+	arch_timer_init();
+}
+CLOCKSOURCE_ACPI_DECLARE(armv8_arch_timer, "GTDT", arch_timer_acpi_init);
+#else
+void __init arch_timer_acpi_init(void) { return; };
+#endif
 
 static void __init arch_timer_mem_init(struct device_node *np)
 {
@@ -682,3 +782,53 @@ static void __init arch_timer_mem_init(struct device_node *np)
 }
 CLOCKSOURCE_OF_DECLARE(armv7_arch_timer_mem, "arm,armv7-timer-mem",
 		       arch_timer_mem_init);
+
+void __init arm_arch_timer_init(u32 freq, u32 irq)
+{
+	int i;
+
+	if (arch_timers_present & ARCH_CP15_TIMER) {
+		pr_warn("arch_timer: multiple calls, skipping\n");
+		return;
+	}
+
+	arch_timers_present |= ARCH_CP15_TIMER;
+	for (i = PHYS_SECURE_PPI; i < MAX_TIMER_PPI; i++) {
+		if (i == PHYS_SECURE_PPI)
+			arch_timer_ppi[i] =  irq;
+		else
+			arch_timer_ppi[i] = 0;
+	}
+
+	arch_timer_rate = freq;
+	arch_timer_rate = arch_timer_get_cntfrq();
+
+	/*
+	 * If HYP mode is available, we know that the physical timer
+	 * has been configured to be accessible from PL1. Use it, so
+	 * that a guest can use the virtual timer instead.
+	 *
+	 * If no interrupt provided for virtual timer, we'll have to
+	 * stick to the physical timer. It'd better be accessible...
+	 */
+	if (is_hyp_mode_available() || !arch_timer_ppi[VIRT_PPI]) {
+		arch_timer_use_virtual = false;
+
+/* 
+ *  * X-Gene does not use virtual timer. Also there is no support for 
+ *   * PHYS_SECURE_PPI 
+ *    */
+#if !defined(CONFIG_XGENE) && !defined(CONFIG_ARCH_XGENE)
+		if (!arch_timer_ppi[PHYS_SECURE_PPI] ||
+		    !arch_timer_ppi[PHYS_NONSECURE_PPI]) {
+			pr_warn("arch_timer: No interrupt available, giving up\n");
+			return;
+		}
+#endif
+	}
+
+	arch_timer_register();
+	arch_timer_banner(arch_timers_present);
+	arch_counter_register(arch_timers_present);
+	arch_timer_arch_init();
+}

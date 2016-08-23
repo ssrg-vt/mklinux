@@ -22,6 +22,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/idr.h>
 #include <linux/acpi.h>
+#include <linux/efi.h>
 
 #include "base.h"
 #include "power/power.h"
@@ -321,7 +322,15 @@ int platform_device_add(struct platform_device *pdev)
 			else if (resource_type(r) == IORESOURCE_IO)
 				p = &ioport_resource;
 		}
-
+#ifdef CONFIG_ACPI_CUSTOM_TABLES
+		if (!efi_enabled(EFI_BOOT)) {
+			/* This means we have both OF and ACPI
+			 * trying to reserve resources. Allow
+			 * this for now.
+			 */
+			continue;
+		}
+#endif
 		if (p && insert_resource(p, r)) {
 			dev_err(&pdev->dev, "failed to claim resource %d\n", i);
 			ret = -EBUSY;

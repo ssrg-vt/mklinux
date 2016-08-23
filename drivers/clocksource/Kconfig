@@ -1,6 +1,9 @@
 config CLKSRC_OF
 	bool
 
+config CLKSRC_ACPI
+	bool
+
 config CLKSRC_I8253
 	bool
 
@@ -74,6 +77,7 @@ config CLKSRC_DBX500_PRCMU_SCHED_CLOCK
 config ARM_ARCH_TIMER
 	bool
 	select CLKSRC_OF if OF
+	select CLKSRC_ACPI if ACPI
 
 config ARM_GLOBAL_TIMER
 	bool
