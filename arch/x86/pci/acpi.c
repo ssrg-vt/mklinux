@@ -549,7 +549,8 @@ struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 
 		if (!setup_mcfg_map(info, domain, (u8)root->secondary.start,
 				    (u8)root->secondary.end, root->mcfg_addr))
-			bus = pci_create_root_bus(NULL, busnum, &pci_root_ops,
+			//bus = pci_create_root_bus(NULL, busnum, &pci_root_ops,
+			bus = pci_create_root_bus_in_domain(NULL, domain, busnum, &pci_root_ops,
 						  sd, &resources);
 
 		if (bus) {

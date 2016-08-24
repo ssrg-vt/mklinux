@@ -108,3 +108,7 @@ libata-y	:= libata-core.o libata-scsi.o libata-eh.o libata-transport.o
 libata-$(CONFIG_ATA_SFF)	+= libata-sff.o
 libata-$(CONFIG_SATA_PMP)	+= libata-pmp.o
 libata-$(CONFIG_ATA_ACPI)	+= libata-acpi.o
+ifneq ($(CONFIG_ARM64),y)
+  libata-$(CONFIG_SATA_ZPODD)	+= libata-zpodd.o
+endif
+

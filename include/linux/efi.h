@@ -619,7 +619,9 @@ static inline efi_status_t efi_query_variable_store(u32 attributes, unsigned lon
 }
 #endif
 extern void __iomem *efi_lookup_mapped_addr(u64 phys_addr);
+#ifdef CONFIG_ARM64
 extern int efi_config_init(efi_config_table_type_t *arch_tables);
+#endif
 extern u64 efi_get_iobase (void);
 extern u32 efi_mem_type (unsigned long phys_addr);
 extern u64 efi_mem_attributes (unsigned long phys_addr);
@@ -680,10 +682,14 @@ extern int __init efi_setup_pcdp_console(char *);
 /*
  * Test whether the above EFI_* bits are enabled.
  */
+# ifdef CONFIG_X86
+extern bool efi_enabled(int facility);
+# else
 static inline bool efi_enabled(int feature)
 {
 	return test_bit(feature, &efi.flags) != 0;
 }
+# endif
 #else
 static inline bool efi_enabled(int feature)
 {
@@ -824,11 +830,13 @@ struct efivar_entry {
 	struct kobject kobj;
 };
 
+#ifdef CONFIG_ARM64
 struct efi_simple_text_output_protocol {
 	void *reset;
 	efi_status_t (*output_string)(void *, void *);
 	void *test_string;
 };
+#endif 
 
 extern struct list_head efivar_sysfs_list;
 

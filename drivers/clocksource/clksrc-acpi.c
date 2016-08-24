@@ -25,6 +25,7 @@ extern struct acpi_device_id __clksrc_acpi_table[];
 static const struct acpi_device_id __clksrc_acpi_table_sentinel
 	__used __section(__clksrc_acpi_table_end);
 
+#ifdef CONFIG_ARM64
 void __init clocksource_acpi_init(void)
 {
 	struct acpi_device_id *id;
@@ -35,3 +36,4 @@ void __init clocksource_acpi_init(void)
 		acpi_table_parse(id->id, init_func);
 	}
 }
+#endif

@@ -145,7 +145,7 @@ static u32 irq_to_gsi(int irq)
  * This is just a simple wrapper around early_ioremap(),
  * with sanity checks for phys == 0 and size == 0.
  */
-char *__init __acpi_map_table(unsigned long phys, unsigned long size)
+char *__init __acpi_map_table(phys_addr_t phys, unsigned long size)
 {
 
 	if (!phys || !size)

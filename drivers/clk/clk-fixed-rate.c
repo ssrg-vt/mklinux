@@ -108,6 +108,7 @@ EXPORT_SYMBOL_GPL(of_fixed_clk_setup);
 CLK_OF_DECLARE(fixed_clk, "fixed-clock", of_fixed_clk_setup);
 #endif
 
+#ifdef CONFIG_ARM64
 #ifdef CONFIG_ACPI
 static int fixed_clk_probe_acpi(struct platform_device *pdev)
 {
@@ -181,3 +182,5 @@ static int __init fixed_clk_init(void)
  * initialized early enough.
  */
 postcore_initcall(fixed_clk_init);
+#endif /* CONFIG_ARM64 */
+
