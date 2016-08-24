@@ -332,8 +332,8 @@ void process_invalid_request_for_2_kernels(struct work_struct* work)
 	lock = 1;
 
 	//case pte not yet installed
-#if defined(CONFIG_ARM64)
-	if (pte == NULL || 
+        if (pte == NULL ||
+#if defined(CONFIG_ARM64) 
 		pte_none(*pte) ) {
 #else
 		pte_none(pte_clear_flags(*pte,_PAGE_UNUSED1)) ) {

@@ -83,7 +83,7 @@ unsigned long x86_efi_facility;
 /*
  * Returns 1 if 'facility' is enabled, 0 otherwise.
  */
-int efi_enabled(int facility)
+bool efi_enabled(int facility)
 {
 	return test_bit(facility, &x86_efi_facility) != 0;
 }
@@ -821,6 +821,7 @@ static void __init runtime_code_page_mkexec(void)
  * it as RAM.  So, look it up in the existing EFI memory map instead.  Only
  * callable after efi_enter_virtual_mode and before efi_free_boot_services.
  */
+#ifdef CONFIG_ARM64
 void __iomem *efi_lookup_mapped_addr(u64 phys_addr)
 {
 	void *p;
@@ -843,6 +844,7 @@ void __iomem *efi_lookup_mapped_addr(u64 phys_addr)
 	}
 	return NULL;
 }
+#endif
 
 void efi_memory_uc(u64 addr, unsigned long size)
 {

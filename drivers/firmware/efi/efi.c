@@ -24,6 +24,7 @@
 #include <linux/of_fdt.h>
 #include <linux/io.h>
 
+#ifdef CONFIG_ARM64
 struct efi __read_mostly efi = {
 	.mps        = EFI_INVALID_TABLE_ADDR,
 	.acpi       = EFI_INVALID_TABLE_ADDR,
@@ -39,6 +40,7 @@ struct efi __read_mostly efi = {
 	.config_table  = EFI_INVALID_TABLE_ADDR,
 };
 EXPORT_SYMBOL(efi);
+#endif
 
 static struct kobject *efi_kobj;
 static struct kobject *efivars_kobj;
@@ -263,6 +265,7 @@ static __init int match_config_table(efi_guid_t *guid,
 	return 0;
 }
 
+#ifdef CONIFG_ARM64
 int __init efi_config_init(efi_config_table_type_t *arch_tables)
 {
 	void *config_tables, *tablep;
@@ -320,6 +323,7 @@ int __init efi_config_init(efi_config_table_type_t *arch_tables)
 
 	return 0;
 }
+#endif
 
 #ifdef CONFIG_UEFI_PARAMS_FROM_FDT
 
