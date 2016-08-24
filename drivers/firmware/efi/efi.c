@@ -265,7 +265,7 @@ static __init int match_config_table(efi_guid_t *guid,
 	return 0;
 }
 
-#ifdef CONIFG_ARM64
+#ifdef CONFIG_ARM64
 int __init efi_config_init(efi_config_table_type_t *arch_tables)
 {
 	void *config_tables, *tablep;
