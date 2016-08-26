@@ -1,3 +1,15 @@
+/**
+ * @file page_server.c
+ *
+ * Popcorn Linux page server implementation
+ * This work is an extension of Marina Sadini MS Thesis, plese refer to the
+ * Thesis for further information about the algorithm.
+ *
+ * @author Vincent Legout, Antonio Barbalace, SSRG Virginia Tech 2016
+ * @author Ajith Saya, Sharath Bhat, SSRG Virginia Tech 2015
+ * @author Marina Sadini, Antonio Barbalace, SSRG Virginia Tech 2014
+ * @author Marina Sadini, SSRG Virginia Tech 2013
+ */
 /*
  * THE FOLLOWINGS ARE THE MESSAGE WAITERS/RECEIVERS: (rendevouz marina style)
  * handle_mapping_response_void <<< called by the messaging layer, registered from the page_server_init function
@@ -30,6 +42,18 @@
  *
  * page_server_init <<< called by process_server initialization function
  */
+
+#include "page_server.h"
+#include <linux/page_server.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// Working queues (servers)
+///////////////////////////////////////////////////////////////////////////////
+static struct workqueue_struct *message_request_wq;
+static struct workqueue_struct *invalid_message_wq;
+
+// wait lists
+DECLARE_WAIT_QUEUE_HEAD( read_write_wait);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Mappings handling
@@ -220,7 +244,7 @@ out:
 	return 0;
 }
 
-void process_invalid_request_for_2_kernels(struct work_struct* work)
+static void process_invalid_request_for_2_kernels(struct work_struct* work)
 {
 	invalid_work_t* work_request = (invalid_work_t*) work;
 	invalid_data_for_2_kernels_t* data = work_request->request;
@@ -518,7 +542,7 @@ static int handle_invalid_request(struct pcn_kmsg_message* inc_msg)
 	return 1;
 }
 
-void process_mapping_request_for_2_kernels(struct work_struct* work)
+static void process_mapping_request_for_2_kernels(struct work_struct* work)
 {
 	request_work_t* request_work = (request_work_t*) work;
 
@@ -1301,7 +1325,7 @@ static int handle_mapping_request(struct pcn_kmsg_message* inc_msg)
  * VM_FAULT_REPLICATION_PROTOCOL, replication protocol error.
  * 0, updated;
  */
-int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
+int page_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
 			       struct vm_area_struct *vma, unsigned long address_not_page, unsigned long page_fault_flags,
 				   int retrying)
 {
@@ -1439,7 +1463,7 @@ out_not_data:
 	return ret;
 }
 
-void process_server_clean_page(struct page* page)
+void page_server_clean_page(struct page* page)
 {
 	if (page == NULL) {
 		return;
@@ -1465,7 +1489,7 @@ void process_server_clean_page(struct page* page)
  *VM_FAULT_REPLICATION_PROTOCOL, general error.
  *0, write succeeded;
  * */
-int do_remote_read_for_2_kernels(struct task_struct * tsk, int tgroup_home_cpu, int tgroup_home_id,
+static int do_remote_read_for_2_kernels(struct task_struct * tsk, int tgroup_home_cpu, int tgroup_home_id,
 				 struct mm_struct *mm, struct vm_area_struct *vma,
 				 unsigned long address, unsigned long page_fault_flags,
 				 pmd_t* pmd, pte_t* pte,
@@ -1694,7 +1718,7 @@ exit:
  *VM_FAULT_REPLICATION_PROTOCOL, general error.
  *0, write succeeded;
  * */
-int do_remote_write_for_2_kernels(struct tast_struct * tsk, int tgroup_home_cpu, int tgroup_home_id,
+static int do_remote_write_for_2_kernels(struct tast_struct * tsk, int tgroup_home_cpu, int tgroup_home_id,
 				  struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
 				  unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, spinlock_t* ptl,
 				  struct page* page,int invalid)
@@ -2038,7 +2062,7 @@ exit:
  *0, remotely fetched;
  *-1, invalidated while fetching;
  * */
-int do_remote_fetch_for_2_kernels(struct task_struct *tsk, int tgroup_home_cpu, int tgroup_home_id,
+static int do_remote_fetch_for_2_kernels(struct task_struct *tsk, int tgroup_home_cpu, int tgroup_home_id,
 				  struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address,
 				  unsigned long page_fault_flags, pmd_t* pmd, pte_t* pte, pte_t value_pte,
 				  spinlock_t* ptl)
@@ -2414,7 +2438,7 @@ exit:
  * VM_CONTINUE, normal page_fault;
  * 0, remotely fetched;
  */
-int process_server_try_handle_mm_fault(struct task_struct *tsk,
+int page_server_try_handle_mm_fault(struct task_struct *tsk,
 				       struct mm_struct *mm, struct vm_area_struct *vma,
 				       unsigned long page_fault_address, unsigned long page_fault_flags,
 				       unsigned long error_code)
@@ -2791,22 +2815,32 @@ check:
 	}
 }
 
-long page_server_init (void)
+int page_server_init (void)
 {
+	int ret;
+	
 	message_request_wq = create_workqueue("request_wq");
+	if (!message_request_wq)
+		return -ENOMEM;
 	invalid_message_wq= create_workqueue("invalid_wq");
-	new_kernel_wq= create_workqueue("new_kernel_wq");
+	if (!invalid_message_wq)
+		return -ENOMEM;
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST,
-				   handle_mapping_request);
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE,
-				   handle_mapping_response);
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_VOID,
-				   handle_mapping_response_void);
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_INVALID_DATA,
-				   handle_invalid_request);
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_ACK_DATA,
-				   handle_ack);
+	if ( ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_REQUEST,
+				   handle_mapping_request) )
+		return ret;
+	if ( ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE,
+				   handle_mapping_response) )
+		return ret;
+	if ( ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_MAPPING_RESPONSE_VOID,
+				   handle_mapping_response_void) )
+		return ret;
+	if ( ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_INVALID_DATA,
+				   handle_invalid_request) )
+		return ret;
+	if ( ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_ACK_DATA,
+				   handle_ack) )
+		return ret;
 
 	return 0;
 }

@@ -27,4 +27,7 @@ static inline int in_exception_text(unsigned long ptr)
 	       ptr < (unsigned long)&__exception_text_end;
 }
 
+/* Antonio: alternatively move this in arch/arm/include/asm/bug.h */
+extern int access_error(unsigned long error_code, struct vm_area_struct *vma);
+
 #endif

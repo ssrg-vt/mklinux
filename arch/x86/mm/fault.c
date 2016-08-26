@@ -1222,7 +1222,7 @@ retry:
 #endif
 	if ( tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0) ) { // Popcorn
 /*		PSPRINTK("%s: call process_server_try_handle_mm_fault retrying %d\n", __func__, retrying);*/
-		repl_ret= process_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
+		repl_ret= page_server_try_handle_mm_fault(tsk,mm,vma,address,flags,error_code);
 /*		PSPRINTK("%s: repl_ret %d\n", __func__, repl_ret);*/
 		if (repl_ret==0)
 			goto out;
@@ -1369,7 +1369,7 @@ good_area:
 			if (tsk->tgroup_distributed == 1)
 				retrying = 1;
 			if ((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
-				repl_ret= process_server_update_page(tsk,mm,vma,address,flags, 1);
+				repl_ret= page_server_update_page(tsk,mm,vma,address,flags, 1);
 				printk("%s: WARN: retry called pid %d\n", __func__, current->pid);
 			}
 #ifdef CONFIG_POPCORN_VDSO_SAFE
@@ -1384,7 +1384,7 @@ skip_popcorn_:
 		goto skip_popcorn__;
 #endif
 	if((tsk->tgroup_distributed == 1 && tsk->main==0) && (repl_ret & VM_CONTINUE_WITH_CHECK)) {
-		repl_ret= process_server_update_page(tsk, mm, vma, address, flags, 0);
+		repl_ret= page_server_update_page(tsk, mm, vma, address, flags, 0);
 
 		if(unlikely(repl_ret & (VM_FAULT_VMA| VM_FAULT_REPLICATION_PROTOCOL))){
 			bad_area(regs, error_code, address);

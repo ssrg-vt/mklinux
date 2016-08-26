@@ -213,7 +213,7 @@ get_write_lock:
 
 			if (current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE) {
 				distributed = 1;
-				distr_ret =  process_server_do_mmap_pgoff_start(file, start, size, prot, vma_flags, pgoff);
+				distr_ret =  vma_server_do_mmap_pgoff_start(file, start, size, prot, vma_flags, pgoff);
 				if ( (distr_ret < 0) &&  (distr_ret!=VMA_OP_SAVE) && (distr_ret!=VMA_OP_NOT_SAVE) )
 					return distr_ret;
 
@@ -226,7 +226,7 @@ get_write_lock:
 			addr = mmap_region(file, start, size, vma_flags, pgoff);
 
 			if (current->tgroup_distributed==1 && distributed==1) {
-				process_server_do_mmap_pgoff_end(file, start, size, prot, vma_flags, pgoff, distr_ret);
+				vma_server_do_mmap_pgoff_end(file, start, size, prot, vma_flags, pgoff, distr_ret);
 			}
 
 			fput(file);

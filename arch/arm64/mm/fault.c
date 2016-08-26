@@ -194,8 +194,8 @@ static int __do_page_fault(struct mm_struct *mm, unsigned long addr,
 	ret_reply = 0;
 	// Nothing to do for a thread group that's not distributed.
 	if(tsk->tgroup_distributed==1 && tsk->main==0 && (retrying == 0)) {
-		PSPRINTK("%s: call process_server_try_handle_mm_fault retrying %d\n", __func__, retrying);
-		ret_reply = process_server_try_handle_mm_fault(tsk,mm,vma,addr,mm_flags, esr);
+		PSPRINTK("%s: call page_server_try_handle_mm_fault retrying %d\n", __func__, retrying);
+		ret_reply = page_server_try_handle_mm_fault(tsk,mm,vma,addr,mm_flags, esr);
 
 		if(ret_reply==0)
 		{
@@ -364,7 +364,7 @@ retry:
 
 			if((tsk->tgroup_distributed == 1 && tsk->main==0) && (fault & VM_CONTINUE_WITH_CHECK))
 			{
-				fault = process_server_update_page(tsk,mm,vma,addr,mm_flags, 1);
+				fault = page_server_update_page(tsk,mm,vma,addr,mm_flags, 1);
 			}
 
 			goto retry;
@@ -379,7 +379,7 @@ retry:
                 vma = find_vma(mm, addr);
                 if((tsk->tgroup_distributed == 1 && tsk->main==0) && (fault & VM_CONTINUE_WITH_CHECK))
                 {
-			fault = process_server_update_page(tsk,mm,vma,addr,mm_flags, 0);
+			fault = page_server_update_page(tsk,mm,vma,addr,mm_flags, 0);
                 }
         }
 

@@ -1104,6 +1104,8 @@ extern unsigned long move_page_tables(struct vm_area_struct *vma,
 				      unsigned long old_addr, struct vm_area_struct *new_vma,
 				      unsigned long new_addr, unsigned long len,
 				      bool need_rmap_locks);
+extern unsigned long mremap_to(unsigned long addr, unsigned long old_len,
+			       unsigned long new_addr, unsigned long new_len, bool *locked);
 extern unsigned long change_protection(struct vm_area_struct *vma, unsigned long start,
 				       unsigned long end, pgprot_t newprot,
 				       int dirty_accountable, int prot_numa);
@@ -1557,6 +1559,7 @@ static inline void mm_populate(unsigned long addr, unsigned long len) {}
 #endif
 
 /* These take the mm semaphore themselves */
+extern unsigned long do_brk(unsigned long addr, unsigned long len);
 extern unsigned long vm_brk(unsigned long, unsigned long);
 extern int vm_munmap(unsigned long, size_t);
 extern unsigned long vm_mmap(struct file *, unsigned long,
@@ -1856,4 +1859,11 @@ static inline void setup_nr_node_ids(void) {}
 #endif
 
 #endif /* __KERNEL__ */
+
+#ifdef CONFIG_POPCORN
+extern int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *vma,
+				  unsigned long address, pte_t *page_table, pmd_t *pmd,
+				  spinlock_t *ptl, pte_t orig_pte);
+#endif /* CONFIG_POPCORN */
+
 #endif /* _LINUX_MM_H */

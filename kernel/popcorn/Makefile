@@ -1,2 +1,2 @@
 
-obj-$(CONFIG_POPCORN) += process_server.o cpu_namespace.o
+obj-$(CONFIG_POPCORN) += cpu_namespace.o process_server.o page_server.o vma_servre.o sched_server.o

@@ -47,12 +47,12 @@
 int process_server_do_migration(struct task_struct* task, int cpu,
                                 struct pt_regs* regs, void __user *uregs);
 int process_server_dup_task(struct task_struct* orig, struct task_struct* task);
-void process_server_clean_page(struct page* page);
-int process_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
+void page_server_clean_page(struct page* page);
+int page_server_update_page(struct task_struct * tsk, struct mm_struct *mm,
                                struct vm_area_struct *vma,
                                unsigned long address,
                                unsigned long page_fault_flags, int retrying);
-int process_server_try_handle_mm_fault(struct task_struct *tsk,
+int page_server_try_handle_mm_fault(struct task_struct *tsk,
                                        struct mm_struct *mm,
                                        struct vm_area_struct *vma,
 		                       unsigned long address,
@@ -61,45 +61,6 @@ int process_server_try_handle_mm_fault(struct task_struct *tsk,
 int process_server_task_exit_notification(struct task_struct *tsk, long code);
 void sleep_shadow(void);
 void create_thread_pull(void);
-
-long process_server_madvise_remove_start(struct mm_struct *mm, unsigned long start, size_t len);
-long process_server_madvise_remove_end(struct mm_struct *mm, unsigned long start, size_t len, int start_ret);
-
-long process_server_do_mmap_pgoff_start(struct file *file,
-                                        unsigned long addr,
-		                        unsigned long len,
-                                        unsigned long prot,
-		                        unsigned long flags,
-                                        unsigned long pgoff);
-long process_server_do_mmap_pgoff_end(struct file *file,
-                                      unsigned long addr,
-		                      unsigned long len,
-                                      unsigned long prot,
-		                      unsigned long flags,
-                                      unsigned long pgoff,
-                                      unsigned long start_ret);
-
-long process_server_do_brk_start(unsigned long addr, unsigned long len);
-long process_server_do_brk_end(unsigned long addr, unsigned long len,
-                               unsigned long start_ret);
-
-long process_server_do_mremap_start(unsigned long addr, unsigned long old_len,
-                                    unsigned long new_len, unsigned long flags,
-                                    unsigned long new_addr);
-long process_server_do_mremap_end(unsigned long addr, unsigned long old_len,
-                                  unsigned long new_len, unsigned long flags,
-                                  unsigned long new_addr,
-                                  unsigned long start_ret);
-
-long process_server_do_unmap_start(struct mm_struct *mm, unsigned long start,
-                                   size_t len);
-long process_server_do_unmap_end(struct mm_struct *mm, unsigned long start,
-                                 size_t len, int start_ret);
-
-long process_server_mprotect_start(unsigned long start, size_t len,
-                                   unsigned long prot);
-long process_server_mprotect_end(unsigned long start, size_t len,
-                                 unsigned long prot, int start_ret);
 
 void synchronize_migrations(int tgroup_home_cpu,int tgroup_home_id);
 

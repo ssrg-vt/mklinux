@@ -1,7 +1,21 @@
-
-/* TODO
- * code current staged here for refactoring
+/**
+ * @file sched_server.c
+ *
+ * Popcorn Linux scheduler server implementation
+ * This server provides the functionalities to communicate current load, power
+ * consumption and other parameters of interest of the scheduler to all the
+ * kernels. Moreover the server communicates to user space the decision to
+ * migrate (see mtrig). Note that this is also implemented in fs/proc/task_mmu.c
+ * if the decision is per process. All these functions are now accessible via
+ * the /proc interface.
+ * This is specifically for ARM/x86, actually X-Gene 1 and Intel (any Intel
+ * processor with RAPL readings).
+ *
+ * @author Vincent Legout, Antonio Barbalace, SSRG Virginia Tech 2016
  */
+ 
+#include "sched_server.h"
+#include <popcorn/sched_server.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // Vincent's scheduling infrasrtucture based on Antonio's power/pmu readings
@@ -26,7 +40,7 @@ struct popcorn_sched {
 };
 
 struct popcorn_sched pop_sched;
-EXPORT_SYMBOL_GPL(pop_sched);
+//EXPORT_SYMBOL_GPL(pop_sched);
 
 ///////////////////////////////////////////////////////////////////////////////
 // scheduling stuff
@@ -355,20 +369,24 @@ static const struct file_operations popcorn_ps_fops1 = {
 };
 
 
-static long sched_server_init (void)
+int sched_server_init (void)
 {
 	struct task_struct *kt_sched;
 	struct proc_dir_entry *res;
-	int i;
+	int i, ret;
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_SCHED_PERIODIC,
-			   handle_sched_periodic);
+	if (ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_SCHED_PERIODIC,
+			   handle_sched_periodic) )
+		return ret;
 
 	popcorn_power_x86_1 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
 	popcorn_power_x86_2 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
 	popcorn_power_arm_1 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
 	popcorn_power_arm_2 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
 	popcorn_power_arm_3 = (int *) kmalloc(POPCORN_POWER_N_VALUES * sizeof(int), GFP_ATOMIC);
+	if (!popcorn_power_x86_1 || !popcorn_power_x86_1 ||
+			!popcorn_power_arm_1 || !popcorn_power_arm_2 || !popcorn_power_arm_3)
+		return -ENOMEM;
 
     for (i = 0; i < POPCORN_POWER_N_VALUES; i++) {
             popcorn_power_x86_1[i] = 0;
@@ -379,25 +397,29 @@ static long sched_server_init (void)
     }
 
 	kt_sched = kthread_run(popcorn_sched_sync, NULL, "popcorn_sched_sync");
+	if ( IS_ERR(kt_sched) ) {
+		//printk("ERROR: cannot create popcorn_sched_sync thread\n");
+		return (int)PTR_ERR(kt_sched);
+	}
 
     if (kt_sched < 0)
             printk("ERROR: cannot create popcorn_sched_sync thread\n");
 
     res = proc_create("power", S_IRUGO, NULL, &power_fops);
     if (!res)
-            printk("ERROR: failed to create proc entry for power\n");
+            printk("%s: WARNING: failed to create proc entry for power\n", __func__);
 
     res = proc_create("mtrig", S_IRUGO, NULL, &mtrig_fops);
     if (!res)
-            printk("ERROR: failed to create proc entry for triggering miggrations\n");
+            printk("%s: WARNING: failed to create proc entry for triggering migrations\n", __func__);
 
     res = proc_create("popcorn_ps", S_IRUGO, NULL, &popcorn_ps_fops);
     if (!res)
-            printk("ERROR: failed to create proc entry for popcorn process list\n");
+            printk("%s: WARNING: failed to create proc entry for Popcorn process list\n", __func__);
 
     res = proc_create("popcorn_ps1", S_IRUGO, NULL, &popcorn_ps_fops1);
     if (!res)
-            printk("ERROR: failed to create proc entry for popcorn process list 1\n");
+            printk("%s: WARNING: failed to create proc entry for Popcorn process list 1\n", __func__);
 
     return res;
 }

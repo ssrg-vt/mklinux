@@ -1128,7 +1128,7 @@ again:
 
 			//Multikernel
 			if(page->replicated==1){
-				process_server_clean_page(page);
+				page_server_clean_page(page);
 			}
 
 			if (unlikely(details) && details->nonlinear_vma
@@ -1205,12 +1205,12 @@ again:
 						print_bad_pte(vma, addr, ptent, page);
 					}
 					force_flush = !__tlb_remove_page(tlb, page);
-					process_server_clean_page(page);
+					page_server_clean_page(page);
 					if (force_flush)
 						break;
 					continue;
 				}
-				process_server_clean_page(page);
+				page_server_clean_page(page);
 			}
 		}
 
@@ -1894,8 +1894,8 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 					fault_flags |= (FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_RETRY_NOWAIT);
 
 				if (current->tgroup_distributed == 1) {
-					printk("%s: call process_server_try_handle_mm_fault\n", __func__);
-					ret = process_server_try_handle_mm_fault(current, mm, vma, start, fault_flags, 0);
+					printk("%s: call page_server_try_handle_mm_fault\n", __func__);
+					ret = page_server_try_handle_mm_fault(current, mm, vma, start, fault_flags, 0);
 				} else {
 					ret = handle_mm_fault(mm, vma, start, fault_flags);
 				}
@@ -2020,8 +2020,8 @@ int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
                 if (!vma || address < vma->vm_start)
                         vma = NULL;
 
-		printk("%s: call process_server_try_handle_mm_fault\n", __func__);
-                ret = process_server_try_handle_mm_fault(tsk, mm, vma, address, fault_flags, 0);
+		printk("%s: call page_server_try_handle_mm_fault\n", __func__);
+                ret = page_server_try_handle_mm_fault(tsk, mm, vma, address, fault_flags, 0);
 
                 if (ret & VM_FAULT_ERROR) {
                         if (ret & VM_FAULT_OOM)
@@ -2687,6 +2687,7 @@ static inline void cow_user_page(struct page *dst, struct page *src, unsigned lo
 		copy_user_highpage(dst, src, va, vma);
 }
 
+#ifdef CONFIG_POPCORN
 //do cow page for Multikernel
 int do_wp_page_for_popcorn(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
@@ -2897,6 +2898,7 @@ unwritable_page:
 	page_cache_release(old_page);
 	return ret;
 }
+#endif /* CONFIG_POPCORN */
 
 /*
  * This routine handles present pages, when users try to write

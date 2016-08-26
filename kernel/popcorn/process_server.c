@@ -1,9 +1,13 @@
 /**
- * Migration service + replication of virtual address space
+ * @file process_server.c
  *
- * Antonio Barbalace 2016
- * Vincent Legout, Antonio Barbalace, Sharat Kumar Bath, Ajithchandra Saya 2014-2015
- * Marina Sadini 2013
+ * Popcorn Linux Migration server implementation
+ * This work is an extension of David Katz MS Thesis, please refer to the
+ * Thesis for further information about the algorithm.
+ *
+ * @author Antonio Barbalace, SSRG Virginia Tech 2016
+ * @author Vincent Legout, Antonio Barbalace, Sharat Kumar Bath, Ajithchandra Saya, SSRG Virginia Tech 2014-2015
+ * @author David Katz, Marina Sadini, SSRG Virginia 2013
  */
 
 //#include <linux/mcomm.h> // IPC
@@ -83,11 +87,12 @@ int _file_cpu = 1;
 ///////////////////////////////////////////////////////////////////////////////
 // Marina's data stores (linked lists)
 ///////////////////////////////////////////////////////////////////////////////
-data_header_t* _data_head = NULL;
+/*data_header_t* _data_head = NULL;
 DEFINE_RAW_SPINLOCK(_data_head_lock);
 
 fetching_t* _fetching_head = NULL;
 DEFINE_RAW_SPINLOCK(_fetching_head_lock);
+*/
 
 mapping_answers_for_2_kernels_t* _mapping_head = NULL;
 DEFINE_RAW_SPINLOCK(_mapping_head_lock);
@@ -115,26 +120,9 @@ DEFINE_RAW_SPINLOCK(thread_pull_head_lock);
 static struct workqueue_struct *clone_wq;
 static struct workqueue_struct *exit_wq;
 static struct workqueue_struct *exit_group_wq;
-static struct workqueue_struct *message_request_wq;
-static struct workqueue_struct *invalid_message_wq;
-static struct workqueue_struct *vma_op_wq;
-static struct workqueue_struct *vma_lock_wq;
 static struct workqueue_struct *new_kernel_wq;
 
-//wait lists
-DECLARE_WAIT_QUEUE_HEAD( read_write_wait);
-DECLARE_WAIT_QUEUE_HEAD( request_distributed_vma_op);
-
-#include "depend.h"
 #include "stat.h"
-
-/* ajith - for file offset fetch */
-#if ELF_EXEC_PAGESIZE > PAGE_SIZE
-#define ELF_MIN_ALIGN   ELF_EXEC_PAGESIZE
-#else
-#define ELF_MIN_ALIGN   PAGE_SIZE
-#endif
-static unsigned long get_file_offset(struct file* file, int start_addr);
 
 static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,memory_t* mm_data)
 {
@@ -213,8 +201,6 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,m
 	return ret;
 }
 
-void process_vma_op(struct work_struct* work);
-
 static void process_new_kernel_answer(struct work_struct* work)
 {
 	new_kernel_work_answer_t* my_work= (new_kernel_work_answer_t*)work;
@@ -283,7 +269,7 @@ static int handle_new_kernel_answer(struct pcn_kmsg_message* inc_msg)
 	return 1;
 }
 
-void process_new_kernel(struct work_struct* work)
+static void process_new_kernel(struct work_struct* work)
 {
 	new_kernel_work_t* new_kernel_work= (new_kernel_work_t*) work;
 	memory_t* memory;
@@ -461,15 +447,8 @@ find:
 		if (status == EXIT_PROCESS) {
 			if (flush == 0) {
 				//this is needed to flush the list of pending operation before die
-				vma_op_work_t* work = kmalloc(sizeof(vma_op_work_t),
-							      GFP_ATOMIC);
-				if (work) {
-					work->fake = 1;
-					work->memory = mm_data;
-					mm_data->arrived_op = 0;
-					INIT_WORK( (struct work_struct*)work, process_vma_op);
-					queue_work(vma_op_wq, (struct work_struct*) work);
-				}
+				mm_data->arrived_op = 0;
+				vma_server_enqueue_vma_op(mm_data, 0, 1);
 				return 1;
 			}
 		}
@@ -554,16 +533,8 @@ find:
 
 				if (flush == 0) {
 					//this is needed to flush the list of pending operation before die
-
-					vma_op_work_t* work = kmalloc(sizeof(vma_op_work_t),
-								      GFP_ATOMIC);
-					if (work) {
-						work->fake = 1;
-						work->memory = mm_data;
-						mm_data->arrived_op = 0;
-						INIT_WORK( (struct work_struct*)work, process_vma_op);
-						queue_work(vma_op_wq, (struct work_struct*) work);
-					}
+					mm_data->arrived_op = 0;
+					vma_server_enqueue_vma_op(mm_data, 0, 1);
 					return 1;
 				} else {
 					printk("%s: ERROR: flush is 1 during first exit (alive set to 0 now) (id %d, cpu %d)\n", __func__, current->tgroup_home_id, current->tgroup_home_cpu);
@@ -639,7 +610,6 @@ static void create_new_threads(thread_pull_t * my_thread_pull, int *spare_thread
 	} \
 })
 
-extern long madvise_dontneed(struct vm_area_struct *vma, struct vm_area_struct **prev, unsigned long start, unsigned long end);
 extern long madvise_remove(struct vm_area_struct *vma, struct vm_area_struct **prev, unsigned long start, unsigned long end);
 
 static void main_for_distributed_kernel_thread(memory_t* mm_data, thread_pull_t * my_thread_pull)
@@ -825,13 +795,12 @@ static int create_kernel_thread_for_distributed_process_from_user_one(void *data
 	return 0;
 }
 
-// TODO
-#include "page_server.c.h"
+#include "page_server.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // exit group notification
 ///////////////////////////////////////////////////////////////////////////////
-void process_exit_group_notification(struct work_struct* work)
+static void process_exit_group_notification(struct work_struct* work)
 {
 	exit_group_work_t* request_exit = (exit_group_work_t*) work;
 	thread_group_exited_notification_t* msg = request_exit->request;
@@ -854,7 +823,7 @@ void process_exit_group_notification(struct work_struct* work)
 	kfree(work);
 }
 
-void process_exiting_process_notification(struct work_struct* work)
+static void process_exiting_process_notification(struct work_struct* work)
 {
 	exit_work_t* request_work = (exit_work_t*) work;
 	exiting_process_t* msg = request_work->request;
@@ -905,7 +874,8 @@ static int handle_thread_group_exited_notification(struct pcn_kmsg_message* inc_
 	return 1;
 }
 
-static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg) {
+static int handle_exiting_process_notification(struct pcn_kmsg_message* inc_msg)
+{
 	exit_work_t* request_work;
 	exiting_process_t* request = (exiting_process_t*) inc_msg;
 
@@ -1015,7 +985,7 @@ static int handle_remote_thread_count_response(struct pcn_kmsg_message* inc_msg)
 	return 0;
 }
 
-void process_count_request(struct work_struct* work)
+static void process_count_request(struct work_struct* work)
 {
 	count_work_t* request_work = (count_work_t*) work;
 	remote_thread_count_request_t* msg = request_work->request;
@@ -1119,7 +1089,7 @@ void synchronize_migrations(int tgroup_home_cpu,int tgroup_home_id )
 ///////////////////////////////////////////////////////////////////////////////
 // handling back migration
 ///////////////////////////////////////////////////////////////////////////////
-void process_back_migration(struct work_struct* work)
+static void process_back_migration(struct work_struct* work)
 {
 	back_mig_work_t* info_work = (back_mig_work_t*) work;
 	back_migration_request_t* request = info_work->back_mig_request;
@@ -1311,7 +1281,7 @@ int process_server_task_exit_notification(struct task_struct *tsk, long code)
  * pairing first, then sends a message to the originating cpu
  * so that it can do the same.
  */
-int process_server_notify_delegated_subprocess_starting(pid_t pid,
+static int process_server_notify_delegated_subprocess_starting(pid_t pid,
 							pid_t remote_pid, int remote_cpu)
 {
 	create_process_pairing_t* msg;
@@ -1740,7 +1710,7 @@ void sleep_shadow()
 ///////////////////////////////////////////////////////////////////////////////
 // thread specific handling
 ///////////////////////////////////////////////////////////////////////////////
-int create_user_thread_for_distributed_process(clone_request_t* clone_data,
+static int create_user_thread_for_distributed_process(clone_request_t* clone_data,
 					       thread_pull_t* my_thread_pull)
 {
 	shadow_thread_t* my_shadow;
@@ -2090,7 +2060,8 @@ static int clone_remote_thread_failed(clone_request_t* clone,int inc)
 	return create_user_thread_for_distributed_process(clone, my_thread_pull);
 }
 
-static int clone_remote_thread(clone_request_t* clone,int inc) {
+static int clone_remote_thread(clone_request_t* clone,int inc)
+{
 	struct file* f;
 	memory_t* memory = NULL;
 	unsigned long flags;
@@ -2303,68 +2274,7 @@ static int handle_clone_request(struct pcn_kmsg_message* inc_msg)
 	return 0;
 }
 
-/* Ajith - adding file offset parsing */
-static unsigned long get_file_offset(struct file *file, int start_addr)
-{
-	struct elfhdr elf_ex;
-	struct elf_phdr *elf_eppnt = NULL, *elf_eppnt_start = NULL;
-	int size, retval, i;
-
-	retval = kernel_read(file, 0, (char *)&elf_ex, sizeof(elf_ex));
-	if (retval != sizeof(elf_ex)) {
-		printk("%s: ERROR in Kernel read of ELF file\n", __func__);
-		retval = -1;
-		goto out;
-	}
-
-	size = elf_ex.e_phnum * sizeof(struct elf_phdr);
-
-	elf_eppnt = kmalloc(size, GFP_KERNEL);
-	if(elf_eppnt == NULL) {
-		printk("%s: ERROR: kmalloc failed in\n", __func__);
-		retval = -1;
-		goto out;
-	}
-
-	elf_eppnt_start = elf_eppnt;
-	retval = kernel_read(file, elf_ex.e_phoff,
-			     (char *)elf_eppnt, size);
-	if (retval != size) {
-		printk("%s: ERROR: during kernel read of ELF file\n", __func__);
-		retval = -1;
-		goto out;
-	}
-	for (i = 0; i < elf_ex.e_phnum; i++, elf_eppnt++) {
-		if (elf_eppnt->p_type == PT_LOAD) {
-
-			printk("%s: Page offset for 0x%x 0x%lx 0x%lx\n",
-				__func__, start_addr, (unsigned long)elf_eppnt->p_vaddr, (unsigned long)elf_eppnt->p_memsz);
-
-			if((start_addr >= elf_eppnt->p_vaddr) && (start_addr <= (elf_eppnt->p_vaddr+elf_eppnt->p_memsz)))
-			{
-				printk("%s: Finding page offset for 0x%x 0x%lx 0x%lx\n",
-					__func__, start_addr, (unsigned long)elf_eppnt->p_vaddr, (unsigned long)elf_eppnt->p_memsz);
-				retval = (elf_eppnt->p_offset - (elf_eppnt->p_vaddr & (ELF_MIN_ALIGN-1)));
-				goto out;
-			}
-/*
-  if ((elf_eppnt->p_flags & PF_R) && (elf_eppnt->p_flags & PF_X)) {
-  printk("Coming to executable program load section\n");
-  retval = (elf_eppnt->p_offset - (elf_eppnt->p_vaddr & (ELF_MIN_ALIGN-1)));
-  goto out;
-  }
-*/
-		}
-	}
-
-out:
-	if(elf_eppnt_start != NULL)
-		kfree(elf_eppnt_start);
-
-	return retval >> PAGE_SHIFT;
-}
-
-#include "sched_server.c.h"
+#include "sched_server.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // init functions
@@ -2402,6 +2312,7 @@ static int __init process_server_init(void)
 	clone_wq = create_workqueue("clone_wq");
 	exit_wq  = create_workqueue("exit_wq");
 	exit_group_wq = create_workqueue("exit_group_wq");
+	new_kernel_wq = create_workqueue("new_kernel_wq");
 
 // TODO make sure to refactor the following
 #if STATISTICS

@@ -2172,6 +2172,12 @@ extern int do_execve(const char *,
 		const char __user * const __user *,
 		const char __user * const __user *);
 extern long do_fork(unsigned long, unsigned long, unsigned long, int __user *, int __user *);
+#ifdef CONFIG_POPCORN
+extern struct task_struct* do_fork_for_main_kernel_thread(unsigned long clone_flags,
+							  unsigned long stack_start, struct pt_regs *regs,
+							  unsigned long stack_size, int __user *parent_tidptr,
+							  int __user *child_tidptr);
+#endif /* CONFIG_POPCORN */
 struct task_struct *fork_idle(int);
 extern pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags);
 extern pid_t kernel_thread_popcorn(int (*fn)(void *), void *arg, unsigned long flags);

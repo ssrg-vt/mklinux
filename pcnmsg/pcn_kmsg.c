@@ -60,7 +60,7 @@ late_initcall(initialize);
 int pcn_kmsg_register_callback(enum pcn_kmsg_type type, pcn_kmsg_cbftn callback)
 {
 	if (type >= PCN_KMSG_TYPE_MAX)
-		return -1; /* invalid type */
+		return -ENODEV; /* invalid type */
 
 	printk("%s: registering %d \n",__func__, type);
 	callbacks[type] = callback;

@@ -1354,7 +1354,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
 
-		distr_ret= process_server_do_mmap_pgoff_start(file,addr,
+		distr_ret= vma_server_do_mmap_pgoff_start(file,addr,
 				len, prot,
 				flags,pgoff);
 
@@ -1374,7 +1374,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	ret= mmap_region(file, addr, len, vm_flags, pgoff);
 
 	if(current->tgroup_distributed==1 && distributed==1){
-		process_server_do_mmap_pgoff_end(file,addr,
+		vma_server_do_mmap_pgoff_end(file,addr,
 				len, prot,
 				flags,pgoff,distr_ret);
 	}
@@ -2510,7 +2510,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
 		//printk("WARNING: unmap called \n");
-		ret= process_server_do_unmap_start(mm, start, len);
+		ret= vma_server_do_unmap_start(mm, start, len);
 		if(ret<0 && ret!=VMA_OP_SAVE && ret!=VMA_OP_NOT_SAVE){
 			return ret;
 		}
@@ -2599,7 +2599,7 @@ exit:
 
 	//Multikernel
 	if(current->tgroup_distributed==1 && distributed==1){
-		process_server_do_unmap_end(mm, start, len, ret);
+		vma_server_do_unmap_end(mm, start, len, ret);
 	}
 
 	return error;
@@ -2656,7 +2656,7 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
 	if(current->tgroup_distributed == 1 && current->distributed_exit == EXIT_ALIVE){
 		distributed= 1;
 
-		distr_ret= process_server_do_brk_start(addr, len);
+		distr_ret= vma_server_do_brk_start(addr, len);
 		if(distr_ret==-1){
 			error=-1;
 			goto exit;
@@ -2766,14 +2766,14 @@ out:
 	vma->vm_flags |= VM_SOFTDIRTY;
 
 	if(current->tgroup_distributed==1 && distributed==1){
-		process_server_do_brk_end(addr, len, distr_ret);
+		vma_server_do_brk_end(addr, len, distr_ret);
 	}
 
 	return addr;
 
 	//Multikernel
 exit:	if(current->tgroup_distributed==1 && distributed==1){
-		process_server_do_brk_end(addr, len, distr_ret);
+		vma_server_do_brk_end(addr, len, distr_ret);
 	}
 
 	return error;

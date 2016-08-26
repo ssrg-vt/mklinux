@@ -1,9 +1,119 @@
-/*
- * vma_server.c.h
+/**
+ * @file vma_server.c
  *
- *  Created on: May 22, 2016
- *      Author: root
+ * Popcorn Linux VMA server implementation
+ * This work is an extension of David Katz MS Thesis, please refer to the
+ * Thesis for further information about the algorithm.
+ *
+ * @author Vincent Legout, Antonio Barbalace, SSRG Virginia Tech 2016
+ * @author Ajith Saya, Sharath Bhat, SSRG Virginia Tech 2015
+ * @author Marina Sadini, Antonio Barbalace, SSRG Virginia Tech 2014
+ * @author Marina Sadini, SSRG Virginia Tech 2013
  */
+ 
+/*
+ * As David Katz thesis the concept of this server is to do consistent modifications to the VMA list
+ * The protocol is for N kernels
+ * The performed operation is shown atomic to every thread of the same application
+ */
+
+#include "vma_server.h"
+#include <popcorn/vma_server.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// Working queues (servers)
+///////////////////////////////////////////////////////////////////////////////
+static struct workqueue_struct *vma_op_wq;
+static struct workqueue_struct *vma_lock_wq;
+
+//wait list
+DECLARE_WAIT_QUEUE_HEAD( request_distributed_vma_op);
+
+int vma_server_enqueue_vma_op(memory_t * memory, vma_operation_t * operation, int fake)
+{
+	vma_op_work_t * work = kmalloc(sizeof(vma_op_work_t), GFP_ATOMIC);
+
+	if (work) {
+		work->fake = fake;
+		work->memory = memory;
+		work->operation = operation;
+		INIT_WORK( (struct work_struct*)work, vma_server_process_vma_op);
+		queue_work(vma_op_wq, (struct work_struct*) work);
+		return 0;
+	}
+	return -ENOMEM;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Support for heterogeneous binaries
+///////////////////////////////////////////////////////////////////////////////
+/* ajith - for file offset fetch */
+#if ELF_EXEC_PAGESIZE > PAGE_SIZE
+#define ELF_MIN_ALIGN   ELF_EXEC_PAGESIZE
+#else
+#define ELF_MIN_ALIGN   PAGE_SIZE
+#endif
+
+/* Ajith - adding file offset parsing */
+static unsigned long get_file_offset(struct file *file, int start_addr)
+{
+	struct elfhdr elf_ex;
+	struct elf_phdr *elf_eppnt = NULL, *elf_eppnt_start = NULL;
+	int size, retval, i;
+
+	retval = kernel_read(file, 0, (char *)&elf_ex, sizeof(elf_ex));
+	if (retval != sizeof(elf_ex)) {
+		printk("%s: ERROR in Kernel read of ELF file\n", __func__);
+		retval = -1;
+		goto out;
+	}
+
+	size = elf_ex.e_phnum * sizeof(struct elf_phdr);
+
+	elf_eppnt = kmalloc(size, GFP_KERNEL);
+	if(elf_eppnt == NULL) {
+		printk("%s: ERROR: kmalloc failed in\n", __func__);
+		retval = -1;
+		goto out;
+	}
+
+	elf_eppnt_start = elf_eppnt;
+	retval = kernel_read(file, elf_ex.e_phoff,
+			     (char *)elf_eppnt, size);
+	if (retval != size) {
+		printk("%s: ERROR: during kernel read of ELF file\n", __func__);
+		retval = -1;
+		goto out;
+	}
+	for (i = 0; i < elf_ex.e_phnum; i++, elf_eppnt++) {
+		if (elf_eppnt->p_type == PT_LOAD) {
+
+			printk("%s: Page offset for 0x%x 0x%lx 0x%lx\n",
+				__func__, start_addr, (unsigned long)elf_eppnt->p_vaddr, (unsigned long)elf_eppnt->p_memsz);
+
+			if((start_addr >= elf_eppnt->p_vaddr) && (start_addr <= (elf_eppnt->p_vaddr+elf_eppnt->p_memsz)))
+			{
+				printk("%s: Finding page offset for 0x%x 0x%lx 0x%lx\n",
+					__func__, start_addr, (unsigned long)elf_eppnt->p_vaddr, (unsigned long)elf_eppnt->p_memsz);
+				retval = (elf_eppnt->p_offset - (elf_eppnt->p_vaddr & (ELF_MIN_ALIGN-1)));
+				goto out;
+			}
+/*
+  if ((elf_eppnt->p_flags & PF_R) && (elf_eppnt->p_flags & PF_X)) {
+  printk("Coming to executable program load section\n");
+  retval = (elf_eppnt->p_offset - (elf_eppnt->p_vaddr & (ELF_MIN_ALIGN-1)));
+  goto out;
+  }
+*/
+		}
+	}
+
+out:
+	if(elf_eppnt_start != NULL)
+		kfree(elf_eppnt_start);
+
+	return retval >> PAGE_SHIFT;
+}
 
 /*****************************************************************************/
 /* Messaging related stuff                                                   */
@@ -36,7 +146,7 @@ static inline int vma_send_long_all( memory_t * entry, void * message, int size,
 	return acks;
 }
 
-vma_lock_t * vma_lock_alloc(struct task_struct * task, int from_cpu, int index)
+static vma_lock_t * vma_lock_alloc(struct task_struct * task, int from_cpu, int index)
 {
 	vma_lock_t* lock_message = (vma_lock_t*) kmalloc(sizeof(vma_lock_t), GFP_ATOMIC);
 	if (!lock_message)
@@ -64,7 +174,7 @@ ack_to_server->header.type = PCN_KMSG_TYPE_PROC_SRV_VMA_ACK;
 ack_to_server->header.prio = PCN_KMSG_PRIO_NORMAL;
 #endif
 
-vma_operation_t * vma_operation_alloc(struct task_struct * task, int op_id,
+static vma_operation_t * vma_operation_alloc(struct task_struct * task, int op_id,
 									unsigned long addr, unsigned long new_addr, int len, int new_len,
 									unsigned long prot, unsigned long flags, int index)
 {
@@ -133,7 +243,7 @@ PSPRINTK("%s,SERVER: woke up the main2\n",__func__);
 /* Marina's data store handling                                              */
 /*****************************************************************************/
 
-vma_op_answers_t * vma_op_answer_alloc(struct task_struct * task, int index)
+static vma_op_answers_t * vma_op_answer_alloc(struct task_struct * task, int index)
 {
 	vma_op_answers_t* acks = (vma_op_answers_t*) kmalloc(sizeof(vma_op_answers_t), GFP_ATOMIC);
 	if (!acks)
@@ -354,7 +464,7 @@ done:
  *
  * ptl is from pte_offset_map_lock (this is a lock on the page table entry somewhere)
  */
-static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* fetching_page,
+int vma_server_do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* fetching_page,
 							struct task_struct *tsk, struct mm_struct* mm, unsigned long address, spinlock_t* ptl)
 {
 
@@ -554,7 +664,7 @@ static int do_mapping_for_distributed_process(mapping_answers_for_2_kernels_t* f
 
 // THIS IS THE SERVER CODE (not about server/client as Marina wrote that is home/not home kernel)
 // currently a workqueue
-void process_vma_op(struct work_struct* work)
+static void vma_server_process_vma_op(struct work_struct* work)
 {
 	vma_op_work_t* vma_work = (vma_op_work_t*) work;
 	vma_operation_t* operation = vma_work->operation;
@@ -866,7 +976,7 @@ void process_vma_op(struct work_struct* work)
 	}
 }
 
-void process_vma_lock(struct work_struct* work)
+static void process_vma_lock(struct work_struct* work)
 {
 	vma_lock_work_t* vma_lock_work = (vma_lock_work_t*) work;
 	vma_lock_t* lock = vma_lock_work->lock;
@@ -1631,118 +1741,29 @@ out:
 	return ret;
 }
 
-//
-// TODO the following must become inline after we are done with debugging
-//
-
-long process_server_madvise_remove_start(struct mm_struct *mm, unsigned long start,
-				   size_t len)
+int vma_server_init(void)
 {
-	return start_distribute_operation(VMA_OP_MADVISE, start, len, 0, 0, 0, 0,
-					  NULL, 0);
-}
-
-long process_server_madvise_remove_end(struct mm_struct *mm, unsigned long start,
-				 size_t len, int start_ret)
-{
-	end_distribute_operation(VMA_OP_MADVISE, start_ret, start);
-	return 0;
-}
-
-long process_server_do_unmap_start(struct mm_struct *mm, unsigned long start,
-				   size_t len)
-{
-	return start_distribute_operation(VMA_OP_UNMAP, start, len, 0, 0, 0, 0,
-					  NULL, 0);
-}
-
-long process_server_do_unmap_end(struct mm_struct *mm, unsigned long start,
-				 size_t len, int start_ret)
-{
-	end_distribute_operation(VMA_OP_UNMAP, start_ret, start);
-	return 0;
-}
-
-long process_server_mprotect_start(unsigned long start, size_t len,
-				   unsigned long prot)
-{
-	return start_distribute_operation(VMA_OP_PROTECT, start, len, prot, 0, 0, 0,
-					  NULL, 0);
-}
-
-long process_server_mprotect_end(unsigned long start, size_t len,
-				 unsigned long prot, int start_ret)
-{
-	end_distribute_operation(VMA_OP_PROTECT, start_ret, start);
-	return 0;
-}
-
-long process_server_do_mmap_pgoff_start(struct file *file, unsigned long addr,
-					unsigned long len, unsigned long prot, unsigned long flags,
-					unsigned long pgoff)
-{
-	return start_distribute_operation(VMA_OP_MAP, addr, len, prot, 0, 0, flags,
-					  file, pgoff);
-}
-
-long process_server_do_mmap_pgoff_end(struct file *file, unsigned long addr,
-				      unsigned long len, unsigned long prot, unsigned long flags,
-				      unsigned long pgoff, unsigned long start_ret)
-{
-	end_distribute_operation(VMA_OP_MAP, start_ret, addr);
-	return 0;
-}
-
-long process_server_do_brk_start(unsigned long addr, unsigned long len)
-{
-	return start_distribute_operation(VMA_OP_BRK, addr, len, 0, 0, 0, 0, NULL,
-					  0);
-}
-
-long process_server_do_brk_end(unsigned long addr, unsigned long len,
-			       unsigned long start_ret)
-{
-	end_distribute_operation(VMA_OP_BRK, start_ret, addr);
-	return 0;
-}
-
-long process_server_do_mremap_start(unsigned long addr, unsigned long old_len,
-				    unsigned long new_len, unsigned long flags, unsigned long new_addr)
-{
-	return start_distribute_operation(VMA_OP_REMAP, addr, (size_t) old_len, 0,
-					  new_addr, new_len, flags, NULL, 0);
-}
-
-long process_server_do_mremap_end(unsigned long addr, unsigned long old_len,
-				  unsigned long new_len, unsigned long flags, unsigned long new_addr,
-				  unsigned long start_ret)
-{
-	end_distribute_operation(VMA_OP_REMAP, start_ret, new_addr);
-	return 0;
-}
-
-long vma_server_init(void)
-{
+	int ret;
 	/*
 	 * These two workqueues are singlethread because we ran into
 	 * synchronization issues using multithread workqueues.
 	 */
 	vma_op_wq = create_singlethread_workqueue("vma_op_wq");
+	if (!vma_op_wq)
+		return -ENOMEM;
 	vma_lock_wq = create_singlethread_workqueue("vma_lock_wq");
+	if (!vma_lock_wq)
+		return -ENOMEM;
 
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_OP,
-				   handle_vma_op);
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_ACK,
-				   handle_vma_ack);
-	pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_LOCK,
-				   handle_vma_lock);
-
+	if ( ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_OP,
+				   handle_vma_op) )
+		return ret;
+	if ( ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_ACK,
+				    handle_vma_ack) )
+		return ret;
+	if ( ret = pcn_kmsg_register_callback(PCN_KMSG_TYPE_PROC_SRV_VMA_LOCK,
+				   handle_vma_lock) )
+		return ret;
+ 
 	return 0;
 }
-
-/*
- * As David Katz thesis the concept of this server is to do consistent modifications to the VMA list
- * The protocol is for N kernels
- * The performed operation is shown atomic to every thread of the same application
- */
- 

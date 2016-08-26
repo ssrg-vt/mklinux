@@ -2029,7 +2029,7 @@ try_this_zone:
 		page = buffered_rmqueue(preferred_zone, zone, order,
 						gfp_mask, migratetype);
 		//Multikernel
-		process_server_clean_page(page);
+		page_server_clean_page(page);
 
 		if (page)
 			break;

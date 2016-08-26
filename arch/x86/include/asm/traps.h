@@ -66,6 +66,8 @@ dotraplinkage void do_simd_coprocessor_error(struct pt_regs *, long);
 dotraplinkage void do_iret_error(struct pt_regs *, long);
 #endif
 
+extern int access_error(unsigned long error_code, struct vm_area_struct *vma);
+
 static inline int get_si_code(unsigned long condition)
 {
 	if (condition & DR_STEP)
