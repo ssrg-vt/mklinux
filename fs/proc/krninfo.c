@@ -7,15 +7,16 @@
 #include <popcorn/init.h>
 #include <popcorn/cpuinfo.h>
 
+#if defined(CONFIG_ARM64)
 #include <asm/memory.h>
-
+#endif
 
 static int krninfo_proc_show(struct seq_file *m, void *v)
 {
 
 	seq_printf(m,
 		"POPCORN KERNEL INFO:   \n"
-		"Kernel Id    %8lu(%d)\n"
+		"Kernel Id    %8u(%d)\n"
 		"Start PFN    %8lu \n"
 		"End   PFN    %8lu \n",
 		Kernel_Id, _cpu,
@@ -24,7 +25,7 @@ static int krninfo_proc_show(struct seq_file *m, void *v)
 #elif defined(CONFIG_ARM64)
 		memstart_addr,
 #endif
-		PFN_PHYS(max_low_pfn));
+		(long unsigned)PFN_PHYS(max_low_pfn));
 
 	return 0;
 }
