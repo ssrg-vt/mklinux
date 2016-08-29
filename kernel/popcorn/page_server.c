@@ -1591,10 +1591,10 @@ static int do_remote_read_for_2_kernels(struct task_struct * tsk, int tgroup_hom
 	reading_page->arrived_response=0;
 
 	// the list does not include the current processor group descirptor (TODO)
-	struct list_head *iter;
+	struct list_head *iter, *tmp_iter;
 	_remote_cpu_info_list_t *objPtr;
 
-	list_for_each(iter, &rlist_head) {
+	list_for_each_safe(iter, tmp_iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
 
@@ -1809,9 +1809,9 @@ static int do_remote_write_for_2_kernels(struct tast_struct * tsk, int tgroup_ho
 		up_read(&mm->mmap_sem);
 		/*PTE UNLOCKED*/
 		// the list does not include the current processor group descirptor (TODO)
-		struct list_head *iter;
+		struct list_head *iter, *tmp_iter;
 		_remote_cpu_info_list_t *objPtr;
-		list_for_each(iter, &rlist_head) {
+		list_for_each_safe(iter, tmp_iter, &rlist_head) {
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
 			if (page->other_owners[i] == 1) {
@@ -1927,9 +1927,9 @@ exit_answers:
 		writing_page->arrived_response=0;
 
 		// the list does not include the current processor group descriptor (TODO)
-		struct list_head *iter;
+		struct list_head *iter, *tmp_iter;
 		_remote_cpu_info_list_t *objPtr;
-		list_for_each(iter, &rlist_head) {
+		list_for_each_safe(iter, tmp_iter, &rlist_head) {
 			objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 			i = objPtr->_data._processor;
 			if (page->other_owners[i] == 1) {
@@ -2177,9 +2177,9 @@ static int do_remote_fetch_for_2_kernels(struct task_struct *tsk, int tgroup_hom
 
 	down_read(&memory->kernel_set_sem);
 	// the list does not include the current processor group descirptor (TODO)
-	struct list_head *iter;
+	struct list_head *iter, *tmp_iter;
 	_remote_cpu_info_list_t *objPtr;
-	list_for_each(iter, &rlist_head) {
+	list_for_each_safe(iter, tmp_iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
 

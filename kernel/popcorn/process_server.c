@@ -84,13 +84,8 @@
 /*akshay*/
 #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 
-/**
- * Module variables
- */
-
-int _cpu = -1;
-int _file_cpu = 1;
-
+int _cpu = -1;		// This is for any Popcorn Linux server
+int _file_cpu = 1;	// This is for the Popcorn Linux file server
 
 ///////////////////////////////////////////////////////////////////////////////
 // Marina's data stores (linked lists)
@@ -168,10 +163,10 @@ static int count_remote_thread_members(int tgroup_home_cpu, int tgroup_home_id,m
 
 	//printk("%s before sending data->expected_responses %d data->responses %d\n",__func__,data->expected_responses,data->responses);
 	// the list does not include the current processor group descirptor (TODO)
-	struct list_head *iter;
+	struct list_head *iter, *tmp_iter;
 	_remote_cpu_info_list_t *objPtr;
 
-	list_for_each(iter, &rlist_head) {
+	list_for_each_safe(iter, tmp_iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
 
@@ -378,9 +373,9 @@ static void _create_thread_pull(struct work_struct* work)
 	msg->header.type= PCN_KMSG_TYPE_PROC_SRV_CREATE_THREAD_PULL;
 	msg->header.prio= PCN_KMSG_PRIO_NORMAL;
 
-	struct list_head *iter;
+	struct list_head *iter, *tmp_iter;
 	_remote_cpu_info_list_t *objPtr;
-	list_for_each(iter, &rlist_head) {
+	list_for_each_safe(iter, tmp_iter, &rlist_head) {
 		objPtr =list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
 		pcn_kmsg_send_long(i,(struct pcn_kmsg_long_message*) (msg),
@@ -528,9 +523,9 @@ find:
 					exit_notification->tgroup_home_cpu = current->tgroup_home_cpu;
 					exit_notification->tgroup_home_id = current->tgroup_home_id;
 					// the list does not include the current processor group descirptor (TODO)
-					struct list_head *iter;
+					struct list_head *iter, *tmp_iter;
 					_remote_cpu_info_list_t *objPtr;
-					list_for_each(iter, &rlist_head) {
+					list_for_each_safe(iter, tmp_iter, &rlist_head) {
 						objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 						i = objPtr->_data._processor;
 						pcn_kmsg_send_long(i,(struct pcn_kmsg_long_message*)(exit_notification),sizeof(thread_group_exited_notification_t)- sizeof(struct pcn_kmsg_hdr));
@@ -1935,9 +1930,9 @@ static int create_kernel_thread_for_distributed_process(void *data)
 	raw_spin_lock_init(&(entry->lock_for_answer));
 	//inform all kernel that a new distributed process is present here
 	// the list does not include the current processor group descirptor (TODO)
-	struct list_head *iter;
+	struct list_head *iter, *tmp_iter;
 	_remote_cpu_info_list_t *objPtr;
-	list_for_each(iter, &rlist_head) {
+	list_for_each_safe(iter, tmp_iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
 		PSPRINTK("sending new kernel message to %d\n",i);

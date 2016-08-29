@@ -161,11 +161,11 @@ static inline int vma_send_long_all( memory_t * entry, void * message, int size,
 		struct task_struct * task, int max_distr_vma_op)
 {
 	int i, acks =0;
-	struct list_head *iter;
+	struct list_head *iter, *tmp_iter;
 	_remote_cpu_info_list_t *objPtr;
 
 	// the list does not include the current processor group descirptor (TODO)
-	list_for_each(iter, &rlist_head) {
+	list_for_each_safe(iter, tmp_iter, &rlist_head) {
 		objPtr = list_entry(iter, _remote_cpu_info_list_t, cpu_list_member);
 		i = objPtr->_data._processor;
 
