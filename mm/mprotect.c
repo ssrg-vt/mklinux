@@ -23,6 +23,7 @@
 #include <linux/mmu_notifier.h>
 #include <linux/migrate.h>
 #include <linux/perf_event.h>
+#include <linux/rmap.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
@@ -30,7 +31,7 @@
 
 //Multikernel
 #include <popcorn/process_server.h>
-#include <linux/rmap.h>
+#include <popcorn/vma_server.h>
 
 #ifndef pgprot_modify
 static inline pgprot_t pgprot_modify(pgprot_t oldprot, pgprot_t newprot)
@@ -88,15 +89,14 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 						}
 
 					} else { // it is becoming a writable vma
-
 						if (page->replicated == 0) {
+							int i,count=0;
 							printk("mprot: changing to read write address %lu\n",addr);
 							if (page->status != REPLICATION_STATUS_NOT_REPLICATED) {
 								printk("ERROR: page replicated is zero "
 										"but not in state not replicated\n");
 							}
 							//check if somebody else fetched the page
-							int i,count=0;
 							for (i = 0; i < MAX_KERNEL_IDS; i++) {
 								count=count+page->other_owners[i];
 							}
@@ -169,11 +169,12 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 					}
 
 					if( !(pgprot_val(newprot) & PROT_WRITE)) { //it is becoming a read only vma
+                                                int i;
+						int rss[NR_MM_COUNTERS];
+                                                memset(rss, 0, sizeof(int) * NR_MM_COUNTERS);
+
 						printk("mprot: removing page address %lu\n",addr);
 						//force a new fetch
-						int rss[NR_MM_COUNTERS];
-						memset(rss, 0, sizeof(int) * NR_MM_COUNTERS);
-
 						if (PageAnon(page))
 							rss[MM_ANONPAGES]--;
 						else {
@@ -186,9 +187,9 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 						page->status= REPLICATION_STATUS_NOT_REPLICATED;
 
 						//add if for 2 kernels
-						if(cpumask_first(cpu_present_mask)==current->tgroup_home_cpu){
-							ptep_get_and_clear(mm, addr, pte);
+						if (cpumask_first(cpu_present_mask)==current->tgroup_home_cpu) {
 							pte_t ptent= *pte;
+							ptep_get_and_clear(mm, addr, pte);
 							if(!pte_none(ptent))
 								printk("ERROR: mprot cleaning pte but after not none\n");
 							
@@ -198,11 +199,10 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 							set_pte_at_notify(mm, addr, pte, ptent);
 						}
 
-						int i;
-
 						if (current->mm == mm)
 							// Ported to Linux 3.12 API
 							sync_mm_rss( mm);
+
 						for (i = 0; i < NR_MM_COUNTERS; i++)
 							if (rss[i])
 								atomic_long_add(rss[i], &mm->rss_stat.count[i]);

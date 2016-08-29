@@ -13,9 +13,34 @@
  *
  * @author Vincent Legout, Antonio Barbalace, SSRG Virginia Tech 2016
  */
+
+#include <linux/smp.h>
+#include <linux/sched.h>
+#include <linux/delay.h>
+#include <linux/threads.h>
+#include <linux/kthread.h>
+#include <linux/slab.h>
+
+#include <linux/fs.h>
+#include <linux/file.h>
+#include <linux/proc_fs.h>
+
+#include <asm/uaccess.h>
  
+#include <popcorn/init.h>
+//#include <popcorn/cpuinfo.h>
+#include <linux/cpu_namespace.h>
+
+#include <process_server_arch.h>
+#include <linux/process_server.h>
+#include <popcorn/process_server.h>
+#include "page_server.h"
+#include <popcorn/page_server.h>
+#include "vma_server.h"
+#include <popcorn/vma_server.h>
 #include "sched_server.h"
 #include <popcorn/sched_server.h>
+#include "internal.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Vincent's scheduling infrasrtucture based on Antonio's power/pmu readings

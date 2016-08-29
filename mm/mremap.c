@@ -24,6 +24,7 @@
 
 //Multikernel
 #include <popcorn/process_server.h>
+#include <popcorn/vma_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -506,7 +507,7 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed =1;
 		printk("WARNING: remap called\n");
-		distr_ret= process_server_do_mremap_start(addr,
+		distr_ret= vma_server_do_mremap_start(addr,
 				old_len,  new_len,
 				flags, new_addr);
 
@@ -603,7 +604,7 @@ out:
 
 	//Multikernel
 	if(current->tgroup_distributed==1 && distributed == 1){
-		process_server_do_mremap_end( addr,
+		vma_server_do_mremap_end( addr,
 				old_len,new_len,
 				flags,  new_addr, distr_ret);
 
@@ -651,7 +652,7 @@ long kernel_mremap(unsigned long addr, unsigned long old_len,
 	if(current->tgroup_distributed==1 && current->distributed_exit == EXIT_ALIVE){
 		distributed =1;
 		printk("WARNING: remap called\n");
-		distr_ret= process_server_do_mremap_start(addr,
+		distr_ret= vma_server_do_mremap_start(addr,
 				old_len,  new_len,
 				flags, new_addr);
 
@@ -748,7 +749,7 @@ out:
 
 	//Multikernel
 	if(current->tgroup_distributed==1 && distributed == 1){
-		process_server_do_mremap_end( addr,
+		vma_server_do_mremap_end( addr,
 				old_len,new_len,
 				flags,  new_addr, distr_ret);
 

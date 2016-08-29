@@ -2182,6 +2182,8 @@ struct task_struct *fork_idle(int);
 extern pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags);
 extern pid_t kernel_thread_popcorn(int (*fn)(void *), void *arg, unsigned long flags);
 
+extern int exec_mmap(struct mm_struct *mm);
+
 extern void set_task_comm(struct task_struct *tsk, char *from);
 extern char *get_task_comm(char *to, struct task_struct *tsk);
 

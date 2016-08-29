@@ -43,8 +43,39 @@
  * page_server_init <<< called by process_server initialization function
  */
 
+#include <linux/smp.h>
+#include <linux/sched.h>
+#include <linux/threads.h>
+#include <linux/slab.h>
+#include <linux/mm.h>
+#include <linux/io.h>
+#include <linux/mman.h>
+#include <linux/highmem.h>
+#include <linux/rmap.h>
+#include <linux/memcontrol.h>
+#include <linux/pagemap.h>
+#include <linux/mmu_notifier.h>
+
+#include <asm/traps.h>
+#include <asm/pgalloc.h>
+#include <asm/tlbflush.h>
+#include <asm/cacheflush.h>
+#include <asm/page.h>
+#include <asm/mmu_context.h>
+#include <asm/atomic.h>
+
+#include <popcorn/init.h>
+#include <popcorn/cpuinfo.h>
+#include <process_server_arch.h>
+#include <linux/process_server.h>
+#include <popcorn/process_server.h>
 #include "page_server.h"
-#include <linux/page_server.h>
+#include <popcorn/page_server.h>
+#include "vma_server.h"
+#include <popcorn/vma_server.h>
+#include "sched_server.h"
+#include <popcorn/sched_server.h>
+#include "internal.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Working queues (servers)
@@ -2187,7 +2218,7 @@ static int do_remote_fetch_for_2_kernels(struct task_struct *tsk, int tgroup_hom
 	PSPRINTK("Out wait fetch %i address %lx\n", fetch, address);
 	//only the client has to update the vma
 	if (tgroup_home_cpu!=_cpu) {
-		ret = do_mapping_for_distributed_process(fetching_page, tsk, mm, address, ptl); // defined in vma_server.c
+		ret = vma_server_do_mapping_for_distributed_process(fetching_page, tsk, mm, address, ptl); // defined in vma_server.c
 		if (ret != 0)
 			goto exit_fetch_message;
 		PSPRINTK("Mapping end\n");

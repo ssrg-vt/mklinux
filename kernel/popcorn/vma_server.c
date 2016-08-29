@@ -17,14 +17,51 @@
  * The performed operation is shown atomic to every thread of the same application
  */
 
+#include <linux/smp.h>
+#include <linux/sched.h>
+#include <linux/threads.h>
+#include <linux/slab.h>
+#include <linux/mm.h>
+#include <linux/io.h>
+#include <linux/mman.h>
+#include <linux/highmem.h>
+#include <linux/rmap.h>
+#include <linux/memcontrol.h>
+#include <linux/pagemap.h>
+#include <linux/mmu_notifier.h>
+
+#include <linux/elf.h>
+#include <linux/binfmts.h>
+#include <asm/elf.h>
+
+#include <asm/traps.h>
+#include <asm/pgalloc.h>
+#include <asm/tlbflush.h>
+#include <asm/cacheflush.h>
+#include <asm/page.h>
+#include <asm/mmu_context.h>
+#include <asm/atomic.h>
+
+#include <popcorn/init.h>
+#include <popcorn/cpuinfo.h>
+#include <process_server_arch.h>
+#include <linux/process_server.h>
+#include <popcorn/process_server.h>
+#include "page_server.h"
+#include <popcorn/page_server.h>
 #include "vma_server.h"
 #include <popcorn/vma_server.h>
+#include "sched_server.h"
+#include <popcorn/sched_server.h>
+#include "internal.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Working queues (servers)
 ///////////////////////////////////////////////////////////////////////////////
 static struct workqueue_struct *vma_op_wq;
 static struct workqueue_struct *vma_lock_wq;
+
+static void vma_server_process_vma_op(struct work_struct* work);
 
 //wait list
 DECLARE_WAIT_QUEUE_HEAD( request_distributed_vma_op);
@@ -1078,7 +1115,7 @@ static int handle_vma_op(struct pcn_kmsg_message* inc_msg)
 			work->fake = 0;
 			work->memory = memory;
 			work->operation = operation;
-			INIT_WORK( (struct work_struct*)work, process_vma_op);
+			INIT_WORK( (struct work_struct*)work, vma_server_process_vma_op);
 			queue_work(vma_op_wq, (struct work_struct*) work);
 		}
 	}

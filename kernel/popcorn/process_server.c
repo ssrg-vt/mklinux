@@ -64,7 +64,15 @@
 #include <linux/cpu_namespace.h>
 #include <linux/popcorn_cpuinfo.h>
 #include <linux/process_server.h>
+
 #include <process_server_arch.h>
+#include <popcorn/process_server.h>
+#include "vma_server.h"
+#include <popcorn/vma_server.h>
+#include "page_server.h"
+#include <popcorn/page_server.h>
+#include "sched_server.h"
+#include <popcorn/sched_server.h>
 #include <popcorn/remote_file.h>
 
 #include <linux/elf.h>
@@ -80,19 +88,13 @@
  * Module variables
  */
 
-static int _cpu = -1;
+int _cpu = -1;
 int _file_cpu = 1;
 
 
 ///////////////////////////////////////////////////////////////////////////////
 // Marina's data stores (linked lists)
 ///////////////////////////////////////////////////////////////////////////////
-/*data_header_t* _data_head = NULL;
-DEFINE_RAW_SPINLOCK(_data_head_lock);
-
-fetching_t* _fetching_head = NULL;
-DEFINE_RAW_SPINLOCK(_fetching_head_lock);
-*/
 
 mapping_answers_for_2_kernels_t* _mapping_head = NULL;
 DEFINE_RAW_SPINLOCK(_mapping_head_lock);
@@ -109,10 +111,16 @@ DEFINE_RAW_SPINLOCK(_count_head_lock);
 vma_op_answers_t* _vma_ack_head = NULL;
 DEFINE_RAW_SPINLOCK(_vma_ack_head_lock);
 
+/* all the above are implemented in internal.h */
+#include "internal.h"
+
+
+
+
+
 thread_pull_t* thread_pull_head = NULL;
 DEFINE_RAW_SPINLOCK(thread_pull_head_lock);
 
-#include "internal.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Working queues (servers)
@@ -1636,8 +1644,6 @@ int process_server_do_migration(struct task_struct *task, int dst_cpu,
 		return PROCESS_SERVER_CLONE_FAIL;
 	}
 }
-
-#include "vma_server.c.h"
 
 void sleep_shadow()
 {

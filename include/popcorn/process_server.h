@@ -3,7 +3,7 @@
 #define __POPCORN_PROCESS_SERVER_H
 
 #include <process_server_arch_macros.h>
-#include <linux/process_server_macro.h>
+#include <popcorn/process_server_macro.h>
 
 /**
  * Use the preprocessor to turn off printk.

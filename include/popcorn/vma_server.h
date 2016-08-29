@@ -101,14 +101,14 @@ static inline long vma_server_do_brk_end(unsigned long addr, unsigned long len,
 	end_distribute_operation(VMA_OP_BRK, start_ret, addr);
 	return 0;
 }
-static inline long process_server_do_mremap_start(unsigned long addr,
+static inline long vma_server_do_mremap_start(unsigned long addr,
 		unsigned long old_len, unsigned long new_len, unsigned long flags,
 		unsigned long new_addr)
 {
 	return start_distribute_operation(VMA_OP_REMAP, addr, (size_t) old_len, 0,
 			new_addr, new_len, flags, NULL, 0);
 }
-static inline long process_server_do_mremap_end(unsigned long addr,
+static inline long vma_server_do_mremap_end(unsigned long addr,
 		unsigned long old_len, unsigned long new_len, unsigned long flags,
 		unsigned long new_addr, unsigned long start_ret)
 {

@@ -17,6 +17,9 @@
 #include <linux/syscalls.h>
 #include <linux/mmu_notifier.h>
 
+#include <popcorn/process_server.h>
+#include <popcorn/vma_server.h>
+
 #include <asm/mmu_context.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>

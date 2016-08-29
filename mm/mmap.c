@@ -39,6 +39,7 @@
 
 /* Multikernel */
 #include <popcorn/process_server.h>
+#include <popcorn/vma_server.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -1208,7 +1209,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	vm_flags_t vm_flags;
 	int distributed = 0;
 	unsigned long ret;
-	long distr_ret;
+	long distr_ret = 0;
 
 	*populate = 0;
 
@@ -2497,7 +2498,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 {
 	unsigned long end;
 	struct vm_area_struct *vma, *prev, *last;
-	int error, distributed= 0 ;
+	int error =0, distributed =0;
 	long ret;
 
 	if ((start & ~PAGE_MASK) || start > TASK_SIZE || len > TASK_SIZE-start)

@@ -7,8 +7,9 @@
 
 #define _PROCESS_SERVER_H
 #include <linux/pcn_kmsg.h> // Messaging
-#include <linux/process_server_macro.h>
+
 #include <process_server_arch_macros.h>
+#include <popcorn/process_server_macro.h>
 /*
  * Structures
  */
@@ -766,7 +767,6 @@ typedef struct _sched_periodic_req {
  */
 void synchronize_migrations(int tgroup_home_cpu,int tgroup_home_id );
 int page_server_update_page(struct task_struct * tsk,struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address, unsigned long page_fault_flags, int retrying);
-int process_server_notify_delegated_subprocess_starting(pid_t pid, pid_t remote_pid, int remote_cpu);
 int process_server_task_exit_notification(struct task_struct *tsk,long code);
 int page_server_try_handle_mm_fault(struct task_struct *tsk,struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, unsigned long page_fault_flags,unsigned long error_code);

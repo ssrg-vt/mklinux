@@ -962,8 +962,8 @@ EXPORT_SYMBOL(file_open_root);
 long remote_thread_open(const char *filename, int flags, int mode, pid_t owner_pid, struct task_struct* task)
 {
 	struct open_flags op;
-	int lookup = build_open_flags(flags, mode, &op);
-	int fd,fd2;
+	//int lookup = build_open_flags(flags, mode, &op);
+	int fd;
 
 	fd = get_unused_fd_flags_task(flags, task);
 
@@ -991,10 +991,9 @@ DEFINE_SPINLOCK(_remote_file_lock);
 static struct file *saif_do_sys_open(int dfd, const char *filename, int flags, int mode, int fd, pid_t actual_owner)
 {
 	struct open_flags op;
-	int lookup = build_open_flags(flags, mode, &op);
+	//int lookup = build_open_flags(flags, mode, &op);
 	struct file *f =NULL;
 	int rcv_fd;
-	unsigned long flag_s;
 	struct files_struct * tsk_ftable = NULL;
 	struct filename name;
 	struct filename * tmp = &name;
@@ -1023,12 +1022,12 @@ static struct file *saif_do_sys_open(int dfd, const char *filename, int flags, i
 				f = fcheck_files(tsk_ftable, fd);
 			}
 			printk("%s after lock opened agian\n",__func__);
-			printk("%s pos %d\n", __func__, f->f_pos);
+			printk("%s pos %ld\n", __func__, (long int)f->f_pos);
 			return f;
 		}
 	}
 
-	printk("%s %d\n", __func__, f->f_pos);
+	printk("%s pos %ld\n", __func__, (long int)f->f_pos);
 
 	return f;
 }
@@ -1054,7 +1053,7 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 	struct filename *tmp;
 
 	if (current->tgroup_distributed == 1) {
-		printk("%s: O Origin PID %d filename _%s_ %x fd %d mode %d flags %d\n", __func__,
+		printk("%s: O Origin PID %d filename _%s_ %p fd %d mode %d flags %d\n", __func__,
 		       current->pid, filename, filename, fd, mode, flags);
 		/* dump_stack(); */
 	}
