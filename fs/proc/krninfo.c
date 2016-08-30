@@ -2,6 +2,8 @@
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/seqlock.h>
+
 #include <linux/bootmem.h>
 
 #include <popcorn/init.h>
@@ -23,15 +25,18 @@ static int krninfo_proc_show(struct seq_file *m, void *v)
 #if defined(CONFIG_X86)
 		kernel_start_addr,
 #elif defined(CONFIG_ARM64)
-		memstart_addr,
+		(long unsigned)memstart_addr,
 #endif
 		(long unsigned)PFN_PHYS(max_low_pfn));
+
+printk("%s: %8u(%d)\n", __func__, Kernel_Id, _cpu);
 
 	return 0;
 }
 
 static int krninfo_proc_open(struct inode *inode, struct file *file)
 {
+printk("%s: %8u(%d)\n", __func__, Kernel_Id, _cpu);
 	return single_open(file, krninfo_proc_show, NULL);
 }
 
@@ -44,7 +49,13 @@ static const struct file_operations krninfo_proc_fops = {
 
 static int __init proc_krninfo_init(void)
 {
-	proc_create("krninfo", 0, NULL, &krninfo_proc_fops);
+	struct proc_dir_entry * ret;
+	ret = proc_create("krninfo", 0, NULL, &krninfo_proc_fops);
+printk("%s: registered!!! [%p]\n", __func__, ret);
+
 	return 0;
 }
 module_init(proc_krninfo_init);
+
+
+
