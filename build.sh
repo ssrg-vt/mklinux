@@ -25,11 +25,11 @@ echo $ARCH
 
 echo "make"
 make -j${N_JOBS} 
-case $ARCH in *$ARCH_AMD64*): amd64_modules ;; esac
+case $ARCH in *$ARCH_AMD64*): ; amd64_modules ;; esac
 
 echo "install"
 make -j${N_JOBS} install
-case $ARCH in *$ARCH_ARM64*): arm64_mkimage ;; esac
+case $ARCH in *$ARCH_ARM64*): ; arm64_mkimage ;; esac
 
 echo "DONE"
              
