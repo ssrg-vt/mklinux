@@ -3,7 +3,7 @@
 #define __POPCORN_CPUINFO_H
 
 extern int _cpu;
-
+/*
 struct _remote_cpu_info_data {
 	unsigned int _processor;
 	char _vendor_id[16];
@@ -39,5 +39,5 @@ struct _remote_cpu_info_list
 
 };
 typedef struct _remote_cpu_info_list _remote_cpu_info_list_t;
-
+*/
 #endif

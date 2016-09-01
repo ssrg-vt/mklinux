@@ -23,6 +23,8 @@
 // TODO furthermore a R/W lock must be used to access the list
 extern struct list_head rlist_head;
 
+#include <popcorn/cpuinfo.h>
+
 #define POPCORN_CPUMASK_SIZE 64
 #define POPCORN_CPUMASK_BITS (POPCORN_CPUMASK_SIZE * BITS_PER_BYTE)
 
@@ -90,6 +92,8 @@ typedef union __cpuinfo_arch{
 	cpuinfo_arch_arm64_t arm64;
 }cpuinfo_arch_t;
 
+
+
 struct _remote_cpu_info_data
 {
 	// TODO the following must be added for the messaging layer
@@ -115,6 +119,7 @@ struct _remote_cpu_info_list
 	struct list_head cpu_list_member;
 };
 typedef struct _remote_cpu_info_list _remote_cpu_info_list_t;
+
 
 struct _remote_cpu_info_request {
 	struct pcn_kmsg_hdr header;

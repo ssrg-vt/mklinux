@@ -53,7 +53,6 @@ extern int my_cpu;
 unsigned int Kernel_Id;
 EXPORT_SYMBOL(Kernel_Id);
 // TODO this must be refactored
-static int _cpu=0;
 static int wait_cpu_list = -1;
 static DECLARE_WAIT_QUEUE_HEAD( wq_cpu);
 struct list_head rlist_head;

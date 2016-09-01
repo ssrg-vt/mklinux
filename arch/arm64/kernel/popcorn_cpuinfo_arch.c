@@ -33,6 +33,8 @@
 #include <linux/delay.h>
 
 #include <linux/cpufreq.h>
+
+#include <popcorn/cpuinfo.h>
 #include <linux/popcorn_cpuinfo.h>
 
 #include <linux/of_fdt.h>
